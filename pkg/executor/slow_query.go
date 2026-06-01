@@ -1322,7 +1322,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 				end := types.NewTime(types.FromGoTime(fileEndTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
 				inTimeRanges := false
 				for _, tr := range e.checker.timeRanges {
-					if slowLogMayOverlapTimeRange(start, end, tr, tz) {
+					if slowLogMayOverlapTimeRangeWithTolerance(start, end, tr, tz) {
 						inTimeRanges = true
 						break
 					}
@@ -1366,7 +1366,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		end := logFiles[i+1].start
 		inTimeRanges := false
 		for _, tr := range e.checker.timeRanges {
-			if slowLogMayOverlapTimeRange(start, end, tr, tz) {
+			if slowLogMayOverlapTimeRangeWithTolerance(start, end, tr, tz) {
 				inTimeRanges = true
 				break
 			}
@@ -1378,7 +1378,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	return ret, err
 }
 
-func slowLogMayOverlapTimeRange(start, end types.Time, tr *timeRange, tz *time.Location) bool {
+func slowLogMayOverlapTimeRangeWithTolerance(start, end types.Time, tr *timeRange, tz *time.Location) bool {
 	rangeStart := slowLogTimeWithTolerance(tr.startTime, tz, -slowLogTimeRangeInternalTolerance)
 	rangeEnd := slowLogTimeWithTolerance(tr.endTime, tz, slowLogTimeRangeInternalTolerance)
 	return !(start.Compare(rangeEnd) > 0 || end.Compare(rangeStart) < 0)
