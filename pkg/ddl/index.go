@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	goerrors "errors"
@@ -66,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
+	lightningtikv "github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -3273,52 +3273,19 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			}
 			if predictionOK && runTiKVSpacePrecheck {
 				enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
+				precheckLogFields := addIndexTiKVSpacePrecheckLogFields(
+					job.ID, taskKey, blockSamplePrediction, blockSamplePeakPredictedTiKVBytes,
+					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID,
+					initialCapacity, enforceTiKVSpacePrecheck)
 				if err := checkTiKVSpaceForAddIndex(initialCapacity, blockSamplePeakPredictedTiKVBytes); err != nil {
 					logutil.DDLLogger().Warn("insufficient TiKV space predicted for add-index task",
-						zap.Int64("jobID", job.ID),
-						zap.String("task-key", taskKey),
-						zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", blockSamplePrediction.PredictedBytes),
-						zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", blockSamplePeakPredictedTiKVBytes),
-						zap.Uint64("block_sample_peak_prediction_factor", blockSamplePeakPredictionFactor),
-						zap.Uint64("block_sample_mvcc_overhead_total_bytes", blockSamplePrediction.MVCCOverheadBytes),
-						zap.Uint64("tikv_replica_count", tikvReplicaCount),
-						zap.String("tikv_replica_count_source", tikvReplicaCountSource),
-						zap.Int64("tikv_replica_count_physical_id", tikvReplicaCountPhysicalID),
-						zap.Int("block_sample_prediction_region_count", blockSamplePrediction.SampledRegionCount),
-						zap.Int("block_sample_prediction_row_count", blockSamplePrediction.SampledRowCount),
-						zap.Int("block_sample_prediction_read_error_count", blockSamplePrediction.ReadErrorCount),
-						zap.Float64("block_sample_encoded_key_shared_prefix_avg", blockSamplePrediction.EncodedKeySharedPrefixAvgBytes),
-						zap.Float64("block_sample_raw_key_shared_prefix_avg", blockSamplePrediction.RawKeySharedPrefixAvgBytes),
-						zap.Float64("block_sample_raw_key_length_avg", blockSamplePrediction.RawKeyLengthAvgBytes),
-						zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
-						zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
-						zap.Int("tikv_store_count", initialCapacity.StoreCount),
-						zap.Bool("enforce_disk_space_precheck_before_add_index", enforceTiKVSpacePrecheck),
-						zap.Error(err))
+						append(precheckLogFields, zap.Error(err))...)
 					if enforceTiKVSpacePrecheck {
 						return err
 					}
 				} else {
 					logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
-						zap.Int64("jobID", job.ID),
-						zap.String("task-key", taskKey),
-						zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", blockSamplePrediction.PredictedBytes),
-						zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", blockSamplePeakPredictedTiKVBytes),
-						zap.Uint64("block_sample_peak_prediction_factor", blockSamplePeakPredictionFactor),
-						zap.Uint64("block_sample_mvcc_overhead_total_bytes", blockSamplePrediction.MVCCOverheadBytes),
-						zap.Uint64("tikv_replica_count", tikvReplicaCount),
-						zap.String("tikv_replica_count_source", tikvReplicaCountSource),
-						zap.Int64("tikv_replica_count_physical_id", tikvReplicaCountPhysicalID),
-						zap.Int("block_sample_prediction_region_count", blockSamplePrediction.SampledRegionCount),
-						zap.Int("block_sample_prediction_row_count", blockSamplePrediction.SampledRowCount),
-						zap.Int("block_sample_prediction_read_error_count", blockSamplePrediction.ReadErrorCount),
-						zap.Float64("block_sample_encoded_key_shared_prefix_avg", blockSamplePrediction.EncodedKeySharedPrefixAvgBytes),
-						zap.Float64("block_sample_raw_key_shared_prefix_avg", blockSamplePrediction.RawKeySharedPrefixAvgBytes),
-						zap.Float64("block_sample_raw_key_length_avg", blockSamplePrediction.RawKeyLengthAvgBytes),
-						zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
-						zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
-						zap.Int("tikv_store_count", initialCapacity.StoreCount),
-						zap.Bool("enforce_disk_space_precheck_before_add_index", enforceTiKVSpacePrecheck))
+						precheckLogFields...)
 				}
 			}
 		} else {
@@ -3339,6 +3306,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			BlockSampleSteadyPredictedTiKVIndexBytes: blockSamplePrediction.PredictedBytes,
 			BlockSamplePeakPredictedTiKVIndexBytes:   blockSamplePeakPredictedTiKVBytes,
 			BlockSampleMVCCOverheadTotalBytes:        blockSamplePrediction.MVCCOverheadBytes,
+			BlockSampleUseStats:                      blockSamplePrediction.UseStats,
 			TiKVReplicaCount:                         tikvReplicaCount,
 			TiKVReplicaCountSource:                   tikvReplicaCountSource,
 			TiKVReplicaCountPhysicalID:               tikvReplicaCountPhysicalID,
@@ -4102,6 +4070,7 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", taskMeta.BlockSampleSteadyPredictedTiKVIndexBytes),
 		zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", taskMeta.BlockSamplePeakPredictedTiKVIndexBytes),
 		zap.Uint64("block_sample_mvcc_overhead_total_bytes", taskMeta.BlockSampleMVCCOverheadTotalBytes),
+		zap.Bool("use_stats", taskMeta.BlockSampleUseStats),
 		zap.Uint64("tikv_replica_count", taskMeta.TiKVReplicaCount),
 		zap.String("tikv_replica_count_source", taskMeta.TiKVReplicaCountSource),
 		zap.Int64("tikv_replica_count_physical_id", taskMeta.TiKVReplicaCountPhysicalID),
@@ -4353,23 +4322,63 @@ func pdReplicateConfigMaxReplicas(replicateConfig map[string]any) (uint64, bool)
 }
 
 func scalePredictedBytesByReplicaCount(predictedBytes, replicaCount uint64) uint64 {
-	if predictedBytes == 0 || replicaCount <= 1 {
+	if replicaCount <= 1 {
 		return predictedBytes
 	}
-	if predictedBytes > math.MaxUint64/replicaCount {
-		return math.MaxUint64
-	}
-	return predictedBytes * replicaCount
+	return saturatingMulUint64(predictedBytes, replicaCount)
 }
 
 func estimateBlockSamplePeakPredictedTiKVIndexBytes(steadyPredictedBytes uint64) uint64 {
-	if steadyPredictedBytes == 0 {
+	return saturatingMulUint64(steadyPredictedBytes, blockSamplePeakPredictionFactor)
+}
+
+func saturatingMulUint64(value, factor uint64) uint64 {
+	if value == 0 || factor == 0 {
 		return 0
 	}
-	if steadyPredictedBytes > math.MaxUint64/blockSamplePeakPredictionFactor {
+	if value > math.MaxUint64/factor {
 		return math.MaxUint64
 	}
-	return steadyPredictedBytes * blockSamplePeakPredictionFactor
+	return value * factor
+}
+
+func addIndexTiKVSpacePrecheckLogFields(
+	jobID int64,
+	taskKey string,
+	prediction sampleTiKVIndexPredictionResult,
+	peakPredictedBytes uint64,
+	replicaCount uint64,
+	replicaCountSource string,
+	replicaCountPhysicalID int64,
+	capacity *TiKVClusterCapacity,
+	enforce bool,
+) []zap.Field {
+	fields := []zap.Field{
+		zap.Int64("jobID", jobID),
+		zap.String("task-key", taskKey),
+		zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", prediction.PredictedBytes),
+		zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", peakPredictedBytes),
+		zap.Uint64("block_sample_peak_prediction_factor", blockSamplePeakPredictionFactor),
+		zap.Uint64("block_sample_mvcc_overhead_total_bytes", prediction.MVCCOverheadBytes),
+		zap.Bool("use_stats", prediction.UseStats),
+		zap.Uint64("tikv_replica_count", replicaCount),
+		zap.String("tikv_replica_count_source", replicaCountSource),
+		zap.Int64("tikv_replica_count_physical_id", replicaCountPhysicalID),
+		zap.Int("block_sample_prediction_region_count", prediction.SampledRegionCount),
+		zap.Int("block_sample_prediction_row_count", prediction.SampledRowCount),
+		zap.Int("block_sample_prediction_read_error_count", prediction.ReadErrorCount),
+		zap.Float64("block_sample_encoded_key_shared_prefix_avg", prediction.EncodedKeySharedPrefixAvgBytes),
+		zap.Float64("block_sample_raw_key_shared_prefix_avg", prediction.RawKeySharedPrefixAvgBytes),
+		zap.Float64("block_sample_raw_key_length_avg", prediction.RawKeyLengthAvgBytes),
+		zap.Bool("enforce_disk_space_precheck_before_add_index", enforce),
+	}
+	if capacity != nil {
+		fields = append(fields,
+			zap.Uint64("cluster_available_bytes", capacity.AvailableBytes),
+			zap.Uint64("cluster_total_bytes", capacity.TotalBytes),
+			zap.Int("tikv_store_count", capacity.StoreCount))
+	}
+	return fields
 }
 
 const (
@@ -4382,26 +4391,15 @@ const (
 )
 
 const (
-	tikvMVCCTimestampBytes = 8
-	tikvMVCCWriteTypeBytes = 1
-	// Current TiDB TSOs encode to 9 bytes as TiKV write CF start_ts uvarints.
-	tikvMVCCEstimatedTSUvarintBytes    = 9
-	tikvMVCCShortValuePrefixBytes      = 1
-	tikvMVCCShortValueLengthBytes      = 1
-	tikvMVCCShortValueMaxBytes         = 64
-	tikvMVCCWriteCFValueMetaBytes      = tikvMVCCWriteTypeBytes + tikvMVCCEstimatedTSUvarintBytes
-	tikvMVCCShortWriteCFValueMetaBytes = tikvMVCCWriteCFValueMetaBytes + tikvMVCCShortValuePrefixBytes + tikvMVCCShortValueLengthBytes
-	tikvMVCCEmptyWriteCFValueMetaBytes = tikvMVCCWriteCFValueMetaBytes
-	tikvMVCCLongWriteCFValueMetaBytes  = tikvMVCCWriteCFValueMetaBytes
-	tikvMVCCShortValueOverheadBytes    = tikvMVCCTimestampBytes + tikvMVCCShortWriteCFValueMetaBytes
-	tikvMVCCEmptyValueOverheadBytes    = tikvMVCCTimestampBytes + tikvMVCCEmptyWriteCFValueMetaBytes
-	tikvMVCCLongValueBaseOverheadBytes = 2*tikvMVCCTimestampBytes + tikvMVCCLongWriteCFValueMetaBytes
-	tikvMVCCPredictionFallbackTS       = uint64(1) << 56
+	tikvMVCCTimestampBytes       = 8
+	tikvMVCCShortValueMaxBytes   = 64
+	tikvMVCCPredictionFallbackTS = uint64(1) << 56
 )
 
 type sampleTiKVIndexPredictionResult struct {
 	PredictedBytes                 uint64
 	MVCCOverheadBytes              uint64
+	UseStats                       bool
 	SampledRegionCount             int
 	SampledRowCount                int
 	ReadErrorCount                 int
@@ -4447,10 +4445,11 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	if err != nil {
 		return result, err
 	}
-	physicalTables, totalRowCount, err := w.buildSamplePredictionPhysicalTables(tbl, targetIndexInfos)
+	physicalTables, totalRowCount, useStats, err := w.buildSamplePredictionPhysicalTables(tbl, targetIndexInfos)
 	if err != nil {
 		return result, err
 	}
+	result.UseStats = useStats
 	if totalRowCount <= 0 {
 		return result, nil
 	}
@@ -4612,6 +4611,10 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 	defer it.Close()
 
 	cols := physicalTbl.Cols()
+	virtualColumnFiller, err := newSamplePredictionVirtualColumnFiller(sctx.GetExprCtx(), physicalTbl.Meta(), cols)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	skipped := 0
 	for it.Valid() && skipped < skipRows {
 		if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
@@ -4644,6 +4647,12 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 			row, _, err := tables.DecodeRawRowData(sctx.GetExprCtx(), physicalTbl.Meta(), handle, cols, it.Value())
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if virtualColumnFiller != nil {
+				row, err = virtualColumnFiller.fill(row)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
 			if err != nil {
@@ -4678,95 +4687,73 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 	return rowCount, totalBytes, kvs, nil
 }
 
-func (w *worker) sampleIndexKVsFromRegion(
-	jobCtx *ReorgContext,
-	sctx sessionctx.Context,
-	physicalTbl table.PhysicalTable,
-	indexes []table.Index,
-	region samplePredictionRegion,
-	snapshotTS uint64,
-	skipRows int,
-	limit int,
-) (int, int64, []sampledIndexKV, error) {
-	if len(region.StartKey) == 0 || len(region.EndKey) == 0 || bytes.Compare(region.StartKey, region.EndKey) >= 0 {
-		return 0, 0, nil, nil
-	}
-	snapshot := w.store.GetSnapshot(kv.Version{Ver: snapshotTS})
-	snapshot.SetOption(kv.Priority, kv.PriorityLow)
-	snapshot.SetOption(kv.RequestSourceInternal, true)
-	snapshot.SetOption(kv.RequestSourceType, jobCtx.ddlJobSourceType())
-	snapshot.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
-	if tagger := jobCtx.getResourceGroupTaggerForTopSQL(); tagger != nil {
-		snapshot.SetOption(kv.ResourceGroupTagger, tagger)
-	}
-	snapshot.SetOption(kv.ResourceGroupName, jobCtx.resourceGroupName)
-
-	it, err := snapshot.Iter(region.StartKey, region.EndKey)
-	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
-	}
-	defer it.Close()
-
-	cols := physicalTbl.Cols()
-	skipped := 0
-	rowCount := 0
-	totalBytes := int64(0)
-	kvs := make([]sampledIndexKV, 0, limit*len(indexes))
-	for it.Valid() && rowCount < limit {
-		if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
-			if err := it.Next(); err != nil {
-				return rowCount, totalBytes, kvs, errors.Trace(err)
-			}
-			continue
-		}
-		if skipped < skipRows {
-			skipped++
-			if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
-				return rowCount, totalBytes, kvs, errors.Trace(err)
-			}
-			continue
-		}
-		handle, err := tablecodec.DecodeRowKey(it.Key())
-		if err != nil {
-			return rowCount, totalBytes, kvs, errors.Trace(err)
-		}
-		row, _, err := tables.DecodeRawRowData(sctx.GetExprCtx(), physicalTbl.Meta(), handle, cols, it.Value())
-		if err != nil {
-			return rowCount, totalBytes, kvs, errors.Trace(err)
-		}
-		rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
-		if err != nil {
-			return rowCount, totalBytes, kvs, err
-		}
-		kvs = append(kvs, rowKVs...)
-		totalBytes += rowBytes
-		rowCount++
-		if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
-			return rowCount, totalBytes, kvs, errors.Trace(err)
-		}
-	}
-	return rowCount, totalBytes, kvs, nil
+type samplePredictionVirtualColumnFiller struct {
+	exprCtx              expression.BuildContext
+	exprCols             []*expression.Column
+	colInfos             []*model.ColumnInfo
+	fieldTypes           []*types.FieldType
+	virtualColumnOffsets []int
+	virtualColumnTypes   []*types.FieldType
 }
 
-func estimateIndexKVBytesForSampledRow(
-	sctx sessionctx.Context,
-	physicalTbl table.PhysicalTable,
-	indexes []table.Index,
-	row []types.Datum,
-	handle kv.Handle,
-) (int64, error) {
-	kvs, totalBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
+func newSamplePredictionVirtualColumnFiller(
+	exprCtx expression.BuildContext,
+	tblInfo *model.TableInfo,
+	cols []*table.Column,
+) (*samplePredictionVirtualColumnFiller, error) {
+	colInfos := make([]*model.ColumnInfo, 0, len(cols))
+	fieldTypes := make([]*types.FieldType, 0, len(cols))
+	hasVirtualColumn := false
+	for _, col := range cols {
+		colInfos = append(colInfos, col.ColumnInfo)
+		fieldTypes = append(fieldTypes, &col.FieldType)
+		if col.IsVirtualGenerated() {
+			hasVirtualColumn = true
+		}
+	}
+	if !hasVirtualColumn {
+		return nil, nil
+	}
+
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx, ast.CIStr{}, tblInfo.Name, colInfos, tblInfo)
 	if err != nil {
-		return 0, err
+		return nil, errors.Trace(err)
 	}
-	estimatedBytes := estimateSampledIndexKVPredictionBytes(kvs)
-	if estimatedBytes.Err != nil {
-		return 0, estimatedBytes.Err
+	filler := &samplePredictionVirtualColumnFiller{
+		exprCtx:    exprCtx,
+		exprCols:   exprCols,
+		colInfos:   colInfos,
+		fieldTypes: fieldTypes,
 	}
-	if estimatedBytes.PredictedBytes > 0 {
-		return estimatedBytes.PredictedBytes, nil
+	for i, col := range exprCols {
+		if col.VirtualExpr == nil {
+			continue
+		}
+		filler.virtualColumnOffsets = append(filler.virtualColumnOffsets, i)
+		filler.virtualColumnTypes = append(filler.virtualColumnTypes, col.GetType(exprCtx.GetEvalCtx()))
 	}
-	return totalBytes, nil
+	if len(filler.virtualColumnOffsets) == 0 {
+		return nil, nil
+	}
+	return filler, nil
+}
+
+func (f *samplePredictionVirtualColumnFiller) fill(row []types.Datum) ([]types.Datum, error) {
+	chk := chunk.NewChunkWithCapacity(f.fieldTypes, 1)
+	for i := range f.fieldTypes {
+		chk.AppendDatum(i, &row[i])
+	}
+	if err := table.FillVirtualColumnValue(
+		f.virtualColumnTypes,
+		f.virtualColumnOffsets,
+		f.exprCols,
+		f.colInfos,
+		f.exprCtx,
+		chk,
+	); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return chk.GetRow(0).GetDatumRow(f.fieldTypes), nil
 }
 
 type sampledIndexKV struct {
@@ -4884,7 +4871,7 @@ func encodeRawIndexKeysForSampledKVIter(
 ) ([][]byte, error) {
 	rawValueGroups := [][]types.Datum{indexedValues}
 	if idxInfo.MVIndex {
-		rawValueGroups = buildMultiValueIndexValueGroups(tblInfo, idxInfo, indexedValues)
+		rawValueGroups = tables.BuildMultiValueIndexValueGroups(tblInfo, idxInfo, indexedValues)
 	}
 	rawKeys := make([][]byte, 0, len(rawValueGroups))
 	for _, rawValues := range rawValueGroups {
@@ -4899,91 +4886,10 @@ func encodeRawIndexKeysForSampledKVIter(
 	return rawKeys, nil
 }
 
-func buildMultiValueIndexValueGroups(
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	indexedValues []types.Datum,
-) [][]types.Datum {
-	valueGroups := make([][]types.Datum, 0, 16)
-	jsonIdx := 0
-	jsonIsNull := false
-	existsVals := make(map[string]struct{})
-	var buf []byte
-	for !jsonIsNull {
-		values := make([]types.Datum, 0, len(indexedValues))
-		for i, value := range indexedValues {
-			if !tblInfo.Columns[idxInfo.Columns[i].Offset].FieldType.IsArray() {
-				values = append(values, value)
-				continue
-			}
-			if value.IsNull() || value.Kind() != types.KindMysqlJSON {
-				values = append(values, value)
-				jsonIsNull = true
-				continue
-			}
-			elemCount := value.GetMysqlJSON().GetElemCount()
-			for {
-				if jsonIdx >= elemCount {
-					return valueGroups
-				}
-				binaryJSON := value.GetMysqlJSON().ArrayGetElem(jsonIdx)
-				jsonIdx++
-				buf = buf[:0]
-				key := string(binaryJSON.HashValue(buf))
-				if _, exists := existsVals[key]; exists {
-					continue
-				}
-				existsVals[key] = struct{}{}
-				values = append(values, types.NewDatum(binaryJSON.GetValue()))
-				break
-			}
-		}
-		valueGroups = append(valueGroups, values)
-	}
-	return valueGroups
-}
-
 type sampleTiKVIndexPredictionBytes struct {
 	PredictedBytes    int64
 	MVCCOverheadBytes int64
 	Err               error
-}
-
-func estimateSampledIndexKVPredictionBytes(kvs []sampledIndexKV) sampleTiKVIndexPredictionBytes {
-	return estimateSampledIndexKVPredictionBytesWithSortedKVs(sortSampledIndexKVs(kvs), 1)
-}
-
-func estimateSampledIndexKVPredictionBytesWithSplit(kvs []sampledIndexKV, splitCount int) sampleTiKVIndexPredictionBytes {
-	return estimateSampledIndexKVPredictionBytesWithSortedKVs(sortSampledIndexKVs(kvs), splitCount)
-}
-
-func estimateSampledIndexKVPredictionBytesWithSortedKVs(
-	sortedKVs []sampledIndexKV,
-	splitCount int,
-) sampleTiKVIndexPredictionBytes {
-	result := sampleTiKVIndexPredictionBytes{}
-	if len(sortedKVs) == 0 {
-		return result
-	}
-	var totalLogicalBytes int64
-	for _, kv := range sortedKVs {
-		totalLogicalBytes += int64(len(kv.key) + len(kv.value))
-	}
-	logicalPhysicalBytes, logicalErr := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs, splitCount)
-	if logicalErr != nil || logicalPhysicalBytes <= 0 {
-		logicalPhysicalBytes = totalLogicalBytes
-	}
-	mvccPhysicalBytes, mvccErr := estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs, splitCount)
-	if mvccErr != nil {
-		result.PredictedBytes = totalLogicalBytes
-		result.Err = mvccErr
-		return result
-	}
-	result.PredictedBytes = mvccPhysicalBytes
-	if mvccPhysicalBytes > logicalPhysicalBytes {
-		result.MVCCOverheadBytes = mvccPhysicalBytes - logicalPhysicalBytes
-	}
-	return result
 }
 
 func estimateBlockSampledIndexKVPredictionBytes(
@@ -5041,13 +4947,6 @@ func sampledIndexKVLogicalBytes(kvs []sampledIndexKV) int64 {
 	return totalBytes
 }
 
-func estimateSampledIndexKVPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
-	if len(kvs) == 0 {
-		return 0, nil
-	}
-	return estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(kvs), 1)
-}
-
 func sortSampledIndexKVs(kvs []sampledIndexKV) []sampledIndexKV {
 	sortedKVs := slices.Clone(kvs)
 	slices.SortFunc(sortedKVs, func(a, b sampledIndexKV) int {
@@ -5059,10 +4958,6 @@ func sortSampledIndexKVs(kvs []sampledIndexKV) []sampledIndexKV {
 	return sortedKVs
 }
 
-func estimateSampledIndexKVEncodedKeySharedPrefixAvg(kvs []sampledIndexKV) float64 {
-	return estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortSampledIndexKVs(kvs))
-}
-
 func estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs []sampledIndexKV) float64 {
 	if len(sortedKVs) < 2 {
 		return 0
@@ -5072,10 +4967,6 @@ func estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs []sampledIn
 		sharedPrefixBytes += int64(sharedPrefixLength(sortedKVs[i-1].key, sortedKVs[i].key))
 	}
 	return float64(sharedPrefixBytes) / float64(len(sortedKVs)-1)
-}
-
-func estimateSampledIndexKVRawKeySharedPrefixAvg(kvs []sampledIndexKV) float64 {
-	return estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortSampledIndexKVs(kvs))
 }
 
 func estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs []sampledIndexKV) float64 {
@@ -5176,32 +5067,11 @@ type sampledTiKVMVCCKVs struct {
 	writeKVs   []sampledIndexKV
 }
 
-func estimateSampledIndexKVMVCCPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
-	return estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortSampledIndexKVs(kvs), 1)
-}
-
-func estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int) (int64, error) {
-	mvccKVs := buildSampledTiKVMVCCKVs(sortedKVs)
-	var physicalBytes int64
-	if len(mvccKVs.defaultKVs) > 0 {
-		defaultCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.defaultKVs), splitCount)
-		if err != nil {
-			return 0, errors.Annotate(err, "estimate default CF MVCC SST")
-		}
-		physicalBytes += defaultCFBytes
-	}
-	if len(mvccKVs.writeKVs) > 0 {
-		writeCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.writeKVs), splitCount)
-		if err != nil {
-			return 0, errors.Annotate(err, "estimate write CF MVCC SST")
-		}
-		physicalBytes += writeCFBytes
-	}
-	return physicalBytes, nil
-}
-
 func estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int, commitTS uint64) (int64, error) {
-	mvccKVs := buildBlockSampledTiKVMVCCKVs(sortedKVs, commitTS)
+	return estimateSampledTiKVMVCCKVsPhysicalBytesWithSplit(buildBlockSampledTiKVMVCCKVs(sortedKVs, commitTS), splitCount)
+}
+
+func estimateSampledTiKVMVCCKVsPhysicalBytesWithSplit(mvccKVs sampledTiKVMVCCKVs, splitCount int) (int64, error) {
 	var physicalBytes int64
 	if len(mvccKVs.defaultKVs) > 0 {
 		defaultCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.defaultKVs), splitCount)
@@ -5218,27 +5088,6 @@ func estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIn
 		physicalBytes += writeCFBytes
 	}
 	return physicalBytes, nil
-}
-
-func buildSampledTiKVMVCCKVs(kvs []sampledIndexKV) sampledTiKVMVCCKVs {
-	mvccKVs := sampledTiKVMVCCKVs{
-		writeKVs: make([]sampledIndexKV, 0, len(kvs)),
-	}
-	for _, kvPair := range kvs {
-		writeKV := sampledIndexKV{
-			key:   appendTiKVMVCCTimestampForPrediction(kvPair.key),
-			value: buildTiKVWriteCFValueForPrediction(kvPair.value),
-		}
-		mvccKVs.writeKVs = append(mvccKVs.writeKVs, writeKV)
-		if len(kvPair.value) > tikvMVCCShortValueMaxBytes {
-			defaultKV := sampledIndexKV{
-				key:   appendTiKVMVCCTimestampForPrediction(kvPair.key),
-				value: slices.Clone(kvPair.value),
-			}
-			mvccKVs.defaultKVs = append(mvccKVs.defaultKVs, defaultKV)
-		}
-	}
-	return mvccKVs
 }
 
 func buildBlockSampledTiKVMVCCKVs(kvs []sampledIndexKV, commitTS uint64) sampledTiKVMVCCKVs {
@@ -5246,9 +5095,10 @@ func buildBlockSampledTiKVMVCCKVs(kvs []sampledIndexKV, commitTS uint64) sampled
 		writeKVs: make([]sampledIndexKV, 0, len(kvs)),
 	}
 	for _, kvPair := range kvs {
+		includeShortValue := len(kvPair.value) <= tikvMVCCShortValueMaxBytes
 		writeKV := sampledIndexKV{
-			key:   buildTiKVWriteCFKeyForPrediction(kvPair.key, commitTS),
-			value: buildTiKVWriteCFValueForBlockSamplePrediction(kvPair.value, commitTS),
+			key:   lightningtikv.EncodeTxnSSTWriteCFKey(kvPair.key, commitTS),
+			value: lightningtikv.EncodeTxnSSTWriteCFValue(commitTS, kvPair.value, includeShortValue),
 		}
 		mvccKVs.writeKVs = append(mvccKVs.writeKVs, writeKV)
 		if len(kvPair.value) > tikvMVCCShortValueMaxBytes {
@@ -5263,14 +5113,6 @@ func buildBlockSampledTiKVMVCCKVs(kvs []sampledIndexKV, commitTS uint64) sampled
 	return mvccKVs
 }
 
-func buildTiKVWriteCFKeyForPrediction(key []byte, commitTS uint64) []byte {
-	actualKey := make([]byte, 0, 1+utilcodec.EncodedBytesLength(len(key))+tikvMVCCTimestampBytes)
-	actualKey = append(actualKey, 'z')
-	actualKey = utilcodec.EncodeBytes(actualKey, key)
-	actualKey = binary.BigEndian.AppendUint64(actualKey, ^commitTS)
-	return actualKey
-}
-
 func appendTiKVMVCCTimestampForPrediction(key []byte) []byte {
 	mvccKey := make([]byte, 0, len(key)+tikvMVCCTimestampBytes)
 	mvccKey = append(mvccKey, key...)
@@ -5278,57 +5120,6 @@ func appendTiKVMVCCTimestampForPrediction(key []byte) []byte {
 		mvccKey = append(mvccKey, byte(0xff-i))
 	}
 	return mvccKey
-}
-
-func buildTiKVWriteCFValueForPrediction(value []byte) []byte {
-	switch {
-	case len(value) == 0:
-		return make([]byte, tikvMVCCEmptyWriteCFValueMetaBytes)
-	case len(value) <= tikvMVCCShortValueMaxBytes:
-		writeValue := make([]byte, tikvMVCCShortWriteCFValueMetaBytes+len(value))
-		copy(writeValue[tikvMVCCShortWriteCFValueMetaBytes:], value)
-		return writeValue
-	default:
-		return make([]byte, tikvMVCCLongWriteCFValueMetaBytes)
-	}
-}
-
-func buildTiKVWriteCFValueForBlockSamplePrediction(value []byte, startTS uint64) []byte {
-	writeValue := make([]byte, 0, tikvMVCCShortWriteCFValueMetaBytes+len(value))
-	writeValue = append(writeValue, 'P')
-	writeValue = binary.AppendUvarint(writeValue, startTS)
-	if len(value) <= tikvMVCCShortValueMaxBytes {
-		writeValue = append(writeValue, 'v')
-		writeValue = append(writeValue, byte(len(value)))
-		writeValue = append(writeValue, value...)
-	}
-	return writeValue
-}
-
-func estimateSampledIndexKVMVCCOverheadBytes(kvs []sampledIndexKV) int64 {
-	if len(kvs) == 0 {
-		return 0
-	}
-	var total int64
-	for _, kv := range kvs {
-		total += int64(math.Round(estimateTiKVMVCCOverheadBytesPerKV(float64(len(kv.key)), float64(len(kv.value)))))
-	}
-	return total
-}
-
-func estimateTiKVMVCCOverheadBytesPerKV(keyBytes, valueBytes float64) float64 {
-	if keyBytes <= 0 {
-		return 0
-	}
-	if valueBytes <= 0 {
-		return float64(tikvMVCCEmptyValueOverheadBytes)
-	}
-	if valueBytes <= tikvMVCCShortValueMaxBytes {
-		return float64(tikvMVCCShortValueOverheadBytes)
-	}
-	// Long values are stored in default CF, while write CF stores the write record.
-	// Compared with a logical TiDB KV, that adds another MVCC key for write CF.
-	return float64(tikvMVCCLongValueBaseOverheadBytes) + keyBytes
 }
 
 func extractHandleRestoreDataFromRow(tblInfo *model.TableInfo, pkIdx *model.IndexInfo, row []types.Datum) []types.Datum {
@@ -5380,22 +5171,26 @@ func predictionPhysicalTables(tbl table.Table) ([]table.PhysicalTable, error) {
 func (w *worker) buildSamplePredictionPhysicalTables(
 	tbl table.Table,
 	targetIndexInfos []*model.IndexInfo,
-) ([]samplePredictionPhysicalTable, int64, error) {
+) ([]samplePredictionPhysicalTable, int64, bool, error) {
 	physicalTables, err := predictionPhysicalTables(tbl)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	result := make([]samplePredictionPhysicalTable, 0, len(physicalTables))
 	var totalRowCount int64
+	useStats := true
 	for _, physicalTbl := range physicalTables {
 		statsTbl := getPhysicalTableStatsForPrediction(physicalTbl.GetPhysicalID(), tbl.Meta(), w.ddlCtx.statsHandle)
+		if statsTbl == nil || statsTbl.Pseudo {
+			useStats = false
+		}
 		rowCount := estimatePhysicalTableRowCount(statsTbl)
 		if rowCount <= 0 {
 			continue
 		}
 		tableIndexes, err := buildPredictionIndexesForPhysicalTable(physicalTbl, targetIndexInfos)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		result = append(result, samplePredictionPhysicalTable{
 			physicalTbl: physicalTbl,
@@ -5404,7 +5199,7 @@ func (w *worker) buildSamplePredictionPhysicalTables(
 		})
 		totalRowCount += rowCount
 	}
-	return result, totalRowCount, nil
+	return result, totalRowCount, useStats, nil
 }
 
 func (w *worker) buildSamplePredictionRegionTasks(
@@ -5557,10 +5352,6 @@ func pickSamplePredictionPhysicalTables(physicalTables []samplePredictionPhysica
 	return result
 }
 
-func pickSamplePredictionRegions(regions []samplePredictionRegion, seed uint64) []samplePredictionRegion {
-	return pickSamplePredictionRegionsWithLimit(regions, seed, samplePredictionMaxRegionCount)
-}
-
 func pickSamplePredictionRegionsWithLimit(regions []samplePredictionRegion, seed uint64, limit int) []samplePredictionRegion {
 	if limit <= 0 {
 		return nil
@@ -5605,14 +5396,6 @@ func blockSamplePredictionTargetRows(sampledRows int, logicalBytes int64) int {
 	}
 	blockRows := int(math.Ceil(float64(litconfig.DefaultBlockSize) / avgLogicBytesPerRow))
 	return clampSamplePredictionRows(blockRows, blockSamplePredictionProbeRows, blockSamplePredictionMaxRows)
-}
-
-func samplePredictionRegionWeight(region samplePredictionRegion, actualRows int) int64 {
-	weight := region.ApproximateKeys
-	if weight <= 0 || weight < int64(actualRows) {
-		return int64(actualRows)
-	}
-	return weight
 }
 
 func clampSamplePredictionRows(rows, lower, upper int) int {
