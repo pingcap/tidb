@@ -3562,31 +3562,16 @@ func estimateTableRowSize(
 }
 
 func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.Table) (int, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return 0, fmt.Errorf("not a helper.Storage")
-	}
-	h := &helper.Helper{
-		Store:       hStore,
-		RegionCache: hStore.GetRegionCache(),
-	}
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return 0, err
-	}
-	pid := tbl.Meta().ID
-	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	start, end := hStore.GetCodec().EncodeRegionRange(sk, ek)
 	// We use the second region to prevent the influence of the front and back tables.
-	regionLimit := 3
-	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), regionLimit)
+	const regionLimit = 3
+	regions, err := listTableRegions(ctx, store, tbl.Meta().ID, regionLimit)
 	if err != nil {
 		return 0, err
 	}
-	if len(regionInfos.Regions) != regionLimit {
+	if len(regions) != regionLimit {
 		return 0, fmt.Errorf("less than 3 regions")
 	}
-	sample := regionInfos.Regions[1]
+	sample := regions[1]
 	// ApproximateSize is SST/blob file size (can reflect compression), while
 	// ApproximateKvSize is KV data size and usually closer to logical table size.
 	sizeInMiB := max(sample.ApproximateSize, sample.ApproximateKvSize)
@@ -3803,12 +3788,7 @@ func buildTiKVStoreCapacity(store pdhttp.StoreInfo) (*TiKVStoreCapacity, error) 
 }
 
 func isNonTiKVStoreInfo(store pdhttp.StoreInfo) bool {
-	return slices.ContainsFunc(store.Store.Labels, func(label pdhttp.StoreLabel) bool {
-		if label.Key != placement.EngineLabelKey {
-			return false
-		}
-		return label.Value == placement.EngineLabelTiFlash || label.Value == placement.EngineLabelTiFlashCompute
-	})
+	return engine.IsTiFlashHTTPResp(&store.Store)
 }
 
 func isNonTiKVMetaStore(store *metapb.Store) bool {
@@ -3818,12 +3798,7 @@ func isNonTiKVMetaStore(store *metapb.Store) bool {
 	if store.GetState() == metapb.StoreState_Tombstone || store.GetNodeState() == metapb.NodeState_Removed {
 		return true
 	}
-	return slices.ContainsFunc(store.GetLabels(), func(label *metapb.StoreLabel) bool {
-		if label.GetKey() != placement.EngineLabelKey {
-			return false
-		}
-		return label.GetValue() == placement.EngineLabelTiFlash || label.GetValue() == placement.EngineLabelTiFlashCompute
-	})
+	return engine.IsTiFlash(store)
 }
 
 func calcObservedTiKVCapacityIncrease(initial, final *TiKVClusterCapacity) observedTiKVCapacityIncrease {
@@ -4186,7 +4161,7 @@ func tiKVReplicaCountFromBundle(bundle *placement.Bundle, physicalID int64) uint
 			continue
 		}
 		switch rule.Role {
-		case pdHttp.Leader, pdHttp.Voter, pdHttp.Follower, pdHttp.Learner:
+		case pdhttp.Leader, pdhttp.Voter, pdhttp.Follower, pdhttp.Learner:
 			replicaCount += uint64(rule.Count)
 		}
 	}
@@ -4233,12 +4208,12 @@ func firstBundleRuleRange(bundle *placement.Bundle) (startKeyHex, endKeyHex stri
 	return "", "", false
 }
 
-func ruleTargetsNonTiKV(rule *pdHttp.Rule) bool {
+func ruleTargetsNonTiKV(rule *pdhttp.Rule) bool {
 	if rule.GroupID == placement.TiFlashRuleGroupID {
 		return true
 	}
 	for _, constraint := range rule.LabelConstraints {
-		if constraint.Key != placement.EngineLabelKey || constraint.Op != pdHttp.In || len(constraint.Values) == 0 {
+		if constraint.Key != placement.EngineLabelKey || constraint.Op != pdhttp.In || len(constraint.Values) == 0 {
 			continue
 		}
 		allNonTiKV := true
@@ -4556,7 +4531,7 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 	encodedKeySharedPrefixAvg = estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs)
 	rawKeySharedPrefixAvg = estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs)
 	rawKeyLengthAvg = estimateSampledIndexKVRawKeyLengthAvg(sortedKVs)
-	estimatedBytes := estimateBlockSampledIndexKVPredictionBytes(sampledKVs, scopeSampleCounts, snapshotTS)
+	estimatedBytes := estimateSortedBlockSampledIndexKVPredictionBytes(sortedKVs, scopeSampleCounts, snapshotTS)
 	if estimatedBytes.Err != nil {
 		logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from block-sampled add-index KVs; fallback to logical bytes for sampled rows",
 			zap.Int("sampled_rows", totalRows),
@@ -4714,13 +4689,7 @@ func newSamplePredictionVirtualColumnFiller(
 		colInfos:   colInfos,
 		fieldTypes: fieldTypes,
 	}
-	for i, col := range exprCols {
-		if col.VirtualExpr == nil {
-			continue
-		}
-		filler.virtualColumnOffsets = append(filler.virtualColumnOffsets, i)
-		filler.virtualColumnTypes = append(filler.virtualColumnTypes, col.GetType(exprCtx.GetEvalCtx()))
-	}
+	filler.virtualColumnOffsets, filler.virtualColumnTypes = copr.CollectVirtualColumnOffsetsAndTypes(exprCtx.GetEvalCtx(), exprCols)
 	if len(filler.virtualColumnOffsets) == 0 {
 		return nil, nil
 	}
@@ -4863,8 +4832,16 @@ func estimateBlockSampledIndexKVPredictionBytes(
 	scopeSampleCounts map[sampledIndexKVScope]int,
 	commitTS uint64,
 ) sampleTiKVIndexPredictionBytes {
+	return estimateSortedBlockSampledIndexKVPredictionBytes(sortSampledIndexKVs(kvs), scopeSampleCounts, commitTS)
+}
+
+func estimateSortedBlockSampledIndexKVPredictionBytes(
+	sortedKVs []sampledIndexKV,
+	scopeSampleCounts map[sampledIndexKVScope]int,
+	commitTS uint64,
+) sampleTiKVIndexPredictionBytes {
 	result := sampleTiKVIndexPredictionBytes{}
-	if len(kvs) == 0 {
+	if len(sortedKVs) == 0 {
 		return result
 	}
 	if commitTS == 0 {
@@ -4872,7 +4849,7 @@ func estimateBlockSampledIndexKVPredictionBytes(
 	}
 	var totalLogicalBytes int64
 	groupedKVs := make(map[sampledIndexKVScope][]sampledIndexKV)
-	for _, kvPair := range kvs {
+	for _, kvPair := range sortedKVs {
 		totalLogicalBytes += int64(len(kvPair.key) + len(kvPair.value))
 		scope := kvPair.scope()
 		groupedKVs[scope] = append(groupedKVs[scope], kvPair)
@@ -4880,14 +4857,13 @@ func estimateBlockSampledIndexKVPredictionBytes(
 	var logicalPhysicalBytes int64
 	var mvccPhysicalBytes int64
 	for scope, scopeKVs := range groupedKVs {
-		sortedKVs := sortSampledIndexKVs(scopeKVs)
 		splitCount := max(scopeSampleCounts[scope], 1)
-		scopeLogicalPhysicalBytes, logicalErr := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs, splitCount)
+		scopeLogicalPhysicalBytes, logicalErr := estimateSortedSampledIndexKVPhysicalBytesWithSplit(scopeKVs, splitCount)
 		if logicalErr != nil || scopeLogicalPhysicalBytes <= 0 {
 			scopeLogicalPhysicalBytes = sampledIndexKVLogicalBytes(scopeKVs)
 		}
 		logicalPhysicalBytes += scopeLogicalPhysicalBytes
-		scopeMVCCPhysicalBytes, mvccErr := estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs, splitCount, commitTS)
+		scopeMVCCPhysicalBytes, mvccErr := estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(scopeKVs, splitCount, commitTS)
 		if mvccErr != nil {
 			result.PredictedBytes = totalLogicalBytes
 			result.Err = mvccErr
@@ -4968,11 +4944,19 @@ func sharedPrefixLength(a, b []byte) int {
 }
 
 func estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int) (int64, error) {
+	return estimateSampledKVsPhysicalBytesWithSplit(sortedKVs, splitCount, estimateSortedSampledIndexKVPhysicalBytes)
+}
+
+func estimateSampledKVsPhysicalBytesWithSplit(
+	sortedKVs []sampledIndexKV,
+	splitCount int,
+	estimateChunk func([]sampledIndexKV) (int64, error),
+) (int64, error) {
 	if len(sortedKVs) == 0 {
 		return 0, nil
 	}
 	if splitCount <= 1 {
-		return estimateSortedSampledIndexKVPhysicalBytes(sortedKVs)
+		return estimateChunk(sortedKVs)
 	}
 	// For a single add-index target, splitting sorted index KVs evenly is equivalent
 	// to splitting sampled rows evenly. Each chunk approximates one local SST.
@@ -4980,7 +4964,7 @@ func estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs []sampledIndex
 	var totalPhysicalBytes int64
 	for start := 0; start < len(sortedKVs); start += chunkSize {
 		end := min(start+chunkSize, len(sortedKVs))
-		physicalBytes, err := estimateSortedSampledIndexKVPhysicalBytes(sortedKVs[start:end])
+		physicalBytes, err := estimateChunk(sortedKVs[start:end])
 		if err != nil {
 			return 0, err
 		}
@@ -5207,7 +5191,9 @@ func (w *worker) buildSamplePredictionRegionTasks(
 	return tasks, readErrorCount, nil
 }
 
-func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
+const tableRegionsPageSize = 128
+
+func listTableRegions(ctx context.Context, store kv.Storage, physicalID int64, maxRegions int) ([]pdhttp.RegionInfo, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
@@ -5218,23 +5204,30 @@ func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physical
 	}
 	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
 	start, end := hStore.GetCodec().EncodeRegionRange(tableStart, tableEnd)
-	regions := make([]samplePredictionRegion, 0, 16)
+	capacity := 16
+	if maxRegions > 0 {
+		capacity = min(maxRegions, capacity)
+	}
+	regions := make([]pdhttp.RegionInfo, 0, capacity)
 	for {
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
+		limit := tableRegionsPageSize
+		if maxRegions > 0 {
+			remaining := maxRegions - len(regions)
+			if remaining <= 0 {
+				break
+			}
+			limit = min(limit, remaining)
+		}
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), limit)
 		if err != nil {
 			return nil, err
 		}
 		if len(regionInfos.Regions) == 0 {
 			break
 		}
-		for _, regionInfo := range regionInfos.Regions {
-			region, ok, err := buildSamplePredictionRegion(hStore.GetCodec(), tableStart, tableEnd, regionInfo)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				regions = append(regions, region)
-			}
+		regions = append(regions, regionInfos.Regions...)
+		if maxRegions > 0 && len(regions) >= maxRegions {
+			break
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
 		if len(lastKey) == 0 {
@@ -5249,6 +5242,29 @@ func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physical
 		}
 		if bytes.Compare(start, end) >= 0 {
 			break
+		}
+	}
+	return regions, nil
+}
+
+func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
+	}
+	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
+	regionInfos, err := listTableRegions(ctx, store, physicalID, 0)
+	if err != nil {
+		return nil, err
+	}
+	regions := make([]samplePredictionRegion, 0, 16)
+	for _, regionInfo := range regionInfos {
+		region, ok, err := buildSamplePredictionRegion(hStore.GetCodec(), tableStart, tableEnd, regionInfo)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			regions = append(regions, region)
 		}
 	}
 	return regions, nil
