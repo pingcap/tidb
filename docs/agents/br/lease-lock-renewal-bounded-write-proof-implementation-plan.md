@@ -616,7 +616,7 @@ git commit -m "pkg/objstore: schedule renewal from proven lease window"
 - Modify: `docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md`
 - Possibly modify: `pkg/objstore/BUILD.bazel` if `make bazel_prepare` changes metadata
 
-- [ ] **Step 1: Run focused objstore checks**
+- [x] **Step 1: Run focused objstore checks**
 
 Run:
 
@@ -626,7 +626,7 @@ Run:
 
 Expected: selected tests pass.
 
-- [ ] **Step 2: Run Bazel metadata generation**
+- [x] **Step 2: Run Bazel metadata generation**
 
 Run `make bazel_prepare` because this plan adds new top-level `func TestXxx(t *testing.T)` functions in an existing `*_test.go` file.
 
@@ -636,7 +636,7 @@ make bazel_prepare
 
 Expected: command succeeds. If it changes `pkg/objstore/BUILD.bazel` or related generated metadata, include those changes in the final commit.
 
-- [ ] **Step 3: Run docs and diff hygiene checks**
+- [x] **Step 3: Run docs and diff hygiene checks**
 
 Run:
 
@@ -648,7 +648,7 @@ rg -n 'TO(DO)|TB(D)' docs/agents/br/lease-lock-renewal-bounded-write-proof-desig
 
 Expected: no output from the `rg` checks and no diff whitespace errors.
 
-- [ ] **Step 4: Run Ready validation**
+- [x] **Step 4: Run Ready validation**
 
 Because code changes are included, use the `Ready` profile before claiming completion.
 
@@ -660,7 +660,7 @@ make lint
 
 Expected: lint passes. If local environment cannot run lint, record the exact failure and do not claim Ready.
 
-- [ ] **Step 5: Commit final metadata/docs updates**
+- [x] **Step 5: Commit final metadata/docs updates**
 
 Run:
 
@@ -672,11 +672,20 @@ git commit -m "docs: record bounded renewal proof validation"
 
 If `pkg/objstore/BUILD.bazel` is unchanged, omit it from `git add`.
 
+Validation record:
+
+- `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenew|TestStartRenewal|TestLockWithRetryStartsRenewal|TestCleanUpStaleTruncateLock' -count=1`: passed.
+- `make bazel_prepare`: first sandboxed run failed because Bazel output base was read-only; rerun with writable cache passed and produced no git diff.
+- `git diff --check`: passed.
+- `rg -n -P '\x60(MUST(?: NOT)?|SHOULD|MAY)\x60' AGENTS.md docs/agents/agents-review-guide.md docs/agents/br/lease-lock-renewal-bounded-write-proof-design.md docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md CONTEXT.md`: no matches.
+- `rg -n 'TO(DO)|TB(D)' docs/agents/br/lease-lock-renewal-bounded-write-proof-design.md docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md CONTEXT.md`: no matches.
+- `make lint`: first sandboxed run failed because Go build cache was read-only; rerun with writable cache passed.
+
 ## Completion Criteria
 
 - Renewal `WriteFile` has a timeout of `min(5min, remainingOldLease / 2)`.
 - A successful renewal write is followed by a `LeaseClock` post-write proof.
-- Renewal enters lease-lost handling when post-write proof fails or remaining lease is `<= 1min`.
+- Renewal enters lease-lost handling when post-write proof fails or remaining lease is `< 1min`.
 - Successful renewal returns a next delay based on proven remaining lease.
 - Stale cleanup uses `ExpireAt + staleReclaimGrace`, where `staleReclaimGrace = 30min`.
 - First-stage tests pass through the failpoint test runner.
