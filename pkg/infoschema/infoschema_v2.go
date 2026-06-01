@@ -125,14 +125,17 @@ func diffChangedPartitionIDs(oldTable table.Table, newTblInfo *model.TableInfo, 
 		return nil
 	}
 
-	// For drop partition: no new partitions are created. The removed partitions are
-	// handled by tomb entries via diffDroppedPartitionIDs. Return an empty non-nil map so that
-	// addPartitions skips re-inserting all remaining partitions into pid2tid.
-	// For truncate partition: new partitions replace old ones, so we fall through to the
-	// comparison logic below to detect the new partition IDs.
+	// For drop partition: remaining partitions need new alive entries at the new version.
+	// Return all remaining partition IDs from the new table so they get alive entries.
+	// Dropped partitions are tomb-marked separately in addTableWithActionType by
+	// comparing old vs new partition IDs.
 	switch tp {
 	case model.ActionDropTablePartition:
-		return make(map[int64]struct{})
+		changed := make(map[int64]struct{}, len(newPi.Definitions))
+		for _, def := range newPi.Definitions {
+			changed[def.ID] = struct{}{}
+		}
+		return changed
 	}
 
 	// For add/reorganize/truncate partition: find partition IDs in new table that were NOT in old table.

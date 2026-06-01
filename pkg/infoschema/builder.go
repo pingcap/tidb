@@ -1261,6 +1261,28 @@ func (b *Builder) addTableWithActionType(schemaVersion int64, di *model.DBInfo, 
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
 		}, tbl, changedIDs)
+
+		// For partition-only DDLs that can drop partitions (drop, truncate, reorganize),
+		// tomb-mark the partitions that were removed by comparing old vs new table.
+		// This complements diffDroppedPartitionIDs which relies on AffectedOpts (not always set).
+		if isPartitionOnlyAction(tp) && oldTable != nil {
+			if oldPi := oldTable.Meta().GetPartitionInfo(); oldPi != nil {
+				newPi := tblInfo.GetPartitionInfo()
+				// Build set of remaining partition IDs
+				remaining := make(map[int64]struct{})
+				if newPi != nil {
+					for _, def := range newPi.Definitions {
+						remaining[def.ID] = struct{}{}
+					}
+				}
+				// Tomb-mark partitions that existed in old but not in new
+				for _, def := range oldPi.Definitions {
+					if _, ok := remaining[def.ID]; !ok {
+						btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, schemaVersion, tblInfo.ID, true})
+					}
+				}
+			}
+		}
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
