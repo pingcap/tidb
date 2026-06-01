@@ -164,21 +164,21 @@ count_pd_clock_markers() {
     find "$marker_dir" -maxdepth 1 -type f -name 'now.*' 2>/dev/null | wc -l
 }
 
-wait_pd_clock_marker_count_gt() {
+wait_pd_clock_marker_count_at_least() {
     local marker_dir=$1
-    local old_count=$2
+    local expected_count=$2
     local waited=0
     while [ "$waited" -lt 20 ]; do
         local new_count
         new_count=$(count_pd_clock_markers "$marker_dir")
-        if [ "$new_count" -gt "$old_count" ]; then
+        if [ "$new_count" -ge "$expected_count" ]; then
             echo "$new_count"
             return 0
         fi
         sleep 1
         waited=$((waited + 1))
     done
-    echo "Timed out waiting for PD clock markers in $marker_dir to exceed $old_count"
+    echo "Timed out waiting for PD clock markers in $marker_dir to reach $expected_count"
     return 1
 }
 
@@ -190,6 +190,23 @@ assert_log_contains() {
         cat "$log_file"
         exit 1
     fi
+}
+
+assert_log_contains_any() {
+    local log_file=$1
+    shift
+    local pattern
+    for pattern in "$@"; do
+        if grep -Fq "$pattern" "$log_file"; then
+            return 0
+        fi
+    done
+    echo "Expected log $log_file to contain one of:"
+    for pattern in "$@"; do
+        echo "  $pattern"
+    done
+    cat "$log_file"
+    exit 1
 }
 
 assert_log_not_contains() {
@@ -206,7 +223,10 @@ run_br_capture() {
     local log_file=$1
     shift
     mkdir -p "$(dirname "$log_file")"
-    run_br "$@" > "$log_file" 2>&1
+    if ! run_br "$@" > "$log_file" 2>&1; then
+        cat "$log_file"
+        return 1
+    fi
 }
 
 run_br_with_failpoints() {
@@ -214,7 +234,10 @@ run_br_with_failpoints() {
     local log_file=$2
     shift 2
     mkdir -p "$(dirname "$log_file")"
-    GO_FAILPOINTS="$failpoints" run_br "$@" > "$log_file" 2>&1
+    if ! GO_FAILPOINTS="$failpoints" run_br "$@" > "$log_file" 2>&1; then
+        cat "$log_file"
+        return 1
+    fi
 }
 
 run_br_bg_with_failpoints() {
@@ -353,7 +376,7 @@ run_migration_renewal_success_case() {
     old_pd_markers=$(count_pd_clock_markers "$pd_clock_dir")
 
     wait_expire_at_advanced "$lock_file" "$old_expire_at" > "$CASE_MARKER_DIR/renewed-expire-at"
-    wait_pd_clock_marker_count_gt "$pd_clock_dir" "$old_pd_markers" > "$CASE_MARKER_DIR/pd-clock-count"
+    wait_pd_clock_marker_count_at_least "$pd_clock_dir" "$((old_pd_markers + 2))" > "$CASE_MARKER_DIR/pd-clock-count"
 
     touch "$release"
     wait_pid_with_timeout "$pid" 120 success "$restore_log"
@@ -416,6 +439,18 @@ run_migration_lost_case() {
     assert_file_not_exists "$release"
     assert_file_not_exists "$after"
     assert_log_contains "$restore_log" "context canceled"
+    case "$mode" in
+        block)
+            assert_log_contains "$restore_log" "Lock renewal detected lease lost; calling onLeaseLost."
+            assert_log_contains "$restore_log" "renewal: write timed out"
+            ;;
+        error)
+            assert_log_contains "$restore_log" "Lock renewal hit transient error; will retry with exponential backoff."
+            assert_log_contains_any "$restore_log" \
+                "Lock renewal proven lease window elapsed; calling onLeaseLost." \
+                "Lock renewal retry backoff would exceed proven lease window; calling onLeaseLost."
+            ;;
+    esac
     run_sql "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = '$DB';"
     check_contains "COUNT(*): 0"
 }
@@ -436,3 +471,9 @@ CASES
 restart_services
 mkdir -p "$CASE_ROOT" "$LOG_DIR" "$MARKER_DIR"
 list_cases
+cat <<'MESSAGE'
+br_lease_lock is still scaffolding: the full seven-case suite is not wired yet.
+Do not treat this script as a passing integration test until every planned case
+is implemented and this guard is removed.
+MESSAGE
+exit 1
