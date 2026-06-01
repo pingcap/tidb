@@ -29,8 +29,8 @@ import (
 
 const getAllMembersBackoff = 5000
 
-// EtcdMetaServiceClient is used to implement etcd meta service.
-type EtcdMetaServiceClient struct {
+// Client is used to implement etcd meta service.
+type Client struct {
 	pdCli           pd.Client
 	KeyspaceEtcdCli *clientv3.Client
 }
@@ -40,19 +40,19 @@ func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) Service
 	if etcdCli == nil {
 		return nil
 	}
-	return &EtcdMetaServiceClient{
+	return &Client{
 		KeyspaceEtcdCli: etcdCli,
 		pdCli:           pdCli,
 	}
 }
 
 // GetKeyspaceEtcdCli return etcd client.
-func (n *EtcdMetaServiceClient) GetKeyspaceEtcdCli() *clientv3.Client {
+func (n *Client) GetKeyspaceEtcdCli() *clientv3.Client {
 	return n.KeyspaceEtcdCli
 }
 
 // GetPDAddrs implements ServiceClient interface.
-func (n *EtcdMetaServiceClient) GetPDAddrs() ([]string, error) {
+func (n *Client) GetPDAddrs() ([]string, error) {
 	addrs, err := GetPDHostPorts(context.Background(), n.pdCli, false)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func (n *EtcdMetaServiceClient) GetPDAddrs() ([]string, error) {
 }
 
 // GetPDLeaderAddrs implements ServiceClient interface.
-func (n *EtcdMetaServiceClient) GetPDLeaderAddrs(ctx context.Context) (string, error) {
+func (n *Client) GetPDLeaderAddrs(ctx context.Context) (string, error) {
 	// todo: PD GetAllMembers should directly return which is the pd leader.
 	// Don't use etcd client to get PD leader.
 
@@ -208,7 +208,7 @@ func isMissingPortErr(err error) bool {
 }
 
 // GetPDHttpAddrs is used to get PD http addrs.
-func (n *EtcdMetaServiceClient) GetPDHttpAddrs() ([]string, error) {
+func (n *Client) GetPDHttpAddrs() ([]string, error) {
 	addrs, err := GetPDHostPorts(context.Background(), n.pdCli, true)
 	if err != nil {
 		return nil, err
