@@ -3163,11 +3163,15 @@ func TestModifyColumnWithGeneratedColumnNoReorg(t *testing.T) {
 	tk.MustExec("alter table t1 modify column a char character set utf8mb4 collate utf8mb4_unicode_ci")
 	tk.MustExec("insert into t1(a, b) values ('a', 'abc'), ('A', 'ABC')")
 	tk.MustQuery("select a, b, c, d from t1 where a = 'a' order by b").Check(testkit.Rows("A ABC AABC ABCÀ", "a abc aabc abcÀ"))
+	tk.MustExec("admin check table t1")
 
 	// Case 2: collation change + stored generated column with byte-preserving concat → success
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a varchar(20), b varchar(20) as (concat(a, 'suffix')) stored, index idx(b)) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table t2 modify column a varchar(20) character set utf8mb4 collate utf8mb4_unicode_ci")
+	tk.MustExec("insert into t2(a) values ('test')")
+	tk.MustQuery("select a, b from t2").Check(testkit.Rows("test testsuffix"))
+	tk.MustExec("admin check table t2")
 
 	// Case 3: collation change + collation-sensitive expression index → error
 	tk.MustExec("drop table if exists t3")
@@ -3183,6 +3187,9 @@ func TestModifyColumnWithGeneratedColumnNoReorg(t *testing.T) {
 	tk.MustExec("drop table if exists t4")
 	tk.MustExec("create table t4(a int, b int as (a+1))")
 	tk.MustExec("alter table t4 modify column a int default 42")
+	tk.MustExec("insert into t4(a) values (1)")
+	tk.MustQuery("select a, b from t4").Check(testkit.Rows("1 2"))
+	tk.MustExec("admin check table t4")
 
 	// Case 5: INT -> BIGINT + generated column → error (outside the narrow allow list)
 	tk.MustExec("drop table if exists t5")
