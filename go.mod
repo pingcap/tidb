@@ -374,7 +374,7 @@ replace (
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// Temporary: pin to feature branches. Revert once tikv/client-go#1947 and tikv/pd#10611 are merged and tagged.
-	github.com/tikv/client-go/v2 => github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260514081829-33af58c5fb00
+	github.com/tikv/client-go/v2 => github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260601032508-148af8cb0465
 	github.com/tikv/pd/client => github.com/YuhaoZhang00/pd/client v0.0.0-20260530162250-9df491e74e6b
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
