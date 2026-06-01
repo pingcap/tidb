@@ -2106,12 +2106,14 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (base.LogicalPlan, error) {
+	var currentLayerCTEs []*cteInfo
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		_, err := b.buildWith(ctx, setOpr.With)
+		var err error
+		currentLayerCTEs, err = b.buildWith(ctx, setOpr.With)
 		if err != nil {
 			return nil, err
 		}
@@ -2191,9 +2193,9 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return proj, nil
+		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
-	return setOprPlan, nil
+	return b.tryToBuildSequence(currentLayerCTEs, setOprPlan), nil
 }
 
 func (b *PlanBuilder) buildSemiJoinForSetOperator(
