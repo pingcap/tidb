@@ -72,6 +72,8 @@ const (
 	FlagBatchFlushInterval = "batch-flush-interval"
 	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
 	FlagDdlBatchSize = "ddl-batch-size"
+	// FlagTxnTotalSizeLimit controls the total size limit of a transaction
+	FlagTxnTotalSizeLimit = "txn-total-size-limit"
 	// FlagWithPlacementPolicy corresponds to tidb config with-tidb-placement-mode
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
@@ -167,6 +169,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tables once.")
+	flags.Uint64(FlagTxnTotalSizeLimit, 0, "the total size limit of a transaction when restoring system tables")
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
@@ -235,6 +238,8 @@ type RestoreConfig struct {
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
+
+	TxnTotalSizeLimit uint64 `json:"txn-total-size-limit" toml:"txn-total-size-limit"`
 
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 
@@ -394,6 +399,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
 	}
+	cfg.TxnTotalSizeLimit, err = flags.GetUint64(FlagTxnTotalSizeLimit)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagTxnTotalSizeLimit)
+	}
 	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
@@ -545,6 +554,7 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 		client.EnableSkipCreateSQL()
 	}
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
+	client.SetTxnTotalSizeLimit(cfg.TxnTotalSizeLimit)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)

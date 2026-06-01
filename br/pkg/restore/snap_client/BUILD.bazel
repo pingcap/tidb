@@ -40,6 +40,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
