@@ -109,8 +109,9 @@ type Executor interface {
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateMaterializedView(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewStmt) error
-	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
+	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt, mlogTableName string) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
+	GenerateMLogTableName(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) (string, error)
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMaterializedViewStmt) error
 	DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error
@@ -1063,7 +1064,40 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	return e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
 }
 
-func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
+// GenerateMLogTableName implements the DDL interface.
+func (e *executor) GenerateMLogTableName(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) (string, error) {
+	is := e.infoCache.GetLatest()
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx.GetSessionVars().CurrentDB == "" {
+			return "", errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+
+	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return "", err
+	}
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+		return "", dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	if baseInfo := baseTable.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+		return "", infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Meta().Name.O))
+	}
+
+	mlogName, err := GenerateMLogTableName(
+		baseTable.Meta().Name,
+		getExistenceOfMLogTableNameChecker(e.ctx, is, schemaName),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return mlogName, nil
+}
+
+func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt, mlogTableName string) error {
 	is := e.infoCache.GetLatest()
 	schemaName := s.Table.Schema
 	if schemaName.O == "" {
@@ -1085,18 +1119,8 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-
-	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
-	if err := checkTooLongTable(mlogNameCIStr); err != nil {
-		return err
-	}
-	_, err = is.TableByName(e.ctx, schemaName, mlogNameCIStr)
-	if err == nil {
-		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
-	}
-	if !infoschema.ErrTableNotExists.Equal(err) {
-		return err
+	if baseInfo := baseTable.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Meta().Name.O))
 	}
 
 	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
@@ -1147,7 +1171,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	createTableStmt := &ast.CreateTableStmt{
-		Table:   &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Table:   &ast.TableName{Schema: schemaName, Name: pmodel.NewCIStr(mlogTableName)},
 		Cols:    colDefs,
 		Options: s.Options,
 	}

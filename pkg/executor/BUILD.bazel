@@ -334,6 +334,7 @@ go_test(
         "cluster_table_test.go",
         "compact_table_test.go",
         "copr_cache_test.go",
+        "ddl_test.go",
         "delete_test.go",
         "detach_integration_test.go",
         "detach_test.go",

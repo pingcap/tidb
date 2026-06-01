@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -172,6 +174,125 @@ func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
 	require.Contains(t, sqlWithNull, "NEXT_TIME")
 	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
 	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
+func TestBuildMaterializedViewLogTableName(t *testing.T) {
+	oldMLogSeq := MLogTableNameSeq.Load()
+	oldShortSeq := MLogShortTableNameSeq.Load()
+	t.Cleanup(func() {
+		MLogTableNameSeq.Store(oldMLogSeq)
+		MLogShortTableNameSeq.Store(oldShortSeq)
+	})
+
+	const baseTableName = "base_table_name"
+	longPrefixedBaseTableName := materializedViewLogTablePrefix + strings.Repeat("t", mysql.MaxTableNameLength-len(materializedViewLogTablePrefix))
+	longBaseTableName := strings.Repeat("t", mysql.MaxTableNameLength-len(materializedViewLogTablePrefix)+1)
+
+	tests := []struct {
+		name             string
+		baseTableName    string
+		existingTables   []string
+		expectedName     string
+		expectedMLogSeq  uint64
+		expectedShortSeq uint64
+	}{
+		{
+			name:            "prefixed base name is renamed",
+			baseTableName:   materializedViewLogTablePrefix + baseTableName,
+			expectedName:    materializedViewLogTablePrefix + "1" + baseTableName,
+			expectedMLogSeq: 1,
+		},
+		{
+			name:          "prefixed base name retries until renamed name does not conflict",
+			baseTableName: materializedViewLogTablePrefix + baseTableName,
+			existingTables: []string{
+				materializedViewLogTablePrefix + "1" + baseTableName,
+				materializedViewLogTablePrefix + "2" + baseTableName,
+			},
+			expectedName:    materializedViewLogTablePrefix + "3" + baseTableName,
+			expectedMLogSeq: 3,
+		},
+		{
+			name:             "prefixed base name falls back to short name when renamed name is too long",
+			baseTableName:    longPrefixedBaseTableName,
+			expectedName:     materializedViewLogTablePrefix + "1",
+			expectedMLogSeq:  1,
+			expectedShortSeq: 1,
+		},
+		{
+			name:          "prefixed base name falls back to short name and retries conflict",
+			baseTableName: longPrefixedBaseTableName,
+			existingTables: []string{
+				materializedViewLogTablePrefix + "1",
+				materializedViewLogTablePrefix + "2",
+			},
+			expectedName:     materializedViewLogTablePrefix + "3",
+			expectedMLogSeq:  1,
+			expectedShortSeq: 3,
+		},
+		{
+			name:             "regular base name falls back to short name when mlog name is too long",
+			baseTableName:    longBaseTableName,
+			expectedName:     materializedViewLogTablePrefix + "1",
+			expectedShortSeq: 1,
+		},
+		{
+			name:          "regular base name falls back to short name and retries conflict after mlog name is too long",
+			baseTableName: longBaseTableName,
+			existingTables: []string{
+				materializedViewLogTablePrefix + "1",
+				materializedViewLogTablePrefix + "2",
+			},
+			expectedName:     materializedViewLogTablePrefix + "3",
+			expectedShortSeq: 3,
+		},
+		{
+			name:          "regular base name falls back to short name when mlog name conflicts",
+			baseTableName: baseTableName,
+			existingTables: []string{
+				materializedViewLogTablePrefix + baseTableName,
+			},
+			expectedName:     materializedViewLogTablePrefix + "1",
+			expectedShortSeq: 1,
+		},
+		{
+			name:          "regular base name falls back to short name and retries conflict after mlog name conflicts",
+			baseTableName: baseTableName,
+			existingTables: []string{
+				materializedViewLogTablePrefix + baseTableName,
+				materializedViewLogTablePrefix + "1",
+				materializedViewLogTablePrefix + "2",
+			},
+			expectedName:     materializedViewLogTablePrefix + "3",
+			expectedShortSeq: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			MLogTableNameSeq.Store(0)
+			MLogShortTableNameSeq.Store(0)
+			exists := make(map[string]struct{}, len(tt.existingTables))
+			for _, tableName := range tt.existingTables {
+				exists[strings.ToLower(tableName)] = struct{}{}
+			}
+			tableExists := func(name pmodel.CIStr) (bool, error) {
+				_, ok := exists[name.L]
+				return ok, nil
+			}
+
+			name, err := GenerateMLogTableName(pmodel.NewCIStr(tt.baseTableName), tableExists)
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedName, name)
+			require.LessOrEqual(t, utf8.RuneCountInString(strings.ToLower(name)), mysql.MaxTableNameLength)
+			require.Equal(t, tt.expectedMLogSeq, MLogTableNameSeq.Load())
+			require.Equal(t, tt.expectedShortSeq, MLogShortTableNameSeq.Load())
+		})
+	}
+
+	MLogTableNameSeq.Store(math.MaxUint64)
+	_, err := nextMLogTableNameNumber(&MLogTableNameSeq, "out of range")
+	require.ErrorContains(t, err, "out of range")
 }
 
 func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {

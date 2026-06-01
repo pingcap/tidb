@@ -166,7 +166,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.CreateMaterializedViewStmt:
 		err = e.ddlExecutor.CreateMaterializedView(e.Ctx(), x)
 	case *ast.CreateMaterializedViewLogStmt:
-		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x)
+		err = e.executeCreateMaterializedViewLog(x)
 	case *ast.AlterMaterializedViewStmt:
 		err = e.ddlExecutor.AlterMaterializedView(e.Ctx(), x)
 	case *ast.AlterMaterializedViewLogStmt:
@@ -328,6 +328,24 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 
 	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateMaterializedViewLog(stmt *ast.CreateMaterializedViewLogStmt) error {
+	for {
+		mlogTableName, err := e.ddlExecutor.GenerateMLogTableName(e.Ctx(), stmt)
+		if err != nil {
+			return err
+		}
+
+		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), stmt, mlogTableName)
+		if err != nil {
+			if infoschema.ErrTableExists.Equal(err) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
