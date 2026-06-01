@@ -409,10 +409,15 @@ func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 	return delay, nil
 }
 
+type renewalResult struct {
+	nextDelay      time.Duration
+	remainingLease time.Duration
+}
+
 // tryRenew performs one Read → Verify → Write cycle to refresh ExpireAt.
 //
 // Returns:
-//   - next renewal delay and nil on successful refresh.
+//   - renewalResult and nil on successful refresh.
 //   - errRenewTxnIDMismatch if the lock file's TxnID no longer matches ours.
 //   - errRenewLeaseExpired if the on-disk ExpireAt is already past.
 //   - errRenewWriteTimeout if the renewal write cannot finish inside the old
@@ -423,33 +428,33 @@ func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 //
 // Crucially, the GET-Verify-PUT order ensures we never write a refreshed
 // ExpireAt onto a lock that has already been reclaimed by another holder.
-func (l *RemoteLock) tryRenew(ctx context.Context) (time.Duration, error) {
+func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 	data, err := l.storage.ReadFile(ctx, l.path)
 	if err != nil {
-		return 0, errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
+		return renewalResult{}, errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
 	}
 	var meta LockMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return 0, errors.Annotatef(err, "tryRenew: unmarshal LockMeta from %s", l.path)
+		return renewalResult{}, errors.Annotatef(err, "tryRenew: unmarshal LockMeta from %s", l.path)
 	}
 	if !bytes.Equal(meta.TxnID, l.txnID[:]) {
-		return 0, errRenewTxnIDMismatch
+		return renewalResult{}, errRenewTxnIDMismatch
 	}
 
 	leaseClock := l.leaseClock
 	if leaseClock == nil {
-		return 0, errors.New("lease clock is required")
+		return renewalResult{}, errors.New("lease clock is required")
 	}
 	leaseNow, err := leaseClock.Now(ctx)
 	if err != nil {
-		return 0, errors.Annotate(err, "tryRenew: get lease time")
+		return renewalResult{}, errors.Annotate(err, "tryRenew: get lease time")
 	}
 	if !meta.ExpireAt.IsZero() && leaseNow.After(meta.ExpireAt) {
-		return 0, errRenewLeaseExpired
+		return renewalResult{}, errRenewLeaseExpired
 	}
 	writeTimeout, err := renewalWriteTimeout(meta.ExpireAt, leaseNow)
 	if err != nil {
-		return 0, err
+		return renewalResult{}, err
 	}
 	newExpireAt := leaseNow.Add(LeaseTTL)
 	meta.ExpireAt = newExpireAt
@@ -462,23 +467,24 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (time.Duration, error) {
 	defer cancel()
 	if err := l.storage.WriteFile(writeCtx, l.path, newData); err != nil {
 		if stderrors.Is(writeCtx.Err(), context.DeadlineExceeded) {
-			return 0, errors.Annotate(errRenewWriteTimeout, err.Error())
+			return renewalResult{}, errors.Annotate(errRenewWriteTimeout, err.Error())
 		}
-		return 0, errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
+		return renewalResult{}, errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
 	}
 	nowAfterWrite, err := leaseClock.Now(ctx)
 	if err != nil {
-		return 0, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
+		return renewalResult{}, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
 	}
 	if nowAfterWrite.After(newExpireAt) {
-		return 0, errors.Annotatef(errRenewPostWriteProofFailed,
+		return renewalResult{}, errors.Annotatef(errRenewPostWriteProofFailed,
 			"now=%s expire_at=%s", nowAfterWrite, newExpireAt)
 	}
-	delay, err := nextRenewDelay(newExpireAt.Sub(nowAfterWrite))
+	remainingLease := newExpireAt.Sub(nowAfterWrite)
+	delay, err := nextRenewDelay(remainingLease)
 	if err != nil {
-		return 0, err
+		return renewalResult{}, err
 	}
-	return delay, nil
+	return renewalResult{nextDelay: delay, remainingLease: remainingLease}, nil
 }
 
 // startRenewal launches a background goroutine that periodically refreshes
@@ -518,6 +524,7 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 	}
 
 	nextDelay := renewInterval
+	leaseDeadline := time.Now().Add(LeaseTTL)
 	for {
 		timer := time.NewTimer(nextDelay)
 		select {
@@ -530,9 +537,10 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		var lastErr error
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
-			delay, err := l.tryRenew(ctx)
+			result, err := l.tryRenew(ctx)
 			if err == nil {
-				nextDelay = delay
+				nextDelay = result.nextDelay
+				leaseDeadline = time.Now().Add(result.remainingLease)
 				renewSucceeded = true
 				break
 			}
@@ -551,6 +559,25 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 			}
 
 			retryBackoff := renewBaseBackoff * time.Duration(1<<attempt)
+			remainingLease := time.Until(leaseDeadline)
+			if remainingLease <= 0 {
+				log.Warn("Lock renewal proven lease window elapsed; calling onLeaseLost.",
+					zap.Stringer("lock", l),
+					zap.Int("attempt", attempt),
+					logutil.ShortError(err))
+				invokeLost()
+				return
+			}
+			if retryBackoff >= remainingLease {
+				log.Warn("Lock renewal retry backoff would exceed proven lease window; calling onLeaseLost.",
+					zap.Stringer("lock", l),
+					zap.Int("attempt", attempt),
+					zap.Duration("backoff", retryBackoff),
+					zap.Duration("remaining", remainingLease),
+					logutil.ShortError(err))
+				invokeLost()
+				return
+			}
 			log.Warn("Lock renewal hit transient error; will retry with exponential backoff.",
 				zap.Stringer("lock", l),
 				zap.Int("attempt", attempt),

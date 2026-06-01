@@ -130,7 +130,7 @@ minRenewRemainingLease = 1 * time.Minute
 ```
 
 如果 post-write 取时失败，或者刷新后的 lease 已经过期，lock 进入终止态丢锁状态。
-如果 `remainingNewLease <= minRenewRemainingLease`，也进入终止态丢锁状态。1 分钟相对
+如果 `remainingNewLease < minRenewRemainingLease`，也进入终止态丢锁状态。1 分钟相对
 60 分钟 TTL 很小，正常路径不会触发；但它避免 holder 在极薄的已证明窗口里继续执行业务
 临界区。
 

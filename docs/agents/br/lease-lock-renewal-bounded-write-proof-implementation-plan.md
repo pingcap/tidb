@@ -674,12 +674,14 @@ If `pkg/objstore/BUILD.bazel` is unchanged, omit it from `git add`.
 
 Validation record:
 
+- Final review follow-up fixed transient retry backoff so it cannot sleep past the proven lease window. Added `TestStartRenewalStopsBeforeProvenLeaseWindowOnTransientBackoff`.
+- `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestStartRenewalStopsBeforeProvenLeaseWindowOnTransientBackoff' -count=1`: passed.
 - `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenew|TestStartRenewal|TestLockWithRetryStartsRenewal|TestCleanUpStaleTruncateLock' -count=1`: passed.
-- `make bazel_prepare`: first sandboxed run failed because Bazel output base was read-only; rerun with writable cache passed and produced no git diff.
+- `make bazel_prepare`: first sandboxed run failed because Bazel output base was read-only; rerun with writable cache passed and produced no git diff. Rerun after the final review follow-up also passed and produced no git diff.
 - `git diff --check`: passed.
 - `rg -n -P '\x60(MUST(?: NOT)?|SHOULD|MAY)\x60' AGENTS.md docs/agents/agents-review-guide.md docs/agents/br/lease-lock-renewal-bounded-write-proof-design.md docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md CONTEXT.md`: no matches.
 - `rg -n 'TO(DO)|TB(D)' docs/agents/br/lease-lock-renewal-bounded-write-proof-design.md docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md CONTEXT.md`: no matches.
-- `make lint`: first sandboxed run failed because Go build cache was read-only; rerun with writable cache passed.
+- `make lint`: first sandboxed run failed because Go build cache was read-only; rerun with writable cache passed. Rerun after the final review follow-up also passed.
 
 ## Completion Criteria
 

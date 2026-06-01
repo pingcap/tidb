@@ -40,7 +40,8 @@ func TESTTryRenew(ctx context.Context, l *RemoteLock) error {
 // TESTTryRenewWithDelay exposes the unexported tryRenew primitive for tests
 // that need to inspect the computed next renewal delay.
 func TESTTryRenewWithDelay(ctx context.Context, l *RemoteLock) (time.Duration, error) {
-	return l.tryRenew(ctx)
+	result, err := l.tryRenew(ctx)
+	return result.nextDelay, err
 }
 
 // TESTClearLeaseClock clears the lock's lease clock for tests that exercise

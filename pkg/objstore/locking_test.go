@@ -166,6 +166,23 @@ func (s *controlledWriteStorage) WriteFile(ctx context.Context, name string, dat
 	return s.Storage.WriteFile(ctx, name, data)
 }
 
+type failWriteAfterStorage struct {
+	storeapi.Storage
+	path      string
+	failAfter int64
+	writes    atomic.Int64
+	failed    chan struct{}
+	failOnce  sync.Once
+}
+
+func (s *failWriteAfterStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if name == s.path && s.writes.Add(1) > s.failAfter {
+		s.failOnce.Do(func() { close(s.failed) })
+		return errors.New("simulated outage after proven lease")
+	}
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
 func TestTryLockRemoteTruncate(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
@@ -1157,6 +1174,48 @@ func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
 		// expected
 	case <-time.After(2 * time.Second):
 		t.Fatal("onLeaseLost was not invoked after persistent renewal failures")
+	}
+}
+
+func TestStartRenewalStopsBeforeProvenLeaseWindowOnTransientBackoff(t *testing.T) {
+	ctx := context.Background()
+	base, _ := createMockStorage(t)
+	storage := &failWriteAfterStorage{
+		Storage:   base,
+		failAfter: 1,
+		failed:    make(chan struct{}),
+	}
+	defer objstore.TESTSetLeaseConstants(90*time.Millisecond, 10*time.Millisecond, 5, 50*time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, 30*time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			leaseNow.Add(10 * time.Millisecond),
+			leaseNow.Add(70 * time.Millisecond),
+			leaseNow.Add(80 * time.Millisecond),
+		},
+	}
+	lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+	defer objstore.TESTStopRenewal(lock)
+	storage.path = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
+
+	lostCh := make(chan struct{}, 1)
+	objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
+
+	select {
+	case <-storage.failed:
+	case <-time.After(time.Second):
+		t.Fatal("renewal write did not reach the injected transient failure")
+	}
+	select {
+	case <-lostCh:
+		// expected: the 50ms retry backoff cannot fit in the remaining proven lease window.
+	case <-time.After(30 * time.Millisecond):
+		t.Fatal("onLeaseLost was not invoked before retry backoff exceeded the proven lease window")
 	}
 }
 
