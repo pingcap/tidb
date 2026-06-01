@@ -1,0 +1,433 @@
+# Start to test tidb_mviews
+
+use test;
+drop table if exists t;
+create table t (
+  c0 int not null,
+  c1 int unsigned not null,
+  c2 double not null,
+  c3 decimal(20, 3) not null,
+  kcol int
+);
+
+select count(*) from information_schema.tidb_mviews;
+select TABLE_SCHEMA, MVIEW_NAME from information_schema.tidb_mviews;
+
+create materialized view log on t (c0, c1, c2, c3, kcol);
+
+CREATE MATERIALIZED VIEW mv_t (kcol, s0, s1, s2, s3, cnt)
+REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
+AS
+SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
+FROM t
+GROUP BY kcol;
+
+CREATE MATERIALIZED VIEW mv_t1 (kcol, s0, s1, s2, s3, cnt)
+REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
+AS
+SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
+FROM t
+GROUP BY kcol;
+
+CREATE MATERIALIZED VIEW mvv_t1 (kcol, s0, s1, s2, s3, cnt)
+REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
+AS
+SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
+FROM t
+GROUP BY kcol;
+
+select count(*) from information_schema.tidb_mviews;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA = "test" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA != "test" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME = "mv_t1" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME not in ("mv", "mv_t1") order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVIEW_NAME like "%mvv%" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where REFRESH_METHOD = "FAST" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where REFRESH_METHOD != "FAST" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST" order by 1, 2, 3;
+
+# Start to test tidb_mlogs
+
+drop table if exists tmlogbra, tmlogbrb, tmlog_like_a, tmlog_like_b, tmlog_misc_c;
+create table tmlogbra (id int primary key, a int, b int);
+create table tmlogbrb (id int primary key, a int, b int);
+create table tmlog_like_a (id int primary key, a int, b int);
+create table tmlog_like_b (id int primary key, a int, b int);
+create table tmlog_misc_c (id int primary key, a int, b int);
+
+create materialized view log on tmlogbra (id, a) purge next date_add(now(), interval 1 hour);
+create materialized view log on tmlogbrb (id, a) purge next date_add(now(), interval 1 hour);
+create materialized view log on tmlog_like_a (id, a)
+  purge start with now() next date_add(now(), interval 1 hour);
+create materialized view log on tmlog_like_b (id, a)
+  purge next date_add(now(), interval 2 hour);
+create materialized view log on tmlog_misc_c (id, a)
+  purge start with now() next date_add(now(), interval 3 hour);
+
+select count(*) >= 2 from information_schema.tidb_mlogs;
+
+select table_schema, mlog_name
+from information_schema.tidb_mlogs
+where table_schema = 'test' and mlog_name = '$mlog$tmlogbra'
+order by 1, 2;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_name = 'tmlogbra'
+order by 1, 2;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlogbr%' and base_table_name = 'tmlogbrb'
+order by 1, 2;
+
+select mlog_name, purge_method
+from information_schema.tidb_mlogs
+where table_catalog like 'de%'
+  and base_table_catalog like 'de%'
+  and mlog_columns like '%id%'
+  and purge_next like 'DATE_ADD%'
+order by 1, 2;
+
+select mlog_name, purge_start, purge_next
+from information_schema.tidb_mlogs
+where mlog_columns like '%a%'
+  and purge_method = 'DEFERRED'
+  and purge_start like 'NOW%'
+order by 1, 2, 3;
+
+select table_schema, mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+  and mlog_name like '%tmlog_like_%'
+  and purge_method = 'DEFERRED'
+order by 1, 2, 3;
+
+select mlog_name, mlog_columns, purge_start
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_misc_%'
+  and table_catalog = 'def'
+  and mlog_columns like '%id%'
+  and purge_start like 'NOW%'
+order by 1, 2, 3;
+
+
+select mlog_name, purge_next
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+  and mlog_name like '%tmlog_%'
+  and purge_next like 'DATE_ADD(NOW(), INTERVAL 2 HOUR)%'
+order by 1, 2;
+
+select mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema like 'te%'
+  and base_table_name like 'tmlog_like_%'
+  and purge_next like 'DATE_ADD%'
+order by 1, 2, 3;
+
+select mlog_name, base_table_name, purge_start
+from information_schema.tidb_mlogs
+where base_table_name like 'tmlog_misc_%'
+  and base_table_catalog like 'de%'
+  and purge_start like 'NOW%'
+order by 1, 2, 3;
+
+select mlog_name, base_table_name, purge_method
+from information_schema.tidb_mlogs
+where base_table_schema like 'te%'
+  and base_table_name like 'tmlog_like_b%'
+  and mlog_columns like '%a%'
+  and purge_method = 'DEFERRED'
+order by 1, 2, 3;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_like_%'
+  and base_table_name like 'tmlog_like_b%'
+  and mlog_columns like '%a%'
+order by 1, 2;
+
+select table_schema, mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+  and base_table_schema like 'te%'
+  and mlog_name like '%tmlog_misc_%'
+  and purge_next like 'DATE_ADD(NOW(), INTERVAL 3 HOUR)%'
+order by 1, 2, 3, 4;
+
+select mlog_name, base_table_name, purge_method, purge_start
+from information_schema.tidb_mlogs
+where table_schema = 'test'
+  and base_table_name like 'tmlog_like_a%'
+  and purge_method = 'DEFERRED'
+  and purge_start like 'NOW%'
+order by 1, 2, 3, 4;
+
+select mlog_name, base_table_name, table_catalog, base_table_catalog
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_%'
+  and base_table_schema like 'te%'
+  and table_catalog like 'de%'
+  and base_table_catalog like 'de%'
+order by 1, 2, 3, 4;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where table_schema in ('test')
+  and mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
+  and purge_method in ('DEFERRED')
+order by 1, 2;
+
+select mlog_name, purge_next
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_misc_c')
+  and table_catalog in ('def')
+  and purge_method in ('DEFERRED')
+order by 1, 2;
+
+select mlog_name, mlog_columns
+from information_schema.tidb_mlogs
+where table_schema in ('test', 'mysql')
+  and mlog_name in ('$mlog$tmlog_like_a', '$mlog$not_exist')
+  and mlog_columns in ('id,a')
+order by 1, 2;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema in ('test')
+  and base_table_name in ('tmlog_like_a', 'tmlog_like_b')
+  and purge_method in ('DEFERRED')
+order by 1, 2;
+
+select mlog_name, base_table_name, purge_next
+from information_schema.tidb_mlogs
+where base_table_name in ('tmlog_misc_c')
+  and base_table_catalog in ('def')
+  and purge_method in ('DEFERRED')
+order by 1, 2, 3;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema in ('test', 'mysql')
+  and base_table_name in ('tmlog_like_b', 'not_exist')
+  and mlog_columns in ('id,a')
+order by 1, 2;
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
+  and base_table_name in ('tmlog_like_b')
+  and purge_method in ('DEFERRED')
+order by 1, 2;
+
+select table_schema, mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where table_schema in ('test')
+  and mlog_name in ('$mlog$tmlog_misc_c')
+  and base_table_schema in ('test')
+  and base_table_name in ('tmlog_misc_c')
+  and table_catalog in ('def')
+order by 1, 2, 3, 4;
+
+select mlog_name, base_table_name, purge_next
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_misc_c')
+  and base_table_name in ('tmlog_like_a', 'tmlog_misc_c')
+  and purge_method in ('DEFERRED')
+order by 1, 2, 3;
+
+select mlog_name, purge_method
+from information_schema.tidb_mlogs
+where table_catalog in ('def')
+  and base_table_catalog in ('def')
+  and purge_method in ('DEFERRED')
+  and mlog_columns in ('id,a')
+order by 1, 2;
+
+select mlog_name, purge_start, purge_next
+from information_schema.tidb_mlogs
+where purge_method in ('DEFERRED')
+  and mlog_columns in ('id,a')
+  and table_catalog in ('def')
+order by 1, 2, 3;
+
+select mlog_name
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a')
+  and mlog_name in ('$mlog$tmlog_like_b')
+order by 1;
+
+drop materialized view log on tmlogbra;
+drop materialized view log on tmlogbrb;
+drop materialized view log on tmlog_like_a;
+drop materialized view log on tmlog_like_b;
+drop materialized view log on tmlog_misc_c;
+
+
+drop table if exists dep_base_alpha, dep_base_beta, dep_base_gamma, dep_base_nomv;
+
+create table dep_base_alpha (
+  id int primary key,
+  a int not null,
+  b int not null
+);
+
+create table dep_base_beta (
+  id int primary key,
+  a int not null,
+  b int not null
+);
+
+create table dep_base_gamma (
+  id int primary key,
+  a int not null,
+  b int not null
+);
+
+create table dep_base_nomv (
+  id int primary key,
+  a int not null,
+  b int not null
+);
+
+create materialized view log on dep_base_alpha (id, a, b)
+  purge next date_add(now(), interval 1 hour);
+
+create materialized view log on dep_base_beta (id, a, b)
+  purge next date_add(now(), interval 2 hour);
+
+create materialized view log on dep_base_gamma (id, a, b)
+  purge next date_add(now(), interval 3 hour);
+
+create materialized view log on dep_base_nomv (id, a, b)
+  purge next date_add(now(), interval 4 hour);
+
+# dep_base_alpha: 4 mviews
+create materialized view dep_mv_alpha_cnt (a, cnt)
+refresh fast next date_add(now(), interval 1 hour)
+as select a, count(1)
+from dep_base_alpha
+group by a;
+
+create materialized view dep_mv_alpha_sum_b (a, s_b, cnt)
+refresh fast next date_add(now(), interval 1 hour)
+as select a, sum(b), count(1)
+from dep_base_alpha
+group by a;
+
+create materialized view dep_mv_alpha_by_b_cnt (b, cnt)
+refresh fast next date_add(now(), interval 1 hour)
+as select b, count(1)
+from dep_base_alpha
+group by b;
+
+create materialized view dep_mv_alpha_by_b_sum_a (b, s_a, cnt)
+refresh fast next date_add(now(), interval 1 hour)
+as select b, sum(a), count(1)
+from dep_base_alpha
+group by b;
+
+# dep_base_beta: 3 mviews
+create materialized view dep_mv_beta_cnt (a, cnt)
+refresh fast next date_add(now(), interval 2 hour)
+as select a, count(1)
+from dep_base_beta
+group by a;
+
+create materialized view dep_mv_beta_sum_b (a, s_b, cnt)
+refresh fast next date_add(now(), interval 2 hour)
+as select a, sum(b), count(1)
+from dep_base_beta
+group by a;
+
+create materialized view dep_mv_beta_by_b_cnt (b, cnt)
+refresh fast next date_add(now(), interval 2 hour)
+as select b, count(1)
+from dep_base_beta
+group by b;
+
+# dep_base_gamma: 2 mviews
+create materialized view dep_mv_gamma_cnt (a, cnt)
+refresh fast next date_add(now(), interval 3 hour)
+as select a, count(1)
+from dep_base_gamma
+group by a;
+
+create materialized view dep_mv_gamma_sum_b (a, s_b, cnt)
+refresh fast next date_add(now(), interval 3 hour)
+as select a, sum(b), count(1)
+from dep_base_gamma
+group by a;
+
+
+# only base predicates: equal, like, equal+like, in
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_schema = 'test' and table_name = 'dep_base_alpha' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_schema = 'test' and table_name = 'dep_base_xxx' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name like 'dep_base_bet%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name like 'dep_baaaase_bet%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_schema = 'test' and table_name like 'dep_base_al%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_schema = 'information_schema' and table_name like 'dep_base_alpha%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name in ('dep_base_alpha', 'dep_base_beta', 'dep_base_nomv') order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name in ('1111', '2222', '3333') order by 1, 3;
+
+# only mlog predicates: equal, like, equal+like, in
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name = '$mlog$dep_base_alpha' or mlog_name = '$mlog$dep_base_beta' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name = '$mlog$dep_11111base_alpha' or mlog_name = '$mlog$dep_11111base_beta' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name like '%dep_base_al%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name like '$mlog$deppppp_base_al%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name = '$mlog$dep_base_alpha' and mlog_name like '%dep_base_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name = '$mlog$dep_baseeeeeee_alpha' and mlog_name like '$mlog$dep_base_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name in ('$mlog$dep_base_alpha', '$mlog$dep_base_beta', '$mlog$dep_base_nomv') order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mlog_name in ('11111', '22222', '33333') order by 1, 3;
+
+# only mview predicates: equal, like, equal+like, in
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_schema = 'test' and mview_name = 'dep_mv_alpha_cnt' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_schema = 'test' and mview_name = 'dddddep_mv_alpha_cnt' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_name like 'dep_mv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_name like 'dep_mvvvv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_schema = 'test' and mview_name like 'dep_mv_beta_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_schema = 'information_schema' and mview_name like 'dep_mv_beta_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_name in ('dep_mv_alpha_cnt', 'dep_mv_beta_cnt', 'dep_mv_not_exist') order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where mview_name in ('dep_mv_alpha_cntttt', 'dep_mv_beta_cntttt', 'dep_mv_not_existttt') order by 1, 3;
+
+# base + mview predicates: equal, like, equal+like, in
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mview_name = 'dep_mv_alpha_sum_b' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mview_name = 'deppp_mv_alpha_sum_b' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name like 'dep_base_al%' and mview_name like 'dep_mv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name like 'dep_basssse_al%' and mview_name like 'dep_mv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mview_name like 'dep_mv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mview_name like 'dep_mv_aaaaalpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name in ('dep_base_alpha', 'dep_base_beta') and mview_name in ('dep_mv_alpha_cnt', 'dep_mv_beta_cnt') order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name in ('dddep_base_alpha', 'dep_base_betaaa') and mview_name in ('dddep_mv_alpha_cnt', 'dep_mv_beta_cccnt') order by 1, 3;
+
+# base + mlog + mview predicates: equal, like, equal+like, in
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mlog_name = '$mlog$dep_base_alpha' and mview_name = 'dep_mv_alpha_cnt' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mlog_name = '$mlogggg$dep_base_alpha' and mview_name = 'dep_mv_alpha_cnt' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name like 'dep_base_%' and mlog_name like '%dep_base_%' and mview_name like 'dep_mv_%_cnt' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name like 'dep_bbbbase_%' and mlog_name like '%dep_base_%' and mview_name like 'dep_mv_%_cnt' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mlog_name like '%dep_base_al%' and mview_name like 'dep_mv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_alpha' and mlog_name like '%dep_base_al%' and mview_name like 'ddddep_mv_alpha_%' order by 1, 3;
+select table_name, mlog_name, mview_name from information_schema.tidb_table_mview_dependencies where table_name in ('dep_base_alpha', 'dep_base_beta', 'dep_base_nomv') and mlog_name in ('$mlog$dep_base_alpha', '$mlog$dep_base_beta', '$mlog$dep_base_nomv') and mview_name in ('dep_mv_alpha_sum', 'dep_mv_beta_cnt') order by 1, 3;
+
+# verify base table with mlog but no mview
+select count(*) from information_schema.tidb_table_mview_dependencies where table_name = 'dep_base_nomv';
+
+drop materialized view dep_mv_alpha_by_b_cnt;
+drop materialized view dep_mv_alpha_by_b_sum_a;
+drop materialized view dep_mv_alpha_cnt;
+drop materialized view dep_mv_alpha_sum_b;
+drop materialized view dep_mv_beta_by_b_cnt;
+drop materialized view dep_mv_beta_cnt;
+drop materialized view dep_mv_beta_sum_b;
+drop materialized view dep_mv_gamma_cnt;
+drop materialized view dep_mv_gamma_sum_b;
+
+drop materialized view log on dep_base_alpha;
+drop materialized view log on dep_base_beta;
+drop materialized view log on dep_base_gamma;
+drop materialized view log on dep_base_nomv;

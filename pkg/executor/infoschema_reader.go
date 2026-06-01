@@ -159,6 +159,12 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexes(ctx, sctx)
 		case infoschema.TableViews:
 			err = e.setDataFromViews(ctx, sctx)
+		case infoschema.TableTiDBMViews:
+			err = e.setDataFromTiDBMViews(ctx, sctx)
+		case infoschema.TableTiDBMLogs:
+			err = e.setDataFromTiDBMLogs(ctx, sctx)
+		case infoschema.TableTiDBTableMViewDependencies:
+			err = e.setDataFromTiDBTableMViewDependencies(ctx, sctx)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
@@ -1532,6 +1538,418 @@ func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionct
 			collation,                       // COLLATION_CONNECTION
 		)
 		rows = append(rows, record)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBMViewsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBMViewsExtractor", e.extractor)
+	}
+
+	if ex.SkipRequest {
+		return nil
+	}
+
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+
+	rows := make([][]types.Datum, 0)
+	for i, tbl := range tables {
+		schema := schemas[i]
+		if tbl.MaterializedView == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
+		}
+		modifyTime := types.NewTime(types.FromGoTime(tbl.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+		record := types.MakeDatums(
+			infoschema.CatalogVal,                 // TABLE_CATALOG
+			schema.O,                              // TABLE_SCHEMA
+			tbl.ID,                                // MVIEW_ID
+			tbl.Name.O,                            // MVIEW_NAME
+			tbl.MaterializedView.SQLContent,       // MVIEW_SQL_CONTENT
+			tbl.Comment,                           // MVIEW_COMMENT
+			modifyTime,                            // MVIEW_MODIFY_TIME
+			tbl.MaterializedView.RefreshMethod,    // REFRESH_METHOD
+			tbl.MaterializedView.RefreshStartWith, // REFRESH_START
+			tbl.MaterializedView.RefreshNext,      // REFRESH_NEXT
+		)
+		rows = append(rows, record)
+	}
+	e.rows = rows
+	return nil
+}
+
+type mlogBaseTableInfo struct {
+	catalog string
+	schema  string
+	id      int64
+	idStr   string
+	name    string
+}
+
+func newMLogBaseTableInfoFromBaseTable(
+	baseSchema pmodel.CIStr,
+	baseTbl *model.TableInfo,
+) mlogBaseTableInfo {
+	baseInfo := mlogBaseTableInfo{
+		catalog: infoschema.CatalogVal,
+	}
+
+	baseInfo.id = baseTbl.ID
+	baseInfo.idStr = strconv.FormatInt(baseInfo.id, 10)
+	baseInfo.name = baseTbl.Name.O
+	if baseSchema.O != "" {
+		baseInfo.schema = baseSchema.O
+	}
+	return baseInfo
+}
+
+func newMLogBaseTableInfos(
+	baseSchemas []pmodel.CIStr,
+	baseTables []*model.TableInfo,
+) []mlogBaseTableInfo {
+	baseInfos := make([]mlogBaseTableInfo, 0, len(baseTables))
+	for i, baseTbl := range baseTables {
+		baseInfos = append(baseInfos, newMLogBaseTableInfoFromBaseTable(baseSchemas[i], baseTbl))
+	}
+	return baseInfos
+}
+
+func (e *memtableRetriever) getMLogBaseTableInfo(
+	ctx context.Context,
+	mlogSchema pmodel.CIStr,
+	tbl *model.TableInfo,
+) mlogBaseTableInfo {
+	baseInfo := mlogBaseTableInfo{
+		catalog: infoschema.CatalogVal,
+		schema:  mlogSchema.O,
+	}
+	if tbl.MaterializedViewLog == nil {
+		return baseInfo
+	}
+
+	baseInfo.id = tbl.MaterializedViewLog.BaseTableID
+	baseInfo.idStr = strconv.FormatInt(baseInfo.id, 10)
+	if baseInfo.id == 0 {
+		return baseInfo
+	}
+
+	baseTbl, ok := e.is.TableByID(ctx, baseInfo.id)
+	if !ok {
+		return baseInfo
+	}
+	baseInfo.name = baseTbl.Meta().Name.O
+	if baseSchema, ok := infoschema.SchemaByTable(e.is, baseTbl.Meta()); ok {
+		baseInfo.schema = baseSchema.Name.O
+	}
+	return baseInfo
+}
+
+func (e *memtableRetriever) filterMLogCandidatesByBasePredicates(
+	ctx context.Context,
+	ex *plannercore.InfoSchemaTiDBMLogsExtractor,
+	schemas []pmodel.CIStr,
+	tables []*model.TableInfo,
+) ([]pmodel.CIStr, []*model.TableInfo, []mlogBaseTableInfo) {
+	filteredSchemas := schemas[:0]
+	filteredTables := tables[:0]
+	baseInfos := make([]mlogBaseTableInfo, 0, len(tables))
+	for i, tbl := range tables {
+		if tbl.MaterializedViewLog == nil {
+			continue
+		}
+		baseInfo := e.getMLogBaseTableInfo(ctx, schemas[i], tbl)
+		if ex.Filter(plannercore.BaseTableSchema, baseInfo.schema) ||
+			ex.Filter(plannercore.BaseTableName, baseInfo.name) ||
+			ex.Filter(plannercore.BaseTableID, baseInfo.idStr) {
+			continue
+		}
+		filteredSchemas = append(filteredSchemas, schemas[i])
+		filteredTables = append(filteredTables, tbl)
+		baseInfos = append(baseInfos, baseInfo)
+	}
+	return filteredSchemas, filteredTables, baseInfos
+}
+
+func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBMLogsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBMLogsExtractor", e.extractor)
+	}
+
+	if ex.SkipRequest {
+		return nil
+	}
+
+	hasMLogPredicates := ex.HasMLogPredicates()
+	hasBasePredicates := ex.HasBaseTablePredicates()
+
+	var (
+		schemas   []pmodel.CIStr
+		tables    []*model.TableInfo
+		baseInfos []mlogBaseTableInfo
+		err       error
+	)
+	switch {
+	case (!hasMLogPredicates && !hasBasePredicates) || (hasMLogPredicates && !hasBasePredicates):
+		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
+	case !hasMLogPredicates && hasBasePredicates:
+		var (
+			baseSchemas []pmodel.CIStr
+			baseTables  []*model.TableInfo
+		)
+		schemas, tables, baseSchemas, baseTables, err = ex.ListSchemasAndTablesByBase(ctx, e.is)
+		if err == nil {
+			baseInfos = newMLogBaseTableInfos(baseSchemas, baseTables)
+		}
+	default:
+		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
+		if err == nil {
+			schemas, tables, baseInfos = e.filterMLogCandidatesByBasePredicates(ctx, ex, schemas, tables)
+		}
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rows := make([][]types.Datum, 0)
+	for i, tbl := range tables {
+		schema := schemas[i]
+		mlogInfo := tbl.MaterializedViewLog
+		if mlogInfo == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
+		}
+
+		var baseInfo mlogBaseTableInfo
+		if i < len(baseInfos) {
+			baseInfo = baseInfos[i]
+		} else {
+			baseInfo = e.getMLogBaseTableInfo(ctx, schema, tbl)
+		}
+
+		columnNames := make([]string, 0, len(mlogInfo.Columns))
+		for _, col := range mlogInfo.Columns {
+			columnNames = append(columnNames, col.O)
+		}
+
+		record := types.MakeDatums(
+			infoschema.CatalogVal,          // TABLE_CATALOG
+			schema.O,                       // TABLE_SCHEMA
+			tbl.ID,                         // MLOG_ID
+			tbl.Name.O,                     // MLOG_NAME
+			strings.Join(columnNames, ","), // MLOG_COLUMNS
+			baseInfo.catalog,               // BASE_TABLE_CATALOG
+			baseInfo.schema,                // BASE_TABLE_SCHEMA
+			baseInfo.idStr,                 // BASE_TABLE_ID
+			baseInfo.name,                  // BASE_TABLE_NAME
+			mlogInfo.PurgeMethod,           // PURGE_METHOD
+			mlogInfo.PurgeStartWith,        // PURGE_START
+			mlogInfo.PurgeNext,             // PURGE_NEXT
+		)
+		rows = append(rows, record)
+	}
+	e.rows = rows
+	return nil
+}
+
+type mviewDependencyInfo struct {
+	catalog string
+	schema  pmodel.CIStr
+	id      int64
+	idStr   string
+	name    string
+}
+
+type mviewDependencyMLogInfo struct {
+	id    int64
+	idStr string
+	name  string
+}
+
+func (e *memtableRetriever) getBaseTableMLogInfo(
+	ctx context.Context,
+	tbl *model.TableInfo,
+) mviewDependencyMLogInfo {
+	baseInfo := tbl.MaterializedViewBase
+	if baseInfo == nil || baseInfo.MLogID == 0 {
+		return mviewDependencyMLogInfo{}
+	}
+
+	mlogInfo := mviewDependencyMLogInfo{
+		id:    baseInfo.MLogID,
+		idStr: strconv.FormatInt(baseInfo.MLogID, 10),
+	}
+	mlogTbl, ok := e.is.TableByID(ctx, baseInfo.MLogID)
+	if !ok {
+		return mlogInfo
+	}
+	mlogMeta := mlogTbl.Meta()
+	if mlogMeta.MaterializedViewLog == nil {
+		return mlogInfo
+	}
+	mlogInfo.name = mlogMeta.Name.O
+	return mlogInfo
+}
+
+func (e *memtableRetriever) getBaseTableMViewDependencies(
+	ctx context.Context,
+	tbl *model.TableInfo,
+) []mviewDependencyInfo {
+	baseInfo := tbl.MaterializedViewBase
+	if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
+		return nil
+	}
+
+	deps := make([]mviewDependencyInfo, 0, len(baseInfo.MViewIDs))
+	seenMViewIDs := make(map[int64]struct{}, len(baseInfo.MViewIDs))
+	for _, mviewID := range baseInfo.MViewIDs {
+		if _, ok := seenMViewIDs[mviewID]; ok {
+			continue
+		}
+		mviewTbl, ok := e.is.TableByID(ctx, mviewID)
+		if !ok {
+			continue
+		}
+		mviewMeta := mviewTbl.Meta()
+		if mviewMeta.MaterializedView == nil {
+			continue
+		}
+		mviewSchema, ok := infoschema.SchemaByTable(e.is, mviewMeta)
+		if !ok {
+			continue
+		}
+		seenMViewIDs[mviewID] = struct{}{}
+		deps = append(deps, mviewDependencyInfo{
+			catalog: infoschema.CatalogVal,
+			schema:  mviewSchema.Name,
+			id:      mviewMeta.ID,
+			idStr:   strconv.FormatInt(mviewMeta.ID, 10),
+			name:    mviewMeta.Name.O,
+		})
+	}
+
+	slices.SortFunc(deps, func(a, b mviewDependencyInfo) int {
+		if a.schema.L == b.schema.L {
+			nameCmp := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name))
+			if nameCmp != 0 {
+				return nameCmp
+			}
+			if a.id < b.id {
+				return -1
+			}
+			if a.id > b.id {
+				return 1
+			}
+			return 0
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+	return deps
+}
+
+func filterMViewDependencyByMViewPredicates(
+	ex *plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor,
+	dep mviewDependencyInfo,
+) bool {
+	return ex.Filter(plannercore.MViewSchema, dep.schema.O) ||
+		ex.Filter(plannercore.MViewName, dep.name) ||
+		ex.Filter(plannercore.MViewID, dep.idStr)
+}
+
+func filterMViewDependencyByMLogPredicates(
+	ex *plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor,
+	mlogInfo mviewDependencyMLogInfo,
+) bool {
+	return ex.Filter(plannercore.MLogName, mlogInfo.name) ||
+		ex.Filter(plannercore.MLogID, mlogInfo.idStr)
+}
+
+func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBTableMViewDependenciesExtractor", e.extractor)
+	}
+
+	if ex.SkipRequest {
+		return nil
+	}
+
+	hasTablePredicates := ex.HasTablePredicates()
+	hasMLogPredicates := ex.HasMLogPredicates()
+	hasMViewPredicates := ex.HasMViewPredicates()
+
+	var (
+		schemas []pmodel.CIStr
+		tables  []*model.TableInfo
+		err     error
+	)
+	switch {
+	case !hasTablePredicates && hasMLogPredicates:
+		schemas, tables, err = ex.ListSchemasAndTablesByMLog(ctx, e.is)
+	case !hasTablePredicates && !hasMLogPredicates && hasMViewPredicates:
+		schemas, tables, err = ex.ListSchemasAndTablesByMView(ctx, e.is)
+	default:
+		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rows := make([][]types.Datum, 0)
+	for i, tbl := range tables {
+		schema := schemas[i]
+		if tbl.MaterializedViewBase == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
+		}
+
+		mlogInfo := e.getBaseTableMLogInfo(ctx, tbl)
+		if mlogInfo.id == 0 || mlogInfo.name == "" {
+			continue
+		}
+		if hasMLogPredicates && filterMViewDependencyByMLogPredicates(ex, mlogInfo) {
+			continue
+		}
+
+		deps := e.getBaseTableMViewDependencies(ctx, tbl)
+		for _, dep := range deps {
+			if hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // TABLE_CATALOG
+				schema.O,              // TABLE_SCHEMA
+				tbl.ID,                // TABLE_ID
+				tbl.Name.O,            // TABLE_NAME
+				mlogInfo.id,           // MLOG_ID
+				mlogInfo.name,         // MLOG_NAME
+				dep.catalog,           // MVIEW_CATALOG
+				dep.schema.O,          // MVIEW_SCHEMA
+				dep.idStr,             // MVIEW_ID
+				dep.name,              // MVIEW_NAME
+			)
+			rows = append(rows, record)
+		}
 	}
 	e.rows = rows
 	return nil
