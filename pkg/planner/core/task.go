@@ -1273,10 +1273,11 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		// paths satisfy the sort hints. When all paths satisfy, the existing
 		// Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
 		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished && !copTask.IdxMergeIsIntersection &&
-			len(copTask.IdxMergePartPlansSatisfySortHints) > 0 {
+			copTask.IdxMergeMatchWithSortItemsHints {
+			intest.Assert(len(copTask.IdxMergePartPlans) == len(copTask.IdxMergePartPlansMatchResults))
 			allSatisfy := true
-			for _, s := range copTask.IdxMergePartPlansSatisfySortHints {
-				if !s {
+			for _, result := range copTask.IdxMergePartPlansMatchResults {
+				if !result.Matched() {
 					allSatisfy = false
 					break
 				}
@@ -1468,7 +1469,7 @@ func handleSortItemsHintsForIndexMerge(p *physicalop.PhysicalTopN, copTask *phys
 	}
 
 	for i, partialPlan := range copTask.IdxMergePartPlans {
-		if copTask.IdxMergePartPlansSatisfySortHints[i] {
+		if copTask.IdxMergePartPlansMatchResults[i].Matched() {
 			// This partial path satisfies the sort order, push Limit.
 			childProfile := partialPlan.StatsInfo()
 			stats := property.DeriveLimitStats(childProfile, float64(newCount))

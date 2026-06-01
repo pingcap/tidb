@@ -1348,9 +1348,9 @@ id	task	access object	operator info
 TopN	root		planner__core__indexmerge_path.t.c, offset:0, count:3
 └─IndexMerge	root		type: union
   ├─Limit(Build)	cop[tikv]		offset:0, count:3
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_ac(a, c)	range:[1,1], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
   ├─TopN(Build)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:3
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_bc(b, c)	range:(5,+inf], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_bc(b, c)	range:(5,+inf], keep order:true, stats:pseudo
   └─TopN(Probe)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:3
     └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3;
@@ -1363,9 +1363,9 @@ id	task	access object	operator info
 TopN	root		planner__core__indexmerge_path.t.c, offset:1, count:3
 └─IndexMerge	root		type: union
   ├─Limit(Build)	cop[tikv]		offset:0, count:4
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_ac(a, c)	range:[1,1], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
   ├─TopN(Build)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:4
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_bc(b, c)	range:(5,+inf], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_bc(b, c)	range:(5,+inf], keep order:true, stats:pseudo
   └─TopN(Probe)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:4
     └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3 offset 1;

@@ -392,6 +392,14 @@ type CopTask struct {
 	IdxMergePartPlans      []base.PhysicalPlan
 	IdxMergeIsIntersection bool
 	IdxMergeAccessMVIndex  bool
+	// IdxMergeMatchWithSortItemsHints indicates the IndexMerge property matching
+	// used SortItemsHints (i.e. no SortItems but SortItemsHints was set).
+	IdxMergeMatchWithSortItemsHints bool
+	// IdxMergePartPlansMatchResults stores each partial path's matchProperty result.
+	// Set by convertToIndexMergeScan. Length equals len(IdxMergePartPlans) or 0.
+	// 0 length may be caused by cases like Intersection type IndexMerge, which can't satisfy any order property. When
+	// its length is 0, it should be considered as all property.PropNotMatched.
+	IdxMergePartPlansMatchResults []property.PhysicalPropMatchResult
 
 	// RootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -411,11 +419,6 @@ type CopTask struct {
 	// PartialOrderMatchResult stores the match result for partial order optimization.
 	// Set by convertToIndexScan when a prefix index provides partial order for TopN.
 	PartialOrderMatchResult *property.PartialOrderMatchResult
-
-	// IdxMergePartPlansSatisfySortHints tracks which partial paths of an IndexMerge
-	// satisfy SortItemsHints. Length equals len(IdxMergePartPlans).
-	// Set by convertToIndexMergeScan when SortItemsHints is used.
-	IdxMergePartPlansSatisfySortHints []bool
 
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
