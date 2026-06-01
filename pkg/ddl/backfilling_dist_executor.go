@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -32,6 +33,13 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
+
+var errBackfillTaskMetaOutdated = errors.New("backfill task meta is outdated")
+
+func isBackfillTaskMetaOutdatedErr(err error) bool {
+	return errors.Cause(err) == errBackfillTaskMetaOutdated ||
+		strings.Contains(err.Error(), errBackfillTaskMetaOutdated.Error())
+}
 
 // Version constants for BackfillTaskMeta.
 const (
@@ -164,7 +172,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			logutil.DDLIngestLogger().Warn("index info not found",
 				zap.Int64("table ID", tbl.Meta().ID),
 				zap.Int64("index ID", eid))
-			return nil, errors.Errorf("index info not found: %d", eid)
+			return nil, errors.Annotatef(errBackfillTaskMetaOutdated,
+				"index info not found: %d, table ID: %d, job ID: %d",
+				eid, tbl.Meta().ID, jobMeta.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
@@ -246,6 +256,9 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
+	if isBackfillTaskMetaOutdatedErr(err) {
+		return false
+	}
 	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 

@@ -17,16 +17,20 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -62,6 +66,46 @@ func TestDoneTaskKeeper(t *testing.T) {
 
 	n.updateNextKey(6, kv.Key("h"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
+}
+
+func TestOutdatedBackfillTaskMetaIsNonRetryable(t *testing.T) {
+	err := errors.Annotatef(errBackfillTaskMetaOutdated, "index info not found: %d", 1)
+	require.False(t, isRetryableError(err, true))
+	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+
+	restoredErr := errors.New(err.Error())
+	require.False(t, isRetryableError(restoredErr, true))
+	require.False(t, (&backfillDistExecutor{}).IsRetryableError(restoredErr))
+}
+
+func TestValidateBackfillTaskMeta(t *testing.T) {
+	job := &model.Job{ID: 1, SchemaID: 2, TableID: 3}
+	reorgInfo := &reorgInfo{
+		Job:         job,
+		elements:    []*meta.Element{{ID: 10, TypeKey: meta.IndexElementKey}},
+		currElement: &meta.Element{ID: 10, TypeKey: meta.IndexElementKey},
+	}
+	taskMeta := &BackfillTaskMeta{
+		Job:        *job,
+		EleIDs:     []int64{10},
+		EleTypeKey: meta.IndexElementKey,
+	}
+	taskMetaBytes, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:  5,
+			Key: "ddl/backfill/1",
+		},
+		Meta: taskMetaBytes,
+	}
+	require.NoError(t, validateBackfillTaskMeta(task, reorgInfo))
+
+	taskMeta.EleIDs = []int64{11}
+	task.Meta, err = json.Marshal(taskMeta)
+	require.NoError(t, err)
+	err = validateBackfillTaskMeta(task, reorgInfo)
+	require.ErrorIs(t, errors.Cause(err), errBackfillTaskMetaOutdated)
 }
 
 func TestPickBackfillType(t *testing.T) {
