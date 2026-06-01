@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	utilcodec "github.com/pingcap/tidb/pkg/util/codec"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -238,6 +239,29 @@ func BuildMultiValueIndexValueGroups(tblInfo *model.TableInfo, idxInfo *model.In
 	}
 out:
 	return vals
+}
+
+// EncodeRawIndexKeyValues encodes one raw index-key suffix per generated index entry.
+// For multi-valued indexes, it expands the indexed values in the same order as index
+// entry generation, then truncates and encodes each group.
+func EncodeRawIndexKeyValues(
+	loc *time.Location,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	indexedValues []types.Datum,
+) ([][]byte, error) {
+	rawValueGroups := BuildMultiValueIndexValueGroups(tblInfo, idxInfo, indexedValues)
+	rawKeys := make([][]byte, 0, len(rawValueGroups))
+	for _, rawValues := range rawValueGroups {
+		clonedValues := append([]types.Datum(nil), rawValues...)
+		tablecodec.TruncateIndexValues(tblInfo, idxInfo, clonedValues)
+		rawKey, err := utilcodec.EncodeKey(loc, nil, clonedValues...)
+		if err != nil {
+			return nil, err
+		}
+		rawKeys = append(rawKeys, rawKey)
+	}
+	return rawKeys, nil
 }
 
 func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {

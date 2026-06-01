@@ -360,7 +360,7 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 	})
 }
 
-func TestSumTiKVStoreUsage(t *testing.T) {
+func TestSumTiKVStoreCapacity(t *testing.T) {
 	stores := []pdhttp.StoreInfo{
 		{
 			Store: pdhttp.MetaStore{
@@ -395,13 +395,6 @@ func TestSumTiKVStoreUsage(t *testing.T) {
 			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "1KiB"},
 		},
 	}
-
-	t.Run("usage snapshot", func(t *testing.T) {
-		usage, err := sumTiKVStoreUsage(stores)
-		require.NoError(t, err)
-		require.Equal(t, 3, usage.StoreCount)
-		require.EqualValues(t, 384, usage.UsedBytes)
-	})
 
 	t.Run("capacity snapshot", func(t *testing.T) {
 		capacity, err := sumTiKVStoreCapacity(stores)
@@ -506,7 +499,7 @@ func TestObservedTiKVUsageTaskTiming(t *testing.T) {
 	require.Zero(t, taskExecutionDuration)
 }
 
-func TestCollectTiKVStoreUsage(t *testing.T) {
+func TestCollectTiKVStoreCapacity(t *testing.T) {
 	pdCli := &mockPDHTTPClient{
 		storesInfo: &pdhttp.StoresInfo{
 			Stores: []pdhttp.StoreInfo{
@@ -527,13 +520,6 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			},
 		},
 	}
-
-	t.Run("usage snapshot", func(t *testing.T) {
-		usage, err := collectTiKVStoreUsage(context.Background(), mockHelperStorage{codec: mockCodec{}, pdCli: pdCli})
-		require.NoError(t, err)
-		require.Equal(t, 1, usage.StoreCount)
-		require.EqualValues(t, 64, usage.UsedBytes)
-	})
 
 	t.Run("capacity snapshot", func(t *testing.T) {
 		capacity, err := collectTiKVStoreCapacity(context.Background(), mockHelperStorage{codec: mockCodec{}, pdCli: pdCli})
@@ -978,18 +964,13 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 	})
 }
 
-func TestSumTiKVStoreUsageError(t *testing.T) {
+func TestSumTiKVStoreCapacityError(t *testing.T) {
 	stores := []pdhttp.StoreInfo{
 		{
 			Store:  pdhttp.MetaStore{ID: 7},
 			Status: pdhttp.StoreStatus{Capacity: "broken", Available: "1KiB"},
 		},
 	}
-	t.Run("usage snapshot", func(t *testing.T) {
-		usage, err := sumTiKVStoreUsage(stores)
-		require.Nil(t, usage)
-		require.ErrorContains(t, err, "parse store 7 capacity")
-	})
 	t.Run("capacity snapshot", func(t *testing.T) {
 		capacity, err := sumTiKVStoreCapacity(stores)
 		require.Nil(t, capacity)
