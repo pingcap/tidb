@@ -786,20 +786,20 @@ func (importer *SnapFileImporter) batchDownloadSST(
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
-		peer := p
-		eg.Go(func() error {
-			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
-			select {
-			case <-ectx.Done():
-				return ectx.Err()
-			case <-tokenCh:
-			}
-			defer func() {
-				importer.releaseToken(tokenCh)
-			}()
-			for i, downloadReqMap := range downloadReqs {
-				logger0 := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
-				for j, req := range downloadReqMap {
+		storeID := p.GetStoreId()
+		for i, downloadReqMap := range downloadReqs {
+			for j, req := range downloadReqMap {
+				eg.Go(func() error {
+					tokenCh := importer.downloadTokensMap.acquireTokenCh(storeID, importer.concurrencyPerStore)
+					select {
+					case <-ectx.Done():
+						return ectx.Err()
+					case <-tokenCh:
+					}
+					defer func() {
+						importer.releaseToken(tokenCh)
+					}()
+					logger0 := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
 					var err error
 					var resp *import_sstpb.DownloadResponse
 					logger := logger0.With(zap.String("reqName", j))
@@ -808,14 +808,14 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						defer cancel()
 						if len(req.Ssts) == 0 {
 							// fallback to single download
-							return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+							return importer.importClient.DownloadSST(dctx, storeID, req)
 						}
 						logger.Info("Sending batch download SST request.",
-							zap.Uint64("store_id", peer.GetStoreId()),
+							zap.Uint64("store_id", storeID),
 							logutil.BriefSSTMetas("ssts", maps.Values(req.Ssts)),
 							logutil.Region(regionInfo.Region),
 						)
-						return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)
+						return importer.importClient.BatchDownloadSST(dctx, storeID, req)
 					})
 					if err != nil {
 						return errors.Trace(err)
@@ -826,7 +826,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 					if resp.GetIsEmpty() {
 						logger.Warn("download file skipped", zap.String("filename", req.Name),
 							logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
-						continue
+						return nil
 					}
 
 					mu.Lock()
@@ -840,10 +840,10 @@ func (importer *SnapFileImporter) batchDownloadSST(
 					sstMeta.ApiVersion = apiVersion
 					resultMetasMap[req.Name] = &sstMeta
 					mu.Unlock()
-				}
+					return nil
+				})
 			}
-			return nil
-		})
+		}
 	}
 	if err := eg.Wait(); err != nil {
 		return nil, err
@@ -911,18 +911,18 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
-		peer := p
-		eg.Go(func() error {
-			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
-			select {
-			case <-ectx.Done():
-				return ectx.Err()
-			case <-tokenCh:
-			}
-			defer func() {
-				importer.releaseToken(tokenCh)
-			}()
-			for i, downloadReq := range downloadReqs {
+		storeID := p.GetStoreId()
+		for i, downloadReq := range downloadReqs {
+			eg.Go(func() error {
+				tokenCh := importer.downloadTokensMap.acquireTokenCh(storeID, importer.concurrencyPerStore)
+				select {
+				case <-ectx.Done():
+					return ectx.Err()
+				case <-tokenCh:
+				}
+				defer func() {
+					importer.releaseToken(tokenCh)
+				}()
 				logger := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
 				var err error
 				var resp *import_sstpb.DownloadResponse
@@ -930,11 +930,11 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
 					logger.Info("Sending batch download latest MVCC SST request.",
-						zap.Uint64("store_id", peer.GetStoreId()),
+						zap.Uint64("store_id", storeID),
 						logutil.BriefSSTMetas("ssts", maps.Values(downloadReq.Ssts)),
 						logutil.Region(regionInfo.Region),
 					)
-					return importer.importClient.BatchDownloadLatestMVCC(dctx, peer.GetStoreId(), downloadReq)
+					return importer.importClient.BatchDownloadLatestMVCC(dctx, storeID, downloadReq)
 				})
 				if err != nil {
 					return errors.Trace(err)
@@ -945,7 +945,7 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 				if resp.GetIsEmpty() {
 					logger.Warn("download file skipped", zap.String("filename", downloadReq.Name),
 						logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
-					continue
+					return nil
 				}
 
 				mu.Lock()
@@ -964,9 +964,9 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 					resultMetasMap[downloadReq.Name] = resultMetas
 				}
 				mu.Unlock()
-			}
-			return nil
-		})
+				return nil
+			})
+		}
 	}
 
 	if err := eg.Wait(); err != nil {
