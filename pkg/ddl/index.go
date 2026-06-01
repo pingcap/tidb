@@ -97,6 +97,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -2744,6 +2745,58 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
+func generateIndexKVsForRow(
+	indexes []table.Index,
+	loc *time.Location,
+	errCtx errctx.Context,
+	handle kv.Handle,
+	physicalID int64,
+	idxDataBuf []types.Datum,
+	checkPartialCondition func(int, table.Index) (bool, error),
+	fetchIndexValues func(int, table.Index, []types.Datum) ([]types.Datum, error),
+	restoreData func(int, table.Index) []types.Datum,
+	sink func(int, table.Index, []types.Datum, table.IndexKVGenerator) (int64, error),
+) (int64, error) {
+	var totalBytes int64
+	for i, index := range indexes {
+		if index.Meta().HasCondition() && checkPartialCondition != nil {
+			ok, err := checkPartialCondition(i, index)
+			if err != nil {
+				return totalBytes, errors.Trace(err)
+			}
+			if !ok {
+				continue
+			}
+		}
+		indexedValues, err := fetchIndexValues(i, index, idxDataBuf)
+		if err != nil {
+			return totalBytes, errors.Trace(err)
+		}
+		var rsData []types.Datum
+		if restoreData != nil {
+			rsData = restoreData(i, index)
+		}
+		indexHandle := indexKVHandleForPhysicalTable(index, physicalID, handle)
+		iter := index.GenIndexKVIter(errCtx, loc, indexedValues, indexHandle, rsData)
+		kvBytes, err := sink(i, index, indexedValues, iter)
+		if err != nil {
+			return totalBytes, errors.Trace(err)
+		}
+		totalBytes += kvBytes
+	}
+	return totalBytes, nil
+}
+
+func indexKVHandleForPhysicalTable(index table.Index, physicalID int64, handle kv.Handle) kv.Handle {
+	if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		if _, ok := handle.(kv.PartitionHandle); ok {
+			return handle
+		}
+		return kv.NewPartitionHandle(physicalID, handle)
+	}
+	return handle
+}
+
 func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
@@ -2754,6 +2807,7 @@ func writeChunk(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	physicalID int64,
 	tblInfo *model.TableInfo,
 ) (rowCnt int, bytes int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
@@ -2803,34 +2857,43 @@ func writeChunk(
 		if err != nil {
 			return 0, totalBytes, errors.Trace(err)
 		}
-		for i, index := range indexes {
-			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
-			// will not be initialized.
-			if index.Meta().HasCondition() && indexConditionCheckers != nil {
+
+		var checkPartialCondition func(int, table.Index) (bool, error)
+		if indexConditionCheckers != nil {
+			checkPartialCondition = func(i int, _ table.Index) (bool, error) {
 				ok, err := indexConditionCheckers[i](row)
 				if err != nil {
-					return 0, 0, errors.Trace(err)
+					return false, errors.Trace(err)
 				}
-				if !ok {
-					continue
-				}
+				return ok, nil
 			}
-
-			idxID := index.Meta().ID
-			idxDataBuf = ExtractDatumByOffsets(ectx,
-				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
-			idxData := idxDataBuf[:len(index.Meta().Columns)]
-			var rsData []types.Datum
-			if needRestoreForIndexes[i] {
-				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
-			}
-			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
-			if err != nil {
-				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, totalBytes, errors.Trace(err)
-			}
-			totalBytes += int(kvBytes)
 		}
+		kvBytes, err := generateIndexKVsForRow(
+			indexes, loc, errCtx, h, physicalID, idxDataBuf, checkPartialCondition,
+			func(_ int, index table.Index, buf []types.Datum) ([]types.Datum, error) {
+				idxID := index.Meta().ID
+				idxData := ExtractDatumByOffsets(ectx, row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, buf)
+				return idxData[:len(index.Meta().Columns)], nil
+			},
+			func(i int, index table.Index) []types.Datum {
+				if !needRestoreForIndexes[i] {
+					return nil
+				}
+				return getRestoreData(c.TableInfo, copCtx.IndexInfo(index.Meta().ID), c.PrimaryKeyInfo, restoreDataBuf)
+			},
+			func(i int, _ table.Index, _ []types.Datum, iter table.IndexKVGenerator) (int64, error) {
+				kvBytes, err := writeOneKV(ctx, writers[i], writeStmtBufs, iter, h)
+				if err != nil {
+					err = ingest.TryConvertToKeyExistsErr(err, indexes[i].Meta(), tblInfo)
+					return 0, errors.Trace(err)
+				}
+				return kvBytes, nil
+			},
+		)
+		if err != nil {
+			return 0, totalBytes + int(kvBytes), errors.Trace(err)
+		}
+		totalBytes += int(kvBytes)
 		count++
 	}
 	return count, totalBytes, nil
@@ -2850,15 +2913,11 @@ func maxIndexColumnCount(indexes []table.Index) int {
 func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
-	index table.Index,
-	loc *time.Location,
-	errCtx errctx.Context,
 	writeBufs *variable.WriteStmtBufs,
-	idxDt, rsData []types.Datum,
+	iter table.IndexKVGenerator,
 	handle kv.Handle,
 ) (int64, error) {
 	var kvBytes int64
-	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
@@ -3356,12 +3415,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			BlockSampleRawKeySharedPrefixAvg:         blockSamplePrediction.RawKeySharedPrefixAvgBytes,
 			BlockSampleRawKeyLengthAvg:               blockSamplePrediction.RawKeyLengthAvgBytes,
 			Version:                                  BackfillTaskMetaVersion1,
-		}
-		if initialCapacity != nil {
-			taskMeta.InitialTiKVStoreUsage = &TiKVStoreUsageSnapshot{
-				UsedBytes:  initialCapacity.UsedBytes,
-				StoreCount: initialCapacity.StoreCount,
-			}
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -4007,8 +4060,9 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Error(err))
 		return
 	}
-	if taskMeta.InitialTiKVStoreUsage == nil {
-		logutil.DDLLogger().Info("skip observed TiKV capacity logging because initial snapshot is unavailable for add-index task",
+	initialCapacity := taskMeta.InitialTiKVCapacity
+	if initialCapacity == nil {
+		logutil.DDLLogger().Info("skip observed TiKV capacity logging because initial capacity is unavailable for add-index task",
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID))
 		return
 	}
@@ -4018,20 +4072,6 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		logutil.DDLLogger().Warn("failed to collect final TiKV store usage for add-index task",
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
 		return
-	}
-	finalUsage := &TiKVStoreUsageSnapshot{
-		UsedBytes:  finalCapacity.UsedBytes,
-		StoreCount: finalCapacity.StoreCount,
-	}
-	initialCapacity := taskMeta.InitialTiKVCapacity
-	initialStoreCount := taskMeta.InitialTiKVStoreUsage.StoreCount
-	if taskMeta.InitialTiKVCapacity != nil {
-		initialStoreCount = taskMeta.InitialTiKVCapacity.StoreCount
-	} else if taskMeta.InitialTiKVStoreUsage != nil {
-		initialCapacity = &TiKVClusterCapacity{
-			UsedBytes:  taskMeta.InitialTiKVStoreUsage.UsedBytes,
-			StoreCount: taskMeta.InitialTiKVStoreUsage.StoreCount,
-		}
 	}
 
 	subtasks, err := taskMgr.GetSubtasksWithHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
@@ -4093,15 +4133,15 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.String("observed_tikv_capacity_reliable_reason", observedIncrease.reason),
 		zap.String("initial_tikv_capacity_source", initialCapacity.Source),
 		zap.String("final_tikv_capacity_source", finalCapacity.Source),
-		zap.Uint64("initial_tikv_used_bytes", taskMeta.InitialTiKVStoreUsage.UsedBytes),
-		zap.Uint64("final_tikv_used_bytes", finalUsage.UsedBytes),
-		zap.Int("initial_tikv_store_count", initialStoreCount),
-		zap.Int("final_tikv_store_count", finalUsage.StoreCount),
+		zap.Uint64("initial_tikv_used_bytes", initialCapacity.UsedBytes),
+		zap.Uint64("final_tikv_used_bytes", finalCapacity.UsedBytes),
+		zap.Int("initial_tikv_store_count", initialCapacity.StoreCount),
+		zap.Int("final_tikv_store_count", finalCapacity.StoreCount),
 	)
 	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task", logFields...)
 	failpoint.InjectCall("afterLogObservedTiKVCapacityIncrease",
 		task.ID, logicalIndexKVBytes, observedIncrease.increase,
-		int64(taskMeta.InitialTiKVStoreUsage.UsedBytes), int64(finalUsage.UsedBytes))
+		int64(initialCapacity.UsedBytes), int64(finalCapacity.UsedBytes))
 }
 
 func checkTiKVSpaceForAddIndex(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64) error {
@@ -4593,8 +4633,8 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 		return 0, 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, nil
 	}
 	sortedKVs := sortSampledIndexKVs(sampledKVs)
-	encodedKeySharedPrefixAvg = estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs)
-	rawKeySharedPrefixAvg = estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs)
+	encodedKeySharedPrefixAvg = estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVs, func(kv sampledIndexKV) []byte { return kv.key })
+	rawKeySharedPrefixAvg = estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVs, func(kv sampledIndexKV) []byte { return kv.rawKey })
 	rawKeyLengthAvg = estimateSampledIndexKVRawKeyLengthAvg(sortedKVs)
 	estimatedBytes := estimateSortedBlockSampledIndexKVPredictionBytes(sortedKVs, scopeSampleCounts, snapshotTS)
 	if estimatedBytes.Err != nil {
@@ -4787,65 +4827,58 @@ func collectIndexKVsForSampledRow(
 	loc := predictionTimeLocation(sctx)
 	errCtx := sctx.GetSessionVars().StmtCtx.ErrCtx()
 	tblInfo := physicalTbl.Meta()
-	pkIdx := tables.FindPrimaryIndex(tblInfo)
-	var handleRestoreData []types.Datum
-	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion != 0 && pkIdx != nil {
-		handleRestoreData = extractHandleRestoreDataFromRow(tblInfo, pkIdx, row)
+	physicalID := physicalTbl.GetPhysicalID()
+	var restoreData func(int, table.Index) []types.Datum
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion != 0 && tables.FindPrimaryIndex(tblInfo) != nil {
+		restoreData = func(_ int, idx table.Index) []types.Datum {
+			return tables.TryGetHandleRestoredDataWrapper(tblInfo, row, nil, idx.Meta())
+		}
 	}
 
 	idxValueBuf := make([]types.Datum, 0, maxIndexColumnCount(indexes))
 	kvs := make([]sampledIndexKV, 0, len(indexes))
-	var totalBytes int64
-	for _, idx := range indexes {
-		if idx.Meta().HasCondition() {
-			match, err := idx.MeetPartialCondition(row)
+	totalBytes, err := generateIndexKVsForRow(
+		indexes, loc, errCtx, handle, physicalID, idxValueBuf,
+		func(_ int, idx table.Index) (bool, error) {
+			return idx.MeetPartialCondition(row)
+		},
+		func(_ int, idx table.Index, buf []types.Datum) ([]types.Datum, error) {
+			return idx.FetchValues(row, buf[:0])
+		},
+		restoreData,
+		func(_ int, idx table.Index, indexedValues []types.Datum, iter table.IndexKVGenerator) (int64, error) {
+			rawKeys, err := tables.EncodeRawIndexKeyValues(loc, tblInfo, idx.Meta(), indexedValues)
 			if err != nil {
-				return nil, 0, err
+				return 0, errors.Trace(err)
 			}
-			if !match {
-				continue
+			rawKeyPos := 0
+			idxInfo := idx.Meta()
+			var kvBytes int64
+			for iter.Valid() {
+				key, value, _, err := iter.Next(nil, nil)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				var rawKey []byte
+				if rawKeyPos < len(rawKeys) {
+					rawKey = rawKeys[rawKeyPos]
+				}
+				rawKeyPos++
+				kvs = append(kvs, sampledIndexKV{
+					key:           slices.Clone(key),
+					value:         slices.Clone(value),
+					rawKey:        slices.Clone(rawKey),
+					physicalID:    physicalID,
+					indexID:       idxInfo.ID,
+					isGlobalIndex: idxInfo.Global,
+				})
+				kvBytes += int64(len(key) + len(value))
 			}
-		}
-		indexedValues, err := idx.FetchValues(row, idxValueBuf[:0])
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		actualHandle := handle
-		if idx.Meta().Global && idx.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-			actualHandle = kv.NewPartitionHandle(physicalTbl.GetPhysicalID(), handle)
-		}
-		var rsData []types.Datum
-		if len(handleRestoreData) > 0 && (tables.NeedRestoredData(idx.Meta().Columns, tblInfo.Columns) || primaryIndexNeedsRestoredData(tblInfo, pkIdx)) {
-			rsData = getRestoreData(tblInfo, idx.Meta(), pkIdx, handleRestoreData)
-		}
-		iter := idx.GenIndexKVIter(errCtx, loc, indexedValues, actualHandle, rsData)
-		rawKeys, err := tables.EncodeRawIndexKeyValues(loc, tblInfo, idx.Meta(), indexedValues)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		idxInfo := idx.Meta()
-		physicalID := physicalTbl.GetPhysicalID()
-		rawKeyPos := 0
-		for iter.Valid() {
-			key, value, _, err := iter.Next(nil, nil)
-			if err != nil {
-				return nil, 0, errors.Trace(err)
-			}
-			var rawKey []byte
-			if rawKeyPos < len(rawKeys) {
-				rawKey = rawKeys[rawKeyPos]
-			}
-			rawKeyPos++
-			kvs = append(kvs, sampledIndexKV{
-				key:           slices.Clone(key),
-				value:         slices.Clone(value),
-				rawKey:        slices.Clone(rawKey),
-				physicalID:    physicalID,
-				indexID:       idxInfo.ID,
-				isGlobalIndex: idxInfo.Global,
-			})
-			totalBytes += int64(len(key) + len(value))
-		}
+			return kvBytes, nil
+		},
+	)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
 	}
 	return kvs, totalBytes, nil
 }
@@ -4929,24 +4962,13 @@ func sortSampledIndexKVs(kvs []sampledIndexKV) []sampledIndexKV {
 	return sortedKVs
 }
 
-func estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs []sampledIndexKV) float64 {
+func estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVs []sampledIndexKV, keyOf func(sampledIndexKV) []byte) float64 {
 	if len(sortedKVs) < 2 {
 		return 0
 	}
 	var sharedPrefixBytes int64
 	for i := 1; i < len(sortedKVs); i++ {
-		sharedPrefixBytes += int64(sharedPrefixLength(sortedKVs[i-1].key, sortedKVs[i].key))
-	}
-	return float64(sharedPrefixBytes) / float64(len(sortedKVs)-1)
-}
-
-func estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs []sampledIndexKV) float64 {
-	if len(sortedKVs) < 2 {
-		return 0
-	}
-	var sharedPrefixBytes int64
-	for i := 1; i < len(sortedKVs); i++ {
-		sharedPrefixBytes += int64(sharedPrefixLength(sortedKVs[i-1].rawKey, sortedKVs[i].rawKey))
+		sharedPrefixBytes += int64(sharedPrefixLength(keyOf(sortedKVs[i-1]), keyOf(sortedKVs[i])))
 	}
 	return float64(sharedPrefixBytes) / float64(len(sortedKVs)-1)
 }
@@ -5099,21 +5121,6 @@ func appendTiKVMVCCTimestampForPrediction(key []byte) []byte {
 		mvccKey = append(mvccKey, byte(0xff-i))
 	}
 	return mvccKey
-}
-
-func extractHandleRestoreDataFromRow(tblInfo *model.TableInfo, pkIdx *model.IndexInfo, row []types.Datum) []types.Datum {
-	if !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 || pkIdx == nil {
-		return nil
-	}
-	handleRestoreData := make([]types.Datum, 0, len(pkIdx.Columns))
-	for _, pkCol := range pkIdx.Columns {
-		handleRestoreData = append(handleRestoreData, *row[pkCol.Offset].Clone())
-	}
-	return handleRestoreData
-}
-
-func primaryIndexNeedsRestoredData(tblInfo *model.TableInfo, pkIdx *model.IndexInfo) bool {
-	return pkIdx != nil && tables.NeedRestoredData(pkIdx.Columns, tblInfo.Columns)
 }
 
 func buildPredictionIndexesForPhysicalTable(physicalTbl table.PhysicalTable, idxInfos []*model.IndexInfo) ([]table.Index, error) {
@@ -5350,17 +5357,7 @@ func blockSamplePredictionTargetRows(sampledRows int, logicalBytes int64) int {
 		return blockSamplePredictionMaxRows
 	}
 	blockRows := int(math.Ceil(float64(litconfig.DefaultBlockSize) / avgLogicBytesPerRow))
-	return clampSamplePredictionRows(blockRows, blockSamplePredictionProbeRows, blockSamplePredictionMaxRows)
-}
-
-func clampSamplePredictionRows(rows, lower, upper int) int {
-	if rows < lower {
-		return lower
-	}
-	if rows > upper {
-		return upper
-	}
-	return rows
+	return mathutil.Clamp(blockRows, blockSamplePredictionProbeRows, blockSamplePredictionMaxRows)
 }
 
 func samplePredictionSeed(jobID, physicalID int64) uint64 {
