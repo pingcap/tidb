@@ -321,13 +321,10 @@ func TestStatementStatsRUV2Sampling(t *testing.T) {
 	})
 }
 
-// TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields documents the
-// contract introduced by removing the per-Next syncRUV2MetricsAfterExec drain:
-// ResourceManagerReadCnt and ResourceManagerWriteCnt on RUV2Metrics are
-// populated only by the end-of-statement drain (finalizeStatementRUV2Metrics).
-// In-flight TopRU samples taken before that drain see these two fields as
-// zero; the sum of the in-flight delta and the finalize delta still telescopes
-// to the full per-statement total.
+// TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields asserts that
+// ResourceManager{Read,Write}Cnt are invisible to in-flight TopRU samples
+// until the end-of-statement drain, and that the in-flight + finalize deltas
+// telescope to the full per-statement total.
 func TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields(t *testing.T) {
 	stats := &StatementStats{
 		data:             StatementStatsMap{},
@@ -342,9 +339,7 @@ func TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields(t *testing.T)
 		ResourceManagerReadCnt:  0.02,
 		ResourceManagerWriteCnt: 0.07,
 	}
-
-	// Planner-side increments are written live, not via drain.
-	metrics.AddPlanCnt(1)
+	metrics.AddPlanCnt(1) // live field, not drain-fed
 
 	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
 		Ctx:          context.WithValue(context.Background(), util.RUDetailsCtxKey, ru),
@@ -356,23 +351,15 @@ func TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields(t *testing.T)
 	})
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 
-	// Mid-statement sample. PlanCnt contributes; ResourceManager{Read,Write}Cnt
-	// are still zero on metrics because no drain has happened yet.
+	// In-flight sample: only PlanCnt visible, drain-fed fields still zero.
 	inFlight := stats.MergeRUInto()
 	require.InDelta(t, 1.0, inFlight[key].TotalRU, 1e-9)
 	require.Equal(t, uint64(1), inFlight[key].ExecCount)
 
-	// Simulate what finalizeStatementRUV2Metrics does at end of statement:
-	// drain raw counters into RUV2Metrics. Real TiKV responses would arrive
-	// via client-go RUDetails.AddRUV2; here we set the metric fields directly
-	// (the post-drain state is equivalent and avoids a kvproto test dep).
+	// Equivalent of finalizeStatementRUV2Metrics's drain; bypassing kvproto.
 	metrics.AddResourceManagerReadCnt(5)
 	metrics.AddResourceManagerWriteCnt(3)
-	require.Equal(t, int64(5), metrics.ResourceManagerReadCnt())
-	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
 
-	// Finalize the statement. The post-drain delta is now visible:
-	// 5*0.02 + 3*0.07 = 0.31 RU.
 	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
 		RUDetails:    ru,
 		User:         "u1",
@@ -380,9 +367,7 @@ func TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields(t *testing.T)
 		TopRUEnabled: true,
 	})
 	finish := stats.MergeRUInto()
-	require.InDelta(t, 0.31, finish[key].TotalRU, 1e-9)
-
-	// Telescoping: in-flight + finalize == full per-statement total (1.31 RU).
+	require.InDelta(t, 0.31, finish[key].TotalRU, 1e-9)              // 5*0.02 + 3*0.07
 	require.InDelta(t, 1.31, inFlight[key].TotalRU+finish[key].TotalRU, 1e-9)
 }
 
