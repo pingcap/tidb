@@ -370,7 +370,7 @@ func renewalWriteTimeout(expireAt, leaseNow time.Time) (time.Duration, error) {
 }
 
 func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
-	if remaining <= minRenewRemainingLease {
+	if remaining < minRenewRemainingLease {
 		return 0, errRenewRemainingLeaseTooSmall
 	}
 	delay := remaining / 3
