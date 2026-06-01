@@ -74,9 +74,9 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	// the Store corresponding to the task.
-	// it's the same as the instance store if on Classic kernel, or it's a task
-	// of SYSTEM keyspace, otherwise it's the store target to the task keyspace.
+	// TaskStore is the store for task.Keyspace. It equals the instance store in
+	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
+	// it from the task keyspace.
 	TaskStore kv.Storage
 }
 

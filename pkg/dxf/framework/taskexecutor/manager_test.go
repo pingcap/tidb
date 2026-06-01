@@ -551,11 +551,13 @@ func TestStartTaskExecutorResolveTaskStoreFromTaskKeyspace(t *testing.T) {
 		<-runCh
 	})
 	mockExecutor.EXPECT().Close()
+	defer func() {
+		close(runCh)
+		m.executorWG.Wait()
+	}()
 
 	require.True(t, m.startTaskExecutor(&task.TaskBase))
 	require.Same(t, taskStore, gotStore)
-	close(runCh)
-	m.executorWG.Wait()
 }
 
 func TestStartTaskExecutorResolveTaskStoreError(t *testing.T) {

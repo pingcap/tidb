@@ -136,7 +136,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	tbl, err := getUserStoreAndTable(ctx, sch.d, sch.TaskStore, job)
+	tbl, err := getUserTableFromTaskStore(ctx, sch.d, sch.TaskStore, job)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -183,7 +183,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 }
 
-func getUserStoreAndTable(
+func getUserTableFromTaskStore(
 	ctx context.Context,
 	d *ddl,
 	taskStore kv.Storage,
