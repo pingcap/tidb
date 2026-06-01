@@ -223,8 +223,8 @@ const (
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
-		INDEX idx_ver(version),
-		UNIQUE INDEX tbl(table_id)
+		PRIMARY KEY (table_id) CLUSTERED,
+		INDEX idx_ver(version)
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
@@ -242,7 +242,7 @@ const (
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
 		last_analyze_pos 	LONGBLOB DEFAULT NULL,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -256,7 +256,7 @@ const (
 		upper_bound LONGBLOB NOT NULL,
 		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
+		PRIMARY KEY (table_id, is_index, hist_id, bucket_id) CLUSTERED
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
@@ -342,7 +342,7 @@ const (
 		is_index 	TINYINT(2) NOT NULL,
 		hist_id 	BIGINT(64) NOT NULL,
 		value 		LONGBLOB,
-		INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
@@ -431,7 +431,7 @@ const (
 		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		PRIMARY KEY (table_id, version, seq_no) CLUSTERED,
 		KEY table_create_time (table_id, create_time, seq_no),
     	KEY idx_create_time (create_time)
 	);`
@@ -443,7 +443,7 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version (table_id, version),
+		PRIMARY KEY (table_id, version) CLUSTERED,
 		KEY table_create_time (table_id, create_time),
     	KEY idx_create_time (create_time)
 	);`
@@ -510,7 +510,7 @@ const (
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
-		PRIMARY KEY (table_id));`
+		PRIMARY KEY (table_id) CLUSTERED);`
 
 	// CreatePasswordHistory is a table save history passwd.
 	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (

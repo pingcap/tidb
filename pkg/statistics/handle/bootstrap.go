@@ -303,6 +303,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 // genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func genInitStatsHistogramsSQL(isPaging bool) string {
+	// Keep the ORDER_INDEX(tbl) hint: `tbl` still exists on clusters bootstrapped
+	// before stats_histograms moved to a clustered PRIMARY KEY. On fresh clusters
+	// it is inapplicable but harmless: the clustered PK scan is already ordered by
+	// table_id.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -643,6 +647,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
 func genInitStatsBucketsSQLForIndexes(isPaging bool) string {
+	// Keep the ORDER_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
