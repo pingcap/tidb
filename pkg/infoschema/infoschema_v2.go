@@ -1996,6 +1996,9 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 	var currDB string
 	var lastTableID int64
 	var res infoschemacontext.TableInfoResult
+	// Track table IDs already found in tableInfoResident to avoid duplicates
+	// when also checking pid2tid for partition tables.
+	existingTableIDs := make(map[int64]bool)
 	is.Data.tableInfoResident.Load().Descend(func(item tableInfoItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
@@ -2015,6 +2018,8 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 			return true
 		}
 
+		existingTableIDs[item.tableID] = true
+
 		if currDB == "" {
 			currDB = item.dbName.L
 			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
@@ -2031,7 +2036,77 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 	if len(res.TableInfos) > 0 {
 		ret = append(ret, res)
 	}
+
+	// Partition tables are not stored in tableInfoResident (to save memory).
+	// Check pid2tid for partition tables and look up their table info on demand.
+	is.listPartitionTablesWithFilter(filter, &ret, existingTableIDs)
+
 	return ret
+}
+
+// listPartitionTablesWithFilter looks up partition tables from pid2tid, loads their
+// table info, applies the filter, and appends matching results to ret.
+// Partition tables are excluded from tableInfoResident to save memory, so we need
+// this separate path to handle the PartitionAttribute filter.
+// existingTableIDs tracks tables already found via tableInfoResident to avoid duplicates.
+func (is *infoschemaV2) listPartitionTablesWithFilter(filter infoschemacontext.SpecialAttributeFilter, ret *[]infoschemacontext.TableInfoResult, existingTableIDs map[int64]bool) {
+	seen := make(map[int64]bool) // tableIDs we've already added
+	var lastPartitionID int64
+	// Descend iterates {partitionID, schemaVersion} in descending order.
+	// For each partitionID, the first entry with schemaVersion <= schemaMetaVersion
+	// is the latest valid record (same logic as searchPartitionItemByPartitionID).
+	is.Data.pid2tid.Load().Descend(func(item partitionItem) bool {
+		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+			return true
+		}
+		// Dedup: for each partitionID, we only care about the latest version <= target.
+		if lastPartitionID != 0 && lastPartitionID == item.partitionID {
+			return true
+		}
+		lastPartitionID = item.partitionID
+
+		if item.tomb {
+			return true
+		}
+
+		// Dedup table ID: multiple partitions can belong to the same table,
+		// or the table may already have been found in tableInfoResident.
+		if existingTableIDs[item.tableID] {
+			return true
+		}
+		if seen[item.tableID] {
+			return true
+		}
+		seen[item.tableID] = true
+
+		tbl, ok := is.TableInfoByID(item.tableID)
+		if !ok || !filter(tbl) {
+			return true
+		}
+
+		// Find the DB name for this table.
+		tblItem, ok := is.searchTableItemByID(item.tableID)
+		if !ok {
+			return true
+		}
+
+		// Find or create the result entry for this DB.
+		found := false
+		for i := range *ret {
+			if (*ret)[i].DBName.L == tblItem.dbName.L {
+				(*ret)[i].TableInfos = append((*ret)[i].TableInfos, tbl)
+				found = true
+				break
+			}
+		}
+		if !found {
+			*ret = append(*ret, infoschemacontext.TableInfoResult{
+				DBName:     tblItem.dbName,
+				TableInfos: []*model.TableInfo{tbl},
+			})
+		}
+		return true
+	})
 }
 
 type refillOption struct{}
