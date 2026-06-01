@@ -227,32 +227,98 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) in
 }
 
 func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helper.Storage, pid int64) (int64, error) {
-	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	start, end := store.GetCodec().EncodeRegionRange(sk, ek)
 	var totalSize int64
+	err := iterateTableRegionsWithClient(ctx, pdCli, store, pid, 0, false, func(r pdhttp.RegionInfo) error {
+		// ApproximateSize is SST/blob file size (can reflect compression), while
+		// ApproximateKvSize is KV data size and usually better tracks logical table size.
+		// Use max() because ApproximateKvSize can be zero when TiKV does not report it.
+		sizeInMiB := max(r.ApproximateSize, r.ApproximateKvSize)
+		totalSize += sizeInMiB * units.MiB
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return totalSize, nil
+}
+
+const tableRegionsPageSize = 128
+
+func listTableRegions(ctx context.Context, store kv.Storage, physicalID int64, maxRegions int) ([]pdhttp.RegionInfo, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
+	}
+	pdCli, err := helper.NewHelper(hStore).TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	capacity := 16
+	if maxRegions > 0 {
+		capacity = min(maxRegions, capacity)
+	}
+	regions := make([]pdhttp.RegionInfo, 0, capacity)
+	err = iterateTableRegionsWithClient(ctx, pdCli, hStore, physicalID, maxRegions, true, func(region pdhttp.RegionInfo) error {
+		regions = append(regions, region)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return regions, nil
+}
+
+func iterateTableRegionsWithClient(
+	ctx context.Context,
+	pdCli pdhttp.Client,
+	store helper.Storage,
+	physicalID int64,
+	maxRegions int,
+	stopOnEmptyEndKey bool,
+	fn func(pdhttp.RegionInfo) error,
+) error {
+	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
+	start, end := store.GetCodec().EncodeRegionRange(tableStart, tableEnd)
+	regionCount := 0
 	for {
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
-		if err != nil {
-			return 0, err
+		limit := tableRegionsPageSize
+		if maxRegions > 0 {
+			remaining := maxRegions - regionCount
+			if remaining <= 0 {
+				break
+			}
+			limit = min(limit, remaining)
 		}
-		if len(regionInfos.Regions) == 0 {
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), limit)
+		if err != nil {
+			return err
+		}
+		if regionInfos == nil || len(regionInfos.Regions) == 0 {
 			break
 		}
-		for _, r := range regionInfos.Regions {
-			// ApproximateSize is SST/blob file size (can reflect compression), while
-			// ApproximateKvSize is KV data size and usually better tracks logical table size.
-			// Use max() because ApproximateKvSize can be zero when TiKV does not report it.
-			sizeInMiB := max(r.ApproximateSize, r.ApproximateKvSize)
-			totalSize += sizeInMiB * units.MiB
+		for _, region := range regionInfos.Regions {
+			if err := fn(region); err != nil {
+				return err
+			}
+			regionCount++
+		}
+		if maxRegions > 0 && regionCount >= maxRegions {
+			break
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
+		if stopOnEmptyEndKey && len(lastKey) == 0 {
+			break
+		}
 		start, err = hex.DecodeString(lastKey)
 		if err != nil {
-			return 0, err
+			return err
+		}
+		if stopOnEmptyEndKey && len(start) == 0 {
+			break
 		}
 		if bytes.Compare(start, end) >= 0 {
 			break
 		}
 	}
-	return totalSize, nil
+	return nil
 }
