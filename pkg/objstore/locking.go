@@ -24,6 +24,8 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,6 +191,83 @@ var (
 	nowFunc = time.Now
 )
 
+type leaseLockTestConstants struct {
+	ttl               time.Duration
+	interval          time.Duration
+	writeTimeoutCap   time.Duration
+	minRemaining      time.Duration
+	staleReclaimGrace time.Duration
+	baseBackoff       time.Duration
+}
+
+func applyLeaseLockTestConstantsFailpoint() error {
+	var retErr error
+	failpoint.Inject("lease-lock-test-constants", func(v failpoint.Value) {
+		cfg, err := parseLeaseLockTestConstants(v)
+		if err != nil {
+			retErr = err
+		} else {
+			LeaseTTL = cfg.ttl
+			renewInterval = cfg.interval
+			renewWriteTimeoutCap = cfg.writeTimeoutCap
+			minRenewRemainingLease = cfg.minRemaining
+			staleReclaimGrace = cfg.staleReclaimGrace
+			renewBaseBackoff = cfg.baseBackoff
+		}
+	})
+	return retErr
+}
+
+func parseLeaseLockTestConstants(v failpoint.Value) (leaseLockTestConstants, error) {
+	raw, ok := v.(string)
+	if !ok {
+		return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: expected string, got %T", v)
+	}
+
+	var cfg leaseLockTestConstants
+	seen := make(map[string]struct{})
+	for _, field := range strings.Split(raw, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+		if !ok {
+			return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: malformed field %q", field)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if _, exists := seen[key]; exists {
+			return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: duplicate key %s", key)
+		}
+		seen[key] = struct{}{}
+
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			return leaseLockTestConstants{}, errors.Annotatef(err, "parse lease-lock-test-constants: %s", key)
+		}
+		switch key {
+		case "ttl":
+			cfg.ttl = duration
+		case "interval":
+			cfg.interval = duration
+		case "write-timeout-cap":
+			cfg.writeTimeoutCap = duration
+		case "min-remaining":
+			cfg.minRemaining = duration
+		case "stale-reclaim-grace":
+			cfg.staleReclaimGrace = duration
+		case "base-backoff":
+			cfg.baseBackoff = duration
+		default:
+			return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: unknown key %s", key)
+		}
+	}
+
+	for _, key := range []string{"ttl", "interval", "write-timeout-cap", "min-remaining", "stale-reclaim-grace", "base-backoff"} {
+		if _, ok := seen[key]; !ok {
+			return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: missing key %s", key)
+		}
+	}
+	return cfg, nil
+}
+
 // LeaseClock supplies the current lease time for lock metadata and lease
 // validity checks.
 type LeaseClock interface {
@@ -351,6 +430,9 @@ func (l *RemoteLock) stopRenewalIfStarted() {
 // using the provided lease clock for stale decisions. It intentionally ignores
 // the legacy fixed path "truncating.lock".
 func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage, clock LeaseClock) (bool, error) {
+	if err := applyLeaseLockTestConstantsFailpoint(); err != nil {
+		return false, err
+	}
 	return cleanUpStaleLockFamily(ctx, storage, truncateLockPath, false, clock)
 }
 
@@ -429,6 +511,9 @@ type renewalResult struct {
 // Crucially, the GET-Verify-PUT order ensures we never write a refreshed
 // ExpireAt onto a lock that has already been reclaimed by another holder.
 func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
+	if err := applyLeaseLockTestConstantsFailpoint(); err != nil {
+		return renewalResult{}, err
+	}
 	data, err := l.storage.ReadFile(ctx, l.path)
 	if err != nil {
 		return renewalResult{}, errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
@@ -465,7 +550,11 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if err := l.storage.WriteFile(writeCtx, l.path, newData); err != nil {
+	injected, err := injectLeaseLockRenewalWriteFailpoint(writeCtx)
+	if !injected {
+		err = l.storage.WriteFile(writeCtx, l.path, newData)
+	}
+	if err != nil {
 		if stderrors.Is(writeCtx.Err(), context.DeadlineExceeded) {
 			return renewalResult{}, errors.Annotate(errRenewWriteTimeout, err.Error())
 		}
@@ -485,6 +574,91 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 		return renewalResult{}, err
 	}
 	return renewalResult{nextDelay: delay, remainingLease: remainingLease}, nil
+}
+
+func injectLeaseLockRenewalWriteFailpoint(writeCtx context.Context) (bool, error) {
+	var (
+		injected bool
+		retErr   error
+	)
+	failpoint.Inject("lease-lock-renewal-write-block", func(v failpoint.Value) {
+		injected = true
+		retErr = runLeaseLockRenewalWriteBlockFailpoint(writeCtx, v)
+	})
+	if injected {
+		return true, retErr
+	}
+
+	failpoint.Inject("lease-lock-renewal-write-error", func(v failpoint.Value) {
+		injected = true
+		retErr = runLeaseLockRenewalWriteErrorFailpoint(v)
+	})
+	return injected, retErr
+}
+
+func runLeaseLockRenewalWriteBlockFailpoint(writeCtx context.Context, v failpoint.Value) error {
+	signal, err := parseLeaseLockFailpointParam(v, "signal")
+	if err != nil {
+		return err
+	}
+	if err := writeLeaseLockFailpointMarker(signal); err != nil {
+		return err
+	}
+	<-writeCtx.Done()
+	return errors.Errorf("failpoint: renewal write block: %v", writeCtx.Err())
+}
+
+func runLeaseLockRenewalWriteErrorFailpoint(v failpoint.Value) error {
+	signalDir, err := parseLeaseLockFailpointParam(v, "signal-dir")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(signalDir, 0o755); err != nil {
+		return errors.Annotatef(err, "failpoint: create renewal write error signal dir %s", signalDir)
+	}
+	entries, err := os.ReadDir(signalDir)
+	if err != nil {
+		return errors.Annotatef(err, "failpoint: read renewal write error signal dir %s", signalDir)
+	}
+	attempt := 1
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "attempt.") {
+			attempt++
+		}
+	}
+	marker := filepath.Join(signalDir, fmt.Sprintf("attempt.%d", attempt))
+	if err := writeLeaseLockFailpointMarker(marker); err != nil {
+		return err
+	}
+	return errors.New("failpoint: renewal write error")
+}
+
+func parseLeaseLockFailpointParam(v failpoint.Value, expectedKey string) (string, error) {
+	raw, ok := v.(string)
+	if !ok {
+		return "", errors.Errorf("failpoint: expected %s string, got %T", expectedKey, v)
+	}
+	key, value, ok := strings.Cut(strings.TrimSpace(raw), "=")
+	if !ok {
+		return "", errors.Errorf("failpoint: malformed %s config %q", expectedKey, raw)
+	}
+	if key != expectedKey {
+		return "", errors.Errorf("failpoint: expected key %s, got %s", expectedKey, key)
+	}
+	if value == "" {
+		return "", errors.Errorf("failpoint: %s must not be empty", expectedKey)
+	}
+	return value, nil
+}
+
+func writeLeaseLockFailpointMarker(marker string) error {
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return errors.Annotatef(err, "failpoint: create marker dir for %s", marker)
+	}
+	if err := os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339Nano)), 0o644); err != nil {
+		return errors.Annotatef(err, "failpoint: write marker %s", marker)
+	}
+	return nil
 }
 
 // startRenewal launches a background goroutine that periodically refreshes
@@ -646,6 +820,9 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
 		return nil, err
 	}
+	if err := applyLeaseLockTestConstantsFailpoint(); err != nil {
+		return nil, err
+	}
 	if clock == nil {
 		return nil, errors.New("lease clock is required")
 	}
@@ -783,6 +960,9 @@ func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint s
 // clock and starts lease renewal.
 func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
+		return nil, err
+	}
+	if err := applyLeaseLockTestConstantsFailpoint(); err != nil {
 		return nil, err
 	}
 	if clock == nil {

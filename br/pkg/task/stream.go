@@ -1136,6 +1136,20 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return lock.Unlock(ctx)
 	})
 
+	failpoint.Inject("lease-lock-after-truncate-lock-acquired", func(v failpoint.Value) {
+		raw, ok := v.(string)
+		if !ok {
+			failpoint.Return(errors.Errorf("invalid lease-lock-after-truncate-lock-acquired value %T", v))
+		}
+		spec, err := utils.ParseLeaseLockFailpointSpec(raw)
+		if err != nil {
+			failpoint.Return(err)
+		}
+		if err := utils.WaitLeaseLockFailpoint(ctx, spec); err != nil {
+			failpoint.Return(err)
+		}
+	})
+
 	sp, err := stream.GetTSFromFile(ctx, extStorage, stream.TruncateSafePointFileName)
 	if err != nil {
 		return err

@@ -14,11 +14,11 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
 
 ## Progress
 
-- [ ] 确认 failpoint 命名、输入格式和插入位置。
-- [ ] 实现 `pkg/objstore` lease 参数缩短 failpoint。
-- [ ] 实现 `pkg/objstore` renewal write block/error failpoint。
-- [ ] 实现 BR 业务持锁后 signal/block failpoint。
-- [ ] 新增 `br/tests/br_lease_lock` shell harness 和通用 helper。
+- [x] (2026-06-01) 确认 failpoint 命名、输入格式和插入位置。
+- [x] (2026-06-01) 实现 `pkg/objstore` lease 参数缩短 failpoint。
+- [x] (2026-06-01) 实现 `pkg/objstore` renewal write block/error failpoint。
+- [x] (2026-06-01) 实现 BR 业务持锁后 signal/block failpoint。
+- [x] (2026-06-01) 新增 `br/tests/br_lease_lock` shell harness 和通用 helper。
 - [ ] 实现 migration renewal success case，并检查 normal unlock。
 - [ ] 实现 migration lost block/error 两个 case。
 - [ ] 实现 truncate renewal success case，并检查 normal unlock。
@@ -45,6 +45,9 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
 
 - Observation: `run_br` 是 shell wrapper，后台 kill wrapper pid 不一定清理真正的 `br.test` 子进程。
   Evidence: `br/tests/run_br` 会继续调用 `tests/_utils/run_br`，后者再执行 `br.test`；后台 helper 必须清理进程树或独立进程组。
+
+- Observation: failpoint 代码生成对 named return function 内部短变量声明比较敏感。
+  Evidence: 在 `pkg/objstore/locking_helper.go` 的 named return 函数里，failpoint closure 使用 `dir, err := ...` 会被 failpoint transform 改写成非法的 `return false, err` 捕获；改为 `parseErr` 后 `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLockTestConstantsFailpoint|TestRenewalWriteBlockFailpoint|TestRenewalWriteErrorFailpoint|TestCleanUpStaleTruncateLockReclaimSignalFailpoint' -count=1` 通过。
 
 ## Decision Log
 
@@ -81,6 +84,9 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
 实现完成后，在这里总结实际覆盖的 case、命令输出、剩余风险和后续优化。
 
 - 2026-06-01 计划审查结论：第三轮独立审查通过。可实施性审查结论为“可实施”，设计一致性审查结论为“符合设计”，证明力审查结论为“证明力充足”，BR integration 模式审查结论为“符合模式”。后续可以进入实现阶段。
+- 2026-06-01 Task 1 实现记录：按 TDD 先新增 `pkg/objstore` failpoint contract 测试，red 结果为 `undefined: applyLeaseLockTestConstantsFailpoint`；实现后运行 `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLockTestConstantsFailpoint|TestRenewalWriteBlockFailpoint|TestRenewalWriteErrorFailpoint' -count=1` 通过。当前只完成 objstore 底层 failpoint，不包含 BR 业务持锁点、PD clock marker、stale reclaim marker 或 shell integration case。
+- 2026-06-01 Task 2 实现记录：按 TDD 先新增 `br/pkg/utils` failpoint helper 测试，red 结果为 helper 类型和函数未定义；实现 helper 后接入 `LogClient.GetLockedMigrations`、`RunStreamTruncate`、`PDLeaseClock.Now` 和 stale cleanup marker。验证命令包括 `./tools/check/failpoint-go-test.sh br/pkg/utils -run 'TestLeaseLockFailpoint' -count=1`、`./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLockTestConstantsFailpoint|TestRenewalWriteBlockFailpoint|TestRenewalWriteErrorFailpoint|TestCleanUpStaleTruncateLockReclaimSignalFailpoint' -count=1`，以及 `br/pkg/restore`、`br/pkg/restore/log_client`、`br/pkg/task` 的 failpoint-enabled compile-only 检查。
+- 2026-06-01 Task 3 实现记录：新增 `br/tests/br_lease_lock/run.sh`，目前包含 case list、目录隔离、marker 等待、lock file 查找、lock JSON 读取、后台 BR 进程和 failpoint 作用域 helper，并先草拟了 migration success/block-lost/error-lost 三个 case 函数。当前只做 `bash -n br/tests/br_lease_lock/run.sh` 语法检查；case 尚未接入脚本主流程，真实 cluster smoke run、truncate case 和 stale reclaim case 仍待后续任务实现。
 
 ## Context and Orientation
 

@@ -16,13 +16,21 @@ package restore
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
+
+var pdLeaseClockNowSignalMu sync.Mutex
 
 // PDLeaseClock gets lease time from PD TSO physical time.
 type PDLeaseClock struct {
@@ -40,5 +48,53 @@ func (c PDLeaseClock) Now(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, errors.Trace(err)
 	}
-	return oracle.GetTimeFromTS(ts), nil
+	now := oracle.GetTimeFromTS(ts)
+	failpoint.Inject("lease-clock-pd-now-signal", func(v failpoint.Value) {
+		raw, ok := v.(string)
+		if !ok {
+			failpoint.Return(now, errors.Errorf("invalid lease-clock-pd-now-signal value %T", v))
+		}
+		dir, err := parsePDLeaseClockNowSignalDir(raw)
+		if err != nil {
+			failpoint.Return(now, err)
+		}
+		if err := createPDLeaseClockNowSignalMarker(dir); err != nil {
+			failpoint.Return(now, err)
+		}
+	})
+	return now, nil
+}
+
+func parsePDLeaseClockNowSignalDir(raw string) (string, error) {
+	key, value, ok := strings.Cut(strings.TrimSpace(raw), "=")
+	if !ok || key != "dir" || value == "" {
+		return "", errors.New("lease-clock-pd-now-signal requires dir=<dir>")
+	}
+	return value, nil
+}
+
+func createPDLeaseClockNowSignalMarker(dir string) error {
+	pdLeaseClockNowSignalMu.Lock()
+	defer pdLeaseClockNowSignalMu.Unlock()
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return errors.Trace(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	maxMarker := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "now.") {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(name, "now."))
+		if err == nil && n > maxMarker {
+			maxMarker = n
+		}
+	}
+	markerPath := filepath.Join(dir, "now."+strconv.Itoa(maxMarker+1))
+	return errors.Trace(os.WriteFile(markerPath, nil, 0o644))
 }

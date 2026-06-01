@@ -23,11 +23,13 @@ import (
 	stderrors "errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -407,11 +409,31 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 	if err := storage.DeleteFile(ctx, path); err != nil {
 		return false, errors.Annotatef(err, "CleanUpStaleLock: DeleteFile %s", path)
 	}
+	var markerErr error
+	failpoint.Inject("lease-lock-stale-reclaim-signal", func(v failpoint.Value) {
+		dir, parseErr := parseLeaseLockFailpointParam(v, "dir")
+		if parseErr != nil {
+			markerErr = parseErr
+			return
+		}
+		markerErr = writeLeaseLockFailpointMarker(filepath.Join(dir, pathBaseForLeaseLockMarker(path)))
+	})
+	if markerErr != nil {
+		return false, markerErr
+	}
 	log.Info("Reclaimed stale lock.",
 		zap.String("path", path),
 		zap.Time("reclaim_after", reclaimAfter),
 		zap.Stringer("original_meta", meta))
 	return true, nil
+}
+
+func pathBaseForLeaseLockMarker(p string) string {
+	idx := strings.LastIndex(p, "/")
+	if idx < 0 {
+		return p
+	}
+	return p[idx+1:]
 }
 
 func cleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string, returnCandidateErrors bool, clock LeaseClock) (bool, error) {

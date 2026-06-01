@@ -94,6 +94,48 @@ func TESTSetRenewalProofConstants(writeTimeoutCap, minRemaining time.Duration) (
 	}
 }
 
+// TESTLeaseTimingConstants captures the lease-related timing knobs used by
+// lease renewal and stale cleanup tests.
+type TESTLeaseTimingConstants struct {
+	TTL               time.Duration
+	Interval          time.Duration
+	WriteTimeoutCap   time.Duration
+	MinRemaining      time.Duration
+	StaleReclaimGrace time.Duration
+	BaseBackoff       time.Duration
+	RenewMaxRetries   int
+}
+
+// TESTGetLeaseTimingConstants returns the current lease timing knobs.
+func TESTGetLeaseTimingConstants() TESTLeaseTimingConstants {
+	return TESTLeaseTimingConstants{
+		TTL:               LeaseTTL,
+		Interval:          renewInterval,
+		WriteTimeoutCap:   renewWriteTimeoutCap,
+		MinRemaining:      minRenewRemainingLease,
+		StaleReclaimGrace: staleReclaimGrace,
+		BaseBackoff:       renewBaseBackoff,
+		RenewMaxRetries:   renewMaxRetries,
+	}
+}
+
+// TESTRestoreLeaseTimingConstants restores a prior timing snapshot.
+func TESTRestoreLeaseTimingConstants(c TESTLeaseTimingConstants) {
+	LeaseTTL = c.TTL
+	renewInterval = c.Interval
+	renewWriteTimeoutCap = c.WriteTimeoutCap
+	minRenewRemainingLease = c.MinRemaining
+	staleReclaimGrace = c.StaleReclaimGrace
+	renewBaseBackoff = c.BaseBackoff
+	renewMaxRetries = c.RenewMaxRetries
+}
+
+// TESTApplyLeaseLockTestConstantsFailpoint exposes the test-only failpoint
+// hook that applies shortened lease timing constants.
+func TESTApplyLeaseLockTestConstantsFailpoint() error {
+	return applyLeaseLockTestConstantsFailpoint()
+}
+
 // TESTSetNow overrides nowFunc for deterministic time-based tests.
 // Callers should invoke the returned restore function in a defer or t.Cleanup.
 func TESTSetNow(fn func() time.Time) (restore func()) {

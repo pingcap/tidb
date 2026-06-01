@@ -1091,6 +1091,81 @@ func TestTryRenewWriteError(t *testing.T) {
 	require.Contains(t, err.Error(), "simulated S3 outage")
 }
 
+func TestLeaseLockTestConstantsFailpoint(t *testing.T) {
+	original := objstore.TESTGetLeaseTimingConstants()
+	t.Cleanup(func() {
+		objstore.TESTRestoreLeaseTimingConstants(original)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/lease-lock-test-constants"))
+	})
+
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/objstore/lease-lock-test-constants",
+		`return("ttl=2s,interval=200ms,write-timeout-cap=100ms,min-remaining=200ms,stale-reclaim-grace=500ms,base-backoff=100ms")`,
+	))
+	require.NoError(t, objstore.TESTApplyLeaseLockTestConstantsFailpoint())
+
+	got := objstore.TESTGetLeaseTimingConstants()
+	require.Equal(t, 2*time.Second, got.TTL)
+	require.Equal(t, 200*time.Millisecond, got.Interval)
+	require.Equal(t, 100*time.Millisecond, got.WriteTimeoutCap)
+	require.Equal(t, 200*time.Millisecond, got.MinRemaining)
+	require.Equal(t, 500*time.Millisecond, got.StaleReclaimGrace)
+	require.Equal(t, 100*time.Millisecond, got.BaseBackoff)
+	require.Equal(t, original.RenewMaxRetries, got.RenewMaxRetries)
+}
+
+func TestRenewalWriteBlockFailpoint(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(2*time.Second, 200*time.Millisecond, 5, 10*time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
+
+	signalFile := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block",
+		fmt.Sprintf(`return("signal=%s")`, signalFile),
+	))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block"))
+	}()
+
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
+	require.NoError(t, err)
+	requireFileNotExists(t, signalFile)
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewWriteTimeout)
+	requireFileExists(t, signalFile)
+}
+
+func TestRenewalWriteErrorFailpoint(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	signalDir := t.TempDir()
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error",
+		fmt.Sprintf(`return("signal-dir=%s")`, signalDir),
+	))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error"))
+	}()
+
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
+	require.NoError(t, err)
+	requireFileNotExists(t, filepath.Join(signalDir, "attempt.1"))
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, objstore.TESTRenewWriteTimeout)
+	require.Contains(t, err.Error(), "failpoint: renewal write error")
+	requireFileExists(t, filepath.Join(signalDir, "attempt.1"))
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failpoint: renewal write error")
+	requireFileExists(t, filepath.Join(signalDir, "attempt.2"))
+}
+
 func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
@@ -1358,6 +1433,36 @@ func TestCleanUpStaleTruncateLockUsesStaleReclaimGrace(t *testing.T) {
 	require.True(t, reclaimed)
 	requireFileNotExists(t, filepath.Join(pth, stalePath))
 	requireFileExists(t, filepath.Join(pth, alivePath))
+}
+
+func TestCleanUpStaleTruncateLockReclaimSignalFailpoint(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetStaleReclaimGrace(30 * time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	stalePath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, stalePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-reclaim-signal",
+	})
+
+	markerDir := t.TempDir()
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/objstore/lease-lock-stale-reclaim-signal",
+		fmt.Sprintf(`return("dir=%s")`, markerDir),
+	))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/lease-lock-stale-reclaim-signal"))
+	}()
+
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg, &sequenceLeaseClock{times: []time.Time{leaseNow}})
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	requireFileNotExists(t, filepath.Join(pth, stalePath))
+	requireFileExists(t, filepath.Join(markerDir, stalePath))
 }
 
 func TestCleanUpStaleTruncateLockOverduePastTTL(t *testing.T) {

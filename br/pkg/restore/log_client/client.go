@@ -700,6 +700,20 @@ func (rc *LogClient) GetLockedMigrations(ctx context.Context, onLeaseLost func()
 		}
 	}()
 
+	failpoint.Inject("lease-lock-after-migration-lock-acquired", func(v failpoint.Value) {
+		raw, ok := v.(string)
+		if !ok {
+			failpoint.Return(nil, errors.Errorf("invalid lease-lock-after-migration-lock-acquired value %T", v))
+		}
+		spec, err := utils.ParseLeaseLockFailpointSpec(raw)
+		if err != nil {
+			failpoint.Return(nil, err)
+		}
+		if err := utils.WaitLeaseLockFailpoint(ctx, spec); err != nil {
+			failpoint.Return(nil, err)
+		}
+	})
+
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
