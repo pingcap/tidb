@@ -22,9 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 )
 
 const leaseLockFailpointPollInterval = 10 * time.Millisecond
@@ -109,12 +106,4 @@ func createLeaseLockFailpointMarker(path string) error {
 func leaseLockFailpointFileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// LogLeaseLockOnLeaseLostForTest emits a narrow integration-test-only log
-// marker when the caller's onLeaseLost callback is invoked.
-func LogLeaseLockOnLeaseLostForTest(scope string) {
-	failpoint.Inject("lease-lock-on-lease-lost-log", func(_ failpoint.Value) {
-		log.Warn("lease lock integration test onLeaseLost invoked", zap.String("scope", scope))
-	})
 }

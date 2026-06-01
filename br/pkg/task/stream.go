@@ -1129,7 +1129,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 	onLeaseLost := func() {
-		utils.LogLeaseLockOnLeaseLostForTest("truncate")
+		log.Warn("lease lock lost; canceling protected BR task", zap.String("scope", "truncate"))
 		cancelFn()
 	}
 	lock, err := objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, onLeaseLost, leaseClock)
@@ -1564,7 +1564,7 @@ func restoreStream(
 
 	client := cfg.logClient
 	onLeaseLost := func() {
-		utils.LogLeaseLockOnLeaseLostForTest("migration")
+		log.Warn("lease lock lost; canceling protected BR task", zap.String("scope", "migration"))
 		cancelFn()
 	}
 	migs, err := client.GetLockedMigrations(ctx, onLeaseLost)
