@@ -910,6 +910,7 @@ var tokenMap = map[string]int{
 	"VOTER_CONSTRAINTS":        voterConstraints,
 	"VOTERS":                   voters,
 	"VIEW":                     view,
+	"VIEWS":                    views,
 	"VIRTUAL":                  virtual,
 	"VISIBLE":                  visible,
 	"WARNINGS":                 warnings,

@@ -690,6 +690,7 @@ import (
 	variables             "VARIABLES"
 	vectorType            "VECTOR"
 	view                  "VIEW"
+	views                 "VIEWS"
 	visible               "VISIBLE"
 	wait                  "WAIT"
 	waitTiflashReady      "WAIT_TIFLASH_READY"
@@ -7334,6 +7335,7 @@ UnReservedKeyword:
 |	"BINLOG"
 |	"FUNCTION"
 |	"VIEW"
+|	"VIEWS"
 |	"BINDING"
 |	"BINDINGS"
 |	"MODIFY"
@@ -11944,6 +11946,32 @@ ShowStmt:
 				stmt.Pattern = x
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEWS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViews}
+		stmt.DBName = $4
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOGS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViewLogs}
+		stmt.DBName = $5
+		if $6 != nil {
+			if x, ok := $6.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $6.(ast.ExprNode)
 			}
 		}
 		$$ = stmt
