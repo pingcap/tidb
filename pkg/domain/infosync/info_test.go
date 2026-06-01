@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -209,4 +210,60 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
+}
+
+func TestClusterReadOnlyStatus(t *testing.T) {
+	ctx := context.Background()
+	_, err := GlobalInfoSyncerInit(ctx, "test-read-only", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		vardef.RestrictedReadOnly.Store(false)
+		vardef.VarTiDBSuperReadOnly.Store(false)
+		require.NoError(t, UpdateServerReadOnlyStatus(context.Background()))
+	})
+
+	vardef.RestrictedReadOnly.Store(false)
+	vardef.VarTiDBSuperReadOnly.Store(false)
+	require.NoError(t, UpdateServerReadOnlyStatus(ctx))
+	on, err := vardef.GetClusterReadOnlyStatus(ctx)
+	require.NoError(t, err)
+	require.False(t, on)
+
+	vardef.VarTiDBSuperReadOnly.Store(true)
+	require.NoError(t, UpdateServerReadOnlyStatus(ctx))
+	on, err = vardef.GetClusterReadOnlyStatus(ctx)
+	require.NoError(t, err)
+	require.True(t, on)
+
+	for _, tt := range []struct {
+		name   string
+		infos  map[string]*serverinfo.ServerInfo
+		expect bool
+	}{
+		{
+			name: "all effective read-only",
+			infos: map[string]*serverinfo.ServerInfo{
+				"tidb-a": {DynamicInfo: serverinfo.DynamicInfo{TiDBSuperReadOnly: true, TiDBEffectiveReadOnly: true}},
+				"tidb-b": {DynamicInfo: serverinfo.DynamicInfo{TiDBRestrictedReadOnly: true, TiDBSuperReadOnly: true, TiDBEffectiveReadOnly: true}},
+			},
+			expect: true,
+		},
+		{
+			name: "one instance is writable",
+			infos: map[string]*serverinfo.ServerInfo{
+				"tidb-a": {DynamicInfo: serverinfo.DynamicInfo{TiDBSuperReadOnly: true, TiDBEffectiveReadOnly: true}},
+				"tidb-b": {DynamicInfo: serverinfo.DynamicInfo{}},
+			},
+			expect: false,
+		},
+		{
+			name:   "no live instance",
+			infos:  map[string]*serverinfo.ServerInfo{},
+			expect: false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expect, clusterReadOnlyStatusFromServerInfo(tt.infos))
+		})
+	}
 }

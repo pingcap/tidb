@@ -83,6 +83,11 @@ const (
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
 
+func init() {
+	vardef.SetClusterReadOnlyChecker(getClusterReadOnlyStatus)
+	vardef.SetReadOnlyStatusReporter(updateServerReadOnlyStatus)
+}
+
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
@@ -341,6 +346,47 @@ func GetAllServerInfo(ctx context.Context) (map[string]*serverinfo.ServerInfo, e
 		return nil, err
 	}
 	return is.svrInfoSyncer.GetAllServerInfo(ctx)
+}
+
+// UpdateServerReadOnlyStatus updates the local TiDB read-only status in the info syncer.
+func UpdateServerReadOnlyStatus(ctx context.Context) error {
+	return updateServerReadOnlyStatus(ctx)
+}
+
+func updateServerReadOnlyStatus(ctx context.Context) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+	return is.svrInfoSyncer.UpdateServerReadOnlyStatus(
+		ctx,
+		vardef.RestrictedReadOnly.Load(),
+		vardef.VarTiDBSuperReadOnly.Load(),
+	)
+}
+
+func getClusterReadOnlyStatus(ctx context.Context) (bool, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return vardef.LocalTiDBReadOnlyStatus(), nil
+	}
+	allServerInfo, err := is.svrInfoSyncer.GetAllServerInfo(ctx)
+	if err != nil {
+		return false, err
+	}
+	return clusterReadOnlyStatusFromServerInfo(allServerInfo), nil
+}
+
+func clusterReadOnlyStatusFromServerInfo(allServerInfo map[string]*serverinfo.ServerInfo) bool {
+	if len(allServerInfo) == 0 {
+		return false
+	}
+	for _, info := range allServerInfo {
+		if info == nil || !info.TiDBEffectiveReadOnly {
+			return false
+		}
+	}
+	return true
 }
 
 // UpdateServerLabel updates the server label for global info syncer.

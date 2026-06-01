@@ -81,6 +81,12 @@ func withMinValue(minVal int64) execConcurrencySysVarOption {
 	return func(sv *SysVar) { sv.MinValue = minVal }
 }
 
+func reportTiDBReadOnlyStatus(ctx context.Context) {
+	if err := vardef.ReportReadOnlyStatus(ctx); err != nil {
+		logutil.BgLogger().Warn("update TiDB read-only status failed", zap.Error(err))
+	}
+}
+
 // newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
 func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
 	sv := &SysVar{
@@ -971,7 +977,7 @@ var defaultSysVars = []*SysVar{
 			tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, int64(tikvstore.DefTxnCommitBatchSize))))
 			return nil
 		}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRestrictedReadOnly, Value: BoolToOnOff(vardef.DefTiDBRestrictedReadOnly), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRestrictedReadOnly, Value: BoolToOnOff(vardef.DefTiDBRestrictedReadOnly), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
 		if on && s.StmtCtx.StmtType == "Set" {
@@ -985,6 +991,7 @@ var defaultSysVars = []*SysVar{
 			}
 		}
 		vardef.RestrictedReadOnly.Store(on)
+		reportTiDBReadOnlyStatus(ctx)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSuperReadOnly, Value: BoolToOnOff(vardef.DefTiDBSuperReadOnly), Type: vardef.TypeBool, Validation: func(s *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
@@ -999,9 +1006,17 @@ var defaultSysVars = []*SysVar{
 			}
 		}
 		return normalizedValue, nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		vardef.VarTiDBSuperReadOnly.Store(TiDBOptOn(val))
+		reportTiDBReadOnlyStatus(ctx)
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBIsReadOnly, Value: vardef.Off, Type: vardef.TypeBool, ReadOnly: true, GetGlobal: func(ctx context.Context, s *SessionVars) (string, error) {
+		on, err := vardef.GetClusterReadOnlyStatus(ctx)
+		if err != nil {
+			return vardef.Off, err
+		}
+		return BoolToOnOff(on), nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableGOGCTuner, Value: BoolToOnOff(vardef.DefTiDBEnableGOGCTuner), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
