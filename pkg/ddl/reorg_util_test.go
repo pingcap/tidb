@@ -15,8 +15,10 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"net"
@@ -33,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	lightningtikv "github.com/pingcap/tidb/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -59,6 +62,10 @@ func (mockCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
 	return append([]byte("k:"), start...), append([]byte("k:"), end...)
 }
 
+func (mockCodec) DecodeRegionRange(start, end []byte) ([]byte, []byte, error) {
+	return bytes.TrimPrefix(start, []byte("k:")), bytes.TrimPrefix(end, []byte("k:")), nil
+}
+
 type mockHelperStorage struct {
 	helper.Storage
 	codec tikv.Codec
@@ -76,6 +83,115 @@ func (s mockHelperStorage) GetPDHTTPClient() pdhttp.Client {
 func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 	return nil
 }
+
+type blockSamplePredictionTestStore struct {
+	helper.Storage
+	codec          tikv.Codec
+	pdCli          pdhttp.Client
+	snapshot       kv.Snapshot
+	currentVersion kv.Version
+}
+
+func (s blockSamplePredictionTestStore) GetSnapshot(ver kv.Version) kv.Snapshot {
+	return s.snapshot
+}
+
+func (s blockSamplePredictionTestStore) CurrentVersion(txnScope string) (kv.Version, error) {
+	return s.currentVersion, nil
+}
+
+func (s blockSamplePredictionTestStore) GetCodec() tikv.Codec {
+	return s.codec
+}
+
+func (s blockSamplePredictionTestStore) GetPDHTTPClient() pdhttp.Client {
+	return s.pdCli
+}
+
+func (s blockSamplePredictionTestStore) GetRegionCache() *tikv.RegionCache {
+	return nil
+}
+
+type blockSamplePredictionKV struct {
+	key   kv.Key
+	value []byte
+}
+
+type blockSamplePredictionSnapshot struct {
+	kvs []blockSamplePredictionKV
+}
+
+func (s blockSamplePredictionSnapshot) Get(_ context.Context, key kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
+	idx := slices.IndexFunc(s.kvs, func(item blockSamplePredictionKV) bool {
+		return bytes.Equal(item.key, key)
+	})
+	if idx < 0 {
+		return kv.ValueEntry{}, kv.ErrNotExist
+	}
+	return kv.NewValueEntry(s.kvs[idx].value, 0), nil
+}
+
+func (s blockSamplePredictionSnapshot) Iter(key kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	idx, _ := slices.BinarySearchFunc(s.kvs, key, func(item blockSamplePredictionKV, target kv.Key) int {
+		return bytes.Compare(item.key, target)
+	})
+	return &blockSamplePredictionIterator{kvs: s.kvs, idx: idx, upperBound: upperBound}, nil
+}
+
+func (s blockSamplePredictionSnapshot) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
+	return &kv.EmptyIterator{}, nil
+}
+
+func (s blockSamplePredictionSnapshot) BatchGet(ctx context.Context, keys []kv.Key, _ ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	result := make(map[string]kv.ValueEntry, len(keys))
+	for _, key := range keys {
+		entry, err := s.Get(ctx, key)
+		if err == nil {
+			result[string(key)] = entry
+			continue
+		}
+		if !kv.ErrNotExist.Equal(err) {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (s blockSamplePredictionSnapshot) SetOption(opt int, val any) {}
+
+type blockSamplePredictionIterator struct {
+	kvs        []blockSamplePredictionKV
+	idx        int
+	upperBound kv.Key
+}
+
+func (it *blockSamplePredictionIterator) Valid() bool {
+	if it.idx >= len(it.kvs) {
+		return false
+	}
+	return len(it.upperBound) == 0 || bytes.Compare(it.kvs[it.idx].key, it.upperBound) < 0
+}
+
+func (it *blockSamplePredictionIterator) Key() kv.Key {
+	if !it.Valid() {
+		return nil
+	}
+	return it.kvs[it.idx].key
+}
+
+func (it *blockSamplePredictionIterator) Value() []byte {
+	if !it.Valid() {
+		return nil
+	}
+	return it.kvs[it.idx].value
+}
+
+func (it *blockSamplePredictionIterator) Next() error {
+	it.idx++
+	return nil
+}
+
+func (it *blockSamplePredictionIterator) Close() {}
 
 func sampleScopeCountsForTest(kvs []sampledIndexKV, count int) map[sampledIndexKVScope]int {
 	scopeCounts := make(map[sampledIndexKVScope]int)
@@ -250,6 +366,67 @@ func expectedRegionRange(tableID int64) ([]byte, []byte) {
 	return mockCodec{}.EncodeRegionRange(tableStart, tableEnd)
 }
 
+func tablePDRegionForTest(t *testing.T, store helper.Storage, physicalID int64, approximateKeys int64) pdhttp.RegionInfo {
+	t.Helper()
+	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
+	start, end := store.GetCodec().EncodeRegionRange(tableStart, tableEnd)
+	return pdhttp.RegionInfo{
+		ID:              physicalID,
+		StartKey:        hex.EncodeToString(start),
+		EndKey:          hex.EncodeToString(end),
+		ApproximateKeys: approximateKeys,
+	}
+}
+
+func blockSamplePredictionTableForTest() table.PhysicalTable {
+	idType := types.NewFieldType(mysql.TypeLonglong)
+	idType.AddFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	intType.AddFlag(mysql.NotNullFlag)
+	stringType := types.NewFieldType(mysql.TypeVarString)
+	stringType.SetCharset(charset.CharsetUTF8MB4)
+	stringType.SetCollate(charset.CollationBin)
+
+	tblInfo := &model.TableInfo{
+		ID:         60101,
+		Name:       ast.NewCIStr("t_block_sample_prediction"),
+		State:      model.StatePublic,
+		PKIsHandle: true,
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Name: ast.NewCIStr("id"), Offset: 0, State: model.StatePublic, FieldType: *idType},
+			{ID: 2, Name: ast.NewCIStr("b"), Offset: 1, State: model.StatePublic, FieldType: *intType},
+			{ID: 3, Name: ast.NewCIStr("c"), Offset: 2, State: model.StatePublic, FieldType: *stringType},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    60102,
+				Name:  ast.NewCIStr("idx_b"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("b"), Offset: 1, Length: types.UnspecifiedLength},
+				},
+			},
+		},
+	}
+	return tables.MockTableFromMeta(tblInfo).(table.PhysicalTable)
+}
+
+func blockSamplePredictionRowKVForTest(t *testing.T, physicalTbl table.PhysicalTable, handle int64, b int64, c string) blockSamplePredictionKV {
+	t.Helper()
+	value, err := tablecodec.EncodeOldRow(
+		time.UTC,
+		[]types.Datum{types.NewIntDatum(b), types.NewStringDatum(c)},
+		[]int64{2, 3},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	return blockSamplePredictionKV{
+		key:   tablecodec.EncodeRowKeyWithHandle(physicalTbl.GetPhysicalID(), kv.IntHandle(handle)),
+		value: value,
+	}
+}
+
 func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 	t.Run("TiKVSpacePrecheckCapability", func(t *testing.T) {
 		ok, err := canRunTiKVSpacePrecheck(mockHelperStorage{codec: mockCodec{}})
@@ -358,6 +535,64 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestPredictTiKVIndexBytesBlockSample(t *testing.T) {
+	physicalTbl := blockSamplePredictionTableForTest()
+	idxInfo := physicalTbl.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+
+	rowKVs := make([]blockSamplePredictionKV, 0, 16)
+	for i := 1; i <= 16; i++ {
+		rowKVs = append(rowKVs, blockSamplePredictionRowKVForTest(t, physicalTbl, int64(i), int64(i%4), fmt.Sprintf("v%02d", i)))
+	}
+	slices.SortFunc(rowKVs, func(a, b blockSamplePredictionKV) int {
+		return bytes.Compare(a.key, b.key)
+	})
+
+	pdCli := &mockPDHTTPClient{
+		regionInfos: []*pdhttp.RegionsInfo{
+			{
+				Count: 1,
+				Regions: []pdhttp.RegionInfo{
+					tablePDRegionForTest(t, mockHelperStorage{codec: mockCodec{}}, physicalTbl.GetPhysicalID(), 16),
+				},
+			},
+		},
+	}
+	workerStore := blockSamplePredictionTestStore{
+		codec:          mockCodec{},
+		pdCli:          pdCli,
+		snapshot:       blockSamplePredictionSnapshot{kvs: rowKVs},
+		currentVersion: kv.Version{Ver: 404411537129996288},
+	}
+	w := &worker{
+		ddlCtx: &ddlCtx{
+			store: workerStore,
+		},
+	}
+	sctx := mock.NewContext()
+
+	result, err := w.predictTiKVIndexBytesBlockSample(context.Background(), sctx, physicalTbl, &reorgInfo{
+		Job: &model.Job{
+			ID:        9527,
+			ReorgMeta: &model.DDLReorgMeta{},
+		},
+		elements: []*meta.Element{
+			{ID: idxInfo.ID, TypeKey: meta.IndexElementKey},
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, result.UseStats)
+	require.Equal(t, 1, result.SampledRegionCount)
+	require.Equal(t, 16, result.SampledRowCount)
+	require.Zero(t, result.ReadErrorCount)
+	require.Positive(t, result.PredictedBytes)
+	require.Positive(t, result.MVCCOverheadBytes)
+	require.GreaterOrEqual(t, result.EncodedKeySharedPrefixAvgBytes, 0.0)
+	require.GreaterOrEqual(t, result.RawKeySharedPrefixAvgBytes, 0.0)
+	require.Positive(t, result.RawKeyLengthAvgBytes)
+	require.Equal(t, 1, pdCli.callCount)
 }
 
 func TestSumTiKVStoreCapacity(t *testing.T) {
@@ -565,6 +800,29 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 			},
 		}, 120)
 		require.ErrorContains(t, err, "TiKV store capacity")
+	})
+
+	t.Run("space precheck enforce behavior", func(t *testing.T) {
+		capacity := &TiKVClusterCapacity{
+			TotalBytes:     1000,
+			AvailableBytes: 210,
+			StoreCount:     2,
+			Stores: []TiKVStoreCapacity{
+				{StoreID: 1, TotalBytes: 500, AvailableBytes: 130},
+				{StoreID: 2, TotalBytes: 500, AvailableBytes: 80},
+			},
+		}
+		checkErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(capacity, 20, false)
+		require.ErrorContains(t, checkErr, "TiKV cluster capacity")
+		require.NoError(t, rejectErr)
+
+		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 20, true)
+		require.ErrorContains(t, checkErr, "TiKV cluster capacity")
+		require.EqualError(t, rejectErr, checkErr.Error())
+
+		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 0, true)
+		require.NoError(t, checkErr)
+		require.NoError(t, rejectErr)
 	})
 
 	t.Run("replica count from placement bundle excludes non-TiKV rules", func(t *testing.T) {
