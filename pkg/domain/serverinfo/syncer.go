@@ -237,7 +237,11 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	})
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
-		info := s.info.Load()
+		localInfo := s.info.Load()
+		info := getServerInfo(localInfo.ID, localInfo.ServerIDGetter, localInfo.AssumedKeyspace)
+		info.TiDBRestrictedReadOnly = localInfo.TiDBRestrictedReadOnly
+		info.TiDBSuperReadOnly = localInfo.TiDBSuperReadOnly
+		info.TiDBEffectiveReadOnly = localInfo.TiDBEffectiveReadOnly
 		allInfo[info.ID] = info
 		return allInfo, nil
 	}
