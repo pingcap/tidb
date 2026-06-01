@@ -571,7 +571,7 @@ func isUnicodeCollation(ch string) bool {
 func isBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationGBKBin
+		collate == charset.CollationGBKBin || collate == charset.CollationUTF8MB40900Bin
 }
 
 // getBinCollation get binary collation by charset
