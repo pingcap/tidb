@@ -220,8 +220,8 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.IsRoot = true
 	}
 	// CteSinkNum/CteSourceNum are required fields in tipb.CTESink/CTESource. After we "untwist" UNION ALL
-	// and split the plan into fragments, the same CTE sink/source can appear multiple times in the final
-	// MPP DAG. Count the executors per TiFlash task address and fill the local numbers into each node.
+	// and split the plan into fragments, one CTE id can appear in multiple CTESink/CTESource plan nodes.
+	// Count the executor instances per TiFlash task address and fill the local numbers into each node.
 	if err := e.fixDuplicatedTimesForCTE(e.frags); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -229,14 +229,14 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 }
 
 // cteSinkInMPPTasks records one CTESink plan node and the self tasks of the fragment containing it.
-// The tasks provide the TiFlash addresses where this sink executor will run.
+// The tasks provide the TiFlash addresses where this plan node's sink executors are instantiated.
 type cteSinkInMPPTasks struct {
 	sink  *PhysicalCTESink
 	tasks []*kv.MPPTask
 }
 
 // cteSourceInMPPTasks records one CTESource plan node and the self tasks of the fragment containing it.
-// The tasks provide the TiFlash addresses where this source executor will run.
+// The tasks provide the TiFlash addresses where this plan node's source executors are instantiated.
 type cteSourceInMPPTasks struct {
 	source *PhysicalCTESource
 	tasks  []*kv.MPPTask
