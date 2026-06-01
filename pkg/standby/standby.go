@@ -51,7 +51,8 @@ const (
 
 	httpPathPrefix = "/tidb-pool/"
 
-	maxCloseConnWait = 24 * time.Hour
+	defaultCloseConnWait = 8 * time.Hour
+	maxCloseConnWait     = 24 * time.Hour
 
 	managerFreeMaxAttempts   = 3
 	managerFreeRetryInterval = 200 * time.Millisecond
@@ -328,6 +329,9 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 					tidbExit(syscall.SIGINT)
 					return
 				}
+				if options.wait <= 0 {
+					options.wait = defaultCloseConnWait
+				}
 				c.setCloseConnWait(options.wait)
 				if options.needMgrFree {
 					svr.SetNeedRequestMgrFree()
@@ -602,10 +606,10 @@ func (c *LoadKeyspaceController) waitZeroConn(svr server.StandbyShutdownServer) 
 	}
 }
 
-func (c *LoadKeyspaceController) reportManagerFree(exitReason string) {
+func (c *LoadKeyspaceController) reportManagerFree(exitReason string) bool {
 	if c.mgrCli == nil {
 		logutil.BgLogger().Warn("manager notifier is unavailable")
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), tidbmanager.DefaultTimeout)
 	defer cancel()
@@ -620,8 +624,8 @@ func (c *LoadKeyspaceController) reportManagerFree(exitReason string) {
 			if attempt < managerFreeMaxAttempts {
 				select {
 				case <-ctx.Done():
-					logutil.BgLogger().Warn("manager free report timed out", zap.Error(ctx.Err()))
-					return
+					logutil.BgLogger().Error("manager free report timed out", zap.Error(ctx.Err()))
+					return false
 				case <-time.After(managerFreeRetryInterval):
 				}
 			}
@@ -630,7 +634,8 @@ func (c *LoadKeyspaceController) reportManagerFree(exitReason string) {
 		if attempt > 1 {
 			logutil.BgLogger().Info("reported free after retry", zap.Int("attempt", attempt))
 		}
-		return
+		return true
 	}
-	logutil.BgLogger().Warn("failed to report free after retries", zap.Error(lastErr))
+	logutil.BgLogger().Error("failed to report free after retries", zap.Error(lastErr))
+	return false
 }

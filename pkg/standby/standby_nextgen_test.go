@@ -156,6 +156,14 @@ func TestOnServerShutdownStarterRetriesManagerFree(t *testing.T) {
 
 	require.True(t, mgrCli.called)
 	require.Equal(t, 3, mgrCli.calls)
+
+	t.Run("returns false after exhausting retries", func(t *testing.T) {
+		mgrCli := &mockManagerClient{failures: managerFreeMaxAttempts}
+		controller := NewLoadKeyspaceController(mgrCli)
+
+		require.False(t, controller.reportManagerFree("manager free failed"))
+		require.Equal(t, managerFreeMaxAttempts, mgrCli.calls)
+	})
 }
 
 func TestStatusReturnsExportIDForStarter(t *testing.T) {
@@ -301,6 +309,7 @@ func TestExitGracefulUsesTermSignalWithoutManagerFree(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, syscall.SIGTERM, gotSig)
+	require.Equal(t, defaultCloseConnWait, controller.getCloseConnWait())
 }
 
 func TestExitRejectsManagerFreeWithoutNotifier(t *testing.T) {
@@ -328,18 +337,54 @@ func TestExitRejectsManagerFreeWithoutNotifier(t *testing.T) {
 		tidbExit = oldExit
 	})
 
-	controller := NewLoadKeyspaceController(nil)
-	_, mux := controller.Handler(server.NewTestServer(config.NewConfig()))
-	query := url.Values{
-		"keyspace":      {"ks1"},
-		"graceful":      {"true"},
-		"need_mgr_free": {"true"},
-	}
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/tidb-pool/exit?"+query.Encode(), nil))
+	t.Run("uses default wait", func(t *testing.T) {
+		oldExit := tidbExit
+		var gotSig syscall.Signal
+		tidbExit = func(sig syscall.Signal) {
+			gotSig = sig
+		}
+		t.Cleanup(func() {
+			tidbExit = oldExit
+		})
 
-	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
-	require.Equal(t, "manager notifier is unavailable\n", recorder.Body.String())
+		for _, wait := range []string{"", "0", "0s"} {
+			gotSig = 0
+			controller := NewLoadKeyspaceController(&mockManagerClient{})
+			svr := server.NewTestServer(config.NewConfig())
+			_, mux := controller.Handler(svr)
+			query := url.Values{
+				"keyspace":      {"ks1"},
+				"graceful":      {"true"},
+				"need_mgr_free": {"true"},
+			}
+			if wait != "" {
+				query.Set("wait", wait)
+			}
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/tidb-pool/exit?"+query.Encode(), nil))
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Equal(t, syscall.SIGTERM, gotSig)
+			require.True(t, svr.GetNeedRequestMgrFree())
+			require.Equal(t, defaultCloseConnWait, controller.getCloseConnWait())
+		}
+	})
+
+	t.Run("requires notifier", func(t *testing.T) {
+		controller := NewLoadKeyspaceController(nil)
+		_, mux := controller.Handler(server.NewTestServer(config.NewConfig()))
+		query := url.Values{
+			"keyspace":      {"ks1"},
+			"graceful":      {"true"},
+			"need_mgr_free": {"true"},
+			"wait":          {"1s"},
+		}
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/tidb-pool/exit?"+query.Encode(), nil))
+
+		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+		require.Equal(t, "manager notifier is unavailable\n", recorder.Body.String())
+	})
 }
 
 func TestParseExitWait(t *testing.T) {
