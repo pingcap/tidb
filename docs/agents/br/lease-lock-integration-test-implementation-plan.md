@@ -92,6 +92,7 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
 - 2026-06-01 Task 3 实现记录：新增 `br/tests/br_lease_lock/run.sh`，包含 case list、目录隔离、marker 等待、lock file 查找、lock JSON 读取、后台 BR 进程和 failpoint 作用域 helper，并先草拟了 migration success/block-lost/error-lost 三个 case 函数。该阶段只做 `bash -n br/tests/br_lease_lock/run.sh` 语法检查；case 当时尚未接入脚本主流程，真实 cluster smoke run、truncate case 和 stale reclaim case 仍待后续任务实现。
 - 2026-06-01 独立审查阶段修正记录：修复“静默成功”风险；`run_br_capture`/`run_br_with_failpoints` 失败时会打印日志；migration success 草稿要求 acquired 后 PD clock marker 至少增加 2 个；migration lost 草稿除了 `context canceled` 之外，还按 block/error 模式断言具体 renewal loss 日志。
 - 2026-06-01 下一阶段进展：`br/tests/br_lease_lock/run.sh` 已接入 7 个 case 的调用：migration renewal success、migration lost by block/error、truncate renewal success、truncate lost by block/error、stale lock reclaim。`br_lease_lock` 已加入 `br/tests/run_group_br_tests.sh` 的 G02。当前只做 shell 语法与文档检查，尚未运行真实集群；实际通过性需要后续 `make build_for_br_integration_test` 和 `TEST_NAME=br_lease_lock br/tests/run.sh` 验证。
+- 2026-06-01 WIP 验证记录：`make build_for_br_integration_test` 通过，且 failpoint transform 后未发现 `_curpkg_`、`failpoint.Eval`、`failpoint.Call` 残留。随后尝试运行 `TEST_NAME=br_lease_lock br/tests/run.sh`，但本地环境缺少 `pd-server`，服务启动停在 `https://127.0.0.1:2379/pd/api/v1/version` 等待；已终止该测试进程树。真实集群 case 仍未验证通过。
 
 ## Context and Orientation
 
