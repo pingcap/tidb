@@ -1116,7 +1116,7 @@ dxf-resource-limit = 101`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.True(t, conf.StarterParams.EnableZeroBackend)
+	require.True(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
 	conf = NewConfig()
@@ -1138,13 +1138,13 @@ max-idle-seconds = 60
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 deploy-mode = "starter"
-[starter-params]
+[standby]
 enable-zero-backend = false
 `), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.False(t, conf.StarterParams.EnableZeroBackend)
+	require.False(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"

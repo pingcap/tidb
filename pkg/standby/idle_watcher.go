@@ -81,7 +81,7 @@ func (c *LoadKeyspaceController) OnServerCreated(svr *server.Server) {
 
 				// if zero backend enabled. We shouldn't skip graceful shutdown to wait for session migration.
 				// And clientInteractiveCount don't need to be considered because session can be restored by gateway.
-				if deploymode.IsStarter() && config.GetGlobalConfig().StarterParams.EnableZeroBackend && (connCount == 0 || processCount == 0) && inTransCount == 0 {
+				if deploymode.IsStarter() && config.GetGlobalConfig().Standby.EnableZeroBackend && (connCount == 0 || processCount == 0) && inTransCount == 0 {
 					SaveTidbNormalRestartInfo("connection idle for too long")
 					svr.SetNeedRequestMgrFree()
 					signal.TiDBExit(syscall.SIGTERM)

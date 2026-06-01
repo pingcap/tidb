@@ -562,6 +562,14 @@ func (c *LoadKeyspaceController) OnServerShutdown(svr server.StandbyShutdownServ
 	// Give up auto ID ownership before waiting for TiProxy to migrate traffic.
 	svr.AutoIDServiceClose()
 
+	if svr.GetForceShutdown() {
+		return
+	}
+
+	if !c.waitZeroConn(svr) {
+		return
+	}
+
 	if svr.GetNeedRequestMgrFree() {
 		exitReason, err := loadTiDBNormalRestartLog()
 		if err != nil && !os.IsNotExist(err) {
@@ -570,14 +578,12 @@ func (c *LoadKeyspaceController) OnServerShutdown(svr server.StandbyShutdownServ
 		}
 		c.reportManagerFree(string(exitReason))
 	}
+}
 
-	if svr.GetForceShutdown() {
-		return
-	}
-
+func (c *LoadKeyspaceController) waitZeroConn(svr server.StandbyShutdownServer) bool {
 	maxWaitTime := c.getCloseConnWait()
 	if maxWaitTime <= 0 {
-		return
+		return true
 	}
 
 	logutil.BgLogger().Info("waiting for tiproxy to migrate and close all connections", zap.Duration("maxWaitTime", maxWaitTime))
@@ -589,8 +595,10 @@ func (c *LoadKeyspaceController) OnServerShutdown(svr server.StandbyShutdownServ
 	select {
 	case <-time.After(maxWaitTime):
 		logutil.BgLogger().Info("tiproxy connection close timed out")
+		return false
 	case <-done:
 		logutil.BgLogger().Info("tiproxy has closed all connections")
+		return true
 	}
 }
 

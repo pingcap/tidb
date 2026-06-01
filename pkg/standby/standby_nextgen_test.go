@@ -31,6 +31,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type blockingShutdownServer struct {
+	forceShutdown      bool
+	needRequestMgrFree bool
+	waitStarted        chan struct{}
+	waitDone           chan struct{}
+}
+
+func newBlockingShutdownServer() *blockingShutdownServer {
+	return &blockingShutdownServer{
+		needRequestMgrFree: true,
+		waitStarted:        make(chan struct{}),
+		waitDone:           make(chan struct{}),
+	}
+}
+
+func (s *blockingShutdownServer) AutoIDServiceClose() {}
+
+func (s *blockingShutdownServer) GetForceShutdown() bool {
+	return s.forceShutdown
+}
+
+func (s *blockingShutdownServer) GetNeedRequestMgrFree() bool {
+	return s.needRequestMgrFree
+}
+
+func (s *blockingShutdownServer) IsAutoIDOwner() bool {
+	return false
+}
+
+func (s *blockingShutdownServer) SetForceShutdown() {
+	s.forceShutdown = true
+}
+
+func (s *blockingShutdownServer) SetNeedRequestMgrFree() {
+	s.needRequestMgrFree = true
+}
+
+func (s *blockingShutdownServer) WaitZeroConn() {
+	close(s.waitStarted)
+	<-s.waitDone
+}
+
 func TestOnServerShutdownStarterReportsFree(t *testing.T) {
 	resetStandbyTestState(t)
 
@@ -55,6 +97,45 @@ func TestOnServerShutdownStarterReportsFree(t *testing.T) {
 	require.True(t, mgrCli.called)
 	require.Equal(t, "keyspace-1:idle", mgrCli.gotReason)
 	require.Equal(t, terminatingState, state)
+
+	t.Run("reports after zero connection wait succeeds", func(t *testing.T) {
+		mgrCli := &mockManagerClient{}
+		controller := NewLoadKeyspaceController(mgrCli)
+		controller.setCloseConnWait(time.Second)
+		svr := newBlockingShutdownServer()
+
+		done := make(chan struct{})
+		go func() {
+			controller.OnServerShutdown(svr)
+			close(done)
+		}()
+
+		select {
+		case <-svr.waitStarted:
+		case <-time.After(time.Second):
+			require.Fail(t, "wait zero connection was not called")
+		}
+		require.False(t, mgrCli.called)
+
+		close(svr.waitDone)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			require.Fail(t, "shutdown did not finish")
+		}
+		require.True(t, mgrCli.called)
+	})
+
+	t.Run("does not report free after zero connection wait timeout", func(t *testing.T) {
+		mgrCli := &mockManagerClient{}
+		controller := NewLoadKeyspaceController(mgrCli)
+		controller.setCloseConnWait(10 * time.Millisecond)
+		svr := newBlockingShutdownServer()
+
+		controller.OnServerShutdown(svr)
+		require.False(t, mgrCli.called)
+		close(svr.waitDone)
+	})
 }
 
 func TestOnServerShutdownStarterRetriesManagerFree(t *testing.T) {

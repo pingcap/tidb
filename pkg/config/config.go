@@ -1029,16 +1029,16 @@ type Standby struct {
 	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
 	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
 	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+	// EnableZeroBackend is used to control the behavior of standby idle watcher.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
+	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
 // StarterParams contains Starter-only extension parameters.
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id"`
-	// EnableZeroBackend is used to control the behavior of standby idle watcher.
-	// When it is enabled, the idle watcher will not wait for session migration
-	// and will not consider client interactive connections.
-	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
 	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
@@ -1503,8 +1503,8 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
-	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("starter-params", "enable-zero-backend") {
-		c.StarterParams.EnableZeroBackend = true
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
+		c.Standby.EnableZeroBackend = true
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
