@@ -367,7 +367,7 @@ func TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields(t *testing.T)
 		TopRUEnabled: true,
 	})
 	finish := stats.MergeRUInto()
-	require.InDelta(t, 0.31, finish[key].TotalRU, 1e-9)              // 5*0.02 + 3*0.07
+	require.InDelta(t, 0.31, finish[key].TotalRU, 1e-9) // 5*0.02 + 3*0.07
 	require.InDelta(t, 1.31, inFlight[key].TotalRU+finish[key].TotalRU, 1e-9)
 }
 
