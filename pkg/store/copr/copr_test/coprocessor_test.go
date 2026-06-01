@@ -33,11 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
->>>>>>> dd8253cf5da (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676))
 	pd "github.com/tikv/pd/client"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )

@@ -840,19 +840,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	idxID := e.getIndexPlanRootID()
 	needMerge := e.keepOrder && needMergeSort(e.byItems, len(kvRanges))
 	e.idxWorkerWg.Add(1)
-<<<<<<< HEAD
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
-=======
-	e.pool.submit(func() {
-		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
-		growWorkerStack16K()
 		defer func() {
 			close(e.resultCh)
 			e.idxWorkerWg.Done()
 		}()
 
->>>>>>> dd8253cf5da (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676))
 		worker := &indexWorker{
 			idxLookup:       e,
 			workCh:          workCh,
@@ -982,19 +976,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		}
 		err := worker.fetchHandles(ctx1, selResultList, indexTypes)
 		cancel()
-<<<<<<< HEAD
-		selResultList.Close()
-		close(workCh)
-		close(e.resultCh)
-		e.idxWorkerWg.Done()
-	}()
-=======
 		if err != nil {
 			worker.syncErr(err)
 			return
 		}
-	})
->>>>>>> dd8253cf5da (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676))
+	}()
 	return nil
 }
 
@@ -1461,17 +1447,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
-	idxID := w.idxLookup.getIndexPlanRootID()
-	if w.idxLookup.stmtRuntimeStatsColl != nil {
-		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
-			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.stmtRuntimeStatsColl.GetBasicRuntimeStats(idxID)
-		}
-	}
-=======
 
 	taskID := 0
->>>>>>> dd8253cf5da (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676))
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := results[curResultIdx]
@@ -1487,69 +1464,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			i++
 		}
 
-<<<<<<< HEAD
-		if len(handles) == 0 && len(completedRows) == 0 {
-			continue
-		}
-
-		var completedTask *lookupTableTask
-		if rowCnt := len(completedRows); rowCnt > 0 {
-			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
-			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
-			// for non-keep-order request, the completed rows can be sent to resultCh directly.
-			completedTask = w.buildCompletedTask(completedRows)
-		}
-
-		var tableLookUpTask *lookupTableTask
-		if rowCnt := len(handles); rowCnt > 0 {
-			if w.idxLookup.indexLookUpPushDown {
-				metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
-			} else {
-				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
-			}
-			tableLookUpTask = w.buildTableTask(handles, retChunk)
-			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
-			}
-		}
-
-		finishBuild := time.Now()
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-w.finished:
-			return nil
-		default:
-			if completedTask != nil {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-w.finished:
-					return nil
-				case w.resultCh <- completedTask:
-				}
-			}
-
-			if tableLookUpTask != nil {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-w.finished:
-					return nil
-				case w.workCh <- tableLookUpTask:
-					w.resultCh <- tableLookUpTask
-				}
-			}
-		}
-		if w.idxLookup.stats != nil {
-			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
-			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
-			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
-=======
 		stopped := w.buildAndDispatchLookupTasks(ctx, curResultIdx, &taskID, &data)
 		if stopped {
 			return nil
->>>>>>> dd8253cf5da (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676))
 		}
 	}
 	return nil
@@ -1647,7 +1564,7 @@ func (w *indexWorker) prepareHandleFetch(indexTypes []*types.FieldType) (*chunk.
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.stmtRuntimeStatsColl != nil {
 		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
-			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.stmtRuntimeStatsColl.GetBasicRuntimeStats(idxID, true)
+			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.stmtRuntimeStatsColl.GetBasicRuntimeStats(idxID)
 		}
 	}
 	return chk, handleOffsets, nil
@@ -1681,7 +1598,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
 		// Currently, completedRows is only produced by index lookup push down which does not support keep order.
 		// for non-keep-order request, the completed rows can be sent to resultCh directly.
-		completedTask = w.buildCompletedTask(*taskID, data.completedRows)
+		completedTask = w.buildCompletedTask(data.completedRows)
 		*taskID++
 	}
 
@@ -1692,7 +1609,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		} else {
 			metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
 		}
-		tableLookUpTask = w.buildTableTask(*taskID, data.handles, data.retChunk)
+		tableLookUpTask = w.buildTableTask(data.handles, data.retChunk)
 		if w.idxLookup.partitionTableMode {
 			tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 		}
@@ -1707,23 +1624,24 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		return true
 	default:
 		if completedTask != nil {
-			w.resultCh <- completedTask
+			select {
+			case <-ctx.Done():
+				return true
+			case <-w.finished:
+				return true
+			case w.resultCh <- completedTask:
+			}
 		}
 
 		if tableLookUpTask != nil {
-			e := w.idxLookup
-			e.tblWorkerWg.Add(1)
-			e.pool.submit(func() {
-				defer e.tblWorkerWg.Done()
-				select {
-				case <-e.finished:
-					return
-				default:
-					growWorkerStack16K()
-					execTableTask(e, tableLookUpTask)
-				}
-			})
-			w.resultCh <- tableLookUpTask
+			select {
+			case <-ctx.Done():
+				return true
+			case <-w.finished:
+				return true
+			case w.workCh <- tableLookUpTask:
+				w.resultCh <- tableLookUpTask
+			}
 		}
 	}
 	if w.idxLookup.stats != nil {

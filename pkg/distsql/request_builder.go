@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // RequestBuilder is used to build a "kv.Request".
