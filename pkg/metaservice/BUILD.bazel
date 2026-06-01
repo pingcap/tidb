@@ -26,10 +26,10 @@ go_test(
         "etcd_test.go",
         "metamanager_test.go",
     ],
+    embed = [":metaservice"],
     flaky = True,
     shard_count = 6,
     deps = [
-        ":metaservice",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_stretchr_testify//require",

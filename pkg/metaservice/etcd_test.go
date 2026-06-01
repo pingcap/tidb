@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metaservice_test
+package metaservice
 
 import (
 	"context"
@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -68,7 +67,7 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 		}},
 	}
 
-	serviceClient := metaservice.NewEtcdMetaServiceClient(etcdCli, pdCli)
+	serviceClient := newClient(etcdCli, pdCli)
 	addrs, err := serviceClient.GetPDAddrs()
 	require.NoError(t, err)
 	require.Equal(t, expectAddrs, addrs)
@@ -86,7 +85,7 @@ func TestGetPDLeaderAddrsWithRealClient(t *testing.T) {
 	defer cluster.Terminate(t)
 	etcdCli := cluster.RandClient()
 
-	serviceClient := metaservice.NewEtcdMetaServiceClient(etcdCli, nil)
+	serviceClient := newClient(etcdCli, nil)
 	ctx := context.Background()
 
 	leaderAddr, err := serviceClient.GetPDLeaderAddrs(ctx)
@@ -105,7 +104,7 @@ func TestGetPDLeaderAddrsReturnsErrorWhenLeaderNotFound(t *testing.T) {
 		require.NoError(t, etcdCli.Close())
 	}()
 
-	serviceClient := metaservice.NewEtcdMetaServiceClient(etcdCli, nil)
+	serviceClient := newClient(etcdCli, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
@@ -145,7 +144,7 @@ func TestParseURL(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		prefix, host, port, err := metaservice.ParseURL(test.rawURL)
+		prefix, host, port, err := ParseURL(test.rawURL)
 
 		// Check if the error status matches the expectation
 		if test.err {
