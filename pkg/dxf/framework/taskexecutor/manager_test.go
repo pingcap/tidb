@@ -17,24 +17,65 @@ package taskexecutor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	mockctx "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type storeWithKS struct {
+	kv.Storage
+	ks string
+}
+
+func (s *storeWithKS) GetKeyspace() string {
+	return s.ks
+}
+
+type testSQLServer struct {
+	stores map[string]kv.Storage
+}
+
+func (s *testSQLServer) GetKSSessPool(string) (tidbutil.DestroyableSessionPool, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *testSQLServer) GetKSStore(targetKS string) (kv.Storage, error) {
+	store, ok := s.stores[targetKS]
+	if !ok {
+		return nil, fmt.Errorf("ks store not found: %s", targetKS)
+	}
+	return store, nil
+}
+
+func (*testSQLServer) GetDDLOwnerMgr() owner.Manager {
+	return nil
+}
+
+func buildMockSessionWithSQLServer(server *testSQLServer) sessionctx.Context {
+	se := mockctx.NewContextDeprecated()
+	se.BindDomainAndSchValidator(server, nil)
+	return se
+}
 
 func TestManageTaskExecutor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	m, err := NewManager(context.Background(), nil, "test", mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), &storeWithKS{}, "test", mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	// add executor 1
@@ -95,7 +136,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	task := &proto.TaskBase{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", RequiredSlots: 6}
 	mockInternalExecutor.EXPECT().GetTaskBase().Return(task).AnyTimes()
 
-	m, err := NewManager(ctx, nil, id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(ctx, &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -164,7 +205,7 @@ func TestManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), nil, id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
@@ -205,7 +246,7 @@ func TestManagerHandleTasks(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), nil, id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -286,7 +327,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), nil, id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(10)
 
@@ -462,6 +503,100 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.Equal(t, 0, len(m.slotManager.executorTasks))
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestStartTaskExecutorResolveTaskStoreFromTaskKeyspace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const (
+		instanceKS = "instance_ks"
+		taskKS     = "task_ks"
+	)
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:            1,
+			Keyspace:      taskKS,
+			Type:          "resolve-store",
+			Step:          proto.StepOne,
+			State:         proto.TaskStateRunning,
+			RequiredSlots: 1,
+		},
+	}
+	mockTaskTable := mock.NewMockTaskTable(ctrl)
+	m, err := NewManager(context.Background(), &storeWithKS{ks: instanceKS}, "test", mockTaskTable, proto.NodeResourceForTest)
+	require.NoError(t, err)
+
+	taskStore := &storeWithKS{ks: taskKS}
+	mockSe := buildMockSessionWithSQLServer(&testSQLServer{
+		stores: map[string]kv.Storage{
+			taskKS: taskStore,
+		},
+	})
+
+	mockExecutor := mock.NewMockTaskExecutor(ctrl)
+	var gotStore kv.Storage
+	RegisterTaskType(task.Type, func(_ context.Context, _ *proto.Task, param Param) TaskExecutor {
+		gotStore = param.TaskStore
+		return mockExecutor
+	})
+	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
+	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
+		return fn(mockSe)
+	})
+	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	runCh := make(chan struct{})
+	mockExecutor.EXPECT().GetTaskBase().Return(&task.TaskBase).AnyTimes()
+	mockExecutor.EXPECT().Run().DoAndReturn(func() {
+		<-runCh
+	})
+	mockExecutor.EXPECT().Close()
+
+	require.True(t, m.startTaskExecutor(&task.TaskBase))
+	require.Same(t, taskStore, gotStore)
+	close(runCh)
+	m.executorWG.Wait()
+}
+
+func TestStartTaskExecutorResolveTaskStoreError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const (
+		instanceKS = "instance_ks"
+		taskKS     = "task_ks"
+	)
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:            2,
+			Keyspace:      taskKS,
+			Type:          "resolve-store-error",
+			Step:          proto.StepOne,
+			State:         proto.TaskStateRunning,
+			RequiredSlots: 1,
+		},
+	}
+	mockTaskTable := mock.NewMockTaskTable(ctrl)
+	m, err := NewManager(context.Background(), &storeWithKS{ks: instanceKS}, "test", mockTaskTable, proto.NodeResourceForTest)
+	require.NoError(t, err)
+
+	mockSe := buildMockSessionWithSQLServer(&testSQLServer{
+		stores: map[string]kv.Storage{},
+	})
+
+	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
+	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
+		return fn(mockSe)
+	})
+	mockTaskTable.EXPECT().FailSubtask(gomock.Any(), "test", task.ID, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, _ int64, err error) error {
+			require.ErrorContains(t, err, "ks store not found")
+			return nil
+		},
+	)
+
+	require.False(t, m.startTaskExecutor(&task.TaskBase))
+	require.Equal(t, proto.NodeResourceForTest.TotalCPU, m.slotManager.availableSlots())
 }
 
 func TestManagerInitMeta(t *testing.T) {

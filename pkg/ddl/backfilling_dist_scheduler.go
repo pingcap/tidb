@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -137,7 +136,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	store, tbl, err := getUserStoreAndTable(ctx, sch.d, sch.d.store, task.Keyspace, job)
+	tbl, err := getUserStoreAndTable(ctx, sch.d, sch.TaskStore, job)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -147,7 +146,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(&task.TaskBase, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
+		return generateReadIndexPlan(ctx, sch.d, sch.TaskStore, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
 		metaBytes, err2 := generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
 		if err2 != nil {
@@ -170,7 +169,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				store.(kv.StorageWithPD),
+				sch.TaskStore.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
@@ -178,7 +177,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		}
 		return nil, nil
 	case proto.BackfillStepMergeTempIndex:
-		return generateMergeTempIndexPlan(ctx, store, tbl, nodeCnt, backfillMeta.EleIDs, logger)
+		return generateMergeTempIndexPlan(ctx, sch.TaskStore, tbl, nodeCnt, backfillMeta.EleIDs, logger)
 	default:
 		return nil, nil
 	}
@@ -187,33 +186,18 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 func getUserStoreAndTable(
 	ctx context.Context,
 	d *ddl,
-	schStore kv.Storage,
-	taskKeyspace string,
+	taskStore kv.Storage,
 	job *model.Job,
-) (kv.Storage, table.Table, error) {
-	store := schStore
-	if taskKeyspace != d.store.GetKeyspace() {
-		taskMgr, err := diststorage.GetTaskManager()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
-			store, err = se.GetSQLServer().GetKSStore(taskKeyspace)
-			return err
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	tblInfo, err := getTblInfo(ctx, store, job)
+) (table.Table, error) {
+	tblInfo, err := getTblInfo(ctx, taskStore, job)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return store, tbl, nil
+	return tbl, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	litstorage "github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -314,6 +315,19 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
 	}
+
+	taskStore := m.store
+	if m.store.GetKeyspace() != task.Keyspace {
+		var err2 error
+		err2 = m.taskTable.WithNewSession(func(se sessionctx.Context) error {
+			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
+			return err2
+		})
+		if err2 != nil {
+			m.failSubtask(err2, task.ID, nil)
+			return false
+		}
+	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
 			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
@@ -339,7 +353,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
-		Store:     m.store,
+		TaskStore: taskStore,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {

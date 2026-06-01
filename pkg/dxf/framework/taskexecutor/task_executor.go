@@ -74,7 +74,10 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	Store  kv.Storage
+	// the Store corresponding to the task.
+	// it's the same as the instance store if on Classic kernel, or it's a task
+	// of SYSTEM keyspace, otherwise it's the store target to the task keyspace.
+	TaskStore kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
@@ -84,7 +87,7 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.No
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-		Store:     store,
+		TaskStore: store,
 	}
 }
 

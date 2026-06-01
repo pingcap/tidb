@@ -70,6 +70,30 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestImportTaskExecutorUsesTaskStoreWithoutExtraLookup(t *testing.T) {
+	ctx := context.Background()
+	taskStore := &StoreWithKS{ks: "task_ks"}
+	executor := NewImportExecutor(
+		ctx,
+		&proto.Task{
+			TaskBase: proto.TaskBase{ID: 2},
+		},
+		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", taskStore),
+	).(*importExecutor)
+
+	taskMeta := []byte(`{"Plan":{"TableInfo":{}}}`)
+	stepExecutor, err := executor.GetStepExecutor(&proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:       2,
+			Step:     proto.ImportStepImport,
+			Keyspace: "another_ks",
+		},
+		Meta: taskMeta,
+	})
+	require.NoError(t, err)
+	require.Same(t, taskStore, stepExecutor.(*importStepExecutor).store)
+}
+
 func TestGetOnDupForKVGroup(t *testing.T) {
 	t.Run("data-kv-group", func(t *testing.T) {
 		onDup, err := getOnDupForKVGroup(nil, globalsort.DataKVGroup, importer.OnDupKeyModeCapture)

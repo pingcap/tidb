@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -865,7 +864,6 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	store        tidbkv.Storage
 	indicesGenKV map[int64]importer.GenKVIndex
 }
 
@@ -880,7 +878,6 @@ func NewImportExecutor(
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
-		store:            param.Store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -912,18 +909,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	indicesGenKV := importer.GetIndicesGenKV(taskMeta.Plan.TableInfo)
 	logger.Info("got indices that generate kv", zap.Any("indices", indicesGenKV))
 
-	store := e.store
-	if e.store.GetKeyspace() != task.Keyspace {
-		var err error
-		err = e.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
-			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	store := e.TaskStore
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{

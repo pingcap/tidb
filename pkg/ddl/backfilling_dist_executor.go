@@ -130,17 +130,13 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-	store := ddlObj.store
+	store := s.TaskStore
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
 	if ddlObj.store.GetKeyspace() != taskKS {
 		var err error
 		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
 			svr := se.GetSQLServer()
-			store, err = svr.GetKSStore(taskKS)
-			if err != nil {
-				return err
-			}
 			sp, err := svr.GetKSSessPool(taskKS)
 			sessPool = sess.NewSessionPool(sp)
 			return err
