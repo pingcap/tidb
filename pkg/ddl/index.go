@@ -3631,17 +3631,6 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	return int(uint64(sizeInMiB)*size.MB) / int(sample.ApproximateKeys), nil
 }
 
-func collectTiKVStoreUsage(ctx context.Context, store kv.Storage) (*TiKVStoreUsageSnapshot, error) {
-	capacity, err := collectTiKVStoreCapacity(ctx, store)
-	if err != nil {
-		return nil, err
-	}
-	return &TiKVStoreUsageSnapshot{
-		UsedBytes:  capacity.UsedBytes,
-		StoreCount: capacity.StoreCount,
-	}, nil
-}
-
 func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
 	if pdStore, ok := store.(kv.StorageWithPD); ok && pdStore.GetPDClient() != nil {
 		return true, nil
@@ -4867,7 +4856,7 @@ func collectIndexKVsForSampledRow(
 			rsData = getRestoreData(tblInfo, idx.Meta(), pkIdx, handleRestoreData)
 		}
 		iter := idx.GenIndexKVIter(errCtx, loc, indexedValues, actualHandle, rsData)
-		rawKeys, err := encodeRawIndexKeysForSampledKVIter(loc, tblInfo, idx.Meta(), indexedValues)
+		rawKeys, err := tables.EncodeRawIndexKeyValues(loc, tblInfo, idx.Meta(), indexedValues)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -4896,29 +4885,6 @@ func collectIndexKVsForSampledRow(
 		}
 	}
 	return kvs, totalBytes, nil
-}
-
-func encodeRawIndexKeysForSampledKVIter(
-	loc *time.Location,
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	indexedValues []types.Datum,
-) ([][]byte, error) {
-	rawValueGroups := [][]types.Datum{indexedValues}
-	if idxInfo.MVIndex {
-		rawValueGroups = tables.BuildMultiValueIndexValueGroups(tblInfo, idxInfo, indexedValues)
-	}
-	rawKeys := make([][]byte, 0, len(rawValueGroups))
-	for _, rawValues := range rawValueGroups {
-		rawValues = slices.Clone(rawValues)
-		tablecodec.TruncateIndexValues(tblInfo, idxInfo, rawValues)
-		rawKey, err := utilcodec.EncodeKey(loc, nil, rawValues...)
-		if err != nil {
-			return nil, err
-		}
-		rawKeys = append(rawKeys, rawKey)
-	}
-	return rawKeys, nil
 }
 
 type sampleTiKVIndexPredictionBytes struct {
@@ -5509,17 +5475,6 @@ func estimatePhysicalTableRowCount(statsTbl *statistics.Table) int64 {
 		rowCount = int64(statsTbl.GetAnalyzeRowCount())
 	}
 	return max(rowCount, 0)
-}
-
-func predictionPhysicalTableIDs(tblInfo *model.TableInfo) []int64 {
-	if tblInfo.Partition == nil {
-		return []int64{tblInfo.ID}
-	}
-	physicalIDs := make([]int64, 0, len(tblInfo.Partition.Definitions))
-	for _, def := range tblInfo.Partition.Definitions {
-		physicalIDs = append(physicalIDs, def.ID)
-	}
-	return physicalIDs
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
