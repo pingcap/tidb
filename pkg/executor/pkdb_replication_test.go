@@ -9,7 +9,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/logreplicationpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -19,32 +18,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/config"
-	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 )
-
-func TestScanReplStateCF(t *testing.T) {
-	t.Skip("this is a manual test")
-
-	ctx := context.Background()
-	replicaPDAddr := "127.0.0.1:12379"
-	cli, err := rawkv.NewClient(ctx, strings.Split(replicaPDAddr, ","), config.Security{})
-	require.NoError(t, err)
-	defer cli.Close()
-
-	startKey := []byte{}
-
-	minSafeTs := ^uint64(0)
-	_, values, err := cli.Scan(ctx, startKey, nil, 1000, rawkv.SetColumnFamily("lr-state"))
-	require.NoError(t, err)
-	for _, v := range values {
-		pb := &logreplicationpb.LogReplicationState{}
-		err = pb.Unmarshal(v)
-		require.NoError(t, err)
-	}
-	t.Logf("minSafeTs = %d", minSafeTs)
-}
 
 func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
 	cases := []struct {
@@ -199,6 +174,19 @@ func TestPollWorkflowCompleteReturnsErrorOnCancelledState(t *testing.T) {
 
 	err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
 	require.ErrorContains(t, err, "workflow 42 is cancelled")
+	require.Equal(t, 1, lister.calls)
+}
+
+func TestPollWorkflowCompleteReturnsCleanedWorkflowError(t *testing.T) {
+	lister := &mockWorkflowLister{
+		results: []mockWorkflowListResult{
+			{workflows: nil},
+		},
+	}
+
+	err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
+	require.ErrorIs(t, err, errLogReplWorkflowCleaned)
+	require.ErrorContains(t, err, "log replication workflow has been cleaned: workflow 42")
 	require.Equal(t, 1, lister.calls)
 }
 
