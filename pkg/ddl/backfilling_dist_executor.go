@@ -48,32 +48,25 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI                          string                  `json:"cloud_storage_uri"`
-	EstimateRowSize                          int                     `json:"estimate_row_size"`
-	MergeTempIndex                           bool                    `json:"merge_temp_index"`
-	InitialTiKVStoreUsage                    *TiKVStoreUsageSnapshot `json:"initial_tikv_store_usage,omitempty"`
-	InitialTiKVCapacity                      *TiKVClusterCapacity    `json:"initial_tikv_capacity,omitempty"`
-	BlockSampleSteadyPredictedTiKVIndexBytes uint64                  `json:"block_sample_steady_predicted_tikv_index_bytes,omitempty"`
-	BlockSamplePeakPredictedTiKVIndexBytes   uint64                  `json:"block_sample_peak_predicted_tikv_index_bytes,omitempty"`
-	BlockSampleMVCCOverheadTotalBytes        uint64                  `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
-	BlockSampleUseStats                      bool                    `json:"block_sample_use_stats,omitempty"`
-	TiKVReplicaCount                         uint64                  `json:"tikv_replica_count,omitempty"`
-	TiKVReplicaCountSource                   string                  `json:"tikv_replica_count_source,omitempty"`
-	TiKVReplicaCountPhysicalID               int64                   `json:"tikv_replica_count_physical_id,omitempty"`
-	BlockSamplePredictionRegionCount         int                     `json:"block_sample_prediction_region_count,omitempty"`
-	BlockSamplePredictionRowCount            int                     `json:"block_sample_prediction_row_count,omitempty"`
-	BlockSamplePredictionReadErrorCount      int                     `json:"block_sample_prediction_read_error_count,omitempty"`
-	BlockSampleEncodedKeySharedPrefixAvg     float64                 `json:"block_sample_encoded_key_shared_prefix_avg,omitempty"`
-	BlockSampleRawKeySharedPrefixAvg         float64                 `json:"block_sample_raw_key_shared_prefix_avg,omitempty"`
-	BlockSampleRawKeyLengthAvg               float64                 `json:"block_sample_raw_key_length_avg,omitempty"`
+	CloudStorageURI                          string               `json:"cloud_storage_uri"`
+	EstimateRowSize                          int                  `json:"estimate_row_size"`
+	MergeTempIndex                           bool                 `json:"merge_temp_index"`
+	InitialTiKVCapacity                      *TiKVClusterCapacity `json:"initial_tikv_capacity,omitempty"`
+	BlockSampleSteadyPredictedTiKVIndexBytes uint64               `json:"block_sample_steady_predicted_tikv_index_bytes,omitempty"`
+	BlockSamplePeakPredictedTiKVIndexBytes   uint64               `json:"block_sample_peak_predicted_tikv_index_bytes,omitempty"`
+	BlockSampleMVCCOverheadTotalBytes        uint64               `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
+	BlockSampleUseStats                      bool                 `json:"block_sample_use_stats,omitempty"`
+	TiKVReplicaCount                         uint64               `json:"tikv_replica_count,omitempty"`
+	TiKVReplicaCountSource                   string               `json:"tikv_replica_count_source,omitempty"`
+	TiKVReplicaCountPhysicalID               int64                `json:"tikv_replica_count_physical_id,omitempty"`
+	BlockSamplePredictionRegionCount         int                  `json:"block_sample_prediction_region_count,omitempty"`
+	BlockSamplePredictionRowCount            int                  `json:"block_sample_prediction_row_count,omitempty"`
+	BlockSamplePredictionReadErrorCount      int                  `json:"block_sample_prediction_read_error_count,omitempty"`
+	BlockSampleEncodedKeySharedPrefixAvg     float64              `json:"block_sample_encoded_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeySharedPrefixAvg         float64              `json:"block_sample_raw_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeyLengthAvg               float64              `json:"block_sample_raw_key_length_avg,omitempty"`
 
 	Version int `json:"version,omitempty"`
-}
-
-// TiKVStoreUsageSnapshot is the observed TiKV store usage at a point in time.
-type TiKVStoreUsageSnapshot struct {
-	UsedBytes  uint64 `json:"used_bytes"`
-	StoreCount int    `json:"store_count"`
 }
 
 // TiKVStoreCapacity contains per-store capacity details needed by DXF add-index

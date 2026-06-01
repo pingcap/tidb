@@ -1003,7 +1003,6 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 	})
 
 	t.Run("block sample prediction bounds", func(t *testing.T) {
-		require.Equal(t, blockSamplePredictionProbeRows, clampSamplePredictionRows(0, blockSamplePredictionProbeRows, blockSamplePredictionMaxRows))
 		require.Equal(t, blockSamplePredictionProbeRows, blockSamplePredictionTargetRows(10, 1<<30))
 		require.Equal(t, blockSamplePredictionMaxRows, blockSamplePredictionTargetRows(10, 10))
 		require.Equal(t, blockSamplePredictionMaxRows, blockSamplePredictionTargetRows(10, 0))
@@ -1083,6 +1082,8 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		restoredStringType := types.NewFieldType(mysql.TypeVarString)
 		restoredStringType.SetCharset(charset.CharsetUTF8MB4)
 		restoredStringType.SetCollate("utf8mb4_general_ci")
+		encodedKeyOf := func(kv sampledIndexKV) []byte { return kv.key }
+		rawKeyOf := func(kv sampledIndexKV) []byte { return kv.rawKey }
 
 		numericTblInfo := &model.TableInfo{
 			ID:    300,
@@ -1125,8 +1126,8 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.Positive(t, numericPrediction.MVCCOverheadBytes)
 		require.NotEmpty(t, numericKVs[0].rawKey)
 		require.Less(t,
-			estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest(numericKVs)),
-			estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest(numericKVs)))
+			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(numericKVs), rawKeyOf),
+			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(numericKVs), encodedKeyOf))
 		require.Positive(t, estimateSampledIndexKVRawKeyLengthAvg(numericKVs))
 
 		restoredTblInfo := &model.TableInfo{
@@ -1198,27 +1199,27 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		prefixSplitPrediction := estimateBlockSampledIndexKVPredictionBytes(prefixKVs, sampleScopeCountsForTest(prefixKVs, 5), ts)
 		require.NoError(t, prefixSplitPrediction.Err)
 		require.Greater(t, prefixSplitPrediction.PredictedBytes, prefixPrediction.PredictedBytes)
-		require.Zero(t, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(nil))
-		require.Zero(t, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{{key: []byte("single")}})))
-		require.InDelta(t, 1.5, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{
+		require.Zero(t, estimateSortedSampledIndexKVSharedPrefixAvg(nil, encodedKeyOf))
+		require.Zero(t, estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{{key: []byte("single")}}), encodedKeyOf))
+		require.InDelta(t, 1.5, estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{
 			{key: []byte("b001")},
 			{key: []byte("a001")},
 			{key: []byte("a000")},
-		})), 1e-9)
-		require.Greater(t, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest(prefixKVs)), float64(50))
-		require.Zero(t, estimateSortedSampledIndexKVRawKeySharedPrefixAvg(nil))
-		require.Zero(t, estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{{key: []byte("single"), rawKey: []byte("single")}})))
+		}), encodedKeyOf), 1e-9)
+		require.Greater(t, estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(prefixKVs), encodedKeyOf), float64(50))
+		require.Zero(t, estimateSortedSampledIndexKVSharedPrefixAvg(nil, rawKeyOf))
+		require.Zero(t, estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{{key: []byte("single"), rawKey: []byte("single")}}), rawKeyOf))
 		require.Zero(t, estimateSampledIndexKVRawKeyLengthAvg(nil))
 		encodedPrefixKVs := []sampledIndexKV{
 			{key: []byte("t_index_b001"), rawKey: []byte("b001")},
 			{key: []byte("t_index_a001"), rawKey: []byte("a001")},
 			{key: []byte("t_index_a000"), rawKey: []byte("a000")},
 		}
-		require.InDelta(t, 1.5, estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs)), 1e-9)
+		require.InDelta(t, 1.5, estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), rawKeyOf), 1e-9)
 		require.InDelta(t, 4, estimateSampledIndexKVRawKeyLengthAvg(encodedPrefixKVs), 1e-9)
 		require.Greater(t,
-			estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs)),
-			estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs)))
+			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), encodedKeyOf),
+			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), rawKeyOf))
 	})
 }
 
