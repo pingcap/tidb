@@ -238,8 +238,8 @@ func (t DataSourceType) String() string {
 }
 
 var (
-	// NewClientWithContext returns a kv.Client.
-	NewClientWithContext = pd.NewClientWithContext
+	// NewClientWithAPIContext returns a kv.Client.
+	NewClientWithAPIContext = pd.NewClientWithAPIContext
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable

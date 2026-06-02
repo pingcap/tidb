@@ -2151,6 +2151,30 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
 }
 
+func TestIssue66918(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		j JSON,
+		g VARCHAR(255) GENERATED ALWAYS AS ((j->'$.v')) STORED,
+		UNIQUE INDEX g_idx (g)
+	)`)
+	tk.MustExec(`INSERT INTO t(j) VALUES ('{"v":1}'), ('{"v":2}')`)
+
+	tk.MustExec("ANALYZE TABLE t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tk.MustQuery("select is_index, stats_ver from mysql.stats_histograms where table_id = ? order by is_index, hist_id", tblInfo.ID).Check(testkit.Rows(
+		"0 2",
+		"1 2",
+	))
+
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, tblStats.GetIdx(tblInfo.Indices[0].ID).IsAnalyzed())
+}
+
 func TestDynamicExpandMustForceAllColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

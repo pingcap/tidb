@@ -279,6 +279,25 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
 
+	// When TopN is directly above a DataSource, set AdvisorySortItems so that
+	// IndexMerge can prefer partial paths that satisfy the ORDER BY.
+	// This enables pushing Limit to ordered partial paths.
+	var advisorySortItems []property.SortItem
+	if _, ok := lt.Children()[0].(*logicalop.DataSource); ok && len(lt.ByItems) > 0 {
+		advisorySortItems = make([]property.SortItem, 0, len(lt.ByItems))
+		for _, byItem := range lt.ByItems {
+			col, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				advisorySortItems = nil
+				break
+			}
+			advisorySortItems = append(advisorySortItems, property.SortItem{
+				Col:  col,
+				Desc: byItem.Desc,
+			})
+		}
+	}
+
 	// Generate candidate plans for partial order optimization using prefix index FIRST.
 	// This is important because when use_index hint is used with a prefix index,
 	// we need to set ForcePartialOrder flag before other candidates are evaluated.
@@ -299,6 +318,22 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
+
+		// The AdvisorySortItems optimization may not fully succeed (e.g. the global filter blocks the LIMIT pushdown),
+		// in this case, it may generate a plan with unnecessary `keep order: true`. So we add this plan as an extra
+		// candidate instead of replacing the original plan.
+		if tp == property.CopMultiReadTaskType && len(advisorySortItems) > 0 {
+			resultProp = resultProp.CloneEssentialFields()
+			resultProp.AdvisorySortItems = advisorySortItems
+			topN := PhysicalTopN{
+				ByItems:     lt.ByItems,
+				PartitionBy: lt.PartitionBy,
+				Count:       lt.Count,
+				Offset:      lt.Offset,
+			}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+			topN.SetSchema(lt.Schema())
+			ret = append(ret, topN)
+		}
 	}
 
 	// If we can generate MPP task and there's vector distance function in the order by column.

@@ -1211,9 +1211,9 @@
         ],
         "Plan": [
           "TopN_7 1.00 root  test.t.b, offset:0, count:1",
-          "└─TableReader_16 1.00 root  data:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableReader_17 1.00 root  data:TopN_16",
+          "  └─TopN_16 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1227,9 +1227,9 @@
         ],
         "Plan": [
           "TopN_7 5.00 root  test.t.b, offset:0, count:5",
-          "└─TableReader_16 5.00 root  data:TopN_15",
-          "  └─TopN_15 5.00 cop[tikv]  test.t.b, offset:0, count:5",
-          "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableReader_17 5.00 root  data:TopN_16",
+          "  └─TopN_16 5.00 cop[tikv]  test.t.b, offset:0, count:5",
+          "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },

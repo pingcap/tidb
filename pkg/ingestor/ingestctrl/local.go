@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -136,7 +137,7 @@ var (
 		return tikvclient.NewRPCClient(opts...)
 	}
 	newTiKVStore = tikvclient.NewKVStore
-	newPDClient  = pd.NewClientWithContext
+	newPDClient  = pd.NewClientWithAPIContext
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -843,7 +844,8 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 	// we have to build a separate PD client for tikv, as KVStore will manage
 	// the lifecycle of input PD client, while the PD client inside this is
 	// managed outside.
-	pdCliForTiKV, err := newPDClient(ctx, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	apiContext := keyspace.BuildAPIContext(local.KeyspaceName)
+	pdCliForTiKV, err := newPDClient(ctx, apiContext, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
 	if err != nil {
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()

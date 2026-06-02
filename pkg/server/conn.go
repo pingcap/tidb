@@ -402,6 +402,7 @@ func (cc *clientConn) Close() error {
 
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
+	cc.server.notifyGracefulShutdownCondIfNeededLocked()
 	cc.server.rwlock.Unlock()
 	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
@@ -440,8 +441,10 @@ func closeConn(cc *clientConn) error {
 	return err
 }
 
+// closeWithoutLock removes cc from the server connection map. The caller must hold server.rwlock.
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
+	cc.server.notifyGracefulShutdownCondIfNeededLocked()
 	return closeConn(cc)
 }
 
