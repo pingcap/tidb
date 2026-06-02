@@ -550,6 +550,7 @@ type PlanHints struct {
 	TiFlashTables         []HintedTable  // isolation_read_engines(xx=tiflash)
 	TiKVTables            []HintedTable  // isolation_read_engines(xx=tikv)
 	LeadingJoinOrder      []HintedTable  // leading
+	LeadingList           *ast.LeadingList // leading recursive
 	HJBuild               []HintedTable  // hash_join_build
 	HJProbe               []HintedTable  // hash_join_probe
 	NoIndexLookUpPushDown []HintedTable  // no_index_lookup_pushdown
@@ -778,6 +779,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		leadingJoinOrder                                                                []HintedTable
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
+		leadingList                                                                     *ast.LeadingList
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -926,6 +928,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				// get LeadingList
+				if hint.HintData != nil {
+					if list, ok := hint.HintData.(*ast.LeadingList); ok {
+						leadingList = list
+					}
+				}
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
@@ -972,6 +980,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferLimitToCop:      preferLimitToCop,
 		CTEMerge:              cteMerge,
 		LeadingJoinOrder:      leadingJoinOrder,
+		LeadingList:           leadingList,
 		HJBuild:               hjBuildTables,
 		HJProbe:               hjProbeTables,
 		NoIndexLookUpPushDown: noIndexLookUpPushDownTables,
