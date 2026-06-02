@@ -166,9 +166,6 @@ func parseHostPort(rawHostPort string) (host string, port string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
 	if host == "" || port == "" {
 		return "", "", errors.New("invalid host or port")
 	}
