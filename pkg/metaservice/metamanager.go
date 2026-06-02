@@ -51,8 +51,8 @@ type Info struct {
 
 // KeyspaceMetaServiceGroup includes keyspace meta service group info.
 type KeyspaceMetaServiceGroup struct {
-	GroupID                  string
-	KeyspaceMetaServiceAddrs []string
+	GroupID string
+	Addrs   []string
 }
 
 // GetKeyspaceMetaServiceGroup return keyspace meta service group.
@@ -80,8 +80,8 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 			return nil, ErrGroupNotMatch
 		}
 		keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
-			GroupID:                  groupID,
-			KeyspaceMetaServiceAddrs: addrs,
+			GroupID: groupID,
+			Addrs:   addrs,
 		}
 		log.Info("get keyspace meta service group info", zap.Any("group-info", keyspaceMetaServiceGroup))
 		return keyspaceMetaServiceGroup, nil
@@ -89,8 +89,8 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 
 	// If keyspace don't have KeyspaceMetaGroupIDKey, then set keyspace meta service as global meta service.
 	keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
-		GroupID:                  GlobalGroupID,
-		KeyspaceMetaServiceAddrs: globalMetaAddrs,
+		GroupID: GlobalGroupID,
+		Addrs:   globalMetaAddrs,
 	}
 	log.Info("get default keyspace meta service group info ", zap.Any("group-info", keyspaceMetaServiceGroup))
 	return keyspaceMetaServiceGroup, nil
@@ -101,8 +101,8 @@ func GetMetaServiceInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs [
 	// If non-keyspace then return global meta service or not enable meta service group.
 	if keyspaceMeta == nil {
 		keyspaceMetaServiceGroup := &KeyspaceMetaServiceGroup{
-			GroupID:                  GlobalGroupID,
-			KeyspaceMetaServiceAddrs: globalMetaAddrs,
+			GroupID: GlobalGroupID,
+			Addrs:   globalMetaAddrs,
 		}
 		metaInfo := &Info{
 			PDAddrs:                pdAddrs,

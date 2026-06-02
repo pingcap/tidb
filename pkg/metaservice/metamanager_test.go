@@ -48,14 +48,14 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
 
-	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.KeyspaceMetaServiceAddrs)
+	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
 	// Test case with blank entries in addresses
 	keyspaceMeta.Config[metaservice.KeyspaceMetaGroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
-	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.KeyspaceMetaServiceAddrs)
+	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
 	// Test case where all addresses are blank
 	keyspaceMeta.Config[metaservice.KeyspaceMetaGroupAddrsKey] = " , \t,  "
@@ -75,7 +75,7 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, metaservice.GlobalGroupID, keyspaceMetaServiceGroup.GroupID)
-	require.ElementsMatch(t, globalMetaAddrs, keyspaceMetaServiceGroup.KeyspaceMetaServiceAddrs)
+	require.ElementsMatch(t, globalMetaAddrs, keyspaceMetaServiceGroup.Addrs)
 }
 
 // TestGetMetaServiceInfo tests the GetMetaServiceInfo function.
@@ -106,5 +106,5 @@ func TestGetMetaServiceInfo(t *testing.T) {
 	require.Equal(t, "2", metaInfo.KeyspaceMetaGroup.GroupID)
 	require.Equal(t, expectPDAddrs, metaInfo.PDAddrs)
 	expectedAddrs := []string{"127.0.0.1:2388", "127.0.0.1:2389"}
-	require.ElementsMatch(t, expectedAddrs, metaInfo.KeyspaceMetaGroup.KeyspaceMetaServiceAddrs)
+	require.ElementsMatch(t, expectedAddrs, metaInfo.KeyspaceMetaGroup.Addrs)
 }
