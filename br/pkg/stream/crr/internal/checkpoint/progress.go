@@ -86,7 +86,6 @@ func (c *Calculator) pollUpstreamCheckpoint(ctx context.Context) (uint64, bool, 
 		TaskName:           c.cfg.TaskName,
 		LoopIteration:      1,
 		UpstreamCheckpoint: checkpoint,
-		SafeCheckpoint:     c.state.lastCheckpoint,
 	})
 	return checkpoint, false, nil
 }

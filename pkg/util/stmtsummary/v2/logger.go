@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -79,7 +80,7 @@ func (s *stmtLogStorage) logEvicted(records []*StmtRecord) {
 	var builder strings.Builder
 	persisted := 0
 	for _, r := range records {
-		b, err := json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+		b, err := marshalStmtRecord(r, true)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to marshal evicted statement summary", zap.Error(err))
 			continue
@@ -109,12 +110,44 @@ type evictedStmtRecord struct {
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
-	b, err := json.Marshal(r)
+	b, err := marshalStmtRecord(r, false)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
 		return
 	}
 	s.logger.Info(string(b))
+}
+
+func marshalStmtRecord(r *StmtRecord, evicted bool) ([]byte, error) {
+	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
+	if len(fields) == 0 {
+		if evicted {
+			return json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+		}
+		return json.Marshal(r)
+	}
+	if evicted {
+		return json.Marshal(evictedStmtRecordWithAdditionalFields{
+			StmtRecord:       r,
+			AdditionalFields: fields,
+			Evicted:          true,
+		})
+	}
+	return json.Marshal(stmtRecordWithAdditionalFields{
+		StmtRecord:       r,
+		AdditionalFields: fields,
+	})
+}
+
+type stmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
+}
+
+type evictedStmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
+	Evicted          bool              `json:"evicted"`
 }
 
 type stmtLogEncoder struct{}

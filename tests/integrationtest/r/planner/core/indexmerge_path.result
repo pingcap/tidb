@@ -1340,3 +1340,36 @@ Limit	root		offset:0, count:10
       ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx2(d, e, c)	range:[10,10], keep order:true, desc, stats:pseudo
       └─Selection(Probe)	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 5)
         └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c));
+insert into t values(1, 1, 100), (1, 2, 50), (1, 3, 150), (6, 6, 10), (7, 7, 20), (8, 8, 30), (9, 9, 5);
+explain format='plan_tree' select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3;
+id	task	access object	operator info
+TopN	root		planner__core__indexmerge_path.t.c, offset:0, count:3
+└─IndexMerge	root		type: union
+  ├─Limit(Build)	cop[tikv]		offset:0, count:3
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─TopN(Build)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:3
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_bc(b, c)	range:(5,+inf], keep order:false, stats:pseudo
+  └─TopN(Probe)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:3
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3;
+a	b	c
+9	9	5
+6	6	10
+7	7	20
+explain format='plan_tree' select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3 offset 1;
+id	task	access object	operator info
+TopN	root		planner__core__indexmerge_path.t.c, offset:1, count:3
+└─IndexMerge	root		type: union
+  ├─Limit(Build)	cop[tikv]		offset:0, count:4
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─TopN(Build)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:4
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_bc(b, c)	range:(5,+inf], keep order:false, stats:pseudo
+  └─TopN(Probe)	cop[tikv]		planner__core__indexmerge_path.t.c, offset:0, count:4
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3 offset 1;
+a	b	c
+6	6	10
+7	7	20
+8	8	30

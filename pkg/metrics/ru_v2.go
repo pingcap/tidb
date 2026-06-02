@@ -42,6 +42,35 @@ var (
 	RUV2TiKVCoprocessorWorkTotal          *prometheus.CounterVec
 )
 
+var (
+	ruv2ExecutorL1BatchPointGetExec prometheus.Counter
+	ruv2ExecutorL1PointGetExecutor  prometheus.Counter
+	ruv2ExecutorL1LimitExec         prometheus.Counter
+
+	ruv2ExecutorL2HashAggExec        prometheus.Counter
+	ruv2ExecutorL2HashJoinExec       prometheus.Counter
+	ruv2ExecutorL2IndexLookUpJoin    prometheus.Counter
+	ruv2ExecutorL2IndexLookUpExec    prometheus.Counter
+	ruv2ExecutorL2IndexReaderExec    prometheus.Counter
+	ruv2ExecutorL2MemTableReaderExec prometheus.Counter
+	ruv2ExecutorL2SelectionExec      prometheus.Counter
+	ruv2ExecutorL2TableDualExec      prometheus.Counter
+	ruv2ExecutorL2TableReaderExec    prometheus.Counter
+	ruv2ExecutorL2UnionScanExec      prometheus.Counter
+	ruv2ExecutorL2SelectLockExec     prometheus.Counter
+
+	ruv2ExecutorL3SortExec      prometheus.Counter
+	ruv2ExecutorL3StreamAggExec prometheus.Counter
+
+	ruv2TiKVCoprocessorWorkTotalBatchIndexScan    prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchTableScan    prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchSelection    prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchTopN         prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchLimit        prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchSimpleAggr   prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchFastHashAggr prometheus.Counter
+)
+
 // InitRUV2Metrics initializes RUv2 metrics.
 func InitRUV2Metrics() {
 	RUV2ResultChunkCells = metricscommon.NewCounter(
@@ -205,4 +234,112 @@ func InitRUV2Metrics() {
 			Help:      "Counter of TiKV coprocessor executor work for RU v2.",
 		}, []string{LblType},
 	)
+
+	initRUV2CachedLabelCounters()
+}
+
+func initRUV2CachedLabelCounters() {
+	ruv2ExecutorL1BatchPointGetExec = RUV2ExecutorL1.WithLabelValues("BatchPointGetExec")
+	ruv2ExecutorL1PointGetExecutor = RUV2ExecutorL1.WithLabelValues("PointGetExecutor")
+	ruv2ExecutorL1LimitExec = RUV2ExecutorL1.WithLabelValues("LimitExec")
+
+	ruv2ExecutorL2HashAggExec = RUV2ExecutorL2.WithLabelValues("HashAggExec")
+	ruv2ExecutorL2HashJoinExec = RUV2ExecutorL2.WithLabelValues("HashJoinExec")
+	ruv2ExecutorL2IndexLookUpJoin = RUV2ExecutorL2.WithLabelValues("IndexLookUpJoin")
+	ruv2ExecutorL2IndexLookUpExec = RUV2ExecutorL2.WithLabelValues("IndexLookUpExecutor")
+	ruv2ExecutorL2IndexReaderExec = RUV2ExecutorL2.WithLabelValues("IndexReaderExecutor")
+	ruv2ExecutorL2MemTableReaderExec = RUV2ExecutorL2.WithLabelValues("MemTableReaderExec")
+	ruv2ExecutorL2SelectionExec = RUV2ExecutorL2.WithLabelValues("SelectionExec")
+	ruv2ExecutorL2TableDualExec = RUV2ExecutorL2.WithLabelValues("TableDualExec")
+	ruv2ExecutorL2TableReaderExec = RUV2ExecutorL2.WithLabelValues("TableReaderExecutor")
+	ruv2ExecutorL2UnionScanExec = RUV2ExecutorL2.WithLabelValues("UnionScanExec")
+	ruv2ExecutorL2SelectLockExec = RUV2ExecutorL2.WithLabelValues("SelectLockExec")
+
+	ruv2ExecutorL3SortExec = RUV2ExecutorL3.WithLabelValues("SortExec")
+	ruv2ExecutorL3StreamAggExec = RUV2ExecutorL3.WithLabelValues("StreamAggExec")
+
+	ruv2TiKVCoprocessorWorkTotalBatchIndexScan = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchIndexScan")
+	ruv2TiKVCoprocessorWorkTotalBatchTableScan = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchTableScan")
+	ruv2TiKVCoprocessorWorkTotalBatchSelection = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchSelection")
+	ruv2TiKVCoprocessorWorkTotalBatchTopN = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchTopN")
+	ruv2TiKVCoprocessorWorkTotalBatchLimit = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchLimit")
+	ruv2TiKVCoprocessorWorkTotalBatchSimpleAggr = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchSimpleAggr")
+	ruv2TiKVCoprocessorWorkTotalBatchFastHashAggr = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchFastHashAggr")
+}
+
+// RUV2ExecutorCounter returns a cached RUv2 executor counter when the label is known.
+func RUV2ExecutorCounter(level int, label string) prometheus.Counter {
+	switch level {
+	case 1:
+		switch label {
+		case "BatchPointGetExec":
+			return ruv2ExecutorL1BatchPointGetExec
+		case "PointGetExecutor":
+			return ruv2ExecutorL1PointGetExecutor
+		case "LimitExec":
+			return ruv2ExecutorL1LimitExec
+		default:
+			return RUV2ExecutorL1.WithLabelValues(label)
+		}
+	case 2:
+		switch label {
+		case "HashAggExec":
+			return ruv2ExecutorL2HashAggExec
+		case "HashJoinExec":
+			return ruv2ExecutorL2HashJoinExec
+		case "IndexLookUpJoin":
+			return ruv2ExecutorL2IndexLookUpJoin
+		case "IndexLookUpExecutor":
+			return ruv2ExecutorL2IndexLookUpExec
+		case "IndexReaderExecutor":
+			return ruv2ExecutorL2IndexReaderExec
+		case "MemTableReaderExec":
+			return ruv2ExecutorL2MemTableReaderExec
+		case "SelectionExec":
+			return ruv2ExecutorL2SelectionExec
+		case "TableDualExec":
+			return ruv2ExecutorL2TableDualExec
+		case "TableReaderExecutor":
+			return ruv2ExecutorL2TableReaderExec
+		case "UnionScanExec":
+			return ruv2ExecutorL2UnionScanExec
+		case "SelectLockExec":
+			return ruv2ExecutorL2SelectLockExec
+		default:
+			return RUV2ExecutorL2.WithLabelValues(label)
+		}
+	case 3:
+		switch label {
+		case "SortExec":
+			return ruv2ExecutorL3SortExec
+		case "StreamAggExec":
+			return ruv2ExecutorL3StreamAggExec
+		default:
+			return RUV2ExecutorL3.WithLabelValues(label)
+		}
+	default:
+		return nil
+	}
+}
+
+// RUV2TiKVCoprocessorWorkTotalCounter returns a cached TiKV coprocessor RUv2 counter when the label is known.
+func RUV2TiKVCoprocessorWorkTotalCounter(label string) prometheus.Counter {
+	switch label {
+	case "BatchIndexScan":
+		return ruv2TiKVCoprocessorWorkTotalBatchIndexScan
+	case "BatchTableScan":
+		return ruv2TiKVCoprocessorWorkTotalBatchTableScan
+	case "BatchSelection":
+		return ruv2TiKVCoprocessorWorkTotalBatchSelection
+	case "BatchTopN":
+		return ruv2TiKVCoprocessorWorkTotalBatchTopN
+	case "BatchLimit":
+		return ruv2TiKVCoprocessorWorkTotalBatchLimit
+	case "BatchSimpleAggr":
+		return ruv2TiKVCoprocessorWorkTotalBatchSimpleAggr
+	case "BatchFastHashAggr":
+		return ruv2TiKVCoprocessorWorkTotalBatchFastHashAggr
+	default:
+		return RUV2TiKVCoprocessorWorkTotal.WithLabelValues(label)
+	}
 }
