@@ -333,6 +333,10 @@ type Config struct {
 	// StarterParams contains Starter-only extension parameters.
 	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
+	// ExternalWorkload configures the external-workload subsystem. The section only takes
+	// effect under the Starter deploy mode; see pkg/config/external_workload.go.
+	ExternalWorkload ExternalWorkload `toml:"external-workload" json:"external-workload"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1138,6 +1142,7 @@ var defaultConf = Config{
 	DeployMode:                   deploymode.Premium,
 	DXFResourceLimit:             DefDXFResourceLimit,
 	RUV2:                         DefaultRUV2Config(),
+	ExternalWorkload:             defaultExternalWorkload(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -1760,6 +1765,9 @@ func (c *Config) Valid() error {
 		return err
 	}
 	if err := c.TrxSummary.Valid(); err != nil {
+		return err
+	}
+	if err := c.ExternalWorkload.Valid(); err != nil {
 		return err
 	}
 

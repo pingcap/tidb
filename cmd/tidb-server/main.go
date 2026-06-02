@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	_ "github.com/pingcap/tidb/pkg/extension/_import"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -319,6 +320,26 @@ func initDeployMode(cfg *config.Config) error {
 	return deploymode.Set(cfg.DeployMode)
 }
 
+// initExternalWorkloadManager installs the external workload manager from the current
+// global config. It assumes the caller has already gated on Starter mode and
+// is a no-op when the [external-workload] section is disabled. Failure to dial the
+// controller is logged but does not abort startup; callers that need the
+// controller (worker roles) will fail later when they check IsEnabled.
+func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) {
+	cfg := config.GetGlobalConfig().ExternalWorkload
+	if !cfg.Enable {
+		return
+	}
+	meta := storage.GetCodec().GetKeyspaceMeta()
+	if meta == nil {
+		logutil.BgLogger().Warn("external workload controller enabled but keyspace meta is unavailable; skipping manager init")
+		return
+	}
+	if err := extworkload.InitManager(ctx, meta, cfg); err != nil {
+		logutil.BgLogger().Warn("failed to initialise external workload manager", zap.Error(err))
+	}
+}
+
 func main() {
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
@@ -451,6 +472,9 @@ func main() {
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
 	repository.SetupRepository(dom)
+	if deploymode.IsStarter() {
+		initExternalWorkloadManager(context.Background(), storage)
+	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
 		standbyController.EndStandby(nil)

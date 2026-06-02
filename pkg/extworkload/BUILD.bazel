@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extworkload",
+    srcs = [
+        "external_workload.go",
+        "manager.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/extworkload",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/extworkload/client",
+        "//pkg/metrics",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "extworkload_test",
+    srcs = [
+        "manager_test.go",
+        "util_test.go",
+    ],
+    embed = [":extworkload"],
+    deps = [
+        "//pkg/config",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_stretchr_testify//require",
+    ],
+)
