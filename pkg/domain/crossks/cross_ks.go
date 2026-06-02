@@ -190,7 +190,7 @@ func (m *Manager) getOrCreateEntryWithoutLock(
 	return entry, nil
 }
 
-func (m *Manager) createSessionManager(
+func (*Manager) createSessionManager(
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, err error) {
