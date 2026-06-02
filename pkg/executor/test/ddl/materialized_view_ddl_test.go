@@ -564,6 +564,15 @@ func TestShowMaterializedViewLogs(t *testing.T) {
 		Check(testkit.Rows(otherExpected))
 	tk.MustQuery("show materialized view logs in test_show_mlog_other like 'test_show_mlog_other.$mlog$%'").
 		Check(testkit.Rows())
+
+	tk.MustExec("create user 'show_mlog_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'show_mlog_u'@'%'")
+	tk.MustExec("grant select on test.t to 'show_mlog_u'@'%'")
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "show_mlog_u", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustQuery("show materialized view logs from test").Check(testkit.Rows())
+	tk.MustExec("grant alter on test.`$mlog$t` to 'show_mlog_u'@'%'")
+	tkUser.MustQuery("show materialized view logs from test").Check(testkit.Rows(expected))
 }
 
 func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
@@ -624,7 +633,7 @@ func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
 	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
 	require.ErrorContains(t, err, "SHOW VIEW command denied")
 
-	tk.MustExec("grant show view on test.t_show_mv_status to 'show_mv_status_u'@'%'")
+	tk.MustExec("grant show view on test.`$mlog$t_show_mv_status` to 'show_mv_status_u'@'%'")
 	tkUser.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
 }
 

@@ -235,7 +235,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, baseTableName.Schema, mlogName)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -435,7 +435,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
 	if err != nil {
 		return err
@@ -563,7 +563,7 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
 	if err != nil {
 		return err
@@ -572,6 +572,9 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
 	}
 
+	// TODO: split ALTER MATERIALIZED VIEW LOG into per-action handlers and
+	// dedicated DDL job args when schema-changing actions (for example column
+	// add/drop) are supported.
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewLogActionPurge:
