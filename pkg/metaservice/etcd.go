@@ -52,8 +52,8 @@ func (n *client) GetKeyspaceEtcdCli() *clientv3.Client {
 }
 
 // GetPDAddrs implements ServiceClient interface.
-func (n *client) GetPDAddrs() ([]string, error) {
-	addrs, err := GetPDHostPorts(context.Background(), n.pdCli, false)
+func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
+	addrs, err := GetPDHostPorts(ctx, n.pdCli, false)
 	if err != nil {
 		return nil, err
 	}
@@ -178,8 +178,8 @@ func isMissingPortErr(err error) bool {
 }
 
 // GetPDHttpAddrs is used to get PD http addrs.
-func (n *client) GetPDHttpAddrs() ([]string, error) {
-	addrs, err := GetPDHostPorts(context.Background(), n.pdCli, true)
+func (n *client) GetPDHttpAddrs(ctx context.Context) ([]string, error) {
+	addrs, err := GetPDHostPorts(ctx, n.pdCli, true)
 	if err != nil {
 		return nil, err
 	}

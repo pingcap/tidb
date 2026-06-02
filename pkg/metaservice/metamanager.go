@@ -15,6 +15,7 @@
 package metaservice
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -128,7 +129,7 @@ func GetMetaServiceInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs [
 // ServiceClient is used to request meta service.
 type ServiceClient interface {
 	// GetPDAddrs is used to get pd addrs(host:port).
-	GetPDAddrs() ([]string, error)
+	GetPDAddrs(ctx context.Context) ([]string, error)
 	// GetPDHttpAddrs is used to get PD http addrs.
-	GetPDHttpAddrs() ([]string, error)
+	GetPDHttpAddrs(ctx context.Context) ([]string, error)
 }

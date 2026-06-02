@@ -66,7 +66,7 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 	}
 
 	serviceClient := newClient(etcdCli, pdCli)
-	addrs, err := serviceClient.GetPDAddrs()
+	addrs, err := serviceClient.GetPDAddrs(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, expectAddrs, addrs)
 }
