@@ -1656,7 +1656,7 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBLoadBindingTimeout                         = 200
-	DefEnableCachePrepareStmt                         = true
+	DefEnableCachePrepareStmt                         = false
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
