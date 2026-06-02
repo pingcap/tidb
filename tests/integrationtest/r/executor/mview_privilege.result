@@ -76,8 +76,7 @@ create user 'u_show_log'@'%';
 create user 'u_refresh_select'@'%';
 grant show view on mview_privilege_test.mv to 'u_show_mv'@'%';
 grant show view, select on mview_privilege_test.mv to 'u_show_create'@'%';
-grant select on mview_privilege_test.t to 'u_show_log'@'%';
-grant show view on mview_privilege_test.t to 'u_show_log'@'%';
+grant show view, select on mview_privilege_test.`$mlog$t` to 'u_show_log'@'%';
 grant operate view on mview_privilege_test.mv to 'u_refresh_select'@'%';
 grant select on mview_privilege_test.t to 'u_refresh_select'@'%';
 create user 'u_db_refresh'@'%';
@@ -107,7 +106,7 @@ create user 'u_purge_sel'@'%';
 create user 'u_purge_op'@'%';
 create user 'u_purge_global'@'%';
 grant select on mview_privilege_test.t to 'u_purge_sel'@'%';
-grant operate view on mview_privilege_test.mv to 'u_purge_op'@'%';
+grant operate view on mview_privilege_test.`$mlog$t` to 'u_purge_op'@'%';
 grant operate view on *.* to 'u_purge_global'@'%';
 create user 'u_dml'@'%';
 grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
@@ -157,21 +156,22 @@ show create materialized view log on t;
 Materialized View Log	Create Materialized View Log
 t	CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) PURGE NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)
 show materialized view log on t_hidden wait_purge;
-Error 1142 (42000): SHOW VIEW command denied to user 'u_show_log'@'%' for table 't_hidden'
-revoke select on mview_privilege_test.t from 'u_show_log'@'%';
+Error 1142 (42000): SHOW VIEW command denied to user 'u_show_log'@'%' for table '$mlog$t_hidden'
+revoke select on mview_privilege_test.`$mlog$t` from 'u_show_log'@'%';
 show grants for 'u_show_log'@'%';
 Grants for u_show_log@%
 GRANT USAGE ON *.* TO 'u_show_log'@'%'
-GRANT SHOW VIEW ON `mview_privilege_test`.`t` TO 'u_show_log'@'%'
+GRANT SHOW VIEW ON `mview_privilege_test`.`$mlog$t` TO 'u_show_log'@'%'
 show materialized views from mview_privilege_test;
 mview_id	mview_name
 show materialized view logs from mview_privilege_test;
 mlog_id	mlog_name	base_table_id	base_table_name
+<mlog_id>	$mlog$t	<base_table_id>	t
 show materialized view log on mview_privilege_test.t wait_purge;
 mlog_id	mlog_name	base_table_id	base_table_name	wait_purge
 <mlog_id>	$mlog$t	<base_table_id>	t	0
 show create materialized view log on mview_privilege_test.t;
-Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't'
+Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table '$mlog$t'
 refresh materialized view mv complete delta apply;
 revoke select on mview_privilege_test.t from 'u_refresh_select'@'%';
 show grants for 'u_refresh_select'@'%';
@@ -236,24 +236,24 @@ Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
 delete from `$mlog$t`;
 Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
 purge materialized view log on t;
-Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_sel'@'%' for table 'mv'
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_sel'@'%' for table '$mlog$t'
 purge materialized view log on t;
-revoke operate view on mview_privilege_test.mv from 'u_purge_op'@'%';
+revoke operate view on mview_privilege_test.`$mlog$t` from 'u_purge_op'@'%';
 show grants for 'u_purge_op'@'%';
 Grants for u_purge_op@%
 GRANT USAGE ON *.* TO 'u_purge_op'@'%'
 purge materialized view log on mview_privilege_test.t;
-Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_op'@'%' for table 'mv'
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_op'@'%' for table '$mlog$t'
 purge materialized view log on t;
 revoke operate view on *.* from 'u_purge_global'@'%';
 show grants for 'u_purge_global'@'%';
 Grants for u_purge_global@%
 GRANT USAGE ON *.* TO 'u_purge_global'@'%'
 purge materialized view log on mview_privilege_test.t;
-Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_global'@'%' for table 'mv'
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_global'@'%' for table '$mlog$t'
 drop materialized view mv;
 purge materialized view log on mview_privilege_test.t;
-Error 1105 (HY000): no dependent materialized view found for materialized view log on table t
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_global'@'%' for table '$mlog$t'
 create table t_revoke_ddl (id int not null, v int not null);
 insert into t_revoke_ddl values (1, 10), (2, 20);
 create materialized view log on t_revoke_ddl (id, v) purge next date_add(now(), interval 1 hour);
@@ -272,15 +272,15 @@ GRANT SELECT ON `mview_privilege_test`.`t_revoke_ddl` TO 'u_create_mv'@'%'
 create materialized view mv_revoke_create (id, s, cnt) as select id, sum(v), count(1) from t_revoke_ddl group by id;
 Error 1142 (42000): CREATE VIEW command denied to user 'u_create_mv'@'%' for table 'mv_revoke_create'
 create user 'u_create_mlog'@'%';
-grant create on mview_privilege_test.* to 'u_create_mlog'@'%';
+grant create view on mview_privilege_test.* to 'u_create_mlog'@'%';
 grant select on mview_privilege_test.t_revoke_create_mlog to 'u_create_mlog'@'%';
-revoke create on mview_privilege_test.* from 'u_create_mlog'@'%';
+revoke create view on mview_privilege_test.* from 'u_create_mlog'@'%';
 show grants for 'u_create_mlog'@'%';
 Grants for u_create_mlog@%
 GRANT USAGE ON *.* TO 'u_create_mlog'@'%'
 GRANT SELECT ON `mview_privilege_test`.`t_revoke_create_mlog` TO 'u_create_mlog'@'%'
 create materialized view log on t_revoke_create_mlog (id, v);
-Error 1142 (42000): CREATE command denied to user 'u_create_mlog'@'%' for table 't_revoke_create_mlog'
+Error 1142 (42000): CREATE VIEW command denied to user 'u_create_mlog'@'%' for table '$mlog$t_revoke_create_mlog'
 create user 'u_alter_mv'@'%';
 grant alter on mview_privilege_test.mv_revoke_ddl to 'u_alter_mv'@'%';
 revoke alter on mview_privilege_test.mv_revoke_ddl from 'u_alter_mv'@'%';
@@ -298,15 +298,15 @@ GRANT USAGE ON *.* TO 'u_drop_mv'@'%'
 drop materialized view mview_privilege_test.mv_revoke_ddl;
 Error 1142 (42000): DROP command denied to user 'u_drop_mv'@'%' for table 'mv_revoke_ddl'
 create user 'u_mlog_select'@'%';
-grant select on mview_privilege_test.t_revoke_ddl to 'u_mlog_select'@'%';
-revoke select on mview_privilege_test.t_revoke_ddl from 'u_mlog_select'@'%';
+grant alter, drop on mview_privilege_test.`$mlog$t_revoke_ddl` to 'u_mlog_select'@'%';
+revoke alter, drop on mview_privilege_test.`$mlog$t_revoke_ddl` from 'u_mlog_select'@'%';
 show grants for 'u_mlog_select'@'%';
 Grants for u_mlog_select@%
 GRANT USAGE ON *.* TO 'u_mlog_select'@'%'
 alter materialized view log on mview_privilege_test.t_revoke_ddl purge next date_add(now(), interval 1 hour);
-Error 1142 (42000): SELECT command denied to user 'u_mlog_select'@'%' for table 't_revoke_ddl'
+Error 1142 (42000): ALTER command denied to user 'u_mlog_select'@'%' for table '$mlog$t_revoke_ddl'
 drop materialized view log on mview_privilege_test.t_revoke_ddl;
-Error 1142 (42000): SELECT command denied to user 'u_mlog_select'@'%' for table 't_revoke_ddl'
+Error 1142 (42000): DROP command denied to user 'u_mlog_select'@'%' for table '$mlog$t_revoke_ddl'
 drop user if exists 'u_role'@'%';
 drop role if exists r_operate;
 drop user if exists 'u_show_mv'@'%';

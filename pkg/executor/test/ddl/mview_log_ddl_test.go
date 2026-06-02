@@ -160,26 +160,26 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	tkNoCreate := testkit.NewTestKit(t, store)
 	require.NoError(t, tkNoCreate.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_no_create", Hostname: "%"}, nil, nil, nil))
 	err := tkNoCreate.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
-	require.ErrorContains(t, err, "CREATE command denied")
+	require.ErrorContains(t, err, "CREATE VIEW command denied")
 
-	tk.MustExec("grant create on test.* to 'u_create_mlog_no_select'@'%'")
+	tk.MustExec("grant create view on test.* to 'u_create_mlog_no_select'@'%'")
 	tkNoSelect := testkit.NewTestKit(t, store)
 	require.NoError(t, tkNoSelect.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_no_select", Hostname: "%"}, nil, nil, nil))
 	err = tkNoSelect.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
 	require.ErrorContains(t, err, "SELECT command denied")
 
-	tk.MustExec("grant create on test.* to 'u_create_mlog_ok'@'%'")
+	tk.MustExec("grant create view on test.* to 'u_create_mlog_ok'@'%'")
 	tk.MustExec("grant select on test.t_create_mlog_priv to 'u_create_mlog_ok'@'%'")
 	tkOK := testkit.NewTestKit(t, store)
 	require.NoError(t, tkOK.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_ok", Hostname: "%"}, nil, nil, nil))
 	tkOK.MustExec("create materialized view log on test.t_create_mlog_priv (a)")
 
-	tk.MustExec("grant create on test.t_create_mlog_priv to 'u_create_mlog_table_create'@'%'")
+	tk.MustExec("grant create view on test.t_create_mlog_priv to 'u_create_mlog_table_create'@'%'")
 	tk.MustExec("grant select on test.t_create_mlog_priv to 'u_create_mlog_table_create'@'%'")
 	tkTableCreate := testkit.NewTestKit(t, store)
 	require.NoError(t, tkTableCreate.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_table_create", Hostname: "%"}, nil, nil, nil))
 	err = tkTableCreate.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
-	require.ErrorContains(t, err, "CREATE command denied")
+	require.ErrorContains(t, err, "CREATE VIEW command denied")
 }
 
 func TestGrantMaterializedViewObjectPrivileges(t *testing.T) {
@@ -216,12 +216,13 @@ func TestGrantMaterializedViewObjectPrivileges(t *testing.T) {
 	require.Len(t, rows, 1)
 	mlogTablePrivs := fmt.Sprint(rows[0][0])
 	require.Contains(t, mlogTablePrivs, "Select")
+	require.Contains(t, mlogTablePrivs, "Show View")
+	require.Contains(t, mlogTablePrivs, "Alter")
+	require.Contains(t, mlogTablePrivs, "Drop")
+	require.Contains(t, mlogTablePrivs, "Operate View")
 	require.NotContains(t, mlogTablePrivs, "Insert")
 	require.NotContains(t, mlogTablePrivs, "Update")
 	require.NotContains(t, mlogTablePrivs, "Delete")
-	require.NotContains(t, mlogTablePrivs, "Alter")
-	require.NotContains(t, mlogTablePrivs, "Drop")
-	require.NotContains(t, mlogTablePrivs, "Operate View")
 	require.Equal(t, "", fmt.Sprint(rows[0][1]))
 
 	err = tk.ExecToErr("grant update on test.`$mlog$t_grant_mv_priv` to 'u_grant_mv_priv'@'%'")
@@ -252,9 +253,24 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 	require.Equal(t, "t_show_mlog", rows[0][0])
 	require.Contains(t, rows[0][1], "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
 
+	tk.MustExec("create user 'u_show_create_mlog'@'%'")
+	defer tk.MustExec("drop user 'u_show_create_mlog'@'%'")
+	tkShow := testkit.NewTestKit(t, store)
+	require.NoError(t, tkShow.Session().Auth(&auth.UserIdentity{Username: "u_show_create_mlog", Hostname: "%"}, nil, nil, nil))
+	err := tkShow.ExecToErr("show create materialized view log on test.t_show_mlog")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+	tk.MustExec("grant show view on test.`$mlog$t_show_mlog` to 'u_show_create_mlog'@'%'")
+	err = tkShow.ExecToErr("show create materialized view log on test.t_show_mlog")
+	require.ErrorContains(t, err, "SELECT command denied")
+	tk.MustExec("grant select on test.`$mlog$t_show_mlog` to 'u_show_create_mlog'@'%'")
+	userRows := tkShow.MustQuery("show create materialized view log on test.t_show_mlog").Rows()
+	require.Len(t, userRows, 1)
+	require.Equal(t, "t_show_mlog", userRows[0][0])
+	require.Equal(t, showCreate, userRows[0][1])
+
 	tk.MustExec("create table t_no_mlog (a int)")
 	err = tk.QueryToErr("show create materialized view log on t_no_mlog")
-	require.Truef(t, exeerrors.ErrWrongObject.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_no_mlog")
 }
 
 func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
@@ -479,15 +495,18 @@ func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 }
 
-func TestAlterMaterializedViewLogPurgeUpdatesNextTimeWithSelectPrivilege(t *testing.T) {
+func TestAlterMaterializedViewLogPurgeUpdatesNextTimeWithMLogAlterPrivilege(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 2 hour)")
 	tk.MustExec("create user 'mv_alter_purge_u'@'%' identified by ''")
+	tk.MustExec("create user 'mv_alter_purge_select_u'@'%' identified by ''")
 	defer tk.MustExec("drop user 'mv_alter_purge_u'@'%'")
-	tk.MustExec("grant select on test.t to 'mv_alter_purge_u'@'%'")
+	defer tk.MustExec("drop user 'mv_alter_purge_select_u'@'%'")
+	tk.MustExec("grant alter on test.`$mlog$t` to 'mv_alter_purge_u'@'%'")
+	tk.MustExec("grant select on test.t to 'mv_alter_purge_select_u'@'%'")
 
 	getMLogMeta := func() (int64, string, string, string) {
 		is := dom.InfoSchema()
@@ -504,6 +523,11 @@ func TestAlterMaterializedViewLogPurgeUpdatesNextTimeWithSelectPrivilege(t *test
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_alter_purge_u", Hostname: "%"}, nil, nil, nil))
 	tkUser.MustExec("alter materialized view log on test.t purge next date_add(now(), interval 25 minute)")
 
+	tkSelectUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkSelectUser.Session().Auth(&auth.UserIdentity{Username: "mv_alter_purge_select_u", Hostname: "%"}, nil, nil, nil))
+	err := tkSelectUser.ExecToErr("alter materialized view log on test.t purge next date_add(now(), interval 30 minute)")
+	require.ErrorContains(t, err, "ALTER command denied")
+
 	mlogID, purgeMethod, purgeStartWith, purgeNext := getMLogMeta()
 	require.Equal(t, "DEFERRED", purgeMethod)
 	require.Equal(t, "", purgeStartWith)
@@ -512,6 +536,29 @@ func TestAlterMaterializedViewLogPurgeUpdatesNextTimeWithSelectPrivilege(t *test
 		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
 	)).Check(testkit.Rows("1 1 1"))
+}
+
+func TestDropMaterializedViewLogPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_mlog_priv (a int)")
+	tk.MustExec("create materialized view log on t_drop_mlog_priv (a)")
+	tk.MustExec("create user 'u_drop_mlog_select'@'%'")
+	tk.MustExec("create user 'u_drop_mlog_ok'@'%'")
+	defer tk.MustExec("drop user 'u_drop_mlog_select'@'%'")
+	defer tk.MustExec("drop user 'u_drop_mlog_ok'@'%'")
+	tk.MustExec("grant select on test.t_drop_mlog_priv to 'u_drop_mlog_select'@'%'")
+	tk.MustExec("grant drop on test.`$mlog$t_drop_mlog_priv` to 'u_drop_mlog_ok'@'%'")
+
+	tkSelect := testkit.NewTestKit(t, store)
+	require.NoError(t, tkSelect.Session().Auth(&auth.UserIdentity{Username: "u_drop_mlog_select", Hostname: "%"}, nil, nil, nil))
+	err := tkSelect.ExecToErr("drop materialized view log on test.t_drop_mlog_priv")
+	require.ErrorContains(t, err, "DROP command denied")
+
+	tkDrop := testkit.NewTestKit(t, store)
+	require.NoError(t, tkDrop.Session().Auth(&auth.UserIdentity{Username: "u_drop_mlog_ok", Hostname: "%"}, nil, nil, nil))
+	tkDrop.MustExec("drop materialized view log on test.t_drop_mlog_priv")
 }
 
 func TestAlterMaterializedViewLogPurgeBestEffortInfoUpdateWarning(t *testing.T) {
@@ -923,7 +970,7 @@ func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	defer tk.MustExec("drop user 'u2'@'%'")
 	defer tk.MustExec("drop user 'u3'@'%'")
 	tk.MustExec("grant select on test.t_purge_priv to 'u1'@'%'")
-	tk.MustExec("grant operate view on test.mv_purge_priv to 'u2'@'%'")
+	tk.MustExec("grant operate view on test.`$mlog$t_purge_priv` to 'u2'@'%'")
 	tk.MustExec("grant operate view on *.* to 'u3'@'%'")
 
 	tkUser := testkit.NewTestKit(t, store)
@@ -938,13 +985,11 @@ func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	tkUser.MustExec("use test")
 	tkUser.MustExec("purge materialized view log on t_purge_priv")
 
-	// Even global OPERATE VIEW is not sufficient when the mlog no longer has dependent MVs.
 	tk.MustExec("drop materialized view mv_purge_priv")
 	tkUser = testkit.NewTestKit(t, store)
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "%"}, nil, nil, nil))
 	tkUser.MustExec("use test")
-	err = tkUser.ExecToErr("purge materialized view log on t_purge_priv")
-	require.ErrorContains(t, err, "no dependent materialized view found")
+	tkUser.MustExec("purge materialized view log on t_purge_priv")
 }
 
 func TestPurgeMaterializedViewLogDisallowExplicitTransaction(t *testing.T) {
@@ -1115,7 +1160,7 @@ func TestCancelMaterializedViewLogPurgeJob(t *testing.T) {
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_purge_cancel_u", Hostname: "%"}, nil, nil, nil))
 	err = tkCancel.ExecToErr(fmt.Sprintf("cancel materialized view log purge job %s", jobID))
 	require.ErrorContains(t, err, "cannot cancel materialized view log purge job")
-	tk.MustExec("grant operate view on test.mv_purge_cancel_job to 'mv_purge_cancel_u'@'%'")
+	tk.MustExec("grant operate view on test.`$mlog$t_purge_cancel_job` to 'mv_purge_cancel_u'@'%'")
 	requestedCh := waitMVTaskCancelWatcherRequested(t, "mlog-purge-")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view log purge job %s", jobID))
 	select {

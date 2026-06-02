@@ -31,8 +31,7 @@ create user 'u_show_log'@'%';
 create user 'u_refresh_select'@'%';
 grant show view on mview_privilege_test.mv to 'u_show_mv'@'%';
 grant show view, select on mview_privilege_test.mv to 'u_show_create'@'%';
-grant select on mview_privilege_test.t to 'u_show_log'@'%';
-grant show view on mview_privilege_test.t to 'u_show_log'@'%';
+grant show view, select on mview_privilege_test.`$mlog$t` to 'u_show_log'@'%';
 grant operate view on mview_privilege_test.mv to 'u_refresh_select'@'%';
 grant select on mview_privilege_test.t to 'u_refresh_select'@'%';
 
@@ -61,7 +60,7 @@ create user 'u_purge_sel'@'%';
 create user 'u_purge_op'@'%';
 create user 'u_purge_global'@'%';
 grant select on mview_privilege_test.t to 'u_purge_sel'@'%';
-grant operate view on mview_privilege_test.mv to 'u_purge_op'@'%';
+grant operate view on mview_privilege_test.`$mlog$t` to 'u_purge_op'@'%';
 grant operate view on *.* to 'u_purge_global'@'%';
 
 create user 'u_dml'@'%';
@@ -121,7 +120,7 @@ show materialized view log on t_hidden wait_purge;
 disconnect u_show_log;
 
 connection default;
-revoke select on mview_privilege_test.t from 'u_show_log'@'%';
+revoke select on mview_privilege_test.`$mlog$t` from 'u_show_log'@'%';
 show grants for 'u_show_log'@'%';
 connect (u_show_log, localhost, u_show_log,,);
 connection u_show_log;
@@ -234,7 +233,7 @@ purge materialized view log on t;
 disconnect u_purge_op;
 
 connection default;
-revoke operate view on mview_privilege_test.mv from 'u_purge_op'@'%';
+revoke operate view on mview_privilege_test.`$mlog$t` from 'u_purge_op'@'%';
 show grants for 'u_purge_op'@'%';
 connect (u_purge_op, localhost, u_purge_op,,);
 connection u_purge_op;
@@ -262,7 +261,7 @@ drop materialized view mv;
 
 connect (u_purge_global, localhost, u_purge_global,,);
 connection u_purge_global;
--- error 1105
+-- error 1142
 purge materialized view log on mview_privilege_test.t;
 disconnect u_purge_global;
 
@@ -289,9 +288,9 @@ disconnect u_create_mv;
 
 connection default;
 create user 'u_create_mlog'@'%';
-grant create on mview_privilege_test.* to 'u_create_mlog'@'%';
+grant create view on mview_privilege_test.* to 'u_create_mlog'@'%';
 grant select on mview_privilege_test.t_revoke_create_mlog to 'u_create_mlog'@'%';
-revoke create on mview_privilege_test.* from 'u_create_mlog'@'%';
+revoke create view on mview_privilege_test.* from 'u_create_mlog'@'%';
 show grants for 'u_create_mlog'@'%';
 connect (u_create_mlog, localhost, u_create_mlog,,mview_privilege_test);
 connection u_create_mlog;
@@ -323,8 +322,8 @@ disconnect u_drop_mv;
 
 connection default;
 create user 'u_mlog_select'@'%';
-grant select on mview_privilege_test.t_revoke_ddl to 'u_mlog_select'@'%';
-revoke select on mview_privilege_test.t_revoke_ddl from 'u_mlog_select'@'%';
+grant alter, drop on mview_privilege_test.`$mlog$t_revoke_ddl` to 'u_mlog_select'@'%';
+revoke alter, drop on mview_privilege_test.`$mlog$t_revoke_ddl` from 'u_mlog_select'@'%';
 show grants for 'u_mlog_select'@'%';
 connect (u_mlog_select, localhost, u_mlog_select,,);
 connection u_mlog_select;

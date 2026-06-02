@@ -723,13 +723,9 @@ func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
 		}
 		baseID := tbl.MaterializedViewLog.BaseTableID
 		baseName := ""
-		baseDB := e.DBName.O
 		if baseID != 0 {
 			if baseTbl, ok := e.is.TableByID(ctx, baseID); ok {
 				baseName = baseTbl.Meta().Name.O
-				if dbInfo, ok := infoschema.SchemaByTable(e.is, baseTbl.Meta()); ok {
-					baseDB = dbInfo.Name.O
-				}
 			}
 		}
 		if baseName == "" {
@@ -742,7 +738,7 @@ func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
 		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(lowerMLogName) {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(activeRoles, baseDB, baseName, "", mysql.SelectPriv) {
+		if checker != nil && !hasAnyMaterializedViewVisiblePriv(checker, activeRoles, e.DBName.O, tbl.Name.O) {
 			continue
 		}
 		rows = append(rows, mlogRow{

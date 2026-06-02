@@ -559,57 +559,30 @@ func checkCancelMaterializedViewJobPrivilege(
 		if !found {
 			return cancelMaterializedViewJobNotRunningUserError(stmt)
 		}
-		baseTable, err := is.TableByName(kctx, pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
-		if err != nil {
-			return errors.Trace(err)
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
+			return nil
 		}
-		if err := checkOperateViewOnAnyDependentMView(ctx, is, baseTable.Meta()); err != nil {
-			return cancelMaterializedViewJobPrecheckUserError(stmt, err)
-		}
-		return nil
+		return cancelMaterializedViewJobPrecheckUserError(stmt,
+			plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName))
 	default:
 		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
 	}
 }
 
-func checkOperateViewOnAnyDependentMView(
+func checkOperateViewOnMLog(
 	ctx sessionctx.Context,
-	is infoschema.InfoSchema,
-	baseTableMeta *model.TableInfo,
+	schemaName pmodel.CIStr,
+	mlogName pmodel.CIStr,
 ) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	user := ctx.GetSessionVars().User
 	if pm == nil || user == nil {
 		return nil
 	}
-
-	var lastTableName string
-	if baseTableMeta != nil {
-		lastTableName = baseTableMeta.Name.L
+	if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, schemaName.L, mlogName.L, "", mysql.OperateViewPriv) {
+		return nil
 	}
-	if baseTableMeta == nil || baseTableMeta.MaterializedViewBase == nil || len(baseTableMeta.MaterializedViewBase.MViewIDs) == 0 {
-		return errors.NewNoStackErrorf(
-			"no dependent materialized view found for materialized view log on table %s",
-			lastTableName,
-		)
-	}
-
-	for _, id := range baseTableMeta.MaterializedViewBase.MViewIDs {
-		mvTable, ok := is.TableByID(context.Background(), id)
-		if !ok || mvTable.Meta().MaterializedView == nil {
-			continue
-		}
-		dbInfo, ok := infoschema.SchemaByTable(is, mvTable.Meta())
-		if !ok {
-			continue
-		}
-		mvName := mvTable.Meta().Name.L
-		lastTableName = mvName
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbInfo.Name.L, mvName, "", mysql.OperateViewPriv) {
-			return nil
-		}
-	}
-	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, lastTableName)
+	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
 }
 
 func checkRefreshMaterializedViewBaseTableSelect(
@@ -717,19 +690,16 @@ WHERE PURGE_JOB_ID = %?
 	if !ok {
 		return "", "", false, errors.Errorf("cannot resolve materialized view log %d for cancel job %d", mlogID, purgeJobID)
 	}
-	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	mlogMeta := mlogTable.Meta()
+	mlogInfo := mlogMeta.MaterializedViewLog
 	if mlogInfo == nil {
 		return "", "", false, errors.Errorf("table %d is not a materialized view log", mlogID)
 	}
-	baseTable, ok := is.TableByID(context.Background(), mlogInfo.BaseTableID)
+	dbInfo, ok := infoschema.SchemaByTable(is, mlogMeta)
 	if !ok {
-		return "", "", false, errors.Errorf("cannot resolve base table %d for materialized view log %d", mlogInfo.BaseTableID, mlogID)
+		return "", "", false, errors.Errorf("cannot resolve schema for materialized view log %d", mlogID)
 	}
-	dbInfo, ok := infoschema.SchemaByTable(is, baseTable.Meta())
-	if !ok {
-		return "", "", false, errors.Errorf("cannot resolve schema for base table %d", mlogInfo.BaseTableID)
-	}
-	return dbInfo.Name.L, baseTable.Meta().Name.L, true, nil
+	return dbInfo.Name.L, mlogMeta.Name.L, true, nil
 }
 
 // MViewCompleteDeltaApplyExec applies COMPLETE DELTA APPLY diff rows to the target MV table.
@@ -1493,7 +1463,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return err
 	}
-	if err := checkOperateViewOnAnyDependentMView(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), baseTableMeta); err != nil {
+	if err := checkOperateViewOnMLog(e.Ctx(), schemaName, mlogName); err != nil {
 		return err
 	}
 	releaseCtx := kctx
@@ -2021,7 +1991,7 @@ func (e *PurgeMaterializedViewLogExec) resolvePurgeMaterializedViewLogMeta(
 	baseTableMeta = baseTable.Meta()
 	baseTableID := baseTableMeta.ID
 
-	mlogName = pmodel.NewCIStr("$mlog$" + baseTableMeta.Name.O)
+	mlogName = model.MaterializedViewLogTableName(baseTableMeta.Name)
 	mlogTable, err := is.TableByName(context.Background(), schemaName, mlogName)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {

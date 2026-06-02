@@ -253,8 +253,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogName := "$mlog$" + baseTable.Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Name)
 	if utf8.RuneCountInString(mlogNameCIStr.L) > mysql.MaxTableNameLength {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mlogNameCIStr)
 	}
