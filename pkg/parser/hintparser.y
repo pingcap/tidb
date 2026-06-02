@@ -257,8 +257,8 @@ TableOptimizerHintOpt:
 |	"LEADING" '(' QueryBlockOpt LeadingTableList ')'
 	{
 		h := &ast.TableOptimizerHint{
-			HintName: ast.NewCIStr($1),
-			QBName:   ast.NewCIStr($3),
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
 			HintData: $4,
 		}
 		// For LEADING hints we need to maintain two views of the tables:
