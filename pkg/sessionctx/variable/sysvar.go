@@ -3677,7 +3677,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCachePrepareStmt, Value: BoolToOnOff(DefEnableCachePrepareStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
 	}},
