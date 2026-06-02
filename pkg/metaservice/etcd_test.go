@@ -97,8 +97,6 @@ func TestParseURL(t *testing.T) {
 		err    bool
 	}{
 		// Successful test cases
-		{"unix://localhost:m0", "unix://", "localhost", "m0", false},
-		{"unix://[2001:db8::1]:2379", "unix://", "2001:db8::1", "2379", false},
 		{"http://example.com:8080", "http://", "example.com", "8080", false},
 		{"https://example.com", "https://", "example.com", "443", false}, // Default port for HTTPS
 		{"http://localhost", "http://", "localhost", "80", false},        // Default port for HTTP
@@ -108,7 +106,8 @@ func TestParseURL(t *testing.T) {
 
 		// Unsuccessful test cases
 		{"ftp://example.com", "ftp://", "", "", true},              // Invalid prefix
-		{"unix://localhost", "unix://", "localhost", "", true},     // Missing port
+		{"unix://localhost:m0", "unix://", "", "", true},           // Unix schema is unsupported
+		{"unix://localhost", "unix://", "", "", true},              // Unix schema is unsupported
 		{"http://example.com:8080:extra", "http://", "", "", true}, // Extra part after port
 		{"https://:8080", "https://", "", "", true},                // Missing host
 		{"http://", "http://", "", "", true},                       // Incomplete URL

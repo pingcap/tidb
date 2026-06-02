@@ -103,68 +103,24 @@ func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([
 func ParseURL(rawURL string) (prefix string, host string, port string, err error) {
 	u, parseErr := url.Parse(rawURL)
 	if parseErr != nil {
-		// net/url rejects hierarchical unix URLs with service-style ports such
-		// as unix://localhost:m0, but etcd still uses host:port-shaped unix
-		// socket addresses.
-		scheme, rawHostPort, ok := strings.Cut(rawURL, "://")
-		if !ok || scheme != "unix" {
-			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-		}
-
-		host, port, err = parseHostPort(rawHostPort)
-		if err != nil {
-			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-		}
-		return "unix://", host, port, nil
+		return "", "", "", invalidURLHostPortErr()
 	}
 
+	defaultPort := ""
 	switch u.Scheme {
-	case "unix":
-		prefix = "unix://"
-		host, port, err = parseHostPort(strings.TrimPrefix(rawURL, prefix))
-		if err != nil {
-			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-		}
-		return prefix, host, port, nil
 	case "http":
 		prefix = "http://"
+		defaultPort = "80"
 	case "https":
 		prefix = "https://"
+		defaultPort = "443"
 	default:
 		return "", "", "", fmt.Errorf("invalid URL prefix")
 	}
 
-	if u.Host == "" {
-		return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-	}
-
-	host = u.Host
-	if strings.Contains(u.Host, ":") {
-		splitHost, splitPort, splitErr := net.SplitHostPort(u.Host)
-		switch {
-		case splitErr == nil:
-			host = splitHost
-			port = splitPort
-		case isMissingPortErr(splitErr):
-			host = u.Hostname()
-		default:
-			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-		}
-	}
-
-	if host == "" {
-		return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-	}
-
-	if port == "" {
-		switch u.Scheme {
-		case "http":
-			port = "80"
-		case "https":
-			port = "443"
-		default:
-			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
-		}
+	host, port, err = parseHostPort(u.Host, defaultPort)
+	if err != nil {
+		return "", "", "", invalidURLHostPortErr()
 	}
 
 	if strings.Contains(host, ":") {
@@ -174,20 +130,41 @@ func ParseURL(rawURL string) (prefix string, host string, port string, err error
 	return prefix, host, port, nil
 }
 
-func parseHostPort(rawHostPort string) (host string, port string, err error) {
-	host, port, err = net.SplitHostPort(rawHostPort)
-	if err != nil {
-		return "", "", err
+func parseHostPort(rawHostPort, defaultPort string) (host string, port string, err error) {
+	host = rawHostPort
+	if strings.Contains(rawHostPort, ":") {
+		host, port, err = net.SplitHostPort(rawHostPort)
+		switch {
+		case err == nil:
+		case defaultPort != "" && isMissingPortErr(err):
+			host = (&url.URL{Host: rawHostPort}).Hostname()
+			port = ""
+		default:
+			return "", "", err
+		}
 	}
-	if host == "" || port == "" {
+
+	if host == "" {
 		return "", "", errors.New("invalid host or port")
 	}
+
+	if port == "" {
+		if defaultPort == "" {
+			return "", "", errors.New("invalid host or port")
+		}
+		port = defaultPort
+	}
+
 	return host, port, nil
 }
 
 func isMissingPortErr(err error) bool {
 	var addrErr *net.AddrError
 	return errors.As(err, &addrErr) && addrErr.Err == "missing port in address"
+}
+
+func invalidURLHostPortErr() error {
+	return fmt.Errorf("invalid URL format, expect host:port")
 }
 
 // GetPDHttpAddrs is used to get PD http addrs.
