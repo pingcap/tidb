@@ -30,6 +30,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -54,15 +55,29 @@ type Manager struct {
 	mu sync.RWMutex
 	// the store of current instance
 	store kv.Storage
-	// keyspace name -> session manager
-	sessMgrs map[string]*SessionManager
+	// keyspace name -> runtime entry
+	runtimes map[string]*runtimeEntry
+}
+
+type runtimeEntry struct {
+	mgr               *SessionManager
+	activeBookkeepers map[string]struct{}
+	lastReleaseAt     time.Time
+}
+
+type runtimeHandle struct {
+	manager    *Manager
+	targetKS   string
+	bookkeeper string
+	entry      *runtimeEntry
+	release    sync.Once
 }
 
 // NewManager creates a new cross keyspace session manager.
 func NewManager(store kv.Storage) *Manager {
 	return &Manager{
 		store:    store,
-		sessMgrs: make(map[string]*SessionManager),
+		runtimes: make(map[string]*runtimeEntry),
 	}
 }
 
@@ -71,7 +86,7 @@ func NewManager(store kv.Storage) *Manager {
 func (m *Manager) GetAllKeyspace() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return slices.Collect(maps.Keys(m.sessMgrs))
+	return slices.Collect(maps.Keys(m.runtimes))
 }
 
 // Get gets a session manager for the specified keyspace.
@@ -83,8 +98,11 @@ func (m *Manager) Get(ks string) (*SessionManager, bool) {
 }
 
 func (m *Manager) getWithoutLock(ks string) (*SessionManager, bool) {
-	sessMgr, ok := m.sessMgrs[ks]
-	return sessMgr, ok
+	entry, ok := m.runtimes[ks]
+	if !ok {
+		return nil, false
+	}
+	return entry.mgr, true
 }
 
 // GetOrCreate gets or creates a session manager for the specified keyspace.
@@ -92,12 +110,8 @@ func (m *Manager) GetOrCreate(
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, err error) {
-	// misusing this function might cause data written to the wrong keyspace, or
-	// corrupt user data, and it's harder to diagnose those issues, so we use
-	// runtime check instead of intest.Assert here, in case some code path are not
-	// covered by tests.
-	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
-		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
+	if err := m.validateTargetKS(ks); err != nil {
+		return nil, err
 	}
 	if mgr, ok := m.Get(ks); ok {
 		return mgr, nil
@@ -105,10 +119,88 @@ func (m *Manager) GetOrCreate(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if mgr, ok := m.getWithoutLock(ks); ok {
-		return mgr, nil
+	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	return entry.mgr, nil
+}
+
+// Acquire acquires a runtime handle for the specified keyspace and bookkeeper.
+func (m *Manager) Acquire(
+	ks string,
+	bookkeeper string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (sqlsvrapi.KSRuntimeHandle, error) {
+	if bookkeeper == "" {
+		return nil, errors.New("cross keyspace runtime bookkeeper must not be empty")
+	}
+	if err := m.validateTargetKS(ks); err != nil {
+		return nil, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := entry.activeBookkeepers[bookkeeper]; ok {
+		logutil.BgLogger().Warn("cross keyspace runtime already acquired",
+			zap.String("targetKS", ks),
+			zap.String("bookkeeper", bookkeeper),
+			zap.Int("activeBookkeeperCount", len(entry.activeBookkeepers)))
+		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by bookkeeper %s", ks, bookkeeper)
+	}
+	entry.activeBookkeepers[bookkeeper] = struct{}{}
+	logutil.BgLogger().Info("acquire cross keyspace runtime",
+		zap.String("targetKS", ks),
+		zap.String("bookkeeper", bookkeeper),
+		zap.Int("activeBookkeeperCount", len(entry.activeBookkeepers)))
+	return &runtimeHandle{
+		manager:    m,
+		targetKS:   ks,
+		bookkeeper: bookkeeper,
+		entry:      entry,
+	}, nil
+}
+
+func (m *Manager) validateTargetKS(ks string) error {
+	// misusing cross keyspace sessions might cause data written to the wrong
+	// keyspace, or corrupt user data, and it's harder to diagnose those issues,
+	// so we use runtime check instead of intest.Assert here, in case some code
+	// paths are not covered by tests.
+	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
+		return errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
+	}
+	return nil
+}
+
+func (m *Manager) getOrCreateEntryWithoutLock(
+	ks string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (_ *runtimeEntry, err error) {
+	if entry, ok := m.runtimes[ks]; ok {
+		return entry, nil
+	}
+
+	mgr, err := m.createSessionManager(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	entry := &runtimeEntry{
+		mgr:               mgr,
+		activeBookkeepers: make(map[string]struct{}),
+	}
+	m.runtimes[ks] = entry
+	return entry, nil
+}
+
+func (m *Manager) createSessionManager(
+	ks string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (_ *SessionManager, err error) {
 	startTime := time.Now()
 	getStoreFn := getOrCreateStore
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
@@ -231,7 +323,6 @@ func (m *Manager) GetOrCreate(
 	mgr.wg.RunWithLog(func() {
 		minJobIDRefresher.Start(ctx)
 	})
-	m.sessMgrs[ks] = mgr
 
 	logutil.BgLogger().Info("create cross keyspace session manager",
 		zap.String("targetKS", ks), zap.Duration("cost", time.Since(startTime)))
@@ -239,13 +330,45 @@ func (m *Manager) GetOrCreate(
 	return mgr, nil
 }
 
+func (h *runtimeHandle) Store() kv.Storage {
+	return h.entry.mgr.Store()
+}
+
+func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
+	return h.entry.mgr.SessPool()
+}
+
+func (h *runtimeHandle) Release() {
+	h.release.Do(func() {
+		h.manager.release(h.targetKS, h.bookkeeper, h.entry)
+	})
+}
+
+func (m *Manager) release(targetKS string, bookkeeper string, entry *runtimeEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current, ok := m.runtimes[targetKS]
+	if !ok || current != entry {
+		return
+	}
+	delete(entry.activeBookkeepers, bookkeeper)
+	if len(entry.activeBookkeepers) == 0 {
+		entry.lastReleaseAt = time.Now()
+	}
+	logutil.BgLogger().Info("release cross keyspace runtime",
+		zap.String("targetKS", targetKS),
+		zap.String("bookkeeper", bookkeeper),
+		zap.Int("activeBookkeeperCount", len(entry.activeBookkeepers)))
+}
+
 // CloseKS closes the session manager for the specified keyspace.
 func (m *Manager) CloseKS(targetKS string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if mgr, ok := m.sessMgrs[targetKS]; ok {
-		mgr.close()
-		delete(m.sessMgrs, targetKS)
+	if entry, ok := m.runtimes[targetKS]; ok {
+		entry.mgr.close()
+		delete(m.runtimes, targetKS)
 	}
 }
 
@@ -254,10 +377,10 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, mgr := range m.sessMgrs {
-		mgr.close()
+	for _, entry := range m.runtimes {
+		entry.mgr.close()
 	}
-	m.sessMgrs = make(map[string]*SessionManager)
+	m.runtimes = make(map[string]*runtimeEntry)
 }
 
 func getOrCreateStore(targetKS string) (kv.Storage, error) {

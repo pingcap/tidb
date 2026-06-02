@@ -300,6 +300,15 @@ func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
 }
 
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, bookkeeper string) (sqlsvrapi.KSRuntimeHandle, error) {
+	handle, err := do.crossKSSessMgr.Acquire(targetKS, bookkeeper, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return handle, nil
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
 func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d

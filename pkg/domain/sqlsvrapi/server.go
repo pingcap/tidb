@@ -20,9 +20,22 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 )
 
+// KSRuntime is the runtime view for accessing a target keyspace.
+type KSRuntime interface {
+	Store() kv.Storage
+	SessPool() util.DestroyableSessionPool
+}
+
+// KSRuntimeHandle is an acquired runtime handle for a target keyspace.
+type KSRuntimeHandle interface {
+	KSRuntime
+	Release()
+}
+
 // Server defines the interface for a SQL server.
 // The SQL server manages nearly everything related to SQL execution.
 type Server interface {
+	AcquireKSRuntime(targetKS string, bookkeeper string) (KSRuntimeHandle, error)
 	GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error)
 	GetKSStore(targetKS string) (store kv.Storage, err error)
 	GetDDLOwnerMgr() owner.Manager
