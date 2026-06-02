@@ -446,7 +446,6 @@ func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextTime(t *testing.
 	)).Check(testkit.Rows("complete out of place auto"))
 }
 
-/*
 func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

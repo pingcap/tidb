@@ -5358,7 +5358,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkIndexOperationMaterializedViewConstraints(t.Meta(), "CREATE INDEX"); err != nil {
+		if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
 			return errors.Trace(err)
 		}
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
