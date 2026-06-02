@@ -61,6 +61,7 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 		return nil, ErrNilKeyspaceMeta
 	}
 	var group *Group
+	// TODO: Refactor meta service group storage format by moving it from config to dedicated fields in keyspace meta.
 	if val, ok := keyspaceMeta.Config[MetaServiceGroupIDKey]; ok {
 		groupID := val
 		addrsStr, addrsOk := keyspaceMeta.Config[MetaGroupAddrsKey]
