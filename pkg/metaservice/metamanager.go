@@ -30,10 +30,10 @@ const (
 	GlobalGroupID = "0"
 	// MetaServiceGroupIDKey is a keyspace meta config key name,
 	// the value of this key is meta service group id for this keyspace.
-	MetaServiceGroupIDKey = "meta_service_group_id"
+	GroupIDKey = "meta_service_group_id"
 	// MetaGroupAddrsKey is a keyspace meta config key name,
 	// the value of this key is meta service group addrs for this key.
-	MetaGroupAddrsKey = "meta_service_group_addrs"
+	GroupAddrsKey = "meta_service_group_addrs"
 )
 
 // ErrGroupNotMatch exported for test.
