@@ -46,7 +46,7 @@ var ErrNilKeyspaceMeta = errors.New("GetKeyspaceMetaServiceGroup: keyspace meta 
 type Info struct {
 	PDAddrs                []string
 	GlobalMetaServiceAddrs []string
-	KeyspaceMetaGroup      *Group
+	Group                  *Group
 }
 
 // Group includes keyspace meta service group info.
@@ -107,7 +107,7 @@ func GetMetaServiceInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs [
 		metaInfo := &Info{
 			PDAddrs:                pdAddrs,
 			GlobalMetaServiceAddrs: globalMetaAddrs,
-			KeyspaceMetaGroup:      keyspaceMetaServiceGroup,
+			Group:                  keyspaceMetaServiceGroup,
 		}
 		log.Info("return meta service group info", zap.Any("meta-service-info", metaInfo))
 		return metaInfo, nil
@@ -120,7 +120,7 @@ func GetMetaServiceInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs [
 	metaInfo := &Info{
 		PDAddrs:                pdAddrs,
 		GlobalMetaServiceAddrs: globalMetaAddrs,
-		KeyspaceMetaGroup:      keyspaceServiceGroup,
+		Group:                  keyspaceServiceGroup,
 	}
 	log.Info("return keyspace meta service group info", zap.Any("meta-service-info", metaInfo))
 	return metaInfo, nil

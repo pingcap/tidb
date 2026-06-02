@@ -88,7 +88,7 @@ func TestGetMetaServiceInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
 	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalMetaServiceAddrs[0])
-	require.Equal(t, "0", metaInfo.KeyspaceMetaGroup.GroupID)
+	require.Equal(t, "0", metaInfo.Group.GroupID)
 	require.Equal(t, expectPDAddrs, metaInfo.PDAddrs)
 
 	// Test case with a valid keyspaceMeta
@@ -103,8 +103,8 @@ func TestGetMetaServiceInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
 	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalMetaServiceAddrs[0])
-	require.Equal(t, "2", metaInfo.KeyspaceMetaGroup.GroupID)
+	require.Equal(t, "2", metaInfo.Group.GroupID)
 	require.Equal(t, expectPDAddrs, metaInfo.PDAddrs)
 	expectedAddrs := []string{"127.0.0.1:2388", "127.0.0.1:2389"}
-	require.ElementsMatch(t, expectedAddrs, metaInfo.KeyspaceMetaGroup.Addrs)
+	require.ElementsMatch(t, expectedAddrs, metaInfo.Group.Addrs)
 }
