@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -274,9 +273,6 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 			keptIndexIDs[ds.PhysicalTableID] = tableKeptIndexes
 		}
 		ds.PossibleAccessPaths = prunedPaths
-		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
-		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.PossibleAccessPaths))
-		copy(ds.PossibleAccessPaths, ds.PossibleAccessPaths)
 	}
 }
 
