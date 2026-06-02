@@ -70,56 +70,70 @@ func RUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
 }
 
 // UpdateRUV2MetricsFromRUV2 adds raw RUv2 counters into the statement-level metrics snapshot.
-func UpdateRUV2MetricsFromRUV2(metrics *RUV2Metrics, ru *kvrpcpb.RUV2) {
-	if metrics == nil || ru == nil {
+func UpdateRUV2MetricsFromRUV2(m *RUV2Metrics, ru *kvrpcpb.RUV2) {
+	if m == nil || ru == nil || m.Bypass() {
 		return
 	}
-	if ru.ReadRpcCount != 0 {
-		metrics.AddResourceManagerReadCnt(int64(ru.ReadRpcCount))
+	m.applyRawCounters(ru)
+}
+
+// applyRawCounters writes ru into m. Caller must check Bypass.
+func (m *RUV2Metrics) applyRawCounters(ru *kvrpcpb.RUV2) {
+	if v := ru.ReadRpcCount; v != 0 {
+		metrics.RUV2ResourceManagerReadCnt.Add(float64(v))
+		atomic.AddInt64(&m.resourceManagerReadCnt, int64(v))
 	}
-	if ru.WriteRpcCount != 0 {
-		metrics.AddResourceManagerWriteCnt(int64(ru.WriteRpcCount))
+	if v := ru.KvEngineCacheMiss; v != 0 {
+		metrics.RUV2TiKVKVEngineCacheMiss.Add(float64(v))
+		atomic.AddInt64(&m.tikvKvEngineCacheMiss, int64(v))
 	}
-	if ru.KvEngineCacheMiss != 0 {
-		metrics.AddTiKVKVEngineCacheMiss(int64(ru.KvEngineCacheMiss))
+	if v := ru.StorageProcessedKeysBatchGet; v != 0 {
+		metrics.RUV2TiKVStorageProcessedKeysBatchGet.Add(float64(v))
+		atomic.AddInt64(&m.tikvStorageProcessedKeysBatchGet, int64(v))
 	}
-	if ru.CoprocessorExecutorIterations != 0 {
-		metrics.AddTiKVCoprocessorExecutorIterations(int64(ru.CoprocessorExecutorIterations))
+	if v := ru.StorageProcessedKeysGet; v != 0 {
+		metrics.RUV2TiKVStorageProcessedKeysGet.Add(float64(v))
+		atomic.AddInt64(&m.tikvStorageProcessedKeysGet, int64(v))
 	}
-	if ru.CoprocessorResponseBytes != 0 {
-		metrics.AddTiKVCoprocessorResponseBytes(int64(ru.CoprocessorResponseBytes))
+
+	var extra *ruv2MetricsExtra
+	ensureExtra := func() *ruv2MetricsExtra {
+		if extra == nil {
+			extra = m.ensureExtra()
+		}
+		return extra
 	}
-	if ru.RaftstoreStoreWriteTriggerWbBytes != 0 {
-		metrics.AddTiKVRaftstoreStoreWriteTriggerWB(int64(ru.RaftstoreStoreWriteTriggerWbBytes))
+	if v := ru.WriteRpcCount; v != 0 {
+		metrics.RUV2ResourceManagerWriteCnt.Add(float64(v))
+		atomic.AddInt64(&ensureExtra().resourceManagerWriteCnt, int64(v))
 	}
-	if ru.StorageProcessedKeysBatchGet != 0 {
-		metrics.AddTiKVStorageProcessedKeysBatchGet(int64(ru.StorageProcessedKeysBatchGet))
+	if v := ru.CoprocessorExecutorIterations; v != 0 {
+		metrics.RUV2TiKVCoprocessorExecutorIterations.Add(float64(v))
+		atomic.AddInt64(&ensureExtra().tikvCoprocessorExecutorIterations, int64(v))
 	}
-	if ru.StorageProcessedKeysGet != 0 {
-		metrics.AddTiKVStorageProcessedKeysGet(int64(ru.StorageProcessedKeysGet))
+	if v := ru.CoprocessorResponseBytes; v != 0 {
+		metrics.RUV2TiKVCoprocessorResponseBytes.Add(float64(v))
+		atomic.AddInt64(&ensureExtra().tikvCoprocessorResponseBytes, int64(v))
+	}
+	if v := ru.RaftstoreStoreWriteTriggerWbBytes; v != 0 {
+		metrics.RUV2TiKVRaftstoreStoreWriteTriggerWB.Add(float64(v))
+		atomic.AddInt64(&ensureExtra().tikvRaftstoreStoreWriteTriggerWB, int64(v))
 	}
 	if inputs := ru.ExecutorInputs; inputs != nil {
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchIndexScan", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan))
+		addWork := func(label string, v uint64) {
+			if v == 0 {
+				return
+			}
+			metrics.RUV2TiKVCoprocessorWorkTotalCounter(label).Add(float64(v))
+			addRUV2ExtraLabelCounter(&ensureExtra().tikvCoprocessorWorkTotal, label, int64(v))
 		}
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchTableScan", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan))
-		}
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchSelection != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchSelection", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchSelection))
-		}
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchTopN != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchTopN))
-		}
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchLimit != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchLimit", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchLimit))
-		}
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchSimpleAggr", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr))
-		}
-		if inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr != 0 {
-			metrics.AddTiKVCoprocessorWorkTotal("BatchFastHashAggr", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr))
-		}
+		addWork("BatchIndexScan", inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan)
+		addWork("BatchTableScan", inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan)
+		addWork("BatchSelection", inputs.TikvCoprocessorExecutorWorkTotalBatchSelection)
+		addWork("BatchTopN", inputs.TikvCoprocessorExecutorWorkTotalBatchTopN)
+		addWork("BatchLimit", inputs.TikvCoprocessorExecutorWorkTotalBatchLimit)
+		addWork("BatchSimpleAggr", inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr)
+		addWork("BatchFastHashAggr", inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr)
 	}
 }
 
@@ -230,6 +244,65 @@ func (m *RUV2Metrics) AddExecutorMetric(level int, label string, delta int64) {
 	case 3:
 		addRUV2ExtraLabelCounter(&m.ensureExtra().executorL3, label, delta)
 	}
+}
+
+// ExecutorMetricRecorder is a pre-resolved counter for one executor metric.
+// The zero value records nothing; callers must check Available before Record.
+type ExecutorMetricRecorder struct {
+	add func(m *RUV2Metrics, delta int64)
+}
+
+// Available reports whether this recorder was resolved.
+func (r ExecutorMetricRecorder) Available() bool { return r.add != nil }
+
+// Record applies delta. Caller must ensure m is non-nil and not bypassed.
+func (r ExecutorMetricRecorder) Record(m *RUV2Metrics, delta int64) { r.add(m, delta) }
+
+// ResolveExecutorMetric returns a pre-resolved recorder for hot L1 executor
+// labels, or the zero recorder for everything else.
+func ResolveExecutorMetric(level int, label string) ExecutorMetricRecorder {
+	ensureExecutorL1Recorders()
+	if level == 1 {
+		switch label {
+		case ruv2LabelBatchPointGetExec:
+			return execL1RecorderBatchPointGet
+		case ruv2LabelPointGetExecutor:
+			return execL1RecorderPointGet
+		case ruv2LabelLimitExec:
+			return execL1RecorderLimit
+		}
+	}
+	return ExecutorMetricRecorder{}
+}
+
+var (
+	execL1RecorderBatchPointGet ExecutorMetricRecorder
+	execL1RecorderPointGet      ExecutorMetricRecorder
+	execL1RecorderLimit         ExecutorMetricRecorder
+	executorL1RecordersOnce     sync.Once
+)
+
+func ensureExecutorL1Recorders() {
+	executorL1RecordersOnce.Do(func() {
+		if c := metrics.RUV2ExecutorCounter(1, ruv2LabelBatchPointGetExec); c != nil {
+			execL1RecorderBatchPointGet = ExecutorMetricRecorder{add: func(m *RUV2Metrics, d int64) {
+				c.Add(float64(d))
+				atomic.AddInt64(&m.executorL1.batchPointGetExec, d)
+			}}
+		}
+		if c := metrics.RUV2ExecutorCounter(1, ruv2LabelPointGetExecutor); c != nil {
+			execL1RecorderPointGet = ExecutorMetricRecorder{add: func(m *RUV2Metrics, d int64) {
+				c.Add(float64(d))
+				atomic.AddInt64(&m.executorL1.pointGetExecutor, d)
+			}}
+		}
+		if c := metrics.RUV2ExecutorCounter(1, ruv2LabelLimitExec); c != nil {
+			execL1RecorderLimit = ExecutorMetricRecorder{add: func(m *RUV2Metrics, d int64) {
+				c.Add(float64(d))
+				atomic.AddInt64(&m.executorL1.limitExec, d)
+			}}
+		}
+	})
 }
 
 // AddExecutorL5InsertRows records affected insert rows for RUv2 accounting.
