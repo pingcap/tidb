@@ -28,7 +28,7 @@ go_test(
     srcs = ["standby_test.go"],
     embed = [":standby"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 11,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",

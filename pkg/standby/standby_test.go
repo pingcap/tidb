@@ -16,8 +16,11 @@ package standby
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -59,6 +62,43 @@ func resetStandbyTestState(t *testing.T) {
 		activateRequest = oldActivateRequest
 		mu.Unlock()
 	})
+}
+
+func TestActivateRequestMetadata(t *testing.T) {
+	resetStandbyTestState(t)
+
+	var req ActivateRequest
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"keyspace_name": "ks",
+		"metadata": {
+			"meta_a": "value_a"
+		}
+	}`), &req))
+	require.Equal(t, map[string]string{
+		"meta_a": "value_a",
+	}, req.Metadata)
+
+	mu.Lock()
+	activateRequest = req
+	mu.Unlock()
+
+	controller := NewLoadKeyspaceController(nil)
+	metadata := controller.ActivationMetadata()
+	require.Equal(t, req.Metadata, metadata)
+	metadata["meta_a"] = "changed"
+	require.Equal(t, "value_a", controller.ActivationMetadata()["meta_a"])
+}
+
+func TestActivateRequiresKeyspaceName(t *testing.T) {
+	resetStandbyTestState(t)
+	controller := NewLoadKeyspaceController(nil)
+	_, mux := controller.Handler(nil)
+	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{}`))
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestOnServerShutdownNoopOutsideStarter(t *testing.T) {

@@ -282,6 +282,9 @@ type Config struct {
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 
+	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
+	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
+
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 
@@ -1586,6 +1589,9 @@ func (c *Config) Valid() error {
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	}
+	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")
+	}
 	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
 		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
 	}
@@ -1594,6 +1600,9 @@ func (c *Config) Valid() error {
 	}
 	if c.DeployMode == deploymode.Starter && !validMaxAllowedPacket(c.MaxAllowedPacket) {
 		return fmt.Errorf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	}
+	if err := c.KeyspaceObservability.Valid(); err != nil {
+		return err
 	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
