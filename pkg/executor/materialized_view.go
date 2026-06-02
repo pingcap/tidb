@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,11 +44,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/table"
@@ -61,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -78,6 +83,39 @@ type CompareMaterializedViewExec struct {
 	exec.BaseExecutor
 	stmt *ast.CompareMaterializedViewStmt
 	done bool
+}
+
+const (
+	compareMaterializedViewDifferTypeBaseName = "_Differ_type_"
+	compareMaterializedViewDifferType         = "mview_differ"
+	compareMaterializedViewVacuumType         = "mview_vacuum"
+	compareMaterializedViewExcessiveType      = "mview_excessive"
+)
+
+type compareMaterializedViewDiffLayout struct {
+	groupKeyOffsets       []int
+	leftMarkerColIdx      int
+	rightMarkerColIdx     int
+	payloadCompareColumns []mvCompleteDeltaCompareColumn
+}
+
+type compareMaterializedViewRecordSetExec struct {
+	exec.BaseExecutor
+
+	recordSet sqlexec.RecordSet
+	release   func() error
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type compareMaterializedViewOutputWriter struct {
+	sctx          sessionctx.Context
+	targetTable   table.Table
+	txn           kv.Transaction
+	fieldTypes    []*types.FieldType
+	row           []types.Datum
+	mvColumnCount int
+	release       func(context.Context)
 }
 
 // CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
@@ -1595,13 +1633,16 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 // Next implements the Executor Next interface.
-func (e *CompareMaterializedViewExec) Next(_ context.Context, _ *chunk.Chunk) error {
+func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
 	e.done = true
 
-	_, tblInfo, err := e.resolveCompareMaterializedViewTarget()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+
+	schemaName, targetTable, tblInfo, err := e.resolveCompareMaterializedViewTarget()
 	if err != nil {
 		return err
 	}
@@ -1611,7 +1652,123 @@ func (e *CompareMaterializedViewExec) Next(_ context.Context, _ *chunk.Chunk) er
 	if err := e.checkCompareMaterializedViewOutputTableNotExists(); err != nil {
 		return err
 	}
-	return errors.NewNoStackError("COMPARE MATERIALIZED VIEW is not implemented")
+
+	compareSnapshotTS, err := e.resolveCompareMaterializedViewSnapshotTS(ctx)
+	if err != nil {
+		return err
+	}
+	lastSuccessReadTSO, err := e.readCompareMaterializedViewLastSuccessReadTSO(ctx, schemaName, tblInfo.ID, compareSnapshotTS)
+	if err != nil {
+		return err
+	}
+
+	diffMeta, err := mvmerge.BuildCompleteDiffSource(e.Ctx().GetPlanCtx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo)
+	if err != nil {
+		return err
+	}
+	visibleCols := targetTable.VisibleCols()
+	layout, err := buildCompareMaterializedViewDiffLayout(diffMeta, visibleCols)
+	if err != nil {
+		return err
+	}
+
+	var outputWriter *compareMaterializedViewOutputWriter
+	if e.stmt.OutputTable != nil {
+		outputWriter, err = e.openCompareMaterializedViewOutputWriter(ctx, schemaName, tblInfo, visibleCols)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if outputWriter != nil {
+				outputWriter.rollback(ctx)
+			}
+		}()
+	}
+
+	baseQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, lastSuccessReadTSO, tblInfo.MaterializedView.SQLContent)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = baseQueryExec.Close() }()
+
+	mvQuerySQL := buildCompareMaterializedViewSelectSQL(schemaName, tblInfo.Name, visibleCols)
+	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, compareSnapshotTS, mvQuerySQL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = mvQueryExec.Close() }()
+
+	hashJoinExec := newCompareMaterializedViewHashJoinExec(e.Ctx(), baseQueryExec, mvQueryExec, layout.groupKeyOffsets, visibleCols)
+	if err := exec.Open(ctx, hashJoinExec); err != nil {
+		_ = hashJoinExec.Close()
+		return err
+	}
+	defer func() { _ = hashJoinExec.Close() }()
+
+	joinResult := exec.NewFirstChunk(hashJoinExec)
+	rowIdxes := make([]int, 0, joinResult.Capacity())
+	changedRows := make([]uint8, 0, joinResult.Capacity())
+	var diffRows int64
+	for {
+		joinResult.Reset()
+		if err := exec.Next(ctx, hashJoinExec, joinResult); err != nil {
+			return err
+		}
+		if joinResult.NumRows() == 0 {
+			break
+		}
+
+		rowIdxes = prepareCompareMaterializedViewRowIdxes(rowIdxes, joinResult.NumRows())
+		if cap(changedRows) < joinResult.NumRows() {
+			changedRows = make([]uint8, joinResult.NumRows())
+		} else {
+			changedRows = changedRows[:joinResult.NumRows()]
+			clear(changedRows)
+		}
+		for _, compareCol := range layout.payloadCompareColumns {
+			if err := markMVCompleteDeltaTouchedRowsByColumn(
+				rowIdxes,
+				changedRows,
+				1,
+				true,
+				compareCol,
+				joinResult.Column(compareCol.mInputColID),
+				joinResult.Column(compareCol.qInputColID),
+			); err != nil {
+				return err
+			}
+		}
+
+		leftMarkerCol := joinResult.Column(layout.leftMarkerColIdx)
+		rightMarkerCol := joinResult.Column(layout.rightMarkerColIdx)
+		for rowIdx := 0; rowIdx < joinResult.NumRows(); rowIdx++ {
+			diffType := classifyCompareMaterializedViewRowDiff(
+				leftMarkerCol.IsNull(rowIdx),
+				rightMarkerCol.IsNull(rowIdx),
+				changedRows[rowIdx] != 0,
+			)
+			if diffType == "" {
+				continue
+			}
+			diffRows++
+			if outputWriter != nil {
+				if err := outputWriter.writeRow(ctx, joinResult.GetRow(rowIdx), diffType); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if outputWriter != nil {
+		if err := outputWriter.commit(ctx); err != nil {
+			return err
+		}
+		outputWriter = nil
+		return nil
+	}
+
+	req.AppendString(0, formatCompareMaterializedViewSummary(lastSuccessReadTSO, diffRows))
+	return nil
 }
 
 func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNotExists() error {
@@ -1637,35 +1794,545 @@ func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNot
 	return nil
 }
 
-func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget() (pmodel.CIStr, *model.TableInfo, error) {
+func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget() (pmodel.CIStr, table.Table, *model.TableInfo, error) {
 	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
 	schemaName := e.stmt.ViewName.Schema
 	if schemaName.O == "" {
 		if e.Ctx().GetSessionVars().CurrentDB == "" {
-			return pmodel.CIStr{}, nil, errors.Trace(plannererrors.ErrNoDB)
+			return pmodel.CIStr{}, nil, nil, errors.Trace(plannererrors.ErrNoDB)
 		}
 		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
 		e.stmt.ViewName.Schema = schemaName
 	}
 	if _, ok := is.SchemaByName(schemaName); !ok {
-		return pmodel.CIStr{}, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+		return pmodel.CIStr{}, nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 
 	tbl, err := is.TableByName(context.Background(), schemaName, e.stmt.ViewName.Name)
 	if err != nil {
-		return pmodel.CIStr{}, nil, err
+		return pmodel.CIStr{}, nil, nil, err
 	}
 	tblInfo := tbl.Meta()
 	if tblInfo.MaterializedView == nil {
-		return pmodel.CIStr{}, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, e.stmt.ViewName.Name.O, "MATERIALIZED VIEW")
+		return pmodel.CIStr{}, nil, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, e.stmt.ViewName.Name.O, "MATERIALIZED VIEW")
 	}
 	if len(tblInfo.MaterializedView.SQLContent) == 0 {
-		return pmodel.CIStr{}, nil, errors.New("compare materialized view: invalid select sql")
+		return pmodel.CIStr{}, nil, nil, errors.New("compare materialized view: invalid select sql")
 	}
 	if err := checkRefreshMaterializedViewReady(schemaName, tblInfo); err != nil {
-		return pmodel.CIStr{}, nil, err
+		return pmodel.CIStr{}, nil, nil, err
 	}
-	return schemaName, tblInfo, nil
+	return schemaName, tbl, tblInfo, nil
+}
+
+func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewSnapshotTS(ctx context.Context) (uint64, error) {
+	if e.stmt.AsOf == nil {
+		return 0, errors.New("compare materialized view: missing AS OF TIMESTAMP")
+	}
+	return staleread.CalculateAsOfTsExpr(ctx, e.Ctx().GetPlanCtx(), e.stmt.AsOf.TsExpr)
+}
+
+func (e *CompareMaterializedViewExec) readCompareMaterializedViewLastSuccessReadTSO(
+	ctx context.Context,
+	schemaName pmodel.CIStr,
+	mviewID int64,
+	compareSnapshotTS uint64,
+) (uint64, error) {
+	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, schemaName, compareSnapshotTS)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = cleanup() }()
+
+	readTSO, readTSONull, err := readRefreshInfoReadTSO(ctx, sctx.GetSQLExecutor(), mviewID)
+	if err != nil {
+		return 0, err
+	}
+	if readTSONull {
+		return 0, errors.New("compare materialized view: LAST_SUCCESS_READ_TSO is NULL")
+	}
+	return readTSO, nil
+}
+
+func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
+	ctx context.Context,
+	defaultDB pmodel.CIStr,
+	snapshotTS uint64,
+	sql string,
+) (exec.Executor, error) {
+	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, defaultDB, snapshotTS)
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	if err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	if rs == nil {
+		_ = cleanup()
+		return nil, errors.New("compare materialized view: query returned nil record set")
+	}
+	schema := buildCompareMaterializedViewRecordSetSchema(rs)
+	if schema.Len() == 0 {
+		_ = rs.Close()
+		_ = cleanup()
+		return nil, errors.New("compare materialized view: query returned empty schema")
+	}
+	return &compareMaterializedViewRecordSetExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), schema, 0),
+		recordSet:    rs,
+		release:      cleanup,
+	}, nil
+}
+
+func (e *CompareMaterializedViewExec) openCompareMaterializedViewSnapshotSession(
+	ctx context.Context,
+	defaultDB pmodel.CIStr,
+	snapshotTS uint64,
+) (sessionctx.Context, func() error, error) {
+	sctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, nil, err
+	}
+	restore, err := prepareCompareMaterializedViewSnapshotSession(sctx, defaultDB, snapshotTS)
+	if err != nil {
+		e.ReleaseSysSession(ctx, sctx)
+		return nil, nil, err
+	}
+	return sctx, func() error {
+		restoreErr := restore()
+		e.ReleaseSysSession(ctx, sctx)
+		return restoreErr
+	}, nil
+}
+
+func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
+	ctx context.Context,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+	visibleCols []*table.Column,
+) (*compareMaterializedViewOutputWriter, error) {
+	diffTypeColName := chooseCompareMaterializedViewDifferTypeColumnName(visibleCols)
+
+	ddlSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ddlSctx.GetSQLExecutor().ExecuteInternal(
+		ctx,
+		"CREATE TABLE %n.%n LIKE %n.%n",
+		e.stmt.OutputTable.Schema.O,
+		e.stmt.OutputTable.Name.O,
+		schemaName.O,
+		tblInfo.Name.O,
+	); err != nil {
+		e.ReleaseSysSession(ctx, ddlSctx)
+		return nil, err
+	}
+	if _, err := ddlSctx.GetSQLExecutor().ExecuteInternal(
+		ctx,
+		"ALTER TABLE %n.%n ADD COLUMN %n VARCHAR(32) NOT NULL",
+		e.stmt.OutputTable.Schema.O,
+		e.stmt.OutputTable.Name.O,
+		diffTypeColName.O,
+	); err != nil {
+		e.ReleaseSysSession(ctx, ddlSctx)
+		return nil, err
+	}
+	e.ReleaseSysSession(ctx, ddlSctx)
+
+	insertSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, err
+	}
+	releaseInsertSession := func(releaseCtx context.Context) {
+		e.ReleaseSysSession(releaseCtx, insertSctx)
+	}
+	if err := sessiontxn.NewTxn(ctx, insertSctx); err != nil {
+		releaseInsertSession(ctx)
+		return nil, err
+	}
+	txn, err := insertSctx.Txn(true)
+	if err != nil {
+		releaseInsertSession(ctx)
+		return nil, err
+	}
+	insertSctx.GetSessionVars().SetInTxn(true)
+
+	outputIS := domain.GetDomain(e.Ctx()).InfoSchema()
+	targetTable, err := outputIS.TableByName(context.Background(), e.stmt.OutputTable.Schema, e.stmt.OutputTable.Name)
+	if err != nil {
+		releaseInsertSession(ctx)
+		return nil, err
+	}
+	writableCols := targetTable.WritableCols()
+	fieldTypes := make([]*types.FieldType, len(writableCols))
+	for i := range writableCols {
+		fieldTypes[i] = &writableCols[i].FieldType
+	}
+	return &compareMaterializedViewOutputWriter{
+		sctx:          insertSctx,
+		targetTable:   targetTable,
+		txn:           txn,
+		fieldTypes:    fieldTypes,
+		row:           make([]types.Datum, len(writableCols)),
+		mvColumnCount: len(visibleCols),
+		release:       releaseInsertSession,
+	}, nil
+}
+
+func prepareCompareMaterializedViewSnapshotSession(
+	sctx sessionctx.Context,
+	defaultDB pmodel.CIStr,
+	snapshotTS uint64,
+) (func() error, error) {
+	sessVars := sctx.GetSessionVars()
+	origCurrentDB := sessVars.CurrentDB
+	origSnapshotTS := sessVars.SnapshotTS
+	origSnapshotInfoSchema := sessVars.SnapshotInfoschema
+
+	sessVars.CurrentDB = defaultDB.O
+	if err := sessVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshotTS, 10)); err != nil {
+		sessVars.CurrentDB = origCurrentDB
+		return nil, err
+	}
+	if err := loadSnapshotInfoSchemaIfNeeded(sctx, snapshotTS); err != nil {
+		_ = sessVars.SetSystemVar(variable.TiDBSnapshot, "")
+		sessVars.SnapshotInfoschema = origSnapshotInfoSchema
+		sessVars.SnapshotTS = origSnapshotTS
+		sessVars.CurrentDB = origCurrentDB
+		return nil, err
+	}
+
+	return func() error {
+		sessVars.CurrentDB = origCurrentDB
+		if origSnapshotTS == 0 {
+			if err := sessVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				return err
+			}
+		} else {
+			if err := sessVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(origSnapshotTS, 10)); err != nil {
+				return err
+			}
+		}
+		sessVars.SnapshotTS = origSnapshotTS
+		sessVars.SnapshotInfoschema = origSnapshotInfoSchema
+		return nil
+	}, nil
+}
+
+func buildCompareMaterializedViewDiffLayout(
+	diffMeta *mvmerge.CompleteDiffBuildResult,
+	visibleCols []*table.Column,
+) (*compareMaterializedViewDiffLayout, error) {
+	if diffMeta == nil {
+		return nil, errors.New("compare materialized view: diff metadata is nil")
+	}
+	if len(visibleCols) != diffMeta.MVColumnCount {
+		return nil, errors.New("compare materialized view: hidden MV columns are unsupported")
+	}
+
+	groupKeySet := make(map[int]struct{}, len(diffMeta.GroupKeyMVOffsets))
+	for _, offset := range diffMeta.GroupKeyMVOffsets {
+		groupKeySet[offset] = struct{}{}
+	}
+
+	layout := &compareMaterializedViewDiffLayout{
+		groupKeyOffsets:   append([]int(nil), diffMeta.GroupKeyMVOffsets...),
+		leftMarkerColIdx:  diffMeta.MarkerMVOffset,
+		rightMarkerColIdx: len(visibleCols) + diffMeta.MarkerMVOffset,
+	}
+	layout.payloadCompareColumns = make([]mvCompleteDeltaCompareColumn, 0, len(visibleCols)-len(groupKeySet))
+	for offset, col := range visibleCols {
+		if _, ok := groupKeySet[offset]; ok {
+			continue
+		}
+		layout.payloadCompareColumns = append(layout.payloadCompareColumns, mvCompleteDeltaCompareColumn{
+			mInputColID:    offset,
+			qInputColID:    len(visibleCols) + offset,
+			fieldType:      &col.FieldType,
+			notNull:        mysql.HasNotNullFlag(col.GetFlag()),
+			touchedBitMask: 1,
+		})
+	}
+	return layout, nil
+}
+
+func newCompareMaterializedViewHashJoinExec(
+	ctx sessionctx.Context,
+	leftExec exec.Executor,
+	rightExec exec.Executor,
+	groupKeyOffsets []int,
+	visibleCols []*table.Column,
+) *join.HashJoinV1Exec {
+	leftTypes, rightTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
+	joinedSchema := buildCompareMaterializedViewJoinSchema(leftTypes, rightTypes)
+	concurrency := uint(ctx.GetSessionVars().Concurrency.HashJoinConcurrency())
+	if concurrency == 0 {
+		concurrency = 1
+	}
+
+	hashJoinExec := &join.HashJoinV1Exec{
+		BaseExecutor:          exec.NewBaseExecutor(ctx, joinedSchema, 0, leftExec, rightExec),
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV1{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV1, concurrency),
+		BuildWorker:           &join.BuildWorkerV1{},
+		HashJoinCtxV1: &join.HashJoinCtxV1{
+			IsOuterJoin:     true,
+			UseOuterToBuild: false,
+		},
+	}
+	hashJoinExec.HashJoinCtxV1.SessCtx = ctx
+	hashJoinExec.HashJoinCtxV1.JoinType = logicalop.FullOuterJoin
+	hashJoinExec.HashJoinCtxV1.Concurrency = concurrency
+	hashJoinExec.HashJoinCtxV1.ChunkAllocPool = hashJoinExec.AllocPool
+	hashJoinExec.HashJoinCtxV1.IsNullEQ = buildCompareMaterializedViewNullEQFlags(groupKeyOffsets, visibleCols)
+	hashJoinExec.FullOuterJoinBuildFilter = nil
+	hashJoinExec.FullOuterJoinProbeFilter = nil
+
+	probeKeyColIdx := append([]int(nil), groupKeyOffsets...)
+	buildKeyColIdx := append([]int(nil), groupKeyOffsets...)
+	hashJoinExec.ProbeSideTupleFetcher.ProbeSideExec = leftExec
+	hashJoinExec.BuildWorker.BuildKeyColIdx = buildKeyColIdx
+	hashJoinExec.BuildWorker.BuildSideExec = rightExec
+	hashJoinExec.BuildWorker.HashJoinCtx = hashJoinExec.HashJoinCtxV1
+
+	childrenUsedSchema := [][]int{
+		buildCompareMaterializedViewOrdinalSlice(len(leftTypes)),
+		buildCompareMaterializedViewOrdinalSlice(len(rightTypes)),
+	}
+	fullJoinBuildJoiner := join.NewJoiner(
+		ctx,
+		logicalop.RightOuterJoin,
+		true,
+		make([]types.Datum, len(leftTypes)),
+		nil,
+		leftTypes,
+		rightTypes,
+		childrenUsedSchema,
+		false,
+	)
+	fullJoinProbeJoiner := join.NewJoiner(
+		ctx,
+		logicalop.LeftOuterJoin,
+		false,
+		make([]types.Datum, len(rightTypes)),
+		nil,
+		leftTypes,
+		rightTypes,
+		childrenUsedSchema,
+		false,
+	)
+	for i := uint(0); i < concurrency; i++ {
+		probeJoiner := fullJoinProbeJoiner.Clone()
+		hashJoinExec.ProbeWorkers[i] = &join.ProbeWorkerV1{
+			HashJoinCtx:         hashJoinExec.HashJoinCtxV1,
+			ProbeKeyColIdx:      probeKeyColIdx,
+			Joiner:              probeJoiner,
+			FullJoinBuildJoiner: fullJoinBuildJoiner.Clone(),
+			FullJoinProbeJoiner: probeJoiner,
+		}
+		hashJoinExec.ProbeWorkers[i].WorkerID = i
+	}
+
+	hashJoinExec.BuildTypes = buildCompareMaterializedViewKeyTypes(rightTypes, groupKeyOffsets)
+	hashJoinExec.ProbeTypes = buildCompareMaterializedViewKeyTypes(leftTypes, groupKeyOffsets)
+	return hashJoinExec
+}
+
+func buildCompareMaterializedViewNullEQFlags(groupKeyOffsets []int, visibleCols []*table.Column) []bool {
+	flags := make([]bool, len(groupKeyOffsets))
+	for i, offset := range groupKeyOffsets {
+		flags[i] = !mysql.HasNotNullFlag(visibleCols[offset].GetFlag())
+	}
+	return flags
+}
+
+func buildCompareMaterializedViewKeyTypes(fieldTypes []*types.FieldType, groupKeyOffsets []int) []*types.FieldType {
+	keyTypes := make([]*types.FieldType, len(groupKeyOffsets))
+	for i, offset := range groupKeyOffsets {
+		keyTypes[i] = fieldTypes[offset].Clone()
+	}
+	return keyTypes
+}
+
+func buildCompareMaterializedViewJoinSchema(leftTypes, rightTypes []*types.FieldType) *expression.Schema {
+	cols := make([]*expression.Column, 0, len(leftTypes)+len(rightTypes))
+	for i, ft := range leftTypes {
+		cols = append(cols, &expression.Column{Index: i, RetType: ft})
+	}
+	offset := len(leftTypes)
+	for i, ft := range rightTypes {
+		cols = append(cols, &expression.Column{Index: offset + i, RetType: ft})
+	}
+	return expression.NewSchema(cols...)
+}
+
+func buildCompareMaterializedViewRecordSetSchema(rs sqlexec.RecordSet) *expression.Schema {
+	fields := rs.Fields()
+	cols := make([]*expression.Column, 0, len(fields))
+	for i, field := range fields {
+		if field == nil || field.Column == nil {
+			continue
+		}
+		cols = append(cols, &expression.Column{
+			ID:      field.Column.ID,
+			Index:   i,
+			RetType: &field.Column.FieldType,
+		})
+	}
+	return expression.NewSchema(cols...)
+}
+
+func buildCompareMaterializedViewSelectSQL(
+	schemaName pmodel.CIStr,
+	tableName pmodel.CIStr,
+	visibleCols []*table.Column,
+) string {
+	var sb strings.Builder
+	sb.WriteString("SELECT ")
+	for i, col := range visibleCols {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(sqlescape.MustEscapeSQL("%n", col.Name.O))
+	}
+	sb.WriteString(" FROM ")
+	sb.WriteString(sqlescape.MustEscapeSQL("%n.%n", schemaName.O, tableName.O))
+	return sb.String()
+}
+
+func chooseCompareMaterializedViewDifferTypeColumnName(visibleCols []*table.Column) pmodel.CIStr {
+	used := make(map[string]struct{}, len(visibleCols))
+	for _, col := range visibleCols {
+		used[col.Name.L] = struct{}{}
+	}
+	base := compareMaterializedViewDifferTypeBaseName
+	name := base
+	for suffix := 1; ; suffix++ {
+		if _, exists := used[strings.ToLower(name)]; !exists {
+			return pmodel.NewCIStr(name)
+		}
+		name = fmt.Sprintf("%s%d", base, suffix)
+	}
+}
+
+func prepareCompareMaterializedViewRowIdxes(rowIdxes []int, rowCnt int) []int {
+	if cap(rowIdxes) < rowCnt {
+		rowIdxes = make([]int, rowCnt)
+	} else {
+		rowIdxes = rowIdxes[:rowCnt]
+	}
+	for i := 0; i < rowCnt; i++ {
+		rowIdxes[i] = i
+	}
+	return rowIdxes
+}
+
+func buildCompareMaterializedViewOrdinalSlice(colCnt int) []int {
+	ordinals := make([]int, colCnt)
+	for i := 0; i < colCnt; i++ {
+		ordinals[i] = i
+	}
+	return ordinals
+}
+
+func classifyCompareMaterializedViewRowDiff(leftMissing, rightMissing, payloadChanged bool) string {
+	switch {
+	case leftMissing:
+		return compareMaterializedViewExcessiveType
+	case rightMissing:
+		return compareMaterializedViewVacuumType
+	case payloadChanged:
+		return compareMaterializedViewDifferType
+	default:
+		return ""
+	}
+}
+
+func formatCompareMaterializedViewSummary(lastSuccessReadTSO uint64, diffRows int64) string {
+	resultTime := oracle.GetTimeFromTS(lastSuccessReadTSO).Format(types.TimeFSPFormat)
+	if diffRows == 0 {
+		return fmt.Sprintf(
+			"There are no differencies result in %d rows compared to source base tables at timestamp '%s'",
+			diffRows,
+			resultTime,
+		)
+	}
+	return fmt.Sprintf(
+		"There are differencies result in %d rows compared to source base tables at timestamp '%s'",
+		diffRows,
+		resultTime,
+	)
+}
+
+func (e *compareMaterializedViewRecordSetExec) Open(ctx context.Context) error {
+	return e.BaseExecutor.Open(ctx)
+}
+
+func (e *compareMaterializedViewRecordSetExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	return e.recordSet.Next(ctx, req)
+}
+
+func (e *compareMaterializedViewRecordSetExec) Close() error {
+	e.closeOnce.Do(func() {
+		if e.recordSet != nil {
+			e.closeErr = e.recordSet.Close()
+		}
+		if releaseErr := e.release(); e.closeErr == nil {
+			e.closeErr = releaseErr
+		}
+		if baseErr := e.BaseExecutor.Close(); e.closeErr == nil {
+			e.closeErr = baseErr
+		}
+	})
+	return e.closeErr
+}
+
+func (w *compareMaterializedViewOutputWriter) writeRow(ctx context.Context, row chunk.Row, diffType string) error {
+	useRight := diffType != compareMaterializedViewVacuumType
+	for colIdx := 0; colIdx < w.mvColumnCount; colIdx++ {
+		sourceColIdx := colIdx
+		if useRight {
+			sourceColIdx += w.mvColumnCount
+		}
+		row.DatumWithBuffer(sourceColIdx, w.fieldTypes[colIdx], &w.row[colIdx])
+	}
+	w.row[w.mvColumnCount].SetString(diffType, mysql.DefaultCollationName)
+	if _, err := w.targetTable.AddRecord(w.sctx.GetTableCtx(), w.txn, w.row, table.WithCtx(ctx), table.DupKeyCheckLazy); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *compareMaterializedViewOutputWriter) commit(ctx context.Context) error {
+	if w == nil || w.sctx == nil {
+		return nil
+	}
+	w.sctx.StmtCommit(ctx)
+	if err := w.sctx.CommitTxn(ctx); err != nil {
+		return err
+	}
+	if w.release != nil {
+		w.release(ctx)
+	}
+	w.sctx = nil
+	w.txn = nil
+	return nil
+}
+
+func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) {
+	if w == nil || w.sctx == nil {
+		return
+	}
+	if w.release != nil {
+		w.release(ctx)
+	}
+	w.sctx = nil
+	w.txn = nil
 }
 
 // Next implements the Executor Next interface.

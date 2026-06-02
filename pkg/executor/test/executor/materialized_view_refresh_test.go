@@ -84,6 +84,13 @@ func requireRowsContainSubstring(t *testing.T, rows [][]any, substr string) {
 	require.Failf(t, "substring not found", "substring=%s rows=%v", substr, rows)
 }
 
+func nextCompareTimestamp(t *testing.T, tk *testkit.TestKit) string {
+	t.Helper()
+
+	time.Sleep(10 * time.Millisecond)
+	return fmt.Sprint(tk.MustQuery("select now(6)").Rows()[0][0])
+}
+
 func requireRefreshTiFlashSessionVarsApplied(
 	t *testing.T,
 	refresh func(),
@@ -3579,7 +3586,8 @@ func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
 	tkUser := testkit.NewTestKit(t, store)
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_compare_u", Hostname: "%"}, nil, nil, nil))
 
-	compareSQL := "compare materialized view test.mv_compare_priv as of timestamp '2026-05-21 10:00:00'"
+	compareTS := nextCompareTimestamp(t, tk)
+	compareSQL := fmt.Sprintf("compare materialized view test.mv_compare_priv as of timestamp '%s'", compareTS)
 	err := tkUser.ExecToErr(compareSQL)
 	require.ErrorContains(t, err, "OPERATE VIEW command denied")
 
@@ -3588,8 +3596,9 @@ func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
 	require.ErrorContains(t, err, "SELECT command denied")
 
 	tk.MustExec("grant select on test.t_compare_priv to 'mv_compare_u'@'%'")
-	err = tkUser.QueryToErr(compareSQL)
-	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+	rows := tkUser.MustQuery(compareSQL).Rows()
+	require.Len(t, rows, 1)
+	require.Contains(t, fmt.Sprint(rows[0][0]), "timestamp")
 
 	outputSQL := compareSQL + " output into table test.mv_compare_priv_diff"
 	err = tkUser.ExecToErr(outputSQL)
@@ -3600,12 +3609,110 @@ func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
 	require.ErrorContains(t, err, "INSERT command denied")
 
 	tk.MustExec("grant insert on test.* to 'mv_compare_u'@'%'")
-	err = tkUser.ExecToErr(outputSQL)
-	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+	tkUser.MustExec(outputSQL)
+	tk.MustQuery("select count(*) from test.mv_compare_priv_diff").Check(testkit.Rows("0"))
 
+	tk.MustExec("drop table mv_compare_priv_diff")
 	tk.MustExec("create table mv_compare_priv_diff (a int)")
 	err = tkUser.ExecToErr(outputSQL)
 	require.ErrorContains(t, err, "Table 'test.mv_compare_priv_diff' already exists")
+}
+
+func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_diff (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_diff values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_compare_diff (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_diff (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_diff group by a")
+
+	lastSuccessRows := tk.MustQuery(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_diff')",
+	).Rows()
+	lastSuccessReadTSO, err := strconv.ParseUint(fmt.Sprint(lastSuccessRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	origInMVMaintenance := tk.Session().GetSessionVars().InMaterializedViewMaintenance
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = true
+	mustExecInternal(t, tk, "update mv_compare_diff set s = s + 7 where a = 1")
+	mustExecInternal(t, tk, "delete from mv_compare_diff where a = 2")
+	mustExecInternal(t, tk, "insert into mv_compare_diff values (3, 30, 1)")
+	mustExecInternal(t, tk, "commit")
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = origInMVMaintenance
+	tk.MustQuery("select a, s, cnt from mv_compare_diff order by a").Check(testkit.Rows(
+		"1 17 1",
+		"3 30 1",
+	))
+
+	compareTS := nextCompareTimestamp(t, tk)
+	compareSQL := fmt.Sprintf(
+		"compare materialized view test.mv_compare_diff as of timestamp '%s'",
+		compareTS,
+	)
+
+	summaryRows := tk.MustQuery(compareSQL).Rows()
+	require.Len(t, summaryRows, 1)
+	summary := fmt.Sprint(summaryRows[0][0])
+	require.Contains(t, summary, "3 rows")
+	require.Contains(t, summary, oracle.GetTimeFromTS(lastSuccessReadTSO).Format("2006-01-02 15:04:05.000000"))
+
+	tk.MustExec(compareSQL + " output into table test.mv_compare_diff_output")
+	tk.MustQuery("select a, s, cnt, _Differ_type_ from test.mv_compare_diff_output order by a").
+		Check(testkit.Rows(
+			"1 17 1 mview_differ",
+			"2 20 1 mview_vacuum",
+			"3 30 1 mview_excessive",
+		))
+}
+
+func TestCompareMaterializedViewNullableGroupKeyMinMax(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_nullable_minmax (a int, b int)")
+	tk.MustExec("create index idx_a_b on t_compare_nullable_minmax (a, b)")
+	tk.MustExec("insert into t_compare_nullable_minmax values (null, 1), (null, 3), (1, 5)")
+	tk.MustExec("create materialized view log on t_compare_nullable_minmax (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_nullable_minmax (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_compare_nullable_minmax group by a")
+
+	origInMVMaintenance := tk.Session().GetSessionVars().InMaterializedViewMaintenance
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = true
+	mustExecInternal(t, tk, "update mv_compare_nullable_minmax set mx = 99 where a is null")
+	mustExecInternal(t, tk, "commit")
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = origInMVMaintenance
+
+	compareSQL := fmt.Sprintf(
+		"compare materialized view test.mv_compare_nullable_minmax as of timestamp '%s'",
+		nextCompareTimestamp(t, tk),
+	)
+	summaryRows := tk.MustQuery(compareSQL).Rows()
+	require.Len(t, summaryRows, 1)
+	require.Contains(t, fmt.Sprint(summaryRows[0][0]), "1 rows")
+
+	tk.MustExec(compareSQL + " output into table test.mv_compare_nullable_minmax_output")
+	tk.MustQuery("select a, cnt, mx, mn, _Differ_type_ from test.mv_compare_nullable_minmax_output").
+		Check(testkit.Rows("<nil> 2 99 1 mview_differ"))
+}
+
+func TestCompareMaterializedViewEmptyInputs(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_empty (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_compare_empty (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_empty (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_empty group by a")
+
+	compareSQL := fmt.Sprintf(
+		"compare materialized view test.mv_compare_empty as of timestamp '%s'",
+		nextCompareTimestamp(t, tk),
+	)
+	summaryRows := tk.MustQuery(compareSQL).Rows()
+	require.Len(t, summaryRows, 1)
+	require.Contains(t, fmt.Sprint(summaryRows[0][0]), "0 rows")
+
+	tk.MustExec(compareSQL + " output into table test.mv_compare_empty_output")
+	tk.MustQuery("select count(*) from test.mv_compare_empty_output").Check(testkit.Rows("0"))
 }
 
 func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
