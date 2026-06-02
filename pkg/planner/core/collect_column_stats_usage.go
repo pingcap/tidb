@@ -273,12 +273,16 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	if c.interestingColsByDS != nil {
 		switch x := lp.(type) {
 		case *logicalop.LogicalJoin:
-			// Extract join columns from EqualConditions and OtherConditions
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+			// Extract join columns from join predicates.
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, expression.ScalarFuncs2Exprs(x.EqualConditions), nil)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, x.LeftConditions, nil)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, x.RightConditions, nil)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, x.OtherConditions, nil)
 		case *logicalop.LogicalApply:
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, expression.ScalarFuncs2Exprs(x.EqualConditions), nil)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, x.LeftConditions, nil)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, x.RightConditions, nil)
+			currentJoinCols = expression.ExtractColumnsFromExpressions(currentJoinCols, x.OtherConditions, nil)
 		case *logicalop.LogicalSort:
 			for _, item := range x.ByItems {
 				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
@@ -293,11 +297,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			}
 		case *logicalop.LogicalAggregation:
 			// GROUP BY columns benefit from indexes (similar to ordering)
-			currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(x.GroupByItems, nil)...)
+			currentOrderingCols = expression.ExtractColumnsFromExpressions(currentOrderingCols, x.GroupByItems, nil)
 			// MIN/MAX aggregates can benefit from ordered indexes
 			for _, aggFunc := range x.AggFuncs {
 				if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax {
-					currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)...)
+					currentOrderingCols = expression.ExtractColumnsFromExpressions(currentOrderingCols, aggFunc.Args, nil)
 				}
 			}
 		}

@@ -260,17 +260,18 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 
 	// Only update if pruning actually occurred (paths changed)
 	if len(prunedPaths) < len(ds.PossibleAccessPaths) {
-		// Union kept indexes instead of overwriting, to handle cases where the same physical table
+		logicalTableID := ds.TableInfo.ID
+		// Union kept indexes instead of overwriting, to handle cases where the same logical table
 		// appears multiple times (e.g., self-joins, repeated subqueries). Each alias may keep different
 		// indexes, and we need to load stats for all indexes kept by any alias.
-		if existingKeptIndexes, exists := keptIndexIDs[ds.PhysicalTableID]; exists {
+		if existingKeptIndexes, exists := keptIndexIDs[logicalTableID]; exists {
 			// Merge new indexes into existing set
 			for idxID := range tableKeptIndexes {
 				existingKeptIndexes[idxID] = struct{}{}
 			}
 		} else {
-			// First time seeing this physical table, create new set
-			keptIndexIDs[ds.PhysicalTableID] = tableKeptIndexes
+			// First time seeing this logical table, create new set
+			keptIndexIDs[logicalTableID] = tableKeptIndexes
 		}
 		ds.PossibleAccessPaths = prunedPaths
 	}

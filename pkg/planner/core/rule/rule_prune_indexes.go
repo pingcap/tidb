@@ -70,7 +70,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	}
 
 	// Build column ID maps and calculate totals
-	req := buildColumnRequirements(interestingColumns)
+	req := buildColumnRequirements(interestingColumns, ds.TableInfo.Columns)
 
 	totalPathCount := len(paths)
 
@@ -204,7 +204,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 }
 
 // buildColumnRequirements builds column ID maps for efficient lookup.
-func buildColumnRequirements(interestingColumns []*expression.Column) columnRequirements {
+func buildColumnRequirements(interestingColumns []*expression.Column, tableColumns []*model.ColumnInfo) columnRequirements {
 	req := columnRequirements{
 		interestingColIDs: make(map[int64]struct{}, len(interestingColumns)),
 	}
@@ -213,8 +213,49 @@ func buildColumnRequirements(interestingColumns []*expression.Column) columnRequ
 	for _, col := range interestingColumns {
 		req.interestingColIDs[col.ID] = struct{}{}
 	}
+	expandGeneratedColumnRequirements(req.interestingColIDs, tableColumns)
 
 	return req
+}
+
+func expandGeneratedColumnRequirements(interestingColIDs map[int64]struct{}, tableColumns []*model.ColumnInfo) {
+	if len(interestingColIDs) == 0 || len(tableColumns) == 0 {
+		return
+	}
+
+	interestingColNames := make(map[string]struct{}, len(interestingColIDs))
+	for _, col := range tableColumns {
+		if col == nil {
+			continue
+		}
+		if _, ok := interestingColIDs[col.ID]; ok {
+			interestingColNames[col.Name.L] = struct{}{}
+		}
+	}
+	if len(interestingColNames) == 0 {
+		return
+	}
+
+	for changed := true; changed; {
+		changed = false
+		for _, col := range tableColumns {
+			if col == nil || col.State != model.StatePublic || !col.IsGenerated() {
+				continue
+			}
+			if _, ok := interestingColIDs[col.ID]; ok {
+				continue
+			}
+			for depCol := range col.Dependences {
+				if _, ok := interestingColNames[depCol]; !ok {
+					continue
+				}
+				interestingColIDs[col.ID] = struct{}{}
+				interestingColNames[col.Name.L] = struct{}{}
+				changed = true
+				break
+			}
+		}
+	}
 }
 
 // buildOrderingKey creates a string key representing the consecutive column ordering.

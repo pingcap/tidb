@@ -26,7 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -117,6 +121,45 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 		})
 		require.Equal(t, output[i].Best, core.ToString(p), comment)
 	}
+}
+
+func TestDAGPlanBuilderJoinIndexChoiceCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	sessionVars := tk.Session().GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	fPlan, fCost := optimizeDAGPlanCost(t, tk, is, "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 use index(f) where t1.c=t2.c and t1.f=t2.f")
+	cdePlan, cdeCost := optimizeDAGPlanCost(t, tk, is, "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 use index(c_d_e) where t1.c=t2.c and t1.f=t2.f")
+
+	require.Contains(t, core.ToString(fPlan), "Index(t.f)")
+	require.Contains(t, core.ToString(cdePlan), "Index(t.c_d_e)")
+	require.Less(t, fCost, cdeCost, "Index(t.f) should remain cheaper than Index(t.c_d_e)")
+}
+
+func optimizeDAGPlanCost(t *testing.T, tk *testkit.TestKit, is infoschema.InfoSchema, sql string) (base.PhysicalPlan, float64) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	tk.Session().GetSessionVars().StmtCtx.OriginalSQL = sql
+	plan, _, err := planner.Optimize(context.TODO(), tk.Session(), resolve.NewNodeW(stmt), is)
+	require.NoError(t, err)
+	physicalPlan, ok := plan.(base.PhysicalPlan)
+	require.True(t, ok)
+	cost, err := core.GetPlanCost(
+		physicalPlan,
+		property.RootTaskType,
+		optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate),
+	)
+	require.NoError(t, err)
+	return physicalPlan, cost
 }
 
 func TestDAGPlanBuilderSubquery(t *testing.T) {
