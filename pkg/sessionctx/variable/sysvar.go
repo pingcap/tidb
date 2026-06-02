@@ -2718,6 +2718,23 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMViewMaintainImportThreads, Value: strconv.Itoa(DefTiDBMViewMaintainImportThreads), Type: TypeInt, MinValue: 0, MaxValue: MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
+		s.MViewMaintainImportThreads = TidbOptInt(val, DefTiDBMViewMaintainImportThreads)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMViewMaintainImportDiskQuota, Value: DefTiDBMViewMaintainImportDiskQuota, Type: TypeStr, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "" {
+			return normalizedValue, nil
+		}
+		byteSize, err := units.RAMInBytes(normalizedValue)
+		if err != nil || byteSize <= 0 {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBMViewMaintainImportDiskQuota, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.MViewMaintainImportDiskQuota = val
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBMViewTaskMax, Value: strconv.Itoa(DefTiDBMViewTaskMax), Type: TypeInt, MinValue: 0, MaxValue: 256, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 		val, err := strconv.Atoi(s)
 		if err != nil {

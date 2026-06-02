@@ -320,28 +320,41 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid job args")
 	}
-	if len(mvTblInfo.MaterializedView.BaseTableIDs) != 1 || mvTblInfo.MaterializedView.BaseTableIDs[0] == 0 {
+	baseTableIDs := mvTblInfo.MaterializedView.BaseTableIDs
+	if len(baseTableIDs) == 0 {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid base table id")
+	}
+	seenBaseTableIDs := make(map[int64]struct{}, len(baseTableIDs))
+	for _, baseTableID := range baseTableIDs {
+		if baseTableID == 0 {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid base table id")
+		}
+		if _, ok := seenBaseTableIDs[baseTableID]; ok {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: duplicate base table id")
+		}
+		seenBaseTableIDs[baseTableID] = struct{}{}
 	}
 
 	if job.IsRollingback() {
 		return w.rollbackCreateMaterializedView(jobCtx, job, mvTblInfo)
 	}
 
-	baseTableID := mvTblInfo.MaterializedView.BaseTableIDs[0]
-
 	switch job.SchemaState {
 	case model.StateNone:
 		// Phase-1: create MV physical table and atomically wire base<->mv metadata.
-		if _, err := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, baseTableID, job.SchemaName); err != nil {
-			if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-				job.State = model.JobStateCancelled
+		for _, baseTableID := range baseTableIDs {
+			if _, err := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, baseTableID, job.SchemaName); err != nil {
+				if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+					job.State = model.JobStateCancelled
+				}
+				if dbterror.ErrInvalidDDLJob.Equal(err) || dbterror.ErrWrongObject.Equal(err) || dbterror.ErrInvalidDDLState.Equal(err) {
+					job.State = model.JobStateCancelled
+				}
+				return ver, errors.Trace(err)
 			}
-			if dbterror.ErrInvalidDDLJob.Equal(err) || dbterror.ErrWrongObject.Equal(err) || dbterror.ErrInvalidDDLState.Equal(err) {
-				job.State = model.JobStateCancelled
-			}
-			return ver, errors.Trace(err)
 		}
 
 		mvTblInfo.State = model.StateNone
@@ -352,13 +365,11 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		job.TableID = mvTblInfo.ID
 
 		var extraInfos []schemaIDAndTableInfo
-		extra, err := updateMaterializedViewBaseInfoOnCreate(jobCtx, job, mvTblInfo)
+		extras, err := updateMaterializedViewBaseInfoOnCreate(jobCtx, job, mvTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if extra != nil {
-			extraInfos = append(extraInfos, *extra)
-		}
+		extraInfos = append(extraInfos, extras...)
 
 		ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 		if err != nil {
@@ -447,11 +458,16 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if job.BinlogInfo != nil {
 			ver = job.BinlogInfo.SchemaVersion
 		}
-		baseTblInfo, err := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		finishedTableInfos := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
+		finishedTableInfos = append(finishedTableInfos, mvTblInfo)
+		for _, baseTableID := range baseTableIDs {
+			baseTblInfo, getErr := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
+			if getErr != nil {
+				return ver, errors.Trace(getErr)
+			}
+			finishedTableInfos = append(finishedTableInfos, baseTblInfo)
 		}
-		job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, []*model.TableInfo{mvTblInfo, baseTblInfo})
+		job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, finishedTableInfos)
 		return ver, nil
 
 	default:
@@ -490,15 +506,15 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 
 	var extraInfos []schemaIDAndTableInfo
 	if droppingTblInfo != nil {
-		extra, err := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, droppingTblInfo)
+		extras, err := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, droppingTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if extra != nil {
+		for _, extra := range extras {
 			if err := updateTable(jobCtx.metaMut, extra.schemaID, extra.tblInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
-			extraInfos = append(extraInfos, *extra)
+			extraInfos = append(extraInfos, extra)
 		}
 	}
 
@@ -521,15 +537,18 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	var mlogTableID int64
+	var mlogTableIDs []int64
 	if args, ok := jobCtx.jobArgs.(*model.CreateMaterializedViewArgs); ok && args != nil {
-		mlogTableID = args.MLogTableID
+		mlogTableIDs = args.MLogTableIDs
 	}
-	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: mvTblInfo, MLogTableID: mlogTableID})
+	job.FillArgs(&model.CreateMaterializedViewArgs{
+		TableInfo:    mvTblInfo,
+		MLogTableIDs: mlogTableIDs,
+	})
 	return ver, nil
 }
 
-func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
+func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, threadCnt int, diskQuota string) (string, error) {
 	if mvTblInfo.MaterializedView == nil || len(mvTblInfo.MaterializedView.SQLContent) == 0 {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
@@ -537,7 +556,14 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.Ta
 	// Build uses current visible data of the source query directly.
 	selectSQL := mvTblInfo.MaterializedView.SQLContent
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mvTblInfo.Name.O)
-	return prefix + "(" + selectSQL + ") WITH disable_precheck", nil
+	options := []string{"disable_precheck"}
+	if threadCnt > 0 {
+		options = append(options, fmt.Sprintf("thread=%d", threadCnt))
+	}
+	if diskQuota != "" {
+		options = append(options, sqlescape.MustEscapeSQL("disk_quota=%?", diskQuota))
+	}
+	return prefix + "(" + selectSQL + ") WITH " + strings.Join(options, ", "), nil
 }
 
 func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Session) (uint64, error) {
@@ -594,24 +620,27 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
+func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta, currentDB string) (func(), error) {
 	if reorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
 	restore := restoreSessCtx(sessCtx)
 	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
+	origCurrentDB := sessCtx.GetSessionVars().CurrentDB
 	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
 		// initSessCtx may mutate session vars before returning error (for example invalid timezone).
 		// Restore immediately to avoid leaking partial state into the pooled session.
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().CurrentDB = currentDB
 	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
 	// Also marks the session as MV maintenance context so writes bypass the explicit-DML guard.
 	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
 	return func() {
 		restore(sessCtx)
 		sessCtx.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		sessCtx.GetSessionVars().CurrentDB = origCurrentDB
 	}, nil
 }
 
@@ -629,7 +658,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
@@ -640,7 +669,15 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	}()
 
 	ddlSess := sess.NewSession(sessCtx)
-	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo)
+	threadCnt := sessCtx.GetSessionVars().MViewMaintainImportThreads
+	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportThreads); ok {
+		threadCnt = variable.TidbOptInt(val, threadCnt)
+	}
+	diskQuota := sessCtx.GetSessionVars().MViewMaintainImportDiskQuota
+	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportDiskQuota); ok {
+		diskQuota = val
+	}
+	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, threadCnt, diskQuota)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -652,7 +689,10 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(w.setCreateMaterializedViewBuildReadTSInReorgCtx(job.ID, readTS))
+	if err := w.setCreateMaterializedViewBuildReadTSInReorgCtx(job.ID, readTS); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
@@ -660,7 +700,7 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
@@ -1219,17 +1259,17 @@ func (w *worker) deleteMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogID i
 
 // updateMaterializedViewBaseInfoOnCreate keeps base-table reverse metadata in sync
 // with MV/MLOG creation in the same DDL transaction.
-func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, createdTable *model.TableInfo) (*schemaIDAndTableInfo, error) {
-	var baseTableID int64
+func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, createdTable *model.TableInfo) ([]schemaIDAndTableInfo, error) {
+	var baseTableIDs []int64
 	var apply func(base *model.TableInfo) error
 
 	switch {
 	case createdTable.MaterializedView != nil:
-		if len(createdTable.MaterializedView.BaseTableIDs) != 1 {
+		if len(createdTable.MaterializedView.BaseTableIDs) == 0 {
 			job.State = model.JobStateCancelled
-			return nil, errors.New("materialized view must reference exactly one base table in Stage-1")
+			return nil, errors.New("materialized view must reference at least one base table")
 		}
-		baseTableID = createdTable.MaterializedView.BaseTableIDs[0]
+		baseTableIDs = createdTable.MaterializedView.BaseTableIDs
 		apply = func(base *model.TableInfo) error {
 			if base.MaterializedViewBase == nil {
 				base.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
@@ -1243,7 +1283,7 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 			return nil
 		}
 	case createdTable.MaterializedViewLog != nil:
-		baseTableID = createdTable.MaterializedViewLog.BaseTableID
+		baseTableIDs = []int64{createdTable.MaterializedViewLog.BaseTableID}
 		apply = func(base *model.TableInfo) error {
 			if base.MaterializedViewBase == nil {
 				base.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
@@ -1258,20 +1298,34 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 		return nil, nil
 	}
 
-	baseTblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, baseTableID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, errors.Trace(err)
+	extraInfos := make([]schemaIDAndTableInfo, 0, len(baseTableIDs))
+	processedBaseTables := make(map[int64]struct{}, len(baseTableIDs))
+	for _, baseTableID := range baseTableIDs {
+		if baseTableID == 0 {
+			job.State = model.JobStateCancelled
+			return nil, errors.New("materialized view base table id is invalid")
+		}
+		if _, ok := processedBaseTables[baseTableID]; ok {
+			continue
+		}
+		processedBaseTables[baseTableID] = struct{}{}
+
+		baseTblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, baseTableID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		if err := apply(baseTblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		if err := updateTable(jobCtx.metaMut, job.SchemaID, baseTblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo})
 	}
-	if err := apply(baseTblInfo); err != nil {
-		job.State = model.JobStateCancelled
-		return nil, errors.Trace(err)
-	}
-	if err := updateTable(jobCtx.metaMut, job.SchemaID, baseTblInfo); err != nil {
-		job.State = model.JobStateCancelled
-		return nil, errors.Trace(err)
-	}
-	return &schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo}, nil
+	return extraInfos, nil
 }
 
 func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {

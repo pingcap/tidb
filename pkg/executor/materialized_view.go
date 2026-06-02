@@ -605,13 +605,12 @@ func purgeMaterializedViewLogData(
 		}
 	})
 
-	const mlogAlias = "mlog"
 	deleteSQL := sqlescape.MustEscapeSQL(
-		"DELETE /*+ read_from_storage(tiflash[%n]) */ FROM %n.%n AS %n WHERE _tidb_commit_ts <= %? LIMIT %?",
-		mlogAlias,
+		"DELETE /*+ read_from_storage(tiflash[%n.%n]) */ FROM %n.%n WHERE _tidb_commit_ts <= %? LIMIT %?",
 		schemaName,
 		mlogName,
-		mlogAlias,
+		schemaName,
+		mlogName,
 		safePurgeTSO,
 		batchSize,
 	)

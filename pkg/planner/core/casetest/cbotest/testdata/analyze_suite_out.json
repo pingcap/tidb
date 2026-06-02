@@ -36,6 +36,12 @@
         "Plan": [
           "TableDual 0.00 root  rows:0"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from (select a from t) as tidb_mv_query limit 0",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ]
       }
     ]
   },

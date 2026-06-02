@@ -75,6 +75,18 @@ func TestMVMaintainMemQuota(t *testing.T) {
 	tk2.MustQuery("select @@tidb_mv_maintain_mem_quota").Check(testkit.Rows("3221225472"))
 }
 
+func TestMViewMaintainImportDiskQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery("select @@tidb_mview_maintain_import_disk_quota").Check(testkit.Rows(""))
+
+	tk.MustExec("set @@session.tidb_mview_maintain_import_disk_quota = '100gib'")
+	tk.MustQuery("select @@tidb_mview_maintain_import_disk_quota").Check(testkit.Rows("100gib"))
+
+	tk.MustGetErrMsg("set @@session.tidb_mview_maintain_import_disk_quota = 'bad'", "[variable:1231]Variable 'tidb_mview_maintain_import_disk_quota' can't be set to the value of 'bad'")
+}
+
 func TestCoprocessorOOMAction(t *testing.T) {
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)

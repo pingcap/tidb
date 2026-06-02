@@ -10,7 +10,8 @@
     "name": "TestTableDual",
     "cases": [
       "explain format = 'brief' select * from t where 1 = 0",
-      "explain format = 'brief' select * from t where 1 = 1 limit 0"
+      "explain format = 'brief' select * from t where 1 = 1 limit 0",
+      "explain format = 'brief' select * from (select a from t) as tidb_mv_query limit 0"
     ]
   },
   {

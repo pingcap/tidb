@@ -773,9 +773,12 @@ func job2TableIDs(jobW *JobWrapper) string {
 		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	case model.ActionCreateMaterializedView:
 		args := jobW.JobArgs.(*model.CreateMaterializedViewArgs)
-		intest.Assert(args != nil && args.MLogTableID > 0)
-		if args != nil && args.MLogTableID > 0 {
-			return makeStringForIDs([]int64{jobW.TableID, args.MLogTableID})
+		intest.Assert(args != nil)
+		if args != nil && len(args.MLogTableIDs) > 0 {
+			ids := make([]int64, 0, len(args.MLogTableIDs)+1)
+			ids = append(ids, jobW.TableID)
+			ids = append(ids, args.MLogTableIDs...)
+			return makeStringForIDs(ids)
 		}
 		return strconv.FormatInt(jobW.TableID, 10)
 	case model.ActionCreateMaterializedViewLog:
