@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -291,6 +292,121 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
+}
+
+// TestCanSkipIndexEstimation verifies that GetRowCountByIndexRanges uses the fast path
+// (canSkipIndexEstimation) when ranges include a full range with NULLs [NULL, +inf),
+// returning RealtimeCount directly without expensive histogram estimation.
+func TestCanSkipIndexEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Use mock stats so Idx2ColUniqueIDs is populated (required by getIndexRowCountForStatsV2).
+	// 50 distinct non-NULL values + 1 NULL row, so the not-null range can produce a
+	// strictly smaller estimate than RealtimeCount and catch a buggy fast-path that
+	// returns RealtimeCount for [MinNotNull,+inf).
+	const nonNullCount = 50
+	const nullCount = 1
+	realtimeCount := int64(nonNullCount + nullCount)
+	statsTbl := mockStatsTable(tblInfo, realtimeCount)
+	colValues, err := generateIntDatum(1, nonNullCount)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		colHist := mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong))
+		colHist.NullCount = nullCount
+		statsTbl.SetCol(int64(i), &statistics.Column{
+			Histogram:         *colHist,
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
+	idxValues := make([]types.Datum, nonNullCount)
+	for i := range idxValues {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	// Mark the index as NOT fully loaded so we can prove the fast path runs before
+	// IndexStatsIsInvalid: under a not-fully-loaded status, the slow path would queue
+	// this index into AsyncLoadHistogramNeededItems, and the assertion below would
+	// fail if canSkipIndexEstimation no longer short-circuited the call.
+	idxHist := mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob))
+	idxHist.NullCount = nullCount
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram:         *idxHist,
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+		StatsVer:          2,
+	})
+	generateMapsForMockStatsTbl(statsTbl)
+
+	idxID := tblInfo.Indices[0].ID
+	// Use the testkit's real session so recordUsedItemStatsStatus can resolve the
+	// table via domain.GetDomain(sctx).InfoSchema(); the bare mock.NewContext() has
+	// no domain registered and would panic now that the index is not FullLoad.
+	sctx := tk.Session().GetPlanCtx()
+	idxItem := model.TableItemID{TableID: tblInfo.ID, ID: idxID, IsIndex: true}
+	hasAsyncLoadEntry := func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableItemID == idxItem {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
+	// Result should equal RealtimeCount exactly (no histogram estimation), and the fast
+	// path must run before IndexStatsIsInvalid so the evicted index is NOT queued for
+	// async load — otherwise the optimization would still pay for the wasted I/O.
+	asyncload.AsyncLoadHistogramNeededItems.Delete(idxItem)
+	fullRanges := ranger.FullRange()
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges)
+	require.NoError(t, err)
+	require.Equal(t, float64(realtimeCount), countResult,
+		"full range [NULL,+inf) should use fast path and return RealtimeCount")
+	require.False(t, hasAsyncLoadEntry(),
+		"fast path must short-circuit before IndexStatsIsInvalid and not queue the evicted index for async load")
+
+	// Full range excluding NULLs [MinNotNull, +inf) must NOT use the fast path.
+	// With nullCount > 0, the histogram estimate must be strictly below RealtimeCount;
+	// equality would mean the fast path was wrongly taken.
+	fullNotNullRanges := ranger.FullNotNullRange()
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult2, float64(realtimeCount),
+		"full not-null range excludes %d NULL row(s), estimate must be < RealtimeCount", nullCount)
+
+	// Bounded range should NOT use fast path.
+	boundedRanges := getRange(1, 10)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult3, float64(realtimeCount),
+		"bounded range should use histogram estimation, not fast path")
+
+	// (NULL, +inf) with an exclusive lower bound drops the NULL endpoint, so the
+	// fast path must not apply — otherwise the NULL row would be silently counted.
+	var nullDatum types.Datum
+	nullDatum.SetNull()
+	exclusiveNullRanges := []*ranger.Range{{
+		LowVal:     []types.Datum{nullDatum},
+		HighVal:    []types.Datum{types.MaxValueDatum()},
+		LowExclude: true,
+		Collators:  collate.GetBinaryCollatorSlice(1),
+	}}
+	countResult4, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, exclusiveNullRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult4, float64(realtimeCount),
+		"exclusive lower bound on NULL must drop the NULL row, estimate must be < RealtimeCount")
 }
 
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
