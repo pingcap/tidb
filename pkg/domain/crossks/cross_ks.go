@@ -50,6 +50,12 @@ import (
 
 const crossKSSessPoolSize = 5
 
+type runtimeEntry struct {
+	sessMgr           *SessionManager
+	activeBookkeepers map[string]struct{}
+	lastReleaseAt     time.Time
+}
+
 // Manager manages all cross keyspace sessions.
 type Manager struct {
 	mu sync.RWMutex
@@ -57,20 +63,6 @@ type Manager struct {
 	store kv.Storage
 	// keyspace name -> runtime entry
 	runtimes map[string]*runtimeEntry
-}
-
-type runtimeEntry struct {
-	mgr               *SessionManager
-	activeBookkeepers map[string]struct{}
-	lastReleaseAt     time.Time
-}
-
-type runtimeHandle struct {
-	manager    *Manager
-	targetKS   string
-	bookkeeper string
-	entry      *runtimeEntry
-	release    sync.Once
 }
 
 // NewManager creates a new cross keyspace session manager.
@@ -102,7 +94,7 @@ func (m *Manager) getWithoutLock(ks string) (*SessionManager, bool) {
 	if !ok {
 		return nil, false
 	}
-	return entry.mgr, true
+	return entry.sessMgr, true
 }
 
 // GetOrCreate gets or creates a session manager for the specified keyspace.
@@ -123,10 +115,11 @@ func (m *Manager) GetOrCreate(
 	if err != nil {
 		return nil, err
 	}
-	return entry.mgr, nil
+	return entry.sessMgr, nil
 }
 
 // Acquire acquires a runtime handle for the specified keyspace and bookkeeper.
+// one bookkeeper is not allowed to acquire the same keyspace multiple times.
 func (m *Manager) Acquire(
 	ks string,
 	bookkeeper string,
@@ -168,7 +161,7 @@ func (m *Manager) Acquire(
 
 func (m *Manager) validateTargetKS(ks string) error {
 	// misusing cross keyspace sessions might cause data written to the wrong
-	// keyspace, or corrupt user data, and it's harder to diagnose those issues,
+	// keyspace, or corrupt user data, and it's harder to diagnose those issues.
 	// so we use runtime check instead of intest.Assert here, in case some code
 	// paths are not covered by tests.
 	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
@@ -190,7 +183,7 @@ func (m *Manager) getOrCreateEntryWithoutLock(
 		return nil, err
 	}
 	entry := &runtimeEntry{
-		mgr:               mgr,
+		sessMgr:           mgr,
 		activeBookkeepers: make(map[string]struct{}),
 	}
 	m.runtimes[ks] = entry
@@ -330,20 +323,6 @@ func (m *Manager) createSessionManager(
 	return mgr, nil
 }
 
-func (h *runtimeHandle) Store() kv.Storage {
-	return h.entry.mgr.Store()
-}
-
-func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
-	return h.entry.mgr.SessPool()
-}
-
-func (h *runtimeHandle) Release() {
-	h.release.Do(func() {
-		h.manager.release(h.targetKS, h.bookkeeper, h.entry)
-	})
-}
-
 func (m *Manager) release(targetKS string, bookkeeper string, entry *runtimeEntry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -367,7 +346,7 @@ func (m *Manager) CloseKS(targetKS string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if entry, ok := m.runtimes[targetKS]; ok {
-		entry.mgr.close()
+		entry.sessMgr.close()
 		delete(m.runtimes, targetKS)
 	}
 }
@@ -378,7 +357,7 @@ func (m *Manager) Close() {
 	defer m.mu.Unlock()
 
 	for _, entry := range m.runtimes {
-		entry.mgr.close()
+		entry.sessMgr.close()
 	}
 	m.runtimes = make(map[string]*runtimeEntry)
 }
@@ -388,6 +367,28 @@ func getOrCreateStore(targetKS string) (kv.Storage, error) {
 		return kvstore.GetSystemStorage(), nil
 	}
 	return kvstore.InitStorage(targetKS)
+}
+
+type runtimeHandle struct {
+	manager    *Manager
+	targetKS   string
+	bookkeeper string
+	entry      *runtimeEntry
+	release    sync.Once
+}
+
+func (h *runtimeHandle) Store() kv.Storage {
+	return h.entry.sessMgr.Store()
+}
+
+func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
+	return h.entry.sessMgr.SessPool()
+}
+
+func (h *runtimeHandle) Release() {
+	h.release.Do(func() {
+		h.manager.release(h.targetKS, h.bookkeeper, h.entry)
+	})
 }
 
 // SessionManager manages sessions for a specific keyspace.
