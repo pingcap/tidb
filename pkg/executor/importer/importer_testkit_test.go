@@ -294,6 +294,7 @@ func TestProcessChunkWith(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
 	tidbCfg := tidb.GetGlobalConfig()
 	tidbCfg.TempDir = t.TempDir()
 
