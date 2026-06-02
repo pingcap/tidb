@@ -256,10 +256,7 @@ func TestParquetFileRegionUsesRealSizeForEngineAllocation(t *testing.T) {
 		IsRowOrdered: true,
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(100)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount"))
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(100)")
 
 	ctx := context.Background()
 	store, err := objstore.NewLocalStorage(".")
