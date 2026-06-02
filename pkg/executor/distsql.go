@@ -1057,6 +1057,11 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	}
 
 	var builder distsql.RequestBuilder
+	// Set concurrency before SetDAGRequest intentionally.
+	// SetDAGRequest may override this value (e.g. to 1) for small-limit DAGs.
+	if indexScanConcurrency > 0 {
+		builder.SetConcurrency(indexScanConcurrency)
+	}
 	builder.SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
@@ -1064,7 +1069,6 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetConcurrency(indexScanConcurrency).
 		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.infoSchema).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
