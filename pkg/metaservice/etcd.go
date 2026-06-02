@@ -52,15 +52,15 @@ func (n *client) GetKeyspaceEtcdCli() *clientv3.Client {
 
 // GetPDAddrs implements ServiceClient interface.
 func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
-	addrs, err := GetPDHostPorts(ctx, n.pdCli, false)
+	addrs, err := GetPDAddrs(ctx, n.pdCli, false)
 	if err != nil {
 		return nil, err
 	}
 	return addrs, err
 }
 
-// GetPDHostPorts returns the PD addresses from PD client.
-func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
+// GetPDAddrs returns the PD addresses from PD client.
+func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
 	pdAddrs := make([]string, 0)
 	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
 	if pdClient == nil {
@@ -142,7 +142,7 @@ func invalidURLHostPortErr() error {
 
 // GetPDHttpAddrs is used to get PD http addrs.
 func (n *client) GetPDHttpAddrs(ctx context.Context) ([]string, error) {
-	addrs, err := GetPDHostPorts(ctx, n.pdCli, true)
+	addrs, err := GetPDAddrs(ctx, n.pdCli, true)
 	if err != nil {
 		return nil, err
 	}
