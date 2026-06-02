@@ -266,11 +266,11 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
 
-	require.Equal(t, vardef.DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
-	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "OFF")
+	require.Equal(t, DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(TiDBOptEnableAdvancedJoinReorder, "OFF")
 	require.NoError(t, err)
 	require.Equal(t, false, v.TiDBOptEnableAdvancedJoinReorder)
-	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "ON")
+	err = v.SetSystemVar(TiDBOptEnableAdvancedJoinReorder, "ON")
 	require.NoError(t, err)
 	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
