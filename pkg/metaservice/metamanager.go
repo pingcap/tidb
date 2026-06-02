@@ -27,9 +27,9 @@ const (
 	// GlobalGroupID is global meta service group id,
 	// it stores some global rules and label, region and other information.
 	GlobalGroupID = "0"
-	// KeyspaceMetaGroupIDKey is a keyspace meta config key name,
+	// KeyspaceMetaServiceGroupIDKey is a keyspace meta config key name,
 	// the value of this key is meta service group id for this keyspace.
-	KeyspaceMetaGroupIDKey = "meta_service_group_id"
+	KeyspaceMetaServiceGroupIDKey = "meta_service_group_id"
 	// KeyspaceMetaGroupAddrsKey is a keyspace meta config key name,
 	// the value of this key is meta service group addrs for this key.
 	KeyspaceMetaGroupAddrsKey = "meta_service_group_addrs"
@@ -60,7 +60,7 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 		return nil, ErrNilKeyspaceMeta
 	}
 	var keyspaceMetaServiceGroup *KeyspaceMetaServiceGroup
-	if val, ok := keyspaceMeta.Config[KeyspaceMetaGroupIDKey]; ok {
+	if val, ok := keyspaceMeta.Config[KeyspaceMetaServiceGroupIDKey]; ok {
 		groupID := val
 		addrsStr, addrsOk := keyspaceMeta.Config[KeyspaceMetaGroupAddrsKey]
 		if !addrsOk {
