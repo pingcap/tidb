@@ -40,6 +40,7 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
@@ -48,6 +49,7 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-lightning:
     - Benjamin2037
     - D3Hunter
