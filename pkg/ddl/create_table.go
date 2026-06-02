@@ -2291,6 +2291,12 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
 	}
+	if referTblInfo.MaterializedViewLog != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view log table")
+	}
+	if referTblInfo.MaterializedView != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view table")
+	}
 	tblInfo := *referTblInfo
 	if err := setTemporaryType(&tblInfo, s); err != nil {
 		return nil, errors.Trace(err)
