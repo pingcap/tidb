@@ -80,7 +80,7 @@ func (s *stmtLogStorage) logEvicted(records []*StmtRecord) {
 	var builder strings.Builder
 	persisted := 0
 	for _, r := range records {
-		b, err := marshalStmtRecord(r, true)
+		b, err := marshalEvictedStmtRecord(r)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to marshal evicted statement summary", zap.Error(err))
 			continue
@@ -110,7 +110,7 @@ type evictedStmtRecord struct {
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
-	b, err := marshalStmtRecord(r, false)
+	b, err := marshalStmtRecord(r)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
 		return
@@ -118,7 +118,15 @@ func (s *stmtLogStorage) log(r *StmtRecord) {
 	s.logger.Info(string(b))
 }
 
-func marshalStmtRecord(r *StmtRecord, evicted bool) ([]byte, error) {
+func marshalStmtRecord(r *StmtRecord) ([]byte, error) {
+	return marshalStmtRecordWithEvicted(r, false)
+}
+
+func marshalEvictedStmtRecord(r *StmtRecord) ([]byte, error) {
+	return marshalStmtRecordWithEvicted(r, true)
+}
+
+func marshalStmtRecordWithEvicted(r *StmtRecord, evicted bool) ([]byte, error) {
 	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
 	if len(fields) == 0 {
 		if evicted {
