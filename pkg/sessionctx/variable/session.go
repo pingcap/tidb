@@ -2296,7 +2296,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
-		EnableCachePrepareStmt:         DefEnableCachePrepareStmt,
+		EnableCachePrepareStmt:        DefEnableCachePrepareStmt,
 		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
