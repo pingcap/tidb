@@ -1713,3 +1713,35 @@ select @@max_execution_time;
 @@max_execution_time
 2000
 set @@global.max_execution_time=default;
+select /*+ set_var(tidb_enable_cache_prepare_stmt=0) */ @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
+set @@tidb_enable_cache_prepare_stmt=default;
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
+select /*+ set_var(tidb_enable_cache_prepare_stmt=1) */ @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+1
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
+set @@tidb_enable_cache_prepare_stmt=default;
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
+set @@tidb_enable_cache_prepare_stmt=off;
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
+set @@tidb_enable_cache_prepare_stmt=on;
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+1
+set @@tidb_enable_cache_prepare_stmt=default;
+select @@tidb_enable_cache_prepare_stmt;
+@@tidb_enable_cache_prepare_stmt
+0
