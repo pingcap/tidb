@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -347,7 +348,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
@@ -579,6 +580,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
+	outputSplitIntoMultipleFiles := conf.Rows != UnspecifiedSize || conf.FileSize != UnspecifiedSize
+	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
+		return errors.New("--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
+	}
 	conf.OutputFileTemplate = tmpl
 
 	compressType, err := flags.GetString(flagCompress)
@@ -612,6 +617,115 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return nil
+}
+
+func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool {
+	if tmpl == nil {
+		return false
+	}
+
+	type templateVisitState struct {
+		name          string
+		inConditional bool
+	}
+	visitedTemplate := make(map[templateVisitState]struct{})
+
+	var visitTemplate func(name string, inConditional bool) bool
+	var visitNode func(node parse.Node, inConditional bool) bool
+	visitTemplate = func(name string, inConditional bool) bool {
+		state := templateVisitState{name: name, inConditional: inConditional}
+		if _, ok := visitedTemplate[state]; ok {
+			return false
+		}
+		visitedTemplate[state] = struct{}{}
+
+		t := tmpl.Lookup(name)
+		if t == nil || t.Tree == nil || t.Tree.Root == nil {
+			return false
+		}
+
+		return visitNode(t.Tree.Root, inConditional)
+	}
+
+	visitNode = func(node parse.Node, inConditional bool) bool {
+		if node == nil {
+			return false
+		}
+
+		switch n := node.(type) {
+		case *parse.ListNode:
+			if n == nil {
+				return false
+			}
+			for _, child := range n.Nodes {
+				if visitNode(child, inConditional) {
+					return true
+				}
+			}
+		case *parse.ActionNode:
+			if n == nil {
+				return false
+			}
+			if inConditional {
+				return false
+			}
+			return isStandaloneOutputIndexAction(n)
+		case *parse.TemplateNode:
+			if n == nil {
+				return false
+			}
+			return visitTemplate(n.Name, inConditional)
+		case *parse.IfNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.RangeNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.WithNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		}
+
+		return false
+	}
+
+	return visitTemplate(templateName, false)
+}
+
+func isStandaloneOutputIndexAction(action *parse.ActionNode) bool {
+	if action == nil || action.Pipe == nil {
+		return false
+	}
+
+	// A standalone {{.Index}} must be a single command with a single argument.
+	if len(action.Pipe.Decl) != 0 || len(action.Pipe.Cmds) != 1 {
+		return false
+	}
+	cmd := action.Pipe.Cmds[0]
+	if cmd == nil || len(cmd.Args) != 1 {
+		return false
+	}
+
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return false
+	}
+	return len(field.Ident) == 1 && field.Ident[0] == "Index"
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments
