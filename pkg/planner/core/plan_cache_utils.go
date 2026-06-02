@@ -624,7 +624,7 @@ func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stm
 }
 
 // DBName returns the dbName field (used for metadata lock during Execute).
-func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+func (s *PlanCacheStmt) DBName() []model.CIStr { return s.dbName }
 
 // Tbls returns the tbls field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
@@ -633,7 +633,7 @@ func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 // so that this PlanCacheStmt owns independent backing arrays. This is required
 // because planCachePreprocess replaces tbls[i] in-place during Execute, and
 // sharing the backing array with a cached template would cause cross-stmt contamination.
-func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []model.CIStr, tbls []table.Table) {
 	s.dbName = slices.Clone(dbName)
 	s.tbls = slices.Clone(tbls)
 }
