@@ -142,17 +142,27 @@ func (m *mockSingleRowRecomputeExecMulti) Next(_ context.Context, req *chunk.Chu
 	return nil
 }
 
+type mockBatchRecomputeRow struct {
+	key         int64
+	value       int64
+	valueIsNull bool
+}
+
 type mockBatchRecomputeExec struct {
 	exec.BaseExecutor
-	rows [][2]int64
+	rows []mockBatchRecomputeRow
 	idx  int
 }
 
 func (m *mockBatchRecomputeExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	for m.idx < len(m.rows) && req.NumRows() < req.Capacity() {
-		req.AppendInt64(0, m.rows[m.idx][0])
-		req.AppendInt64(1, m.rows[m.idx][1])
+		req.AppendInt64(0, m.rows[m.idx].key)
+		if m.rows[m.idx].valueIsNull {
+			req.AppendNull(1)
+		} else {
+			req.AppendInt64(1, m.rows[m.idx].value)
+		}
 		m.idx++
 	}
 	return nil
@@ -162,17 +172,26 @@ type mockBatchRecomputeBuilder struct {
 	sctx          sessionctx.Context
 	retTp         []*types.FieldType
 	values        map[int64]int64
+	nullKeys      map[int64]struct{}
 	reverseOutput bool
 	extraRows     [][2]int64
+	calls         int
 }
 
 func (b *mockBatchRecomputeBuilder) Build(_ context.Context, req *MinMaxBatchBuildRequest) (exec.Executor, error) {
-	rows := make([][2]int64, 0, len(req.LookupKeys))
+	b.calls++
+	rows := make([]mockBatchRecomputeRow, 0, len(req.LookupKeys)+len(b.extraRows))
 	for _, key := range req.LookupKeys {
 		k := key.Keys[0].GetInt64()
-		rows = append(rows, [2]int64{k, b.values[k]})
+		row := mockBatchRecomputeRow{key: k, value: b.values[k]}
+		if _, isNull := b.nullKeys[k]; isNull {
+			row.valueIsNull = true
+		}
+		rows = append(rows, row)
 	}
-	rows = append(rows, b.extraRows...)
+	for _, row := range b.extraRows {
+		rows = append(rows, mockBatchRecomputeRow{key: row[0], value: row[1]})
+	}
 	if b.reverseOutput {
 		for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 			rows[i], rows[j] = rows[j], rows[i]
@@ -1498,19 +1517,10 @@ func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	maxDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncMax, []expression.Expression{maxArg}, false)
 	require.NoError(t, err)
 
-	keyDatum := new(types.Datum)
-	keyCol := &expression.CorrelatedColumn{
-		Column: expression.Column{Index: 0, RetType: ftInt},
-		Data:   keyDatum,
-	}
-	recomputeExec := &mockSingleRowRecomputeExec{
-		BaseExecutor: exec.NewBaseExecutor(
-			sctx,
-			expression.NewSchema(&expression.Column{Index: 0, RetType: ftInt}),
-			0,
-		),
-		keyCols: []*expression.CorrelatedColumn{keyCol},
-		values:  map[int64]int64{},
+	batchBuilder := &mockBatchRecomputeBuilder{
+		sctx:     sctx,
+		retTp:    []*types.FieldType{ftInt, ftInt},
+		nullKeys: map[int64]struct{}{1: {}},
 	}
 
 	mergeExec := &Exec{
@@ -1522,15 +1532,8 @@ func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 				ColID:           []int{7},
 				DependencyColID: []int{1, 2, 3, 4},
 				MinMaxRecompute: &MinMaxRecomputeSpec{
-					Strategy: MinMaxRecomputeSingleRow,
-					SingleRow: &MinMaxRecomputeSingleRowExec{
-						Workers: []MinMaxRecomputeSingleRowWorker{
-							{
-								KeyCols: []*expression.CorrelatedColumn{keyCol},
-								Exec:    recomputeExec,
-							},
-						},
-					},
+					Strategy:            MinMaxRecomputeBatch,
+					BatchResultColIdxes: []int{1},
 				},
 			},
 		},
@@ -1539,6 +1542,7 @@ func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		MinMaxRecompute: &MinMaxRecomputeExec{
 			KeyInputColIDs:    []int{5},
 			KeyResultColIdxes: []int{0},
+			BatchBuilder:      batchBuilder,
 		},
 	}
 	writer := &collectWriter{}
@@ -1549,7 +1553,7 @@ func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	require.NoError(t, mergeExec.Next(context.Background(), outChk))
 	require.NoError(t, mergeExec.Close())
 
-	require.Equal(t, 1, recomputeExec.calls)
+	require.Equal(t, 1, batchBuilder.calls)
 	require.Len(t, writer.results, 1)
 	res := writer.results[0]
 	require.Len(t, res.RowOps, 1)
