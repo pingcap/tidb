@@ -1590,6 +1590,11 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.Self
 	}
+	// max_count/min_count currently support only one-stage execution on TiFlash.
+	// Do not split them into partial/final here.
+	if copTaskType == kv.TiFlash && containsMaxMinCountAgg(p.AggFuncs) {
+		return nil, p.Self
+	}
 	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
@@ -1823,6 +1828,15 @@ func computePartialCursorOffset(name string) int {
 		offset++
 	}
 	return offset
+}
+
+func containsMaxMinCountAgg(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		if aggregation.IsMaxMinCount(aggFunc.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -2268,6 +2282,21 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		attachPlan2Task(finalAgg, t)
 		return t
 	case MppScalar:
+		if containsMaxMinCountAgg(p.AggFuncs) {
+			prop := &property.PhysicalProperty{
+				TaskTp:         property.MppTaskType,
+				ExpectedCnt:    math.MaxFloat64,
+				MPPPartitionTp: property.SinglePartitionType,
+			}
+			if mpp.needEnforceExchanger(prop) {
+				newMpp := mpp.enforceExchanger(prop)
+				if newMpp.Invalid() {
+					return newMpp
+				}
+				mpp = newMpp
+			}
+			return p.attach2TaskForMpp1Phase(mpp)
+		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !mpp.needEnforceExchanger(prop) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.

@@ -51,6 +51,7 @@ go_library(
         "memtable_reader.go",
         "metrics_reader.go",
         "mpp_gather.go",
+        "mv_refresh_observability.go",
         "mview_delta_merge_agg_builder.go",
         "operate_ddl_jobs.go",
         "opt_rule_blacklist.go",

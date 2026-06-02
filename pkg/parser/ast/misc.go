@@ -513,9 +513,10 @@ func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
 type RefreshMaterializedViewStmt struct {
 	stmtNode
 
-	ViewName     *TableName
-	WithSyncMode bool
-	Type         RefreshMaterializedViewType
+	ViewName      *TableName
+	WithAsyncMode bool
+	Type          RefreshMaterializedViewType
+	ObserveType   RefreshMaterializedViewObserveType
 }
 
 // RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
@@ -582,17 +583,31 @@ func (t RefreshMaterializedViewType) String() string {
 	}
 }
 
+type RefreshMaterializedViewObserveType int
+
+const (
+	RefreshMaterializedViewObserveNone RefreshMaterializedViewObserveType = iota
+	RefreshMaterializedViewObserveDryRun
+	RefreshMaterializedViewObserveProfile
+)
+
 // Restore implements Node interface.
 func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
 	if err := n.ViewName.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.ViewName")
 	}
-	if n.WithSyncMode {
-		ctx.WriteKeyWord(" WITH SYNC MODE")
+	if n.WithAsyncMode {
+		ctx.WriteKeyWord(" WITH ASYNC MODE")
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
+	switch n.ObserveType {
+	case RefreshMaterializedViewObserveDryRun:
+		ctx.WriteKeyWord(" DRY RUN")
+	case RefreshMaterializedViewObserveProfile:
+		ctx.WriteKeyWord(" WITH PROFILE")
+	}
 	return nil
 }
 

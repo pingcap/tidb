@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,18 @@ func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
 	rs, err := tk.Session().ExecuteInternal(ctx, sql)
 	require.NoError(t, err)
 	require.Nil(t, rs)
+}
+
+func requireRowsContainPrefix(t *testing.T, rows [][]any, prefix string) {
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		if strings.HasPrefix(fmt.Sprintf("%v", row[0]), prefix) {
+			return
+		}
+	}
+	require.Failf(t, "prefix not found", "prefix=%s rows=%v", prefix, rows)
 }
 
 func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
@@ -80,6 +93,43 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("success complete manually 1 1 1 1"))
+}
+
+func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_explain_analyze (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_explain_analyze values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_explain_analyze (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_explain_analyze (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_explain_analyze group by a")
+
+	tk.MustExec("insert into t_mv_explain_analyze values (2, 3), (3, 4)")
+	fastRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze fast with profile").Rows()
+	requireRowsContainPrefix(t, fastRows, "[S01 TXN_BEGIN]")
+	requireRowsContainPrefix(t, fastRows, "[S04 DATA_CHANGE_FAST_MERGE]")
+	requireRowsContainPrefix(t, fastRows, "  MVDeltaMerge")
+	requireRowsContainPrefix(t, fastRows, "[S07 FINALIZE_HIST]")
+
+	tk.MustExec("insert into t_mv_explain_analyze values (4, 8)")
+	completeRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete with profile").Rows()
+	requireRowsContainPrefix(t, completeRows, "[S04 DATA_CHANGE_COMPLETE_DELETE]")
+	requireRowsContainPrefix(t, completeRows, "[S05 DATA_CHANGE_COMPLETE_INSERT]")
+	requireRowsContainPrefix(t, completeRows, "[S08 FINALIZE_HIST]")
+}
+
+func TestFastDryRunMaterializedViewRefreshUsesCurrentDB(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_fast_dry_run (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_fast_dry_run values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_fast_dry_run (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_dry_run (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_fast_dry_run group by a")
+
+	rows := tk.MustQuery("refresh materialized view mv_fast_dry_run fast dry run").Rows()
+	requireRowsContainPrefix(t, rows, "[S04 DATA_CHANGE_FAST_MERGE]")
+	requireRowsContainPrefix(t, rows, "  MVDeltaMerge")
 }
 
 func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
@@ -296,20 +346,20 @@ func TestMaterializedViewRefreshFastMinMaxWhereSeparateIndexes(t *testing.T) {
 		group by g1`)
 
 	tk.MustExec("insert into t_mv_fast_minmax_where values (19001, 1, 1, 1.00, 1, 1), (19002, 2, 2, 2.00, 1, 1)")
-	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where fast")
 	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
 		"1 1 1 1.00 1.00 1",
 		"2 1 2 2.00 2.00 1",
 	))
 
 	tk.MustExec("update t_mv_fast_minmax_where set g1 = 2, v1 = 10, f1 = 2, v2 = 9.00, c1 = 1 where id = 19001")
-	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where fast")
 	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
 		"2 1 2 2.00 2.00 1",
 	))
 
 	tk.MustExec("update t_mv_fast_minmax_where set f1 = 1 where id = 19001")
-	tk.MustExec("refresh materialized view mv_fast_minmax_where with sync mode fast")
+	tk.MustExec("refresh materialized view mv_fast_minmax_where fast")
 	tk.MustQuery("select * from mv_fast_minmax_where order by g1").Check(testkit.Rows(
 		"2 2 12 2.00 9.00 2",
 	))
@@ -529,6 +579,9 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	tk.MustExec("set @@tidb_snapshot = '" + strconv.FormatUint(refreshReadTSO, 10) + "'")
 	tk.MustQuery("select a, sum(b), count(1) from t group by a order by a").Check(testkit.Rows("1 16 3", "2 7 1"))
 	tk.MustExec("set @@tidb_snapshot = ''")
+
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", refreshReadTSO, mviewID)).
+		Check(testkit.Rows("success complete manually 1 1 1"))
 }
 
 func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUpdate(t *testing.T) {
@@ -671,7 +724,7 @@ func TestMaterializedViewRefreshCompleteMissingRefreshInfoRow(t *testing.T) {
 	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 }
 
-func TestMaterializedViewRefreshWithSyncModeComplete(t *testing.T) {
+func TestMaterializedViewRefreshWithAsyncModeComplete(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -681,8 +734,9 @@ func TestMaterializedViewRefreshWithSyncModeComplete(t *testing.T) {
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
-	tk.MustExec("refresh materialized view mv with sync mode complete")
-	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	err := tk.ExecToErr("refresh materialized view mv with async mode complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "WITH ASYNC MODE is not supported yet")
 }
 
 func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testing.T) {
