@@ -32,7 +32,6 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/client/opt"
 )
 
 func TestGetKeyRangeByMode(t *testing.T) {
@@ -225,7 +224,6 @@ func (c *flowControlSplitClient) ScanRegions(
 	ctx context.Context,
 	key, endKey []byte,
 	limit int,
-	opts ...opt.GetRegionOption,
 ) ([]*split.RegionInfo, error) {
 	cur := c.inFlight.Add(1)
 	defer c.inFlight.Add(-1)
