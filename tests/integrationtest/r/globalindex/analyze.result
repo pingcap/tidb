@@ -116,7 +116,13 @@ d varchar(20),
 index b(b),
 unique index b_s((b + 1)) global,
 unique index d_s(d(3)) global
-) partition by hash(a) partitions 5;
+) partition by range(a) (
+partition p0 values less than (2),
+partition p1 values less than (3),
+partition p2 values less than (4),
+partition p3 values less than (5),
+partition p4 values less than (6)
+);
 show warnings;
 Level	Code	Message
 Warning	8265	Auto analyze is not effective for index 'b_s', need analyze manually
