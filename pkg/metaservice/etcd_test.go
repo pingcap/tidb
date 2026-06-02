@@ -17,6 +17,7 @@ package metaservice
 import (
 	"context"
 	"net"
+	"runtime"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -49,7 +50,7 @@ func unixSocketAvailable() bool {
 // TestGetPDAddrsWithRealClient tests the GetPDAddrs method with a real etcd client
 func TestGetPDAddrsWithRealClient(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	if !unixSocketAvailable() {
+	if runtime.GOOS == "windows" {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
 	}
 
