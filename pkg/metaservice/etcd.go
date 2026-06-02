@@ -101,27 +101,40 @@ func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([
 
 // ParseURL parses the given URL to get the host and port.
 func ParseURL(rawURL string) (prefix string, host string, port string, err error) {
-	switch {
-	case strings.HasPrefix(rawURL, "unix://"):
-		prefix = "unix://"
-	case strings.HasPrefix(rawURL, "http://"):
-		prefix = "http://"
-	case strings.HasPrefix(rawURL, "https://"):
-		prefix = "https://"
-	default:
-		return "", "", "", fmt.Errorf("invalid URL prefix")
+	u, parseErr := url.Parse(rawURL)
+	if parseErr != nil {
+		// net/url rejects hierarchical unix URLs with service-style ports such
+		// as unix://localhost:m0, but etcd still uses host:port-shaped unix
+		// socket addresses.
+		scheme, rawHostPort, ok := strings.Cut(rawURL, "://")
+		if !ok || scheme != "unix" {
+			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
+		}
+
+		host, port, err = parseHostPort(rawHostPort)
+		if err != nil {
+			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
+		}
+		return "unix://", host, port, nil
 	}
 
-	if prefix == "unix://" {
+	switch u.Scheme {
+	case "unix":
+		prefix = "unix://"
 		host, port, err = parseHostPort(strings.TrimPrefix(rawURL, prefix))
 		if err != nil {
 			return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
 		}
 		return prefix, host, port, nil
+	case "http":
+		prefix = "http://"
+	case "https":
+		prefix = "https://"
+	default:
+		return "", "", "", fmt.Errorf("invalid URL prefix")
 	}
 
-	u, parseErr := url.Parse(rawURL)
-	if parseErr != nil || u.Host == "" {
+	if u.Host == "" {
 		return "", "", "", fmt.Errorf("invalid URL format, expect host:port")
 	}
 
