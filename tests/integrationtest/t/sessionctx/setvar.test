@@ -188,6 +188,14 @@ select /*+ set_var(tidb_enable_outer_join_reorder=1) */ @@tidb_enable_outer_join
 select @@tidb_enable_outer_join_reorder;
 set @@tidb_enable_outer_join_reorder=default;
 select @@tidb_enable_outer_join_reorder;
+select /*+ set_var(tidb_opt_enable_advanced_join_reorder=0) */ @@tidb_opt_enable_advanced_join_reorder;
+select @@tidb_opt_enable_advanced_join_reorder;
+set @@tidb_opt_enable_advanced_join_reorder=default;
+select @@tidb_opt_enable_advanced_join_reorder;
+select /*+ set_var(tidb_opt_enable_advanced_join_reorder=1) */ @@tidb_opt_enable_advanced_join_reorder;
+select @@tidb_opt_enable_advanced_join_reorder;
+set @@tidb_opt_enable_advanced_join_reorder=default;
+select @@tidb_opt_enable_advanced_join_reorder;
 select /*+ set_var(tidb_enable_null_aware_anti_join=0) */ @@tidb_enable_null_aware_anti_join;
 select @@tidb_enable_null_aware_anti_join;
 set @@tidb_enable_null_aware_anti_join=default;
