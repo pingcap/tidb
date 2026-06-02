@@ -426,6 +426,15 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 		var nilMetrics *RUV2Metrics
 		require.Equal(t, tikvRU+tiflashRU, nilMetrics.TotalRU(weights, tikvRU, tiflashRU))
 	})
+
+	t.Run("known executor labels avoid per statement map allocations", func(t *testing.T) {
+		NewRUV2Metrics().AddExecutorMetric(1, "PointGetExecutor", 1) // warm cached prometheus counter
+		allocs := testing.AllocsPerRun(1000, func() {
+			metrics := NewRUV2Metrics()
+			metrics.AddExecutorMetric(1, "PointGetExecutor", 1)
+		})
+		require.LessOrEqual(t, allocs, 1.0)
+	})
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {

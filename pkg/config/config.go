@@ -320,8 +320,12 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
+	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
+	// StarterParams contains Starter-only extension parameters.
+	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -1034,6 +1038,18 @@ type Standby struct {
 	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
+// StarterParams contains Starter-only extension parameters.
+type StarterParams struct {
+	// ExportID is the export identifier supplied by standby activation.
+	ExportID string `toml:"export-id" json:"export-id"`
+	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
+	// It is only used in NextGen Starter deployments.
+	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
+	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
+	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
+	ManagerAddr string `toml:"manager-addr" json:"manager-addr"`
+}
+
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
@@ -1563,6 +1579,15 @@ func (c *Config) Valid() error {
 	}
 	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.Standby.StandByMode && c.KeyspaceActivateMode {
+		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")
+	}
+	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
+	}
+	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")

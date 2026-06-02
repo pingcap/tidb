@@ -73,6 +73,27 @@ func TestExitCodeForSignal(t *testing.T) {
 	}
 }
 
+func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
+	originalArgs := os.Args
+	originalStarterAdditionalParams := starterAdditionalParams
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
+
+	fset := initFlagSet()
+	require.NoError(t, fset.Parse([]string{
+		"--keyspace-activate=true",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1",
+	}))
+
+	cfg := config.NewConfig()
+	overrideConfig(cfg, fset)
+	require.True(t, cfg.KeyspaceActivateMode)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
+}
+
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)
@@ -159,6 +180,56 @@ func TestInitDeployMode(t *testing.T) {
 		require.Equal(t, "/tmp/flag-sql-cert.pem", cfg.Security.SSLCert)
 		require.Equal(t, "/tmp/flag-sql-key.pem", cfg.Security.SSLKey)
 	})
+}
+
+func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.EnableManagerNotifier = true
+		conf.StarterParams.ManagerAddr = "manager.example.com:8000"
+	})
+
+	originalStarterAdditionalParams := starterAdditionalParams
+	t.Cleanup(func() {
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
+
+	_, err := createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires --starter-additional-params")
+
+	duplicatedParam := "pod-name=pod-1,pod-name=pod-2,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &duplicatedParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "pod-name" is duplicated`)
+
+	unknownParam := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,unknown=value"
+	starterAdditionalParams = &unknownParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.ManagerAddr = ""
+	})
+	missingManagerNamespace := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &missingManagerNamespace
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
+
+	validParams := "manager-namespace=manager-ns,pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &validParams
+	cli, err := createMgrClientForStarter()
+	require.NoError(t, err)
+	require.NotNil(t, cli)
 }
 
 func TestSetVersionByConfigInNextGen(t *testing.T) {

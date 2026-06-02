@@ -97,7 +97,15 @@ case "${log_color_mode}" in
 		;;
 esac
 
-mkdir -p "${state_dir}"
+if ! mkdir -p "${state_dir}"; then
+	echo "failed to create failpoint state directory: ${state_dir}" >&2
+	exit 1
+fi
+
+if [ ! -w "${state_dir}" ]; then
+	echo "failpoint state directory is not writable: ${state_dir}" >&2
+	exit 1
+fi
 
 read_refcount() {
 	if [ ! -f "${refcount_file}" ]; then

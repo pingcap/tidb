@@ -1314,6 +1314,23 @@ dxf-resource-limit = 101`), 0644))
 	require.True(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
+	conf = NewConfig()
+	conf.StarterParams.EnableManagerNotifier = true
+	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+[standby]
+standby-mode = true
+activation-timeout = 30
+max-idle-seconds = 60
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.Standby.StandByMode)
+	require.Equal(t, uint(30), conf.Standby.ActivationTimeout)
+	require.Equal(t, uint(60), conf.Standby.MaxIdleSeconds)
+	require.NoError(t, conf.Valid())
+
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 deploy-mode = "starter"
 [standby]
@@ -1415,6 +1432,24 @@ max-allowed-packet = %d`, packetSize)), 0644))
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
+}
+
+func TestKeyspaceActivateModeConfig(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.KeyspaceActivateMode = true
+	require.NoError(t, conf.Valid())
+
+	conf.Standby.StandByMode = true
+	require.ErrorContains(t, conf.Valid(), "can't set standby and keyspace-activate mode at the same time")
+
+	conf.Standby.StandByMode = false
+	conf.DeployMode = deploymode.Premium
+	require.ErrorContains(t, conf.Valid(), "keyspace-activate can only be configured for starter deploy mode")
 }
 
 func TestConflictInstanceConfig(t *testing.T) {

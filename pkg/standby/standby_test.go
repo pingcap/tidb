@@ -15,16 +15,58 @@
 package standby
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/stretchr/testify/require"
 )
 
+type mockManagerClient struct {
+	called    bool
+	calls     int
+	failures  int
+	gotReason string
+}
+
+func (c *mockManagerClient) Free(_ context.Context, exitReason string) error {
+	c.called = true
+	c.calls++
+	c.gotReason = exitReason
+	if c.calls <= c.failures {
+		return errors.New("temporary error")
+	}
+	return nil
+}
+
+func resetStandbyTestState(t *testing.T) {
+	t.Helper()
+	mu.Lock()
+	oldState := state
+	oldActivateRequest := activateRequest
+	state = standbyState
+	activateRequest = ActivateRequest{}
+	mu.Unlock()
+
+	t.Cleanup(func() {
+		mu.Lock()
+		state = oldState
+		activateRequest = oldActivateRequest
+		mu.Unlock()
+	})
+}
+
 func TestActivateRequestMetadata(t *testing.T) {
+	resetStandbyTestState(t)
+
 	var req ActivateRequest
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"keyspace_name": "ks",
@@ -37,16 +79,10 @@ func TestActivateRequestMetadata(t *testing.T) {
 	}, req.Metadata)
 
 	mu.Lock()
-	originalRequest := activateRequest
 	activateRequest = req
 	mu.Unlock()
-	t.Cleanup(func() {
-		mu.Lock()
-		activateRequest = originalRequest
-		mu.Unlock()
-	})
 
-	controller := NewLoadKeyspaceController()
+	controller := NewLoadKeyspaceController(nil)
 	metadata := controller.ActivationMetadata()
 	require.Equal(t, req.Metadata, metadata)
 	metadata["meta_a"] = "changed"
@@ -54,7 +90,8 @@ func TestActivateRequestMetadata(t *testing.T) {
 }
 
 func TestActivateRequiresKeyspaceName(t *testing.T) {
-	controller := NewLoadKeyspaceController()
+	resetStandbyTestState(t)
+	controller := NewLoadKeyspaceController(nil)
 	_, mux := controller.Handler(nil)
 	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{}`))
 	resp := httptest.NewRecorder()
@@ -62,4 +99,49 @@ func TestActivateRequiresKeyspaceName(t *testing.T) {
 	mux.ServeHTTP(resp, req)
 
 	require.Equal(t, http.StatusBadRequest, resp.Code)
+}
+
+func TestOnServerShutdownNoopOutsideStarter(t *testing.T) {
+	resetStandbyTestState(t)
+	if kerneltype.IsNextGen() {
+		original := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(original))
+		})
+	}
+	require.False(t, deploymode.IsStarter())
+
+	mgrCli := &mockManagerClient{}
+	controller := NewLoadKeyspaceController(mgrCli)
+	svr := server.NewTestServer(config.NewConfig())
+	svr.SetNeedRequestMgrFree()
+
+	controller.OnServerShutdown(svr)
+
+	require.False(t, mgrCli.called)
+}
+
+func TestStatusDoesNotReturnExportIDOutsideStarter(t *testing.T) {
+	resetStandbyTestState(t)
+	if kerneltype.IsNextGen() {
+		original := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(original))
+		})
+	}
+	require.False(t, deploymode.IsStarter())
+
+	mu.Lock()
+	activateRequest = ActivateRequest{
+		KeyspaceName: "ks1",
+		ExportID:     "export-1",
+	}
+	mu.Unlock()
+
+	recorder := httptest.NewRecorder()
+	statusHandler(recorder, httptest.NewRequest("GET", "/tidb-pool/status", nil))
+
+	require.JSONEq(t, `{"state": "standby", "keyspace_name": "ks1"}`, recorder.Body.String())
 }
