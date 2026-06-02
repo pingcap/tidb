@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fulltext",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/pkg/expression/fulltext",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+    ],
+)
+
+go_test(
+    name = "fulltext_test",
+    timeout = "short",
+    srcs = ["analyzer_test.go"],
+    embed = [":fulltext"],
+    flaky = False,
+    shard_count = 5,
+    deps = [
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)
