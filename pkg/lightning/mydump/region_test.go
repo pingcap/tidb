@@ -20,11 +20,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
