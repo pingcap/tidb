@@ -62,27 +62,28 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 	var keyspaceMetaServiceGroup *KeyspaceMetaServiceGroup
 	if val, ok := keyspaceMeta.Config[KeyspaceMetaGroupIDKey]; ok {
 		groupID := val
-		if addrsStr, addrsOk := keyspaceMeta.Config[KeyspaceMetaGroupAddrsKey]; addrsOk {
-			rawAddrs := strings.Split(strings.TrimSpace(addrsStr), ",")
-			addrs := make([]string, 0, len(rawAddrs))
-			for _, addr := range rawAddrs {
-				addr = strings.TrimSpace(addr)
-				if addr == "" {
-					continue
-				}
-				addrs = append(addrs, addr)
-			}
-			if len(addrs) == 0 {
-				return nil, ErrGroupNotMatch
-			}
-			keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
-				GroupID:                  groupID,
-				KeyspaceMetaServiceAddrs: addrs,
-			}
-			log.Info("get keyspace meta service group info", zap.Any("group-info", keyspaceMetaServiceGroup))
-			return keyspaceMetaServiceGroup, nil
+		addrsStr, addrsOk := keyspaceMeta.Config[KeyspaceMetaGroupAddrsKey]
+		if !addrsOk {
+			return nil, ErrGroupNotMatch
 		}
-		return nil, ErrGroupNotMatch
+		rawAddrs := strings.Split(strings.TrimSpace(addrsStr), ",")
+		addrs := make([]string, 0, len(rawAddrs))
+		for _, addr := range rawAddrs {
+			addr = strings.TrimSpace(addr)
+			if addr == "" {
+				continue
+			}
+			addrs = append(addrs, addr)
+		}
+		if len(addrs) == 0 {
+			return nil, ErrGroupNotMatch
+		}
+		keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
+			GroupID:                  groupID,
+			KeyspaceMetaServiceAddrs: addrs,
+		}
+		log.Info("get keyspace meta service group info", zap.Any("group-info", keyspaceMetaServiceGroup))
+		return keyspaceMetaServiceGroup, nil
 	}
 
 	// If keyspace don't have KeyspaceMetaGroupIDKey, then set keyspace meta service as global meta service.
