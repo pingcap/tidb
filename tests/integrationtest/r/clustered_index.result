@@ -75,8 +75,8 @@ IndexReader_8	1860.39	root		index:IndexRangeScan_7
 └─IndexRangeScan_7	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
 explain select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
 id	estRows	task	access object	operator info
-IndexReader_8	1860.39	root		index:IndexRangeScan_7
-└─IndexRangeScan_7	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
+IndexReader_6	1860.39	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
 explain select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
 id	estRows	task	access object	operator info
 MergeJoin_7	2533.51	root		right outer join, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3

@@ -383,9 +383,16 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 		if a.totalConsecutive == 1 && a.columns != b.columns {
 			return a.columns - b.columns
 		}
-		// Tie-breaker: use index ID for deterministic ordering when all other criteria are equal
-		// This ensures stable sorting for functionally identical indexes (e.g., k1 and k2 with same expressions)
+		// Tie-breaker: use index name, then ID, for deterministic ordering when all
+		// other criteria are equal. This keeps functionally identical indexes (for
+		// example k1 and k2 with the same expressions) stable.
 		if a.info.path.Index != nil && b.info.path.Index != nil {
+			if a.info.path.Index.Name.L < b.info.path.Index.Name.L {
+				return -1
+			}
+			if a.info.path.Index.Name.L > b.info.path.Index.Name.L {
+				return 1
+			}
 			// Use proper three-way comparison to avoid integer overflow
 			// (a.info.path.Index.ID is int64, casting the difference to int can overflow)
 			if a.info.path.Index.ID < b.info.path.Index.ID {
