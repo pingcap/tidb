@@ -99,8 +99,8 @@ func TestParseURL(t *testing.T) {
 		// Successful test cases
 		{"http://example.com:8080", "http://", "example.com", "8080", false},
 		{"https://localhost:443", "https://", "localhost", "443", false}, // Specified port for HTTPS
-		{"http://[2001:db8::1]:2379", "http://", "[2001:db8::1]", "2379", false},
-		{"https://[2001:db8::1]:443", "https://", "[2001:db8::1]", "443", false},
+		{"http://[2001:db8::1]:2379", "http://", "2001:db8::1", "2379", false},
+		{"https://[2001:db8::1]:443", "https://", "2001:db8::1", "443", false},
 
 		// Unsuccessful test cases
 		{"ftp://example.com", "ftp://", "", "", true},              // Invalid prefix

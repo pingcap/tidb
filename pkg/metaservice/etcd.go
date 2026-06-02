@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strings"
 
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -82,11 +81,12 @@ func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([
 				if err != nil {
 					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
 				}
+				hostPort := net.JoinHostPort(host, port)
 				var pdAddr string
 				if withSchema {
-					pdAddr = prefix + host + ":" + port // http://ip:port
+					pdAddr = prefix + hostPort // http://ip:port
 				} else {
-					pdAddr = host + ":" + port // ip:port
+					pdAddr = hostPort // ip:port
 				}
 
 				pdAddrs = append(pdAddrs, pdAddr)
@@ -120,10 +120,6 @@ func ParseURL(rawURL string) (prefix string, host string, port string, err error
 		return "", "", "", invalidURLHostPortErr()
 	}
 
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-
 	return prefix, host, port, nil
 }
 
@@ -133,11 +129,7 @@ func parseHostPort(rawHostPort string) (host string, port string, err error) {
 		return "", "", err
 	}
 
-	if host == "" {
-		return "", "", errors.New("invalid host or port")
-	}
-
-	if port == "" {
+	if host == "" || port == "" {
 		return "", "", errors.New("invalid host or port")
 	}
 
