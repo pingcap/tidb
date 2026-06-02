@@ -111,7 +111,10 @@ go_test(
         "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/mysql",
+<<<<<<< HEAD
         "//pkg/table",
+=======
+>>>>>>> 628b31cd9a4 (importer: fix `table_import` to look at real table size instead of compressed size (#68652))
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
