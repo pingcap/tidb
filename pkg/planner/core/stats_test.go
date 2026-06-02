@@ -73,7 +73,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	dsBaseline := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
 	require.NotNil(t, dsBaseline)
 	// With threshold=-1, pruning should be disabled entirely, so we should have all 64 paths
-	expectedFull := len(dsBaseline.AllPossibleAccessPaths)
+	expectedFull := len(dsBaseline.PossibleAccessPaths)
 	t.Logf("Baseline paths with threshold=-1: %d (expected 64)", expectedFull)
 
 	// If we're getting fewer paths, it means pruning is still happening somehow
@@ -89,7 +89,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		interestingColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
 	}
 
-	t.Logf("Interesting columns: %d (from PushedDownConds: %d), paths: %d", len(interestingColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.AllPossibleAccessPaths))
+	t.Logf("Interesting columns: %d (from PushedDownConds: %d), paths: %d", len(interestingColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.PossibleAccessPaths))
 	for i, col := range interestingColumns {
 		t.Logf("Interesting col %d: ID=%d", i, col.ID)
 	}
@@ -98,17 +98,17 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		// First get threshold_100 result for comparison
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=100")
 		ds100 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		count100 := len(ds100.AllPossibleAccessPaths)
+		count100 := len(ds100.PossibleAccessPaths)
 
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=20")
 		ds20 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
 		// With threshold 20, we expect pruning to occur, resulting in fewer paths than baseline
 		// The exact number depends on how many indexes score > 0 and the pruning algorithm
-		require.Less(t, len(ds20.AllPossibleAccessPaths), count100, "threshold_20 should have fewer paths than threshold_100")
-		require.Less(t, len(ds20.AllPossibleAccessPaths), expectedFull, "threshold_20 should have fewer paths than baseline (-1)")
-		t.Logf("threshold_20: %d paths (threshold_100: %d, baseline: %d)", len(ds20.AllPossibleAccessPaths), count100, expectedFull)
+		require.Less(t, len(ds20.PossibleAccessPaths), count100, "threshold_20 should have fewer paths than threshold_100")
+		require.Less(t, len(ds20.PossibleAccessPaths), expectedFull, "threshold_20 should have fewer paths than baseline (-1)")
+		t.Logf("threshold_20: %d paths (threshold_100: %d, baseline: %d)", len(ds20.PossibleAccessPaths), count100, expectedFull)
 		// Verify all paths are valid
-		for _, path := range ds20.AllPossibleAccessPaths {
+		for _, path := range ds20.PossibleAccessPaths {
 			require.NotNil(t, path)
 			if !path.IsTablePath() {
 				require.NotNil(t, path.Index)
@@ -120,16 +120,16 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		// First get threshold_20 result for comparison
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=20")
 		ds20 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		count20 := len(ds20.AllPossibleAccessPaths)
+		count20 := len(ds20.PossibleAccessPaths)
 
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 		ds10 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
 		// With threshold 10, we expect more aggressive pruning than threshold 20
-		require.Less(t, len(ds10.AllPossibleAccessPaths), count20, "threshold_10 should have fewer paths than threshold_20")
-		require.Less(t, len(ds10.AllPossibleAccessPaths), expectedFull, "threshold_10 should have fewer paths than baseline (-1)")
-		t.Logf("threshold_10: %d paths (threshold_20: %d, baseline: %d)", len(ds10.AllPossibleAccessPaths), count20, expectedFull)
+		require.Less(t, len(ds10.PossibleAccessPaths), count20, "threshold_10 should have fewer paths than threshold_20")
+		require.Less(t, len(ds10.PossibleAccessPaths), expectedFull, "threshold_10 should have fewer paths than baseline (-1)")
+		t.Logf("threshold_10: %d paths (threshold_20: %d, baseline: %d)", len(ds10.PossibleAccessPaths), count20, expectedFull)
 		// Verify all paths are valid
-		for _, path := range ds10.AllPossibleAccessPaths {
+		for _, path := range ds10.PossibleAccessPaths {
 			require.NotNil(t, path)
 			if !path.IsTablePath() {
 				require.NotNil(t, path.Index)
@@ -141,16 +141,16 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		// First get threshold_100 result for comparison
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=100")
 		dsh100 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		counth100 := len(dsh100.AllPossibleAccessPaths)
+		counth100 := len(dsh100.PossibleAccessPaths)
 
 		// Next we will hint the threshold to 10
 		dsh10 := getDataSourceFromQuery(t, dom, tk.Session(), "select /*+ SET_VAR(tidb_opt_index_prune_threshold=10) */ * from t1 where a = 1 and f = 1")
 		// With threshold 10, we expect more aggressive pruning than threshold 20
-		require.Less(t, len(dsh10.AllPossibleAccessPaths), counth100, "hint threshold_10 should have fewer paths than threshold_100")
-		require.Less(t, len(dsh10.AllPossibleAccessPaths), expectedFull, "hint threshold_10 should have fewer paths than baseline (-1)")
-		t.Logf("hint_10: %d paths (threshold_100: %d, baseline: %d)", len(dsh10.AllPossibleAccessPaths), counth100, expectedFull)
+		require.Less(t, len(dsh10.PossibleAccessPaths), counth100, "hint threshold_10 should have fewer paths than threshold_100")
+		require.Less(t, len(dsh10.PossibleAccessPaths), expectedFull, "hint threshold_10 should have fewer paths than baseline (-1)")
+		t.Logf("hint_10: %d paths (threshold_100: %d, baseline: %d)", len(dsh10.PossibleAccessPaths), counth100, expectedFull)
 		// Verify all paths are valid
-		for _, path := range dsh10.AllPossibleAccessPaths {
+		for _, path := range dsh10.PossibleAccessPaths {
 			require.NotNil(t, path)
 			if !path.IsTablePath() {
 				require.NotNil(t, path.Index)
@@ -161,7 +161,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	t.Run("no_interesting_columns", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 		dsNoInteresting := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1")
-		require.Equal(t, expectedFull, len(dsNoInteresting.AllPossibleAccessPaths), "With no interesting columns, should return all paths")
+		require.Equal(t, expectedFull, len(dsNoInteresting.PossibleAccessPaths), "With no interesting columns, should return all paths")
 	})
 }
 
@@ -316,7 +316,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 	findDataSource(logicalPlan, &dsAfterOpt)
 	if dsAfterOpt != nil {
 		t.Logf("After optimization - Threshold: %d, InterestingColumns: %d, Paths: %d",
-			threshold, len(dsAfterOpt.InterestingColumns), len(dsAfterOpt.AllPossibleAccessPaths))
+			threshold, len(dsAfterOpt.InterestingColumns), len(dsAfterOpt.PossibleAccessPaths))
 	}
 
 	// Trigger stats derivation

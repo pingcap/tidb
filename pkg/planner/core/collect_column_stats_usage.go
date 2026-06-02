@@ -136,7 +136,7 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, c.cols)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedColGroups [][]*expression.Column, ds *logicalop.DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		intest.Assert(!ds.SCtx().GetSessionVars().InRestrictedSQL, "system table should have been skipped in restricted SQL mode")
@@ -160,19 +160,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		}
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
-	}
-	// record the asked column group specific for each datasource table, which will be checked and converted to index needed in collectSyncIndices.
-	for _, group := range askedColGroups {
-		inTable := true
-		for _, col := range group {
-			if !ds.Schema().Contains(col) {
-				inTable = false
-			}
-		}
-		if inTable {
-			// only store the right col group in this table.
-			ds.AskedColumnGroup = append(ds.AskedColumnGroup, group)
-		}
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
@@ -323,16 +310,16 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
-		c.collectPredicateColumnsForDataSource(askedColGroups, x)
+		c.collectPredicateColumnsForDataSource(x)
 		// Collect all interesting columns (WHERE + JOIN + ORDERING) for index pruning
 		if c.interestingColsByDS != nil {
 			c.collectInterestingColumnsForDataSource(x, currentJoinCols, currentOrderingCols)
 		}
 	case *logicalop.LogicalIndexScan:
-		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
+		c.collectPredicateColumnsForDataSource(x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalTableScan:
-		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
+		c.collectPredicateColumnsForDataSource(x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalProjection:
 		// Schema change from children to self.
