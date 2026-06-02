@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -347,4 +348,71 @@ func TestIssue64645(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})
+}
+
+func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@sql_mode = default")
+
+	// issue-63455-point-update-negative-to-unsigned
+	{
+		tk.MustExec("drop table if exists foo")
+		tk.MustExec("create table foo (id int primary key, bing bigint unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #63455 it wrapped -1 to MAX_UINT64 without error.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-unsigned-decimal-negative
+	{
+		tk.MustExec("drop table if exists foo")
+		tk.MustExec("create table foo (id int primary key, bing decimal(10, 0) unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #67534 it might wrap -1 using CAST semantics.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-unsigned-real-negative
+	{
+		tk.MustExec("drop table if exists foo")
+		tk.MustExec("create table foo (id int primary key, bing double unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #67534 it might wrap -1 using CAST semantics.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-set-int-assignment
+	{
+		tk.MustExec("drop table if exists foo")
+		tk.MustExec("create table foo (id int primary key, bing set('1','2','3') default null)")
+		tk.MustExec("insert into foo values (1, null), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		tk.MustExec("update foo set bing = (select 3) where id = 1")
+
+		// Fast point-update path should have the same enum/set-as-int behavior as the normal UPDATE path.
+		tk.MustExec("update foo set bing = 3 where id = 2")
+
+		tk.MustQuery("select id, bing + 0, bing from foo order by id").Check(testkit.Rows(
+			"1 3 1,2",
+			"2 3 1,2",
+		))
+	}
 }
