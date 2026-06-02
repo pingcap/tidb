@@ -2037,6 +2037,7 @@ type AlterMaterializedViewLogAction struct {
 type AlterMaterializedViewLogActionType int
 
 const (
+	// TODO: support column-level ALTER MATERIALIZED VIEW LOG actions.
 	AlterMaterializedViewLogActionPurge AlterMaterializedViewLogActionType = iota
 )
 
