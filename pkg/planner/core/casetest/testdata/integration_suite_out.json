@@ -67,18 +67,30 @@
         "SQL": "explain format = 'verbose' select * from t3 order by a limit 1",
         "Plan": [
           "TopN_7 1.00 60.74 root  test.t3.a, offset:0, count:1",
+<<<<<<< HEAD
           "└─TableReader_15 1.00 54.34 root  data:TopN_14",
           "  └─TopN_14 1.00 688.32 cop[tikv]  test.t3.a, offset:0, count:1",
           "    └─TableFullScan_13 3.00 681.92 cop[tikv] table:t3 keep order:false"
+=======
+          "└─TableReader_17 1.00 54.34 root  data:TopN_16",
+          "  └─TopN_16 1.00 688.32 cop[tikv]  test.t3.a, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b limit 1",
         "Plan": [
           "TopN_7 1.00 60.74 root  test.t3.b, offset:0, count:1",
+<<<<<<< HEAD
           "└─TableReader_15 1.00 54.34 root  data:TopN_14",
           "  └─TopN_14 1.00 688.32 cop[tikv]  test.t3.b, offset:0, count:1",
           "    └─TableFullScan_13 3.00 681.92 cop[tikv] table:t3 keep order:false"
+=======
+          "└─TableReader_17 1.00 54.34 root  data:TopN_16",
+          "  └─TopN_16 1.00 688.32 cop[tikv]  test.t3.b, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
         ]
       },
       {

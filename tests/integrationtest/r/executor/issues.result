@@ -931,6 +931,7 @@ Limit_8	64.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
       └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t order by id limit 100;  # expected distsql concurrency 1
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+<<<<<<< HEAD
 Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 └─TableReader_17	100.00	<actRows>	root	NULL	max_distsql_concurrency: 1	NULL	<memory>	<disk>
   └─Limit_16	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
@@ -948,6 +949,25 @@ Limit_11	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
   └─Limit_19	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abd")	<memory>	<disk>
       └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+=======
+Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_22	100.00	<actRows>	root	NULL	max_distsql_concurrency: 1	NULL	<memory>	<disk>
+  └─Limit_21	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─TableFullScan_20	101.56	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+explain analyze select * from t order by id limit 100000;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Limit_12	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+└─TableReader_22	256.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_21	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+    └─TableFullScan_20	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+explain analyze select * from t where c = 'abd' order by id limit 100;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Limit_13	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_26	1.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_25	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─Selection_24	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abd")	<memory>	<disk>
+      └─TableFullScan_23	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 select @@tidb_partition_prune_mode;
 @@tidb_partition_prune_mode
 dynamic
@@ -983,6 +1003,7 @@ Limit_8	1.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
       └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from pt order by id limit 100;         # expected distsql concurrency 7, but currently get 1, see issue #55190
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+<<<<<<< HEAD
 Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 └─TableReader_17	100.00	<actRows>	root	partition:all	max_distsql_concurrency: 1	NULL	<memory>	<disk>
   └─Limit_16	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
@@ -1001,6 +1022,26 @@ Limit_11	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.pt.val, 126)	<memory>	<disk>
       └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
 explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=5)*/ * from t order by id;  # expected distsql concurrency 5
+=======
+Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_22	100.00	<actRows>	root	partition:all	max_distsql_concurrency: 1	NULL	<memory>	<disk>
+  └─Limit_21	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─TableFullScan_20	101.56	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+explain analyze select * from pt order by id limit 100000;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Limit_12	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+└─TableReader_22	256.00	<actRows>	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_21	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+    └─TableFullScan_20	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+explain analyze select * from pt where val = 126 order by id limit 100;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Limit_13	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_26	1.00	<actRows>	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_25	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─Selection_24	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.pt.val, 126)	<memory>	<disk>
+      └─TableFullScan_23	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=5)*/ * from t order by id;
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 TableReader_11	256.00	<actRows>	root	NULL	max_distsql_concurrency: 5	NULL	<memory>	<disk>
 └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>

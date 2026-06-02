@@ -23,12 +23,21 @@ a	b	c
 explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
 id	estRows	task	access object	operator info
 TopN_9	3.00	root		executor__index_lookup_pushdown_partition.tp1.a, offset:0, count:3
+<<<<<<< HEAD
 └─IndexLookUp_16	3.00	root	partition:all	
   ├─LocalIndexLookUp_18(Build)	3.00	cop[tikv]		index handle offsets:[1]
   │ ├─TopN_15(Build)	3.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.a, offset:0, count:3
   │ │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:tp1, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
   │ └─TableRowIDScan_17(Probe)	3.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
   └─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+=======
+└─IndexLookUp_19	3.00	root	partition:all	
+  ├─LocalIndexLookUp_21(Build)	3.00	cop[tikv]		index handle offsets:[1]
+  │ ├─TopN_18(Build)	3.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.a, offset:0, count:3
+  │ │ └─IndexRangeScan_16	3323.33	cop[tikv]	table:tp1, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
+  │ └─TableRowIDScan_20(Probe)	3.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+  └─TableRowIDScan_17(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
 a	b	c
 2	9	20
@@ -207,6 +216,7 @@ explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 
 id	estRows	task	access object	operator info
 TopN_19	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
 └─PartitionUnion_24	20.00	root		
+<<<<<<< HEAD
   ├─TopN_26	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
   │ └─IndexLookUp_33	5.00	root		
   │   ├─TopN_34(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
@@ -239,6 +249,40 @@ TopN_19	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, co
       │   └─TableRowIDScan_71(Probe)	10000.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
       └─TopN_68(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
         └─TableRowIDScan_67	0.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+=======
+  ├─TopN_27	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─IndexLookUp_37	5.00	root		
+  │   ├─TopN_38(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │   │ └─LocalIndexLookUp_40	10000.00	cop[tikv]		index handle offsets:[1]
+  │   │   ├─IndexFullScan_34(Build)	10000.00	cop[tikv]	table:tp1, partition:p0, index:b(b)	keep order:false, stats:pseudo
+  │   │   └─TableRowIDScan_39(Probe)	10000.00	cop[tikv]	table:tp1, partition:p0	keep order:false, stats:pseudo
+  │   └─TopN_36(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │     └─TableRowIDScan_35	0.00	cop[tikv]	table:tp1, partition:p0	keep order:false, stats:pseudo
+  ├─TopN_54	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─IndexLookUp_64	5.00	root		
+  │   ├─TopN_65(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │   │ └─LocalIndexLookUp_67	10000.00	cop[tikv]		index handle offsets:[1]
+  │   │   ├─IndexFullScan_61(Build)	10000.00	cop[tikv]	table:tp1, partition:p1, index:b(b)	keep order:false, stats:pseudo
+  │   │   └─TableRowIDScan_66(Probe)	10000.00	cop[tikv]	table:tp1, partition:p1	keep order:false, stats:pseudo
+  │   └─TopN_63(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │     └─TableRowIDScan_62	0.00	cop[tikv]	table:tp1, partition:p1	keep order:false, stats:pseudo
+  ├─TopN_81	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─IndexLookUp_91	5.00	root		
+  │   ├─TopN_92(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │   │ └─LocalIndexLookUp_94	10000.00	cop[tikv]		index handle offsets:[1]
+  │   │   ├─IndexFullScan_88(Build)	10000.00	cop[tikv]	table:tp1, partition:p2, index:b(b)	keep order:false, stats:pseudo
+  │   │   └─TableRowIDScan_93(Probe)	10000.00	cop[tikv]	table:tp1, partition:p2	keep order:false, stats:pseudo
+  │   └─TopN_90(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │     └─TableRowIDScan_89	0.00	cop[tikv]	table:tp1, partition:p2	keep order:false, stats:pseudo
+  └─TopN_108	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+    └─IndexLookUp_118	5.00	root		
+      ├─TopN_119(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+      │ └─LocalIndexLookUp_121	10000.00	cop[tikv]		index handle offsets:[1]
+      │   ├─IndexFullScan_115(Build)	10000.00	cop[tikv]	table:tp1, partition:p3, index:b(b)	keep order:false, stats:pseudo
+      │   └─TableRowIDScan_120(Probe)	10000.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+      └─TopN_117(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+        └─TableRowIDScan_116	0.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
 a	b	c
 1	10	10

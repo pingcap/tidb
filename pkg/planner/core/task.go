@@ -1051,7 +1051,28 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 			return newTask
 		}
 	}
+<<<<<<< HEAD
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+=======
+	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.RootTaskConds) == 0 {
+		// Handle IndexMerge with advisory sort items when some (but not all)
+		// partial paths satisfy the sort order. When all paths satisfy, the
+		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
+		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished && !copTask.IdxMergeIsIntersection &&
+			copTask.IdxMergeMatchWithAdvisorySortItems {
+			intest.Assert(len(copTask.IdxMergePartPlans) == len(copTask.IdxMergePartPlansMatchResults))
+			allSatisfy := true
+			for _, result := range copTask.IdxMergePartPlansMatchResults {
+				if !result.Matched() {
+					allSatisfy = false
+					break
+				}
+			}
+			if !allSatisfy {
+				return handleAdvisorySortItemsForIndexMerge(p, copTask)
+			}
+		}
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1077,8 +1098,187 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	return attachPlan2Task(p, rootTask)
 }
 
+<<<<<<< HEAD
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
+=======
+// handlePartialOrderTopN handles the partial order TopN scenario.
+// It fills the partial-order-related fields on the TopN itself and, when possible,
+// pushes down a special Limit with prefix information to the index side.
+// There are two different cases:
+//
+// Case1: Two phase TopN, where TiDB keeps TopN and TiKV applies a partial-order Limit:
+//
+//	TopN(with partial info)
+//	  └─IndexLookUp
+//	     └─Limit(with partial info)
+//	... (other operators)
+//
+// Case2: One phase TopN, where the whole TopN can only be executed in TiDB:
+//
+//	TopN(with partial info)
+//	  ├─IndexPlan
+//	  └─TablePlan
+func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+	matchResult := copTask.PartialOrderMatchResult
+
+	// Init partial order params PrefixCol and PrefixLen.
+	// PartialOrderedLimit = Count + Offset.
+	// TopN(with partial order) executor will short-cut read when it already handle "p.Count + p.Offset" rows.
+	// Also it need to read X more rows (which prefix value is same as the last line prefix value) to ensure correctness.
+	partialOrderedLimit := p.Count + p.Offset
+	p.PrefixLen = matchResult.PrefixLen
+	// Find the corresponding prefix column in TopN's schema.
+	// matchResult.PrefixCol is from IndexScan's schema, but
+	// Projection operators may remap columns. We need to find the column in TopN's
+	// schema that has the same UniqueID as matchResult.PrefixCol.
+	// Column UniqueID remains unchanged even after Projection remapping.
+	p.PrefixCol = nil
+	for _, col := range p.Schema().Columns {
+		if col.UniqueID == matchResult.PrefixCol.UniqueID {
+			p.PrefixCol = col
+			break
+		}
+	}
+	// Fallback: if not found in rootTask schema (should not happen)
+	if p.PrefixCol == nil {
+		return base.InvalidTask
+	}
+
+	// Decide whether we can push a special Limit down to the index plan.
+	// Conditions:
+	//   - Not an IndexMerge.
+	//   - IndexPlan is not finished (IndexPlanFinished == false).
+	//   - No root task conditions.
+	// Since the output of the table plan is not ordered. So if limit can be pushed down, it must be pushed down to the index plan.
+	// Therefore, we performed this related check here.
+	canPushLimit := false
+	if len(copTask.IdxMergePartPlans) == 0 &&
+		!copTask.IndexPlanFinished &&
+		len(copTask.RootTaskConds) == 0 &&
+		copTask.IndexPlan != nil {
+		canPushLimit = true
+	}
+
+	if canPushLimit {
+		// Two-layer mode: TiDB TopN(with partial order info.) + TiKV limit(with partial order info.)
+		// The estRows of partial order TopN : N + X
+		// N: The partialOrderedLimit, N means the value of TopN, N = Count + Offset.
+		// X: The estimated extra rows to read to fulfill the TopN.
+		// We need to read more prefix values that are the same as the last line
+		// to ensure the correctness of the final calculation of the Top n rows.
+		maxX := estimateMaxXForPartialOrder()
+		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
+		childProfile := copTask.IndexPlan.StatsInfo()
+		limitStats := property.DeriveLimitStats(childProfile, estimatedRows)
+
+		pushedDownLimit := physicalop.PhysicalLimit{
+			Count:     partialOrderedLimit,
+			PrefixCol: p.PrefixCol,
+			PrefixLen: matchResult.PrefixLen,
+		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
+		pushedDownLimit.SetChildren(copTask.IndexPlan)
+		pushedDownLimit.SetSchema(copTask.IndexPlan.Schema())
+		copTask.IndexPlan = pushedDownLimit
+	}
+
+	// Always keep TopN in TiDB as the upper layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask)
+}
+
+// estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
+// This value is used for statistics (row count estimation).
+func estimateMaxXForPartialOrder() uint64 {
+	// TODO: implement it by TopN/buckets and adjust it by session variable.
+	return 0
+}
+
+// handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
+// has advisory sort items satisfaction info. It pushes Limit to partial paths
+// that satisfy the sort order and TopN to those that don't, then keeps a root
+// TopN for final merge.
+func handleAdvisorySortItemsForIndexMerge(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+	newCount := p.Offset + p.Count
+
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
+	for i, partialPlan := range copTask.IdxMergePartPlans {
+		if copTask.IdxMergePartPlansMatchResults[i].Matched() {
+			// This partial path satisfies the sort order, push Limit.
+			childProfile := partialPlan.StatsInfo()
+			stats := property.DeriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := physicalop.PhysicalLimit{
+				Count:       newCount,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit.SetChildren(partialPlan)
+			pushedDownLimit.SetSchema(partialPlan.Schema())
+			copTask.IdxMergePartPlans[i] = pushedDownLimit
+		} else if canPushToIndexPlan(partialPlan, cols) {
+			// This partial path does not satisfy the sort order, push TopN.
+			pushedDownTopN, _ := getPushedDownTopN(p, partialPlan, copTask.GetStoreType())
+			copTask.IdxMergePartPlans[i] = pushedDownTopN
+		}
+	}
+
+	// Push TopN to the table plan side if it exists.
+	if copTask.TablePlan != nil {
+		pushedDownTopN, _ := getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
+		copTask.TablePlan = pushedDownTopN
+	}
+
+	// Keep the root TopN as the final merge layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	if len(p.GetPartitionBy()) > 0 {
+		return rootTask
+	}
+	return attachPlan2Task(p, rootTask)
+}
+
+// attach2Task4PhysicalProjection implements PhysicalPlan interface.
+func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalProjection)
+	t := tasks[0].Copy()
+	// when it's a copTask, we can push down projection to indexPlan or tablePlan respectively, say logical plan: proj->ds, when ds can supply the needed columns to proj
+	// doesn't mean its index plan can supply needed columns to proj when it's double read and index plan is not finished. When it's not, we should finish the index plan
+	// immediately and push down projection to table plan if possible. For the case of index merge, we can only push down projection to table plan since index plan and table
+	// plan will be union-ed together and the final output will be used by projection, so both of them should provide needed columns to projection.
+	if cop, ok := t.(*physicalop.CopTask); ok {
+		if (len(cop.RootTaskConds) == 0 && len(cop.IdxMergePartPlans) == 0) && expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, cop.GetStoreType()) {
+			if !cop.IndexPlanFinished {
+				// when index plan is not finished, and index plan can not supply the columns the proj needed.
+				if !canPushToIndexPlan(cop.IndexPlan, expression.ExtractColumnsFromExpressions(p.Exprs, nil)) {
+					// finish index plan and push down projection to table plan.
+					cop.FinishIndexPlan()
+				}
+			}
+			copTask := attachPlan2Task(p, cop)
+			return copTask
+		}
+	} else if mpp, ok := t.(*physicalop.MppTask); ok {
+		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
+			p.SetChildren(mpp.Plan())
+			mpp.SetPlan(p)
+			return mpp
+		}
+	}
+	t = t.ConvertToRootTask(p.SCtx())
+	t = attachPlan2Task(p, t)
+	return t
+}
+
+// attach2Task4PhysicalExpand implements PhysicalPlan interface.
+func attach2Task4PhysicalExpand(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalExpand)
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 	t := tasks[0].Copy()
 	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
 	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.

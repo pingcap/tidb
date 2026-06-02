@@ -287,6 +287,97 @@ type PhysicalProperty struct {
 		*expression.VectorHelper
 		TopK uint32
 	}
+<<<<<<< HEAD
+=======
+
+	IndexJoinProp *IndexJoinRuntimeProp
+
+	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	NoCopPushDown bool
+
+	// PartialOrderInfo is used for TopN's partial order optimization.
+	// When this field is not nil, it indicates that prefix index can be used
+	// to provide partial order for TopN.
+	// For example:
+	// query: order by a, b limit 10
+	// partialOrderInfo: sortItems: [a, b]
+	// The partialOrderInfo property will pass through to the datasource and try to matchPartialOrderProperty such as:
+	// index: (a, b(10) )
+	PartialOrderInfo *PartialOrderInfo
+
+	// AdvisorySortItems contains sort items that are preferred but not required.
+	// When SortItems is empty and AdvisorySortItems is not, DataSource can try to
+	// generate paths that satisfy these sort items, enabling Limit pushdown to
+	// partial paths of IndexMerge.
+	// Currently only set when TopN is directly above a DataSource.
+	AdvisorySortItems []SortItem
+}
+
+// PartialOrderInfo records information needed for partial order optimization.
+// When PhysicalProperty.PartialOrderInfo is not nil, it indicates that
+// prefix index can be used to provide partial order.
+type PartialOrderInfo struct {
+	// SortItems are the ORDER BY columns from TopN
+	SortItems []*SortItem
+}
+
+// AllSameOrder checks if all the items have same order.
+func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
+	if len(p.SortItems) == 0 {
+		return true, false
+	}
+	for i := 1; i < len(p.SortItems); i++ {
+		if p.SortItems[i].Desc != p.SortItems[i-1].Desc {
+			return
+		}
+	}
+	return true, p.SortItems[0].Desc
+}
+
+// PartialOrderMatchResult records the result of matching partial order property with an access path.
+// It is stored in candidatePath to allow each path to have its own match result.
+type PartialOrderMatchResult struct {
+	// Matched indicates whether this path can provide partial order
+	Matched bool
+	// PrefixCol is the last and only one prefix column ID of index, only used for executor part
+	// For example:
+	// Query ORDER BY a,b,c
+	// Index: a, b, c(10)
+	// PrefixCol: c, the col c
+	// PrefixLen: 10, the col length of c in index
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix length in bytes for prefix index, only used for executor part
+	PrefixLen int
+}
+
+// IndexJoinRuntimeProp is the inner runtime property for index join.
+type IndexJoinRuntimeProp struct {
+	// for complete the last col range access, cuz its runtime constant.
+	OtherConditions []expression.Expression
+	// for filling the range msg info
+	OuterJoinKeys []*expression.Column
+	// for inner ds/index to detect the range, cuz its runtime constant.
+	InnerJoinKeys []*expression.Column
+	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount.
+	// since ds only can build empty range before seeing runtime data, the so inner
+	// ds can get an accurate countAfterAccess. Once index join prop pushed to the
+	// deeper side like through join, the deeper DS's countAfterAccess should be
+	// thought twice.
+	AvgInnerRowCnt float64
+	// since tableRangeScan and indexRangeScan can't be told which one is better at
+	// copTask phase because of the latter attached operators into cop and the single
+	// and double reader cost consideration. Therefore, we introduce another bool to
+	// indicate prefer tableRangeScan or indexRangeScan each at a time.
+	TableRangeScan bool
+}
+
+// CloneEssentialFields clone the essential fields for IndexJoinRuntimeProp.
+func (ijr *IndexJoinRuntimeProp) CloneEssentialFields() *IndexJoinRuntimeProp {
+	one := *ijr
+	return &one
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -393,7 +484,16 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
+<<<<<<< HEAD
 	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
+=======
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8 + (16+8)*len(p.AdvisorySortItems) + 8
+	if p.PartialOrderInfo != nil {
+		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
+	} else {
+		hashcodeSize += 8
+	}
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.CanAddEnforcer {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
@@ -423,6 +523,56 @@ func (p *PhysicalProperty) HashCode() []byte {
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
+<<<<<<< HEAD
+=======
+	// encode indexJoinProp into physical prop's hashcode.
+	if p.IndexJoinProp != nil {
+		for _, expr := range p.IndexJoinProp.OtherConditions {
+			p.hashcode = append(p.hashcode, expr.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.OuterJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.InnerJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+		if p.IndexJoinProp.TableRangeScan {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
+	}
+	// encode NoCopPushDown into physical prop's hashcode.
+	if p.NoCopPushDown {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
+	// encode PartialOrderInfo into physical prop's hashcode.
+	if p.PartialOrderInfo != nil {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		for _, item := range p.PartialOrderInfo.SortItems {
+			p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+			if item.Desc {
+				p.hashcode = codec.EncodeInt(p.hashcode, 1)
+			} else {
+				p.hashcode = codec.EncodeInt(p.hashcode, 0)
+			}
+		}
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
+	// encode SortItemsHints into physical prop's hashcode.
+	for _, item := range p.AdvisorySortItems {
+		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+		if item.Desc {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
+	}
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 	return p.hashcode
 }
 
@@ -443,6 +593,14 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+<<<<<<< HEAD
+=======
+		NoCopPushDown:         p.NoCopPushDown,
+		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
+		AdvisorySortItems:     p.AdvisorySortItems,
+		// we default not to clone basic indexJoinProp by default.
+		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
+>>>>>>> 2310c3d99f3 (planner: support pushing Limit and TopN to individual partial paths of IndexMerge (#68772))
 	}
 	return prop
 }
@@ -477,6 +635,9 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 	}
 	for _, mppCol := range p.MPPPartitionCols {
 		sum += mppCol.MemoryUsage()
+	}
+	for _, sortItem := range p.AdvisorySortItems {
+		sum += sortItem.MemoryUsage()
 	}
 	return
 }
