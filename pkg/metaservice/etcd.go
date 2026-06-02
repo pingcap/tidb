@@ -83,7 +83,7 @@ func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([
 					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
 				}
 				var pdAddr string
-				if hasPrefix {
+				if withSchema {
 					pdAddr = prefix + host + ":" + port // http://ip:port
 				} else {
 					pdAddr = host + ":" + port // ip:port
