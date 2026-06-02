@@ -30,7 +30,8 @@ import (
 
 // Token is the analyzed fulltext token.
 type Token struct {
-	Text     string
+	Text string
+	// Position is the token-stream ordinal, not a byte or rune offset.
 	Position int
 }
 
@@ -120,7 +121,7 @@ func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType mo
 // every other character is a delimiter.
 func PreserveUnderscoreTokenize(text string) []Token {
 	tokens := make([]Token, 0)
-	pos := 0
+	tokenPos := 0
 	for i := 0; i < len(text); {
 		ch, next := runeAtByte(text, i)
 		if !isTokenChar(ch) {
@@ -139,9 +140,9 @@ func PreserveUnderscoreTokenize(text string) []Token {
 		}
 		tokens = append(tokens, Token{
 			Text:     text[start:j],
-			Position: pos,
+			Position: tokenPos,
 		})
-		pos++
+		tokenPos++
 		i = j
 	}
 	return tokens
@@ -267,13 +268,14 @@ func lengthFilter(tokens []Token, minLen, maxLen int) []Token {
 		return nil
 	}
 
-	out := make([]Token, 0, len(tokens))
+	out := tokens[:0]
 	for _, token := range tokens {
 		n := charLen(token.Text)
 		if minLen <= n && n <= maxLen {
 			out = append(out, token)
 		}
 	}
+	clear(tokens[len(out):])
 	return out
 }
 
@@ -297,12 +299,13 @@ func stopwordFilter(tokens []Token, parserInfo parserInfo) []Token {
 		return tokens
 	}
 
-	out := make([]Token, 0, len(tokens))
+	out := tokens[:0]
 	for _, token := range tokens {
 		if _, ok := parserInfo.stopwords[token.Text]; !ok {
 			out = append(out, token)
 		}
 	}
+	clear(tokens[len(out):])
 	return out
 }
 
@@ -358,15 +361,14 @@ type charSpan struct {
 
 func utf8CharSpans(text string) []charSpan {
 	spans := make([]charSpan, 0, len(text))
-	for start, ch := range text {
-		size := utf8.RuneLen(ch)
-		if size < 0 {
-			size = 1
-		}
+	for start := 0; start < len(text); {
+		_, size := utf8.DecodeRuneInString(text[start:])
+		end := start + size
 		spans = append(spans, charSpan{
 			byteStart: start,
-			byteEnd:   start + size,
+			byteEnd:   end,
 		})
+		start = end
 	}
 	return spans
 }

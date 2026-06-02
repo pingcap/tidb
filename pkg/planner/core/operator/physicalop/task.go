@@ -33,13 +33,17 @@ func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	}
 }
 
-func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
+func collectScanPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *PhysicalTableScan:
-		p.TableScanAndPartitionInfos = append(p.TableScanAndPartitionInfos, TableScanAndPartitionInfo{TableScan: x, PhysPlanPartInfo: x.PlanPartInfo})
+		p.ScanAndPartitionInfos = append(p.ScanAndPartitionInfos, ScanAndPartitionInfo{TableScan: x, PhysPlanPartInfo: x.PlanPartInfo})
+	case *PhysicalIndexScan:
+		if x.PlanPartInfo != nil {
+			p.ScanAndPartitionInfos = append(p.ScanAndPartitionInfos, ScanAndPartitionInfo{IndexScan: x, PhysPlanPartInfo: x.PlanPartInfo})
+		}
 	default:
 		for _, ch := range mppPlan.Children() {
-			collectPartitionInfosFromMPPPlan(p, ch)
+			collectScanPartitionInfosFromMPPPlan(p, ch)
 		}
 	}
 }

@@ -140,15 +140,16 @@ func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
 	return
 }
 
-// TableScanAndPartitionInfo is to save PhysicalTableScan and PhysPlanPartInfo Info
-type TableScanAndPartitionInfo struct {
+// ScanAndPartitionInfo is to save scan plan and PhysPlanPartInfo Info
+type ScanAndPartitionInfo struct {
 	// TODO(hawkingrei): we can make it private after moving PhysicalTableReader into physicalop
 	TableScan        *PhysicalTableScan
+	IndexScan        *PhysicalIndexScan
 	PhysPlanPartInfo *PhysPlanPartInfo
 }
 
-// MemoryUsage return the memory usage of TableScanAndPartitionInfo
-func (t *TableScanAndPartitionInfo) MemoryUsage() (sum int64) {
+// MemoryUsage return the memory usage of ScanAndPartitionInfo
+func (t *ScanAndPartitionInfo) MemoryUsage() (sum int64) {
 	if t == nil {
 		return
 	}
@@ -156,6 +157,9 @@ func (t *TableScanAndPartitionInfo) MemoryUsage() (sum int64) {
 	sum += t.PhysPlanPartInfo.MemoryUsage()
 	if t.TableScan != nil {
 		sum += t.TableScan.MemoryUsage()
+	}
+	if t.IndexScan != nil {
+		sum += t.IndexScan.MemoryUsage()
 	}
 	return
 }

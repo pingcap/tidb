@@ -2382,6 +2382,14 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			return base.InvalidTask, nil
 		}
 		mppTask := physicalop.NewMppTask(is, property.AnyType, nil, ds.TblColHists, nil)
+		if ds.TableInfo.GetPartitionInfo() != nil {
+			is.PlanPartInfo = &physicalop.PhysPlanPartInfo{
+				PruningConds:   ds.AllConds,
+				PartitionNames: ds.PartitionNames,
+				Columns:        ds.TblCols,
+				ColumnNames:    ds.OutputNames(),
+			}
+		}
 		finalStats := ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt)
 		if err = addPushedDownSelectionToMppTask4PhysicalIndexScan(is, mppTask, path, finalStats); err != nil {
 			return base.InvalidTask, err

@@ -27,7 +27,7 @@ go_test(
     ],
     embed = [":fulltext"],
     flaky = False,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/meta/model",
         "//pkg/sessionctx/vardef",

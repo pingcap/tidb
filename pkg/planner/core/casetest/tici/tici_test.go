@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	ticipkg "github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 )
 
@@ -686,5 +687,211 @@ func TestTiCIJoinWithNonTiCITable(t *testing.T) {
 		tk.MustQuery(sql).CheckContain("cop[tici]")
 		tk.MustQuery(sql).CheckContain("cop[tikv]")
 		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
+	})
+}
+
+func TestTiCIMPPIndexScanPartitionPruning(t *testing.T) {
+	ticipkg.InstallMockTiCIManagerForTest(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload")
+		require.NoError(t, err)
+	}()
+
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec("set tidb_allow_mpp=on")
+		tk.MustExec("set tidb_enforce_mpp=on")
+		tk.MustExec(`create table employees(
+			id bigint primary key,
+			fname varchar(25) not null,
+			store_id bigint not null,
+			body text
+		) partition by range(id) (
+			partition p0 values less than (100),
+			partition p1 values less than (200),
+			partition p2 values less than maxvalue
+		)`)
+		tk.MustExec(`create hybrid index h_idx on employees(id, fname, store_id, body) parameter '{
+			"inverted": {
+				"columns": ["id", "fname", "store_id", "body"]
+			},
+			"sort": {
+				"columns": ["id", "fname", "store_id"],
+				"order": ["asc", "desc", "asc"]
+			},
+			"sharding_key": {
+				"columns": ["id", "fname", "store_id"]
+			}
+		}'`)
+		tk.MustExec(`create table stores(
+			id bigint primary key,
+			name varchar(25) not null
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "employees")
+		testkit.SetTiFlashReplica(t, dom, "test", "stores")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		integrationSuiteData := GetFTSIndexSuiteData()
+		integrationSuiteData.LoadTestCasesByName("TestTiCIMPPIndexScanPartitionPruning", t, &input, &output)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
+
+func TestTiCIAlternativeLogicalPlansKeepNativePrefixPlan(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table amazon_review(
+			id bigint primary key,
+			review_body text,
+			review_headline text,
+			product_title text,
+			fulltext index review_body(review_body, review_headline, product_title)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "amazon_review")
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
+
+		sql := `explain format='brief' select count(*) from amazon_review
+			where match(review_body, review_headline, product_title)
+			against('stainles*' in boolean mode)`
+		tk.MustQuery(sql).CheckContain(`search func:fts_match_prefix("stainles", test.amazon_review.review_body, test.amazon_review.review_headline, test.amazon_review.product_title)`)
+		tk.MustQuery(sql).CheckContain("index:review_body(review_body, review_headline, product_title)")
+	})
+}
+
+func TestTiCIAlternativeLogicalPlansPreferNativeOverLikeFallbackOnCost(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table amazon_review(
+			id bigint primary key,
+			review_body text,
+			review_headline text,
+			product_title text,
+			fulltext index review_body(review_body, review_headline, product_title)
+		)`)
+		tk.MustExec(`insert into amazon_review values
+			(1, 'stainless steel bottle', 'durable bottle', 'travel bottle'),
+			(2, 'stainless lunch box', 'steel lunch box', 'kitchen organizer'),
+			(3, 'plastic container', 'light container', 'storage box'),
+			(4, 'ceramic mug', 'coffee mug', 'kitchen mug')`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "amazon_review")
+
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
+		sql := `explain format='brief' select count(*) from amazon_review
+			where match(review_body, review_headline, product_title)
+			against('stainless' in boolean mode)`
+		tk.MustQuery(sql).CheckContain(`search func:fts_match_word("stainless", test.amazon_review.review_body, test.amazon_review.review_headline, test.amazon_review.product_title)`)
+		tk.MustQuery(sql).CheckContain("index:review_body(review_body, review_headline, product_title)")
+		tk.MustQuery(sql).CheckNotContain("ilike")
+	})
+}
+
+func TestTiCIAlternativeLogicalPlansIgnoreIndexRoutesToLikeFallback(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table amazon_review(
+			id bigint primary key,
+			review_body text,
+			review_headline text,
+			product_title text,
+			fulltext index review_body(review_body, review_headline, product_title)
+		)`)
+		tk.MustExec(`insert into amazon_review values
+			(1, 'stainless steel bottle', 'durable bottle', 'travel bottle'),
+			(2, 'stainless lunch box', 'steel lunch box', 'kitchen organizer'),
+			(3, 'plastic container', 'light container', 'storage box'),
+			(4, 'ceramic mug', 'coffee mug', 'kitchen mug')`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "amazon_review")
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
+
+		sqlWithIgnoreIndex := `explain format='brief' select count(*) from amazon_review ignore index(review_body)
+			where match(review_body, review_headline, product_title)
+			against('stainless' in boolean mode)`
+		tk.MustQuery(sqlWithIgnoreIndex).CheckContain("ilike(")
+		tk.MustQuery(sqlWithIgnoreIndex).CheckContain("TableFullScan")
+		tk.MustQuery(sqlWithIgnoreIndex).CheckNotContain("fts_match_word")
+
+		sqlWithIgnoreHint := `explain format='brief' select /*+ ignore_index(ar, review_body) */ count(*) from amazon_review ar
+			where match(review_body, review_headline, product_title)
+			against('stainless' in boolean mode)`
+		tk.MustQuery(sqlWithIgnoreHint).CheckContain("ilike(")
+		tk.MustQuery(sqlWithIgnoreHint).CheckContain("TableFullScan")
+		tk.MustQuery(sqlWithIgnoreHint).CheckNotContain("fts_match_word")
+	})
+}
+
+func TestTiCIMatchAgainstQuotedWordLikeFallback(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table amazon_review(
+			id bigint primary key,
+			review_body text,
+			review_headline text,
+			product_title text,
+			fulltext index review_body(review_body, review_headline, product_title)
+		)`)
+		tk.MustExec(`insert into amazon_review values
+			(1, 'stainless steel bottle', 'durable bottle', 'travel bottle'),
+			(2, 'stainless lunch box', 'steel lunch box', 'kitchen organizer'),
+			(3, 'plastic container', 'light container', 'storage box'),
+			(4, 'ceramic mug', 'coffee mug', 'kitchen mug')`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "amazon_review")
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
+
+		sql := `explain select count(*) from amazon_review ignore index(review_body)
+			where match(review_body, review_headline, product_title)
+			against('"stainless"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("ilike(")
+		tk.MustQuery(sql).CheckContain("%stainless%")
+		tk.MustQuery(sql).CheckContain("TableFullScan")
+		tk.MustQuery(sql).CheckNotContain("fts_match_word")
+	})
+}
+
+func TestTiCIIsolationReadEnginesFiltersFTSPath(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table obj_new(
+			id bigint primary key,
+			label text,
+			fulltext index idx_label(label)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "obj_new")
+		tk.MustExec("set @@sql_mode = ''")
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tiflash,tidb'")
+
+		sql := `explain format = 'brief' select id from obj_new
+			where match(label) against ('"BFACPXUZXEIN"' in boolean mode)`
+
+		_, err := tk.Exec(sql)
+		require.NoError(t, err)
+
+		tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
+		tk.MustExec("begin pessimistic")
+		_, err = tk.Exec(sql)
+		require.NoError(t, err)
+		tk.MustExec("rollback")
+
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tidb'") // TiCI indexes depend on the TiFlash store type.
+		tk.MustExec("begin pessimistic")
+		_, err = tk.Exec(sql)
+		require.EqualError(t, err, "[planner:1815]Internal : No access path for table 'obj_new' is found with 'tidb_isolation_read_engines' = 'tikv,tidb', valid values can be 'tiflash'.")
+		tk.MustExec("rollback")
 	})
 }

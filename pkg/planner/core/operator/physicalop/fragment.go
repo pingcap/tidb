@@ -643,23 +643,12 @@ func (e *mppTaskGenerator) constructMPPTasksForTiCIFTSIndexScan(ctx context.Cont
 			}
 			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		} else {
-			// Dynamic-prune path currently doesn't carry partition-pruning conditions on IndexScan,
-			// so keep all partition ranges here.
-			physicalTableIDs = make([]int64, len(pi.Definitions))
-			partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(pi.Definitions))
-			for i, def := range pi.Definitions {
-				pid := def.ID
-				kvRanges, kvErr := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{pid}, is.Table.IsCommonHandle, splitedRanges)
-				if kvErr != nil {
-					return nil, errors.Trace(kvErr)
-				}
-				physicalTableIDs[i] = pid
-				partitionIDAndRanges[i].ID = pid
-				partitionIDAndRanges[i].KeyRanges = kvRanges.FirstPartitionRange()
-				e.KVRanges = append(e.KVRanges, partitionIDAndRanges[i].KeyRanges...)
+			req, physicalTableIDs, err = e.constructMPPBuildTaskReqForTiCIPartitionedIndexScan(ctx, is, splitedRanges)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
-			req = &kv.MPPBuildTasksRequest{
-				PartitionIDAndRanges: partitionIDAndRanges,
+			for _, partitionKVRanges := range req.PartitionIDAndRanges {
+				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
 			}
 		}
 	} else {
@@ -679,6 +668,40 @@ func (e *mppTaskGenerator) constructMPPTasksForTiCIFTSIndexScan(ctx context.Cont
 		return nil, err
 	}
 	return e.constructMPPTasksFromRequest(ctx, req, is.Table.ID, nil, false)
+}
+
+func (e *mppTaskGenerator) constructMPPBuildTaskReqForTiCIPartitionedIndexScan(ctx context.Context, is *PhysicalIndexScan, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, []int64, error) {
+	pi := is.Table.GetPartitionInfo()
+	if pi == nil {
+		return nil, nil, errors.New("TiCI partitioned IndexScan requires a partition table")
+	}
+	if is.PlanPartInfo != nil {
+		tmp, _ := e.is.TableByID(ctx, is.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(e.ctx.GetPlanCtx(), tbl, is.PlanPartInfo.PruningConds, is.PlanPartInfo.PartitionNames, is.PlanPartInfo.Columns, is.PlanPartInfo.ColumnNames)
+		if err != nil {
+			return nil, nil, err
+		}
+		return e.constructMPPBuildTaskReqForPhysicalPartitions(is.Table.IsCommonHandle, splitedRanges, partitions)
+	}
+
+	// Keep the legacy fallback when the IndexScan does not carry partition-pruning metadata.
+	physicalTableIDs := make([]int64, len(pi.Definitions))
+	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(pi.Definitions))
+	for i, def := range pi.Definitions {
+		pid := def.ID
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{pid}, is.Table.IsCommonHandle, splitedRanges)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		physicalTableIDs[i] = pid
+		partitionIDAndRanges[i].ID = pid
+		partitionIDAndRanges[i].KeyRanges = kvRanges.FirstPartitionRange()
+	}
+	req := &kv.MPPBuildTasksRequest{
+		PartitionIDAndRanges: partitionIDAndRanges,
+	}
+	return req, physicalTableIDs, nil
 }
 
 func (e *mppTaskGenerator) attachTiCIFTSInfoToMPPBuildTaskReq(req *kv.MPPBuildTasksRequest, is *PhysicalIndexScan, physicalTableIDs []int64) error {
@@ -719,6 +742,10 @@ func (e *mppTaskGenerator) attachTiCIFTSInfoToMPPBuildTaskReq(req *kv.MPPBuildTa
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
+	return e.constructMPPBuildTaskReqForPhysicalPartitions(ts.Table.IsCommonHandle, splitedRanges, partitions)
+}
+
+func (e *mppTaskGenerator) constructMPPBuildTaskReqForPhysicalPartitions(isCommonHandle bool, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
 	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
@@ -728,7 +755,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 	for i, p := range partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges)
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{pid}, meta != nil && isCommonHandle, splitedRanges)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

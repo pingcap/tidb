@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -241,26 +242,151 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 
 func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	countAfterAccess := defaultTiCISearchPathCount(ds)
 	// TiCI count estimation is only used to refine multi-table plan choices.
 	// StmtCtx.Tables is de-duplicated, so self-joins on one table use the local fallback.
 	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
 		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
-			path.CountAfterAccess = count
-			path.CountAfterIndex = count
-			applyTiCISearchPathStatsToDataSource(ds, path)
-			return
+			countAfterAccess = count
 		}
+	} else {
+		// For a single-table FTS query, there is no join-order decision to refine
+		// with a remote TiCI estimate. Use the average rows per distinct indexed
+		// text value as the local default instead of the capped selectivity fallback.
+		countAfterAccess = deriveSingleTableTiCISearchPathCount(ds, path)
 	}
-	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
-	path.CountAfterIndex = path.CountAfterAccess
-	applyTiCISearchPathStatsToDataSource(ds, path)
+	updateTiCISearchPathStats(ds, path, countAfterAccess)
 }
 
-func applyTiCISearchPathStatsToDataSource(ds *logicalop.DataSource, path *util.AccessPath) {
+func defaultTiCISearchPathCount(ds *logicalop.DataSource) float64 {
+	return min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+}
+
+func deriveSingleTableTiCISearchPathCount(ds *logicalop.DataSource, path *util.AccessPath) float64 {
+	totalRows := float64(ds.StatisticTable.RealtimeCount)
+	if totalRows <= 0 {
+		return 0
+	}
+	ndv, ok := estimateTiCISearchPathNDV(ds, path)
+	if !ok || ndv <= 0 {
+		return defaultTiCISearchPathCount(ds)
+	}
+	return totalRows / max(ndv, 1)
+}
+
+func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
+	if !canUseTiCISearchPathNDV(path.AccessConds) {
+		return 0, false
+	}
+	// Prefer the columns referenced by the FTS predicate. If extraction cannot find
+	// them, fall back to the full TiCI index columns so multi-column fulltext indexes
+	// still get a stable local estimate.
+	matchedCols := expression.ExtractColumnsFromExpressions(path.AccessConds, func(col *expression.Column) bool {
+		if col == nil {
+			return false
+		}
+		for _, idxCol := range path.FullIdxCols {
+			if idxCol != nil && col.EqualColumn(idxCol) {
+				return true
+			}
+		}
+		return false
+	}, false)
+	if len(matchedCols) == 0 {
+		matchedCols = path.FullIdxCols
+	}
+	ndv := 0.0
+	for _, col := range matchedCols {
+		if col == nil {
+			continue
+		}
+		colStats := ds.StatisticTable.GetCol(col.ID)
+		if ds.StatisticTable.Pseudo || colStats == nil || !colStats.IsStatsInitialized() {
+			// Avoid EstimateColumnNDV's synthetic no-stats NDV; keep no-stats
+			// behavior on the conservative capped fallback.
+			return 0, false
+		}
+		ndv = max(ndv, cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID))
+	}
+	return ndv, true
+}
+
+// canUseTiCISearchPathNDV returns true only for search literals whose selectivity
+// can be approximated from value NDV without invoking standard tokenization.
+// Terms with operators or punctuation, such as "ab.cd" or "*abc", must go
+// through the formal FTS tokenizer before we can reason about their real terms,
+// so they keep the conservative fallback estimate.
+func canUseTiCISearchPathNDV(accessConds []expression.Expression) bool {
+	if len(accessConds) != 1 {
+		return false
+	}
+	sf, ok := accessConds[0].(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch sf.FuncName.L {
+	case ast.FTSMatchWord, ast.FTSMatchPhrase:
+	default:
+		return false
+	}
+	args := sf.GetArgs()
+	if len(args) < 2 {
+		return false
+	}
+	query, ok := args[0].(*expression.Constant)
+	if !ok || query.Value.IsNull() {
+		return false
+	}
+	return isSimpleFTSSearchWord(query.Value.GetString())
+}
+
+func isSimpleFTSSearchWord(query string) bool {
+	if query == "" {
+		return false
+	}
+	for i := range len(query) {
+		ch := query[i]
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, countAfterAccess float64) {
+	calcSelectivity := func(filters []expression.Expression) float64 {
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, filters, nil)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			return cost.SelectionFactor
+		}
+		return selectivity
+	}
+
+	path.CountAfterAccess = countAfterAccess
+	path.CountAfterIndex = countAfterAccess
+	countAfterFilters := countAfterAccess
+	if len(path.IndexFilters) > 0 {
+		selectivity := calcSelectivity(path.IndexFilters)
+		path.CountAfterIndex = countAfterAccess * selectivity
+		countAfterFilters = path.CountAfterIndex
+	}
+	if len(path.TableFilters) > 0 {
+		selectivity := calcSelectivity(path.TableFilters)
+		countAfterFilters *= selectivity
+	}
+	// TODO: Let deriveStatsByFilter produce this final DataSource stats after TiCI FTS
+	// predicates can participate in normal selectivity estimation. Today those predicates
+	// are consumed into FtsQueryInfo before deriveStatsByFilter runs, and the TiCI search
+	// count is only known during path stats derivation.
+	applyTiCISearchPathStatsToDataSource(ds, path, countAfterFilters)
+}
+
+func applyTiCISearchPathStatsToDataSource(ds *logicalop.DataSource, path *util.AccessPath, rowCount float64) {
 	if !isOnlySelectedTiCIFTSPath(ds, path) || ds.TableStats == nil {
 		return
 	}
-	rowCount := path.CountAfterIndex
 	statsToScale := ds.TableStats
 	if stats := ds.StatsInfo(); stats != nil {
 		rowCount = min(rowCount, stats.RowCount)
@@ -281,6 +407,9 @@ func isOnlySelectedTiCIFTSPath(ds *logicalop.DataSource, path *util.AccessPath) 
 func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
 	sctx, ok := ds.SCtx().(sessionctx.Context)
 	if !ok || path == nil || path.Index == nil || path.FtsQueryInfo == nil || len(path.Ranges) == 0 {
+		return 0, false
+	}
+	if !vardef.EnableTiCIEstimate.Load() {
 		return 0, false
 	}
 	provider, ok := sctx.GetStore().(kv.TiCIEstimateCountProvider)

@@ -59,6 +59,7 @@
       "explain format='brief' select * from t1 where match(title) against ('\\\"hello world\\\"' IN BOOLEAN MODE)",
       "explain format='brief' select id from t1 where match(title) against ('+apple -banana' IN BOOLEAN MODE)",
       "explain format='brief' select id from t1 where match(title) against ('-banana' IN BOOLEAN MODE)",
+      "explain format='brief' select id from t1 use index(idx_field1) where field1 = 1 and not match(title) against ('-banana' IN BOOLEAN MODE)",
       "explain format='brief' select id from t1 where match(title) against ('apple' IN BOOLEAN MODE) or match(title) against ('banana' IN BOOLEAN MODE)",
       "explain format='brief' select id from t1 where match(title) against ('\"\"' IN BOOLEAN MODE)",
       "explain format='brief' select * from t1 where match(title) against (NULL IN BOOLEAN MODE)",
@@ -82,6 +83,13 @@
       "explain format='brief' select count(*) from t2 use index(idx1) where i > 10",
       "explain format='brief' select count(*) from t2 use index(primary) where i > 10",
       "explain format='brief' select /*+ order_index(t2, primary) */ * from t2 where i > 10 order by i"
+    ]
+  },
+  {
+    "name": "TestTiCIMPPIndexScanPartitionPruning",
+    "cases": [
+      "explain format='brief' select e.id, e.fname, s.name from employees partition(p1) e use index(h_idx) join stores s on e.store_id = s.id where e.id > 101",
+      "explain format='brief' select e.id, e.fname, s.name from employees e use index(h_idx) join stores s on e.store_id = s.id where e.id > 101"
     ]
   }
 ]

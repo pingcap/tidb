@@ -86,14 +86,24 @@ func TestAnalyzeNgramV1(t *testing.T) {
 func TestAnalyzeNgramV1ShortTokenAdvancesPositionBase(t *testing.T) {
 	sctx := newFulltextTestContext(t)
 
-	tokens, err := AnalyzeNgramV1(sctx, "abc x def")
+	tokens, err := AnalyzeNgramV1(sctx, "abc x 好 y A_b 中z")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
 		{Text: "ab", Position: 0},
 		{Text: "bc", Position: 1},
-		{Text: "de", Position: 2},
-		{Text: "ef", Position: 3},
+		{Text: "a_", Position: 4},
+		{Text: "_b", Position: 5},
+		{Text: "中z", Position: 6},
 	}, tokens)
+}
+
+func TestUTF8CharSpansInvalidUTF8(t *testing.T) {
+	text := string([]byte{'a', 0xff, 'b'})
+	require.Equal(t, []charSpan{
+		{byteStart: 0, byteEnd: 1},
+		{byteStart: 1, byteEnd: 2},
+		{byteStart: 2, byteEnd: 3},
+	}, utf8CharSpans(text))
 }
 
 func TestAnalyzeNgramV1ReadsTokenSizeFromSessionContext(t *testing.T) {
