@@ -65,23 +65,14 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 // 3. Support single-scan (covering index without table lookups)
 // 4. Have different consecutive column orderings (e.g., if interesting columns are A, B, keep both (A,B) and (B,A))
 func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, interestingColumns []*expression.Column, threshold int) []*util.AccessPath {
-	if len(paths) <= 1 {
+	if threshold < 0 || len(paths) <= 1 {
 		return paths
 	}
 
 	// Build column ID maps and calculate totals
-	req := buildColumnRequirements(interestingColumns, ds.TableInfo.Columns)
+	req := buildColumnRequirements(interestingColumns, ds.TableInfo.Columns, ds.TblColsByID)
 
-	totalPathCount := len(paths)
-
-	// If totalPathCount <= threshold, we should keep all indexes with score > 0
-	// Only prune indexes with score > 0 when we have more index paths than the threshold
-	// threshold = -1: disable pruning (handled by caller)
-	// threshold = 0: only prune indexes with no interesting columns (score == 0)
-	// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
-	needPruning := totalPathCount > threshold && threshold >= 0
-
-	preferredIndexes := make([]indexWithScore, 0, totalPathCount)
+	preferredIndexes := make([]indexWithScore, 0, len(paths))
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
 	indexMergeIndexPaths := make([]*util.AccessPath, 0, 1)
@@ -187,8 +178,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	}
 
 	// Build final result by sorting and selecting top indexes
-	maxToKeep := max(threshold, defaultMaxIndexes)
-	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, needPruning, req)
+	keepBudget := max(threshold, defaultMaxIndexes)
+	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, keepBudget, req)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
@@ -204,63 +195,59 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 }
 
 // buildColumnRequirements builds column ID maps for efficient lookup.
-func buildColumnRequirements(interestingColumns []*expression.Column, tableColumns []*model.ColumnInfo) columnRequirements {
+func buildColumnRequirements(interestingColumns []*expression.Column, tableColumns []*model.ColumnInfo, tblColsByID map[int64]*expression.Column) columnRequirements {
 	req := columnRequirements{
 		interestingColIDs: make(map[int64]struct{}, len(interestingColumns)),
 	}
+	interestingGeneratedExprSignatures := make(map[string]struct{})
 
 	// Build interesting column IDs
 	for _, col := range interestingColumns {
+		if col == nil {
+			continue
+		}
 		req.interestingColIDs[col.ID] = struct{}{}
+		if signature := generatedColumnExprSignature(col, tblColsByID); signature != "" {
+			interestingGeneratedExprSignatures[signature] = struct{}{}
+		}
 	}
-	expandGeneratedColumnRequirements(req.interestingColIDs, tableColumns)
+	expandGeneratedColumnRequirements(req.interestingColIDs, tableColumns, tblColsByID, interestingGeneratedExprSignatures)
 
 	return req
 }
 
-func expandGeneratedColumnRequirements(interestingColIDs map[int64]struct{}, tableColumns []*model.ColumnInfo) {
-	if len(interestingColIDs) == 0 || len(tableColumns) == 0 {
+func generatedColumnExprSignature(col *expression.Column, tblColsByID map[int64]*expression.Column) string {
+	if col == nil {
+		return ""
+	}
+	if tblColsByID != nil {
+		if tblCol, ok := tblColsByID[col.ID]; ok && tblCol != nil {
+			col = tblCol
+		}
+	}
+	if !col.IsHidden || col.VirtualExpr == nil {
+		return ""
+	}
+	return string(col.VirtualExpr.CanonicalHashCode())
+}
+
+func expandGeneratedColumnRequirements(interestingColIDs map[int64]struct{}, tableColumns []*model.ColumnInfo, tblColsByID map[int64]*expression.Column, interestingGeneratedExprSignatures map[string]struct{}) {
+	if len(interestingColIDs) == 0 || len(tableColumns) == 0 || len(interestingGeneratedExprSignatures) == 0 {
 		return
 	}
 
-	interestingColNames := make(map[string]struct{}, len(interestingColIDs))
-	for _, col := range tableColumns {
-		if col == nil {
+	for _, colInfo := range tableColumns {
+		if colInfo == nil || colInfo.State != model.StatePublic || !colInfo.IsGenerated() {
 			continue
 		}
-		if _, ok := interestingColIDs[col.ID]; ok {
-			interestingColNames[col.Name.L] = struct{}{}
-			if col.IsGenerated() {
-				for depCol := range col.Dependences {
-					interestingColNames[depCol] = struct{}{}
-				}
-			}
+		if _, ok := interestingColIDs[colInfo.ID]; ok {
+			continue
 		}
-	}
-	if len(interestingColNames) == 0 {
-		return
-	}
-
-	for changed := true; changed; {
-		changed = false
-		for _, col := range tableColumns {
-			if col == nil || col.State != model.StatePublic || !col.IsGenerated() {
-				continue
-			}
-			if _, ok := interestingColIDs[col.ID]; ok {
-				continue
-			}
-			for depCol := range col.Dependences {
-				if _, ok := interestingColNames[depCol]; !ok {
-					continue
-				}
-				interestingColIDs[col.ID] = struct{}{}
-				interestingColNames[col.Name.L] = struct{}{}
-				for depCol := range col.Dependences {
-					interestingColNames[depCol] = struct{}{}
-				}
-				changed = true
-				break
+		// Sharing base-column dependencies is too broad: a+1 and abs(a) both depend
+		// on a, but only the same virtual expression should inherit interestingness.
+		if signature := generatedColumnExprSignature(tblColsByID[colInfo.ID], nil); signature != "" {
+			if _, ok := interestingGeneratedExprSignatures[signature]; ok {
+				interestingColIDs[colInfo.ID] = struct{}{}
 			}
 		}
 	}
@@ -415,7 +402,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, needPruning bool, req columnRequirements) []*util.AccessPath {
+func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, keepBudget int, req columnRequirements) []*util.AccessPath {
 	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexMergeIndexPaths)+len(preferredIndexes))
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
@@ -426,7 +413,7 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	// CRITICAL: Always include indexes specified in IndexMerge hints - index merge needs them to build partial paths
 	result = append(result, indexMergeIndexPaths...)
 
-	if maxToKeep <= 0 {
+	if keepBudget <= 0 {
 		return result
 	}
 
@@ -442,8 +429,10 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	}
 
 	preferredScored := scoreAndSort(preferredIndexes, req)
+	needPruning := len(preferredScored) > keepBudget
 
-	// If we don't need pruning, skip two-phase selection and keep all indexes with score > 0
+	// If the scored pruneable candidates fit the budget, skip two-phase selection
+	// and keep all indexes with score > 0.
 	if !needPruning {
 		for _, entry := range preferredScored {
 			if _, ok := added[entry.info.path]; !ok {
@@ -454,8 +443,8 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	}
 
 	// Apply two-phase selection to limit the number of indexes
-	phase1Limit := maxToKeep / 2
-	selectionState := newIndexSelectionState(phase1Limit, maxToKeep)
+	phase1Limit := keepBudget / 2
+	selectionState := newIndexSelectionState(phase1Limit, keepBudget)
 
 	result = selectIndexes(preferredScored, added, req, selectionState, result)
 
@@ -511,7 +500,7 @@ func selectIndexes(preferredScored []scoredIndex, added map[*util.AccessPath]str
 // shouldAddIndex determines if an index should be added based on phase and diversity rules
 func shouldAddIndex(entry scoredIndex, path *util.AccessPath, req columnRequirements, state *indexSelectionState) bool {
 	if state.phase1Count < state.phase1Limit {
-		// Phase 1: Keep top threshold/2 based solely on score
+		// Phase 1: Keep the top half of the budget based solely on score.
 		state.phase1Count++
 		recordConsecutiveColumns(entry.info.consecutiveColumnIDs, state)
 		return true

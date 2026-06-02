@@ -257,6 +257,71 @@ func (c *columnStatsUsageCollector) collectInterestingColumnsForDataSource(ds *l
 	c.interestingColsByDS[ds] = allCols
 }
 
+func appendUniqueColumns(cols []*expression.Column, seen map[int64]struct{}, newCols ...*expression.Column) []*expression.Column {
+	for _, col := range newCols {
+		if col == nil {
+			continue
+		}
+		if _, exists := seen[col.UniqueID]; exists {
+			continue
+		}
+		seen[col.UniqueID] = struct{}{}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+func remapColumnsBySchema(cols []*expression.Column, fromSchema, toSchema *expression.Schema) []*expression.Column {
+	if len(cols) == 0 || fromSchema == nil || toSchema == nil {
+		return cols
+	}
+	remappedCols := make([]*expression.Column, 0, len(cols))
+	seen := make(map[int64]struct{}, len(cols))
+	for _, col := range cols {
+		if idx := toSchema.ColumnIndex(col); idx >= 0 {
+			remappedCols = appendUniqueColumns(remappedCols, seen, toSchema.Columns[idx])
+			continue
+		}
+		if idx := fromSchema.ColumnIndex(col); idx >= 0 && idx < len(toSchema.Columns) {
+			remappedCols = appendUniqueColumns(remappedCols, seen, toSchema.Columns[idx])
+		}
+	}
+	return remappedCols
+}
+
+func remapAccumulatedColumnsForChild(lp base.LogicalPlan, childIdx int, cols []*expression.Column) []*expression.Column {
+	if len(cols) == 0 {
+		return cols
+	}
+	children := lp.Children()
+	if childIdx < 0 || childIdx >= len(children) {
+		return cols
+	}
+	childSchema := children[childIdx].Schema()
+	remappedCols := make([]*expression.Column, 0, len(cols))
+	seen := make(map[int64]struct{}, len(cols))
+	for _, col := range cols {
+		if idx := childSchema.ColumnIndex(col); idx >= 0 {
+			remappedCols = appendUniqueColumns(remappedCols, seen, childSchema.Columns[idx])
+			continue
+		}
+		switch x := lp.(type) {
+		case *logicalop.LogicalProjection:
+			if childIdx != 0 {
+				continue
+			}
+			if idx := x.Schema().ColumnIndex(col); idx >= 0 && idx < len(x.Exprs) {
+				remappedCols = appendUniqueColumns(remappedCols, seen, expression.ExtractColumns(x.Exprs[idx])...)
+			}
+		case *logicalop.LogicalUnionAll:
+			remappedCols = appendUniqueColumns(remappedCols, seen, remapColumnsBySchema([]*expression.Column{col}, x.Schema(), childSchema)...)
+		case *logicalop.LogicalPartitionUnionAll:
+			remappedCols = appendUniqueColumns(remappedCols, seen, remapColumnsBySchema([]*expression.Column{col}, x.Schema(), childSchema)...)
+		}
+	}
+	return remappedCols
+}
+
 // collectFromPlan will dive into the tree to collect base column stats usage, in this process
 // we also make the use of the dive process down to passing the parent operator's column groups
 // requirement to notify the underlying datasource to maintain the possible group ndv.
@@ -307,9 +372,15 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		}
 	}
 
-	for _, child := range lp.Children() {
+	for childIdx, child := range lp.Children() {
 		// passing the new asked column groups down, along with accumulated join/ordering columns
-		c.collectFromPlan(curColGroups, child, currentJoinCols, currentOrderingCols)
+		childJoinCols := currentJoinCols
+		childOrderingCols := currentOrderingCols
+		if c.interestingColsByDS != nil {
+			childJoinCols = remapAccumulatedColumnsForChild(lp, childIdx, currentJoinCols)
+			childOrderingCols = remapAccumulatedColumnsForChild(lp, childIdx, currentOrderingCols)
+		}
+		c.collectFromPlan(curColGroups, child, childJoinCols, childOrderingCols)
 	}
 
 	switch x := lp.(type) {
@@ -380,9 +451,21 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 	case *logicalop.LogicalCTE:
 		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan, nil, nil)
+		seedJoinCols := currentJoinCols
+		seedOrderingCols := currentOrderingCols
+		if c.interestingColsByDS != nil {
+			seedJoinCols = remapColumnsBySchema(currentJoinCols, x.Schema(), x.Cte.SeedPartLogicalPlan.Schema())
+			seedOrderingCols = remapColumnsBySchema(currentOrderingCols, x.Schema(), x.Cte.SeedPartLogicalPlan.Schema())
+		}
+		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan, seedJoinCols, seedOrderingCols)
 		if x.Cte.RecursivePartLogicalPlan != nil {
-			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan, nil, nil)
+			recursiveJoinCols := currentJoinCols
+			recursiveOrderingCols := currentOrderingCols
+			if c.interestingColsByDS != nil {
+				recursiveJoinCols = remapColumnsBySchema(currentJoinCols, x.Schema(), x.Cte.RecursivePartLogicalPlan.Schema())
+				recursiveOrderingCols = remapColumnsBySchema(currentOrderingCols, x.Schema(), x.Cte.RecursivePartLogicalPlan.Schema())
+			}
+			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan, recursiveJoinCols, recursiveOrderingCols)
 		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns

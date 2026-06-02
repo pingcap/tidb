@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -219,7 +219,7 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_index_prune_threshold=-1")
 	plansAtNegative := make([][][]any, len(queries))
 	for i, sql := range queries {
-		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
 		plansAtNegative[i] = rows
 	}
 
@@ -227,7 +227,7 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 	plansAt10 := make([][][]any, len(queries))
 	for i, sql := range queries {
-		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
 		plansAt10[i] = rows
 	}
 
@@ -260,7 +260,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessiontypes.Se
 		}
 		return true, warning
 	}
-	hypoIndexChecker := func(db, tbl, col ast.CIStr) (colOffset int, err error) {
+	hypoIndexChecker := func(db, tbl, col pmodel.CIStr) (colOffset int, err error) {
 		tblInfo, err := dom.InfoSchema().TableByName(ctx, db, tbl)
 		if err != nil {
 			return 0, err
@@ -282,7 +282,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessiontypes.Se
 
 	// Apply SET_VAR hints to session variables
 	for name, val := range se.GetSessionVars().StmtCtx.StmtHints.SetVars {
-		oldV, err := se.GetSessionVars().SetSystemVarWithOldStateAsRet(name, val)
+		oldV, err := se.GetSessionVars().SetSystemVarWithOldValAsRet(name, val)
 		if err != nil {
 			se.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
@@ -321,7 +321,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessiontypes.Se
 
 	// Trigger stats derivation
 	lp := logicalPlan
-	_, _, err = lp.RecursiveDeriveStats(nil)
+	_, err = lp.RecursiveDeriveStats(nil)
 	require.NoError(t, err)
 
 	// Find DataSource in the optimized plan with derived stats
