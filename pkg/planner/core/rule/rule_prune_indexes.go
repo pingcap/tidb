@@ -230,6 +230,11 @@ func expandGeneratedColumnRequirements(interestingColIDs map[int64]struct{}, tab
 		}
 		if _, ok := interestingColIDs[col.ID]; ok {
 			interestingColNames[col.Name.L] = struct{}{}
+			if col.IsGenerated() {
+				for depCol := range col.Dependences {
+					interestingColNames[depCol] = struct{}{}
+				}
+			}
 		}
 	}
 	if len(interestingColNames) == 0 {
@@ -251,6 +256,9 @@ func expandGeneratedColumnRequirements(interestingColIDs map[int64]struct{}, tab
 				}
 				interestingColIDs[col.ID] = struct{}{}
 				interestingColNames[col.Name.L] = struct{}{}
+				for depCol := range col.Dependences {
+					interestingColNames[depCol] = struct{}{}
+				}
 				changed = true
 				break
 			}
