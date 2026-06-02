@@ -106,19 +106,16 @@ func ParseURL(rawURL string) (prefix string, host string, port string, err error
 		return "", "", "", invalidURLHostPortErr()
 	}
 
-	defaultPort := ""
 	switch u.Scheme {
 	case "http":
 		prefix = "http://"
-		defaultPort = "80"
 	case "https":
 		prefix = "https://"
-		defaultPort = "443"
 	default:
 		return "", "", "", fmt.Errorf("invalid URL prefix")
 	}
 
-	host, port, err = parseHostPort(u.Host, defaultPort)
+	host, port, err = parseHostPort(u.Host)
 	if err != nil {
 		return "", "", "", invalidURLHostPortErr()
 	}
@@ -130,18 +127,10 @@ func ParseURL(rawURL string) (prefix string, host string, port string, err error
 	return prefix, host, port, nil
 }
 
-func parseHostPort(rawHostPort, defaultPort string) (host string, port string, err error) {
-	host = rawHostPort
-	if strings.Contains(rawHostPort, ":") {
-		host, port, err = net.SplitHostPort(rawHostPort)
-		switch {
-		case err == nil:
-		case defaultPort != "" && isMissingPortErr(err):
-			host = (&url.URL{Host: rawHostPort}).Hostname()
-			port = ""
-		default:
-			return "", "", err
-		}
+func parseHostPort(rawHostPort string) (host string, port string, err error) {
+	host, port, err = net.SplitHostPort(rawHostPort)
+	if err != nil {
+		return "", "", err
 	}
 
 	if host == "" {
@@ -149,18 +138,10 @@ func parseHostPort(rawHostPort, defaultPort string) (host string, port string, e
 	}
 
 	if port == "" {
-		if defaultPort == "" {
-			return "", "", errors.New("invalid host or port")
-		}
-		port = defaultPort
+		return "", "", errors.New("invalid host or port")
 	}
 
 	return host, port, nil
-}
-
-func isMissingPortErr(err error) bool {
-	var addrErr *net.AddrError
-	return errors.As(err, &addrErr) && addrErr.Err == "missing port in address"
 }
 
 func invalidURLHostPortErr() error {

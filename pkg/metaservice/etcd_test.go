@@ -98,11 +98,9 @@ func TestParseURL(t *testing.T) {
 	}{
 		// Successful test cases
 		{"http://example.com:8080", "http://", "example.com", "8080", false},
-		{"https://example.com", "https://", "example.com", "443", false}, // Default port for HTTPS
-		{"http://localhost", "http://", "localhost", "80", false},        // Default port for HTTP
 		{"https://localhost:443", "https://", "localhost", "443", false}, // Specified port for HTTPS
 		{"http://[2001:db8::1]:2379", "http://", "[2001:db8::1]", "2379", false},
-		{"https://[2001:db8::1]", "https://", "[2001:db8::1]", "443", false},
+		{"https://[2001:db8::1]:443", "https://", "[2001:db8::1]", "443", false},
 
 		// Unsuccessful test cases
 		{"ftp://example.com", "ftp://", "", "", true},              // Invalid prefix
@@ -111,6 +109,9 @@ func TestParseURL(t *testing.T) {
 		{"http://example.com:8080:extra", "http://", "", "", true}, // Extra part after port
 		{"https://:8080", "https://", "", "", true},                // Missing host
 		{"http://", "http://", "", "", true},                       // Incomplete URL
+		{"https://example.com", "https://", "", "", true},          // Missing port
+		{"http://localhost", "http://", "", "", true},              // Missing port
+		{"https://[2001:db8::1]", "https://", "", "", true},        // Missing port
 		{"http://2001:db8::1:2379", "http://", "", "", true},       // Unbracketed IPv6 with port
 		{"https://[2001:db8::1", "https://", "", "", true},         // Invalid bracketed IPv6
 	}
