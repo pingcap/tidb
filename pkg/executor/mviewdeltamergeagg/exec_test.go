@@ -1537,7 +1537,8 @@ func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
 		},
 	}
 	writer := &collectWriter{}

@@ -785,22 +785,22 @@ func TestBuildMinMaxNullableWithoutCountExpr(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.Build(
+	res, err := mview.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1},
+		mview.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
 
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
-		case mvmerge.AggCountStar:
+		case mview.AggCountStar:
 			requireDependencies(t, ai, []int{0})
-		case mvmerge.AggMax:
+		case mview.AggMax:
 			requireDependencies(t, ai, []int{1, 2, 3, 4})
-		case mvmerge.AggMin:
+		case mview.AggMin:
 			requireDependencies(t, ai, []int{5, 6, 7, 8})
 		}
 	}
@@ -858,20 +858,20 @@ func TestBuildSumNullableWithDuplicateCountExpr(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.Build(
+	res, err := mview.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1},
+		mview.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
 
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
-		case mvmerge.AggCountStar:
+		case mview.AggCountStar:
 			requireDependencies(t, ai, []int{0})
-		case mvmerge.AggCount:
+		case mview.AggCount:
 			require.Equal(t, "b", ai.ArgColName)
 			if ai.MVOffset == 2 {
 				requireDependencies(t, ai, []int{1})
@@ -879,7 +879,7 @@ func TestBuildSumNullableWithDuplicateCountExpr(t *testing.T) {
 				require.Equal(t, 3, ai.MVOffset)
 				requireDependencies(t, ai, []int{2})
 			}
-		case mvmerge.AggSum:
+		case mview.AggSum:
 			requireDependencies(t, ai, []int{3, 6})
 		}
 	}
@@ -938,20 +938,20 @@ func TestBuildMinMaxNullableWithDuplicateCountExpr(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.Build(
+	res, err := mview.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1},
+		mview.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
 
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
-		case mvmerge.AggCountStar:
+		case mview.AggCountStar:
 			requireDependencies(t, ai, []int{0})
-		case mvmerge.AggCount:
+		case mview.AggCount:
 			require.Equal(t, "b", ai.ArgColName)
 			if ai.MVOffset == 2 {
 				requireDependencies(t, ai, []int{1})
@@ -959,9 +959,9 @@ func TestBuildMinMaxNullableWithDuplicateCountExpr(t *testing.T) {
 				require.Equal(t, 3, ai.MVOffset)
 				requireDependencies(t, ai, []int{2})
 			}
-		case mvmerge.AggMax:
+		case mview.AggMax:
 			requireDependencies(t, ai, []int{3, 4, 5, 6, 13})
-		case mvmerge.AggMin:
+		case mview.AggMin:
 			requireDependencies(t, ai, []int{7, 8, 9, 10, 13})
 		}
 	}
