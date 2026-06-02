@@ -69,6 +69,21 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 	addrs, err := serviceClient.GetPDAddrs(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, expectAddrs, addrs)
+
+	t.Run("empty client urls returns error", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{
+				{},
+				{ClientUrls: []string{}},
+			},
+		}
+
+		serviceClient := newClient(etcdCli, pdCli)
+		addrs, err := serviceClient.GetPDAddrs(context.Background())
+		require.Error(t, err)
+		require.Nil(t, addrs)
+		require.EqualError(t, err, "no usable PD client URL found in PD members")
+	})
 }
 
 // TestParseURL tests the ParseURL function with various inputs.

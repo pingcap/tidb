@@ -92,6 +92,9 @@ func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([
 				pdAddrs = append(pdAddrs, pdAddr)
 			}
 		}
+		if len(pdAddrs) == 0 {
+			return nil, errors.New("no usable PD client URL found in PD members")
+		}
 		return pdAddrs, nil
 	}
 }
