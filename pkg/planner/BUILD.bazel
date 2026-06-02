@@ -30,6 +30,7 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/sem/v2:sem",
         "//pkg/util/topsql",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",

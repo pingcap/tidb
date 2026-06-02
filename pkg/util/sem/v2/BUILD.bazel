@@ -4,6 +4,8 @@ go_library(
     name = "sem",
     srcs = [
         "config.go",
+        "restricted_hint.go",
+        "restricted_user.go",
         "sem.go",
         "sql_rule.go",
         "testhelper.go",
@@ -11,12 +13,14 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/sem/v2",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/keyspace",
         "//pkg/objstore",
         "//pkg/objstore/s3like",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_coreos_go_semver//semver",
@@ -29,6 +33,7 @@ go_test(
     timeout = "short",
     srcs = [
         "config_test.go",
+        "restricted_test.go",
         "sem_test.go",
         "sql_rule_test.go",
     ],
@@ -36,6 +41,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/parser",
+        "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",

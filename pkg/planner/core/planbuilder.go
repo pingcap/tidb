@@ -6453,6 +6453,13 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 		return nil
 	}
 
+	// Protected identities cannot be dropped, renamed, or have their roles
+	// changed, even by holders of RESTRICTED_SQL_ADMIN, so this runs before the
+	// bypass below.
+	if err := semv2.CheckRestrictedUserStmt(stmt); err != nil {
+		return err
+	}
+
 	stmtNode, ok := stmt.(ast.StmtNode)
 	intest.Assert(ok, "node.Node should be ast.StmtNode, but got %T", stmt)
 	if !semv2.IsRestrictedSQL(stmtNode) {

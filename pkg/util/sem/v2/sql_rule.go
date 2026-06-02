@@ -43,6 +43,7 @@ var sqlRuleNameMap = map[string]SQLRule{
 	"import_with_external_id": ImportWithExternalIDRule,
 	"select_into_file":        SelectIntoFileRule,
 	"import_from_local":       ImportFromLocalRule,
+	"exchange_partition":      ExchangePartitionRule,
 }
 
 // TimeToLiveSQLRule returns true if the SQL statement is related to Time To Live (TTL) options.
@@ -81,6 +82,20 @@ var AlterTableAttributesRule SQLRule = func(stmt ast.StmtNode) bool {
 		return false
 	}
 
+	return false
+}
+
+// ExchangePartitionRule returns true for ALTER TABLE ... EXCHANGE PARTITION,
+// which shares the generic "ALTER TABLE" command and so cannot be matched by a
+// restricted_sql.sql entry.
+var ExchangePartitionRule SQLRule = func(stmt ast.StmtNode) bool {
+	if alterStmt, ok := stmt.(*ast.AlterTableStmt); ok {
+		for _, spec := range alterStmt.Specs {
+			if spec.Tp == ast.AlterTableExchangePartition {
+				return true
+			}
+		}
+	}
 	return false
 }
 

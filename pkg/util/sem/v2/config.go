@@ -53,6 +53,21 @@ type Config struct {
 
 	// RestrictedSQL contains restricted SQL statements and rules
 	RestrictedSQL SQLRestriction `json:"restricted_sql"`
+
+	// RestrictedUsers is the list of users that are protected from account
+	// management (DROP USER, RENAME USER, and role changes). A name matches
+	// after the keyspace username policy strips its tenant prefix, and only for
+	// host '%'.
+	RestrictedUsers []string `json:"restricted_users"`
+
+	// RestrictedRoles is the list of roles that cannot be granted, revoked, or
+	// activated. A name is matched the same way as RestrictedUsers.
+	RestrictedRoles []string `json:"restricted_roles"`
+
+	// RestrictedHints is the list of optimizer hints stripped from queries and
+	// bindings with a warning. A hint that overrides a system variable (see
+	// hintGuardVars) is only stripped while that variable is hidden or read-only.
+	RestrictedHints []string `json:"restricted_hints"`
 }
 
 // TableRestriction defines the configuration for a restricted table
