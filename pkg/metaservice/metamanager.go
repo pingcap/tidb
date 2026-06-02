@@ -46,21 +46,21 @@ var ErrNilKeyspaceMeta = errors.New("GetKeyspaceMetaServiceGroup: keyspace meta 
 type Info struct {
 	PDAddrs                []string
 	GlobalMetaServiceAddrs []string
-	KeyspaceMetaGroup      *KeyspaceMetaServiceGroup
+	KeyspaceMetaGroup      *Group
 }
 
-// KeyspaceMetaServiceGroup includes keyspace meta service group info.
-type KeyspaceMetaServiceGroup struct {
+// Group includes keyspace meta service group info.
+type Group struct {
 	GroupID string
 	Addrs   []string
 }
 
 // GetKeyspaceMetaServiceGroup return keyspace meta service group.
-func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (*KeyspaceMetaServiceGroup, error) {
+func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (*Group, error) {
 	if keyspaceMeta == nil {
 		return nil, ErrNilKeyspaceMeta
 	}
-	var keyspaceMetaServiceGroup *KeyspaceMetaServiceGroup
+	var keyspaceMetaServiceGroup *Group
 	if val, ok := keyspaceMeta.Config[MetaServiceGroupIDKey]; ok {
 		groupID := val
 		addrsStr, addrsOk := keyspaceMeta.Config[MetaGroupAddrsKey]
@@ -79,7 +79,7 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 		if len(addrs) == 0 {
 			return nil, ErrGroupNotMatch
 		}
-		keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
+		keyspaceMetaServiceGroup = &Group{
 			GroupID: groupID,
 			Addrs:   addrs,
 		}
@@ -88,7 +88,7 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 	}
 
 	// If keyspace don't have KeyspaceMetaGroupIDKey, then set keyspace meta service as global meta service.
-	keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
+	keyspaceMetaServiceGroup = &Group{
 		GroupID: GlobalGroupID,
 		Addrs:   globalMetaAddrs,
 	}
@@ -100,7 +100,7 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 func GetMetaServiceInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pdAddrs []string) (*Info, error) {
 	// If non-keyspace then return global meta service or not enable meta service group.
 	if keyspaceMeta == nil {
-		keyspaceMetaServiceGroup := &KeyspaceMetaServiceGroup{
+		keyspaceMetaServiceGroup := &Group{
 			GroupID: GlobalGroupID,
 			Addrs:   globalMetaAddrs,
 		}
