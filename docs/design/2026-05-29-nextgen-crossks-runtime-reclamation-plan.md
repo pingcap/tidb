@@ -16,7 +16,7 @@ A runtime handle is an acquired ownership handle, not a time-bounded lease. It h
 
 - [x] (2026-06-02 Asia/Shanghai) Converted the prior design summary into this `PLANS.md`-style ExecPlan.
 - [x] (2026-06-02 Asia/Shanghai) Implemented crossKS runtime handle API and active bookkeeper tracking in commit `571a893d58eb` with tests, `make bazel_prepare`, and `make lint`. Raw getter removal from `sqlsvrapi.Server` is intentionally deferred to the caller-migration milestone so each subtask commit remains buildable.
-- [ ] Add idle sweeper lifecycle tied to `Domain` lifecycle.
+- [x] (2026-06-02 Asia/Shanghai) Added crossKS idle sweeper lifecycle tied to `Domain` lifecycle with active-handle eviction tests, raw-getter coexistence guard, `make bazel_prepare`, targeted failpoint-aware tests, and `make lint`.
 - [ ] Move SYSTEM-to-user acquire/release ownership to DXF scheduler manager and task executor manager boundaries.
 - [ ] Migrate IMPORT and DDL backfill code to consume DXF-provided runtime/store/session pool values.
 - [ ] Add unit and integration coverage for handle bookkeeping, DXF boundary ownership, migration guards, and idle eviction.
@@ -32,6 +32,8 @@ A runtime handle is an acquired ownership handle, not a time-bounded lease. It h
   Evidence: `pkg/domain/crossks`, `pkg/dxf/framework/scheduler`, `pkg/dxf/framework/taskexecutor`, `pkg/dxf/importinto`, and `pkg/ddl` have `failpoint` or `testfailpoint` usages or Bazel failpoint dependencies, so targeted tests must use the failpoint-aware test runner.
 - Observation: Removing `GetKSStore` and `GetKSSessPool` from `sqlsvrapi.Server` cannot be isolated from DXF, IMPORT, and DDL caller migration.
   Evidence: `rg -n "GetKSStore|GetKSSessPool" pkg/dxf pkg/ddl pkg/session` reports non-domain call sites through `sessionctx.Context.GetSQLServer()`, so removing the interface methods before migration would break compilation.
+- Observation: The temporary raw getter path has no release boundary, so idle sweeping cannot safely reclaim runtimes touched by `GetOrCreate` while raw getters remain.
+  Evidence: A nextgen regression test failed before the guard because a runtime acquired and released through a handle, then touched through `GetOrCreate`, was evicted by `sweepIdleRuntimes` using the old `lastReleaseAt`.
 
 ## Decision Log
 
@@ -56,10 +58,15 @@ A runtime handle is an acquired ownership handle, not a time-bounded lease. It h
 - Decision: Keep `GetKSStore` and `GetKSSessPool` temporarily on `sqlsvrapi.Server` during the first handle-bookkeeping milestone, then remove them in the DXF/IMPORT/DDL migration milestone.
   Rationale: Existing DXF, IMPORT, and DDL call sites still compile through `sessionctx.Context.GetSQLServer()`. Adding `AcquireKSRuntime` first while deferring raw getter removal keeps the branch buildable after each subtask commit.
   Date/Author: 2026-06-02 / Codex.
+- Decision: Mark runtimes touched by temporary raw getters as ineligible for idle sweeping until raw getter migration removes that untracked path.
+  Rationale: Raw users do not acquire a runtime handle and therefore have no release event. Conservatively skipping raw-touched entries preserves compatibility during staged migration; final reclamation for normal task flows is restored after DXF/IMPORT/DDL move to handle-owned runtime values and raw getter exposure is removed.
+  Date/Author: 2026-06-02 / Codex.
 
 ## Outcomes & Retrospective
 
 Milestone 1 completed in commit `571a893d58eb` (`domain/crossks: add runtime handle bookkeeping`). `pkg/domain/sqlsvrapi/server.go` now defines `KSRuntime`, `KSRuntimeHandle`, and `AcquireKSRuntime`; `pkg/domain/domain.go` delegates acquisition to the crossKS manager; and `pkg/domain/crossks/cross_ks.go` tracks active bookkeepers plus `lastReleaseAt` per runtime. Targeted failpoint-aware crossKS tests, nextgen-tagged crossKS tests, `make bazel_prepare`, `make lint`, and diff whitespace checks passed during the subtask. Remaining gap: raw SQL server getter removal is deferred until the caller migration milestone.
+
+Milestone 2 added `crossKSRuntimeIdleTimeout`, `crossKSRuntimeSweepInterval`, `Manager.RunGCLoop`, and a single-sweep helper that removes only released handle-owned runtimes whose idle age exceeds the timeout. `Domain.Start` now runs the crossKS GC loop under the Domain wait group, so `Domain.Close` cancels it before closing remaining runtimes. Resource close happens after removal from the manager map and outside the manager lock. Tests cover active non-eviction, idle eviction, close-outside-lock, re-acquire after eviction, raw-getter coexistence, shutdown close behavior, and GC loop cancellation. Remaining gap: runtimes touched through temporary raw getters are deliberately not idle-reclaimed until later milestones remove raw getter use and exposure.
 
 ## Context and Orientation
 
@@ -283,6 +290,32 @@ Parent-session verification after review:
 
     make lint
     # success
+
+Milestone 2 evidence:
+
+    ./tools/check/failpoint-go-test.sh pkg/domain/crossks -tags=intest,deadlock,nextgen -run 'Test.*RuntimeHandle|Test.*Bookkeeper|Test.*Evict|Test.*GCLoop' -count=1
+    # red before raw-getter guard: TestEvictRuntimeSkipsRawTouchedEntry failed because the sweeper evicted a raw-touched runtime with stale lastReleaseAt
+
+    make bazel_prepare
+    # success; reviewed generated pkg/domain/crossks/BUILD.bazel shard_count change
+
+    ./tools/check/failpoint-go-test.sh pkg/domain/crossks -run 'Test.*RuntimeHandle|Test.*Bookkeeper|Test.*Evict|Test.*GCLoop' -count=1
+    # ok github.com/pingcap/tidb/pkg/domain/crossks 1.827s; failpoint refcount returned to 0
+
+    ./tools/check/failpoint-go-test.sh pkg/domain/crossks -tags=intest,deadlock,nextgen -run 'Test.*RuntimeHandle|Test.*Bookkeeper|Test.*Evict|Test.*GCLoop' -count=1
+    # ok github.com/pingcap/tidb/pkg/domain/crossks 16.673s; failpoint refcount returned to 0
+
+    make lint
+    # success
+
+    git diff --check
+    # success
+
+    Spec compliance subagent re-review
+    # approved; verified the idle sweeper subtask scope
+
+    Code quality subagent re-review
+    # approved; verified raw-getter coexistence, lock safety, lifecycle hook placement, and test coverage
 
 ## Interfaces and Dependencies
 

@@ -814,6 +814,9 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(func() {
 		do.isSyncer.MDLCheckLoop(do.ctx)
 	}, "mdlCheckLoop")
+	do.wg.Run(func() {
+		do.crossKSSessMgr.RunGCLoop(do.ctx)
+	}, "crossKSSessMgrGCLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(func() {
 		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)

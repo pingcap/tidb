@@ -48,12 +48,19 @@ import (
 	"go.uber.org/zap"
 )
 
-const crossKSSessPoolSize = 5
+const (
+	crossKSSessPoolSize         = 5
+	crossKSRuntimeIdleTimeout   = 30 * time.Minute
+	crossKSRuntimeSweepInterval = time.Minute
+)
 
 type runtimeEntry struct {
 	sessMgr       *SessionManager
 	activeHolders map[string]struct{}
 	lastReleaseAt time.Time
+	// rawAccessed is set by the temporary raw getters. Raw users do not have a
+	// release boundary, so entries touched this way are not safe to idle-evict.
+	rawAccessed bool
 }
 
 // Manager manages all cross keyspace sessions.
@@ -63,6 +70,8 @@ type Manager struct {
 	store kv.Storage
 	// keyspace name -> runtime entry
 	runtimes map[string]*runtimeEntry
+
+	newSessionManager func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)
 }
 
 // NewManager creates a new cross keyspace session manager.
@@ -102,9 +111,6 @@ func (m *Manager) GetOrCreate(
 	if err := m.validateTargetKS(ks); err != nil {
 		return nil, err
 	}
-	if mgr, ok := m.get(ks); ok {
-		return mgr, nil
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -112,6 +118,7 @@ func (m *Manager) GetOrCreate(
 	if err != nil {
 		return nil, err
 	}
+	entry.rawAccessed = true
 	return entry.sessMgr, nil
 }
 
@@ -177,9 +184,12 @@ func (m *Manager) getOrCreateEntryWithoutLock(
 		return entry, nil
 	}
 
-	createSessionManager := m.createSessionManager
-	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
-	mgr, err := createSessionManager(ks, ksSessFactoryGetter)
+	newSessionManager := m.createSessionManager
+	if m.newSessionManager != nil {
+		newSessionManager = m.newSessionManager
+	}
+	failpoint.InjectCall("mockCreateSessionManager", &newSessionManager)
+	mgr, err := newSessionManager(ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -324,15 +334,12 @@ func (*Manager) createSessionManager(
 	return mgr, nil
 }
 
-// release releases the runtime handle for the specified keyspace and holderID.
-// the resources will be cleaned up if there is no active holder after enough
-// time. we will impl this part later.
-func (m *Manager) release(targetKS string, holderID string) {
+func (m *Manager) release(targetKS string, holderID string, entry *runtimeEntry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	entry, ok := m.runtimes[targetKS]
-	if !ok {
+	current, ok := m.runtimes[targetKS]
+	if !ok || current != entry {
 		return
 	}
 	delete(entry.activeHolders, holderID)
@@ -343,6 +350,50 @@ func (m *Manager) release(targetKS string, holderID string) {
 		zap.String("targetKS", targetKS),
 		zap.String("holderID", holderID),
 		zap.Int("activeHolderCount", len(entry.activeHolders)))
+}
+
+// RunGCLoop periodically evicts idle cross keyspace runtimes until ctx is canceled.
+func (m *Manager) RunGCLoop(ctx context.Context) {
+	ticker := time.NewTicker(crossKSRuntimeSweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			m.sweepIdleRuntimes(now, crossKSRuntimeIdleTimeout)
+		}
+	}
+}
+
+func (m *Manager) sweepIdleRuntimes(now time.Time, idleTimeout time.Duration) {
+	type evictedRuntime struct {
+		targetKS string
+		entry    *runtimeEntry
+	}
+	var evicted []evictedRuntime
+
+	m.mu.Lock()
+	for targetKS, entry := range m.runtimes {
+		if len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() || entry.rawAccessed {
+			continue
+		}
+		if now.Sub(entry.lastReleaseAt) < idleTimeout {
+			continue
+		}
+		delete(m.runtimes, targetKS)
+		evicted = append(evicted, evictedRuntime{targetKS: targetKS, entry: entry})
+	}
+	m.mu.Unlock()
+
+	for _, runtime := range evicted {
+		logutil.BgLogger().Info("evict idle cross keyspace runtime",
+			zap.String("targetKS", runtime.targetKS),
+			zap.Duration("idleTimeout", idleTimeout),
+			zap.Time("lastReleaseAt", runtime.entry.lastReleaseAt))
+		runtime.entry.sessMgr.close()
+	}
 }
 
 // Close closes all session managers and their associated resources.
@@ -381,7 +432,7 @@ func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
 
 func (h *runtimeHandle) Release() {
 	h.releaseOnce.Do(func() {
-		h.manager.release(h.targetKS, h.holderID)
+		h.manager.release(h.targetKS, h.holderID, h.entry)
 	})
 }
 
@@ -430,9 +481,13 @@ func (m *SessionManager) close() {
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
-	m.schemaVerSyncer.Close()
-	if err := m.etcdCli.Close(); err != nil {
-		logger.Warn("failed to close etcd client", zap.Error(err))
+	if m.schemaVerSyncer != nil {
+		m.schemaVerSyncer.Close()
+	}
+	if m.etcdCli != nil {
+		if err := m.etcdCli.Close(); err != nil {
+			logger.Warn("failed to close etcd client", zap.Error(err))
+		}
 	}
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System
