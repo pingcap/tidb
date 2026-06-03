@@ -17,6 +17,13 @@ package stmtsummary
 import (
 	"testing"
 
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+>>>>>>> 2c307d67a70 (util/stmtsummary: add tidb_stmt_summary_group_by_user (#68512))
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,6 +73,103 @@ func TestStmtSummary(t *testing.T) {
 	require.Equal(t, 0, w.lru.Size())
 }
 
+<<<<<<< HEAD
+=======
+func TestStmtSummaryGroupByUser(t *testing.T) {
+	ss := NewStmtSummary4Test(100)
+	defer ss.Close()
+
+	// Two statements, same digest, different users: without the flag they
+	// should merge into one record.
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	ss.Add(stmtExecInfoWithUser("digest1", "bob"))
+	require.Equal(t, 1, ss.window.lru.Size())
+
+	// Switching the flag on clears the window. Re-emitting produces two rows.
+	require.NoError(t, ss.SetGroupByUser(true))
+	require.Equal(t, 0, ss.window.lru.Size())
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	ss.Add(stmtExecInfoWithUser("digest1", "bob"))
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	require.Equal(t, 2, ss.window.lru.Size())
+
+	// When grouping by user, each record's AuthUsers must hold exactly one
+	// user — the one that groups it — so SAMPLE_USER naturally reflects the
+	// grouping dimension without a dedicated column.
+	users := map[string]int64{}
+	for _, v := range ss.window.lru.Values() {
+		r := v.(*lockedStmtRecord)
+		require.Len(t, r.AuthUsers, 1)
+		for u := range r.AuthUsers {
+			users[u] = r.ExecCount
+		}
+	}
+	require.Equal(t, int64(2), users["alice"])
+	require.Equal(t, int64(1), users["bob"])
+
+	// Turning the flag off again clears and reverts to single-record merging.
+	require.NoError(t, ss.SetGroupByUser(false))
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	ss.Add(stmtExecInfoWithUser("digest1", "bob"))
+	require.Equal(t, 1, ss.window.lru.Size())
+	for _, v := range ss.window.lru.Values() {
+		r := v.(*lockedStmtRecord)
+		require.Len(t, r.AuthUsers, 2) // both users merged when grouping is off
+	}
+}
+
+// stmtExecInfoWithUser returns a StmtExecInfo whose digest and User fields are
+// set; everything else is the generic test fixture.
+func stmtExecInfoWithUser(digest, user string) *stmtsummary.StmtExecInfo {
+	info := GenerateStmtExecInfo4Test(digest)
+	info.User = user
+	return info
+}
+
+func TestWindowEvictedCountResetOnRotate(t *testing.T) {
+	ss := NewStmtSummary4Test(2)
+	defer ss.Close()
+	require.NoError(t, ss.SetMaxStmtCount(2))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	})
+
+	// Fill the LRU cache and trigger evictions.
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
+	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+	require.Equal(t, 2, ss.window.lru.Size())
+	require.Equal(t, int64(2), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+
+	// Rotate creates a new window with a fresh counter.
+	ss.rotate(timeNow())
+	require.Equal(t, int64(0), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+
+	// Add more records in the new window.
+	ss.Add(GenerateStmtExecInfo4Test("digest5"))
+	ss.Add(GenerateStmtExecInfo4Test("digest6"))
+	ss.Add(GenerateStmtExecInfo4Test("digest7")) // evicts digest5
+	require.Equal(t, int64(1), ss.window.evictedCount.Load())
+	require.Equal(t, 2, ss.window.lru.Size())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+}
+
+>>>>>>> 2c307d67a70 (util/stmtsummary: add tidb_stmt_summary_group_by_user (#68512))
 func TestStmtSummaryFlush(t *testing.T) {
 	storage := &mockStmtStorage{}
 	ss := NewStmtSummary4Test(1000)

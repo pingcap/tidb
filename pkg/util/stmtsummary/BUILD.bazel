@@ -40,7 +40,11 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 24,
+=======
+    shard_count = 28,
+>>>>>>> 2c307d67a70 (util/stmtsummary: add tidb_stmt_summary_group_by_user (#68512))
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/auth",
