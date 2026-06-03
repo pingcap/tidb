@@ -2616,15 +2616,16 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	for _, colInfo := range result {
 		shouldSkip := false
 		if colInfo.IsGenerated() {
+			_, keep := mustAnalyze[colInfo.ID]
+			// Stored generated columns that must be analyzed are materialized in storage.
+			// They can be decoded directly without reading skipped base columns, while the
+			// skipped dependencies remain skipped.
+			decodableFromStorage := colInfo.GeneratedStored && keep
 			// Check if any dependency is in the skip list.
 			for depName := range colInfo.Dependences {
-				if _, exists := skipColNameMap[depName]; exists {
-					// If the generated column is required (e.g., part of an index),
-					// we must keep it to avoid index offset remapping failures.
-					if _, need := mustAnalyze[colInfo.ID]; !need {
-						skipCol = append(skipCol, colInfo)
-						shouldSkip = true
-					}
+				if _, exists := skipColNameMap[depName]; exists && !decodableFromStorage {
+					skipCol = append(skipCol, colInfo)
+					shouldSkip = true
 					break
 				}
 			}
