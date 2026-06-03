@@ -1844,7 +1844,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
 
-			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
+			// MySQL contract: for ALTER USER that carries RETAIN/DISCARD,
+			// APPLICATION_PASSWORD_ADMIN is an alternative to CREATE USER on
+			// the target account. Honor that here so a caller with only
+			// APPLICATION_PASSWORD_ADMIN can manage someone else's secondary
+			// password.
+			dualPwdBypass := specDualPwdRequested && hasApplicationPasswordAdminPriv
+			if !(hasCreateUserPriv || hasSystemSchemaPriv || dualPwdBypass) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
 		}
@@ -1869,17 +1875,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		// MySQL-compatible dual password: RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD validation.
 		// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password
+		// Self-service needs no extra privilege beyond the standard
+		// self-password path. Cross-user gating is handled by the outer
+		// needAdminPrivCheck above, which now also accepts
+		// APPLICATION_PASSWORD_ADMIN when dual-password is in play.
 		if specDualPwdRequested {
-			// MySQL requires APPLICATION_PASSWORD_ADMIN or CREATE USER for a
-			// user manipulating their own secondary password. Manipulating
-			// other accounts' secondary passwords is covered by CREATE USER.
-			if alterCurrentUser {
-				if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
-					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
-				}
-			} else if !hasCreateUserPriv {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
 			// Only password-based auth plugins can hold a secondary password.
 			if !isDualPasswordCapablePlugin(currentAuthPlugin) {
 				return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", currentAuthPlugin)
@@ -2783,18 +2783,19 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		h = s.User.Hostname
 
 		if checker != nil && s.RetainCurrentPassword {
-			if !hasCreateUserPriv {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			// MySQL: cross-user RETAIN requires CREATE USER or
+			// APPLICATION_PASSWORD_ADMIN, in addition to the usual SET
+			// PASSWORD authority on the target account.
+			if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
 			}
 		} else if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := sessUser
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
-	if s.RetainCurrentPassword && setPwdForSelf && checker != nil &&
-		!(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
-		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
-	}
+	// Self-service SET PASSWORD ... RETAIN CURRENT PASSWORD needs no extra
+	// privilege beyond the normal self-password path (matching MySQL).
 	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
 		return err

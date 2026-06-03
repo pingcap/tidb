@@ -127,16 +127,19 @@ func TestDualPasswordPluginChangeSilentlyDiscardsSecondary(t *testing.T) {
 func TestDualPasswordCrossUserRequiresCreateUser(t *testing.T) {
 	tk := rootTK(t)
 
-	tk.MustExec("DROP USER IF EXISTS dpcreate, dpaponly, dpvictim_create, dpvictim_ap")
+	tk.MustExec("DROP USER IF EXISTS dpcreate, dpaponly, dpnopriv, dpvictim_create, dpvictim_ap, dpvictim_nopriv")
 	tk.MustExec("CREATE USER dpvictim_create IDENTIFIED BY 'v1'")
 	tk.MustExec("CREATE USER dpvictim_ap IDENTIFIED BY 'v1'")
+	tk.MustExec("CREATE USER dpvictim_nopriv IDENTIFIED BY 'v1'")
 	tk.MustExec("CREATE USER dpcreate IDENTIFIED BY 'a1'")
 	tk.MustExec("CREATE USER dpaponly IDENTIFIED BY 'a1'")
+	tk.MustExec("CREATE USER dpnopriv IDENTIFIED BY 'a1'")
 	tk.MustExec("GRANT CREATE USER ON *.* TO dpcreate")
 	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpaponly")
 
 	// MySQL-compatible rule: cross-user secondary-password operations require
-	// CREATE USER. APPLICATION_PASSWORD_ADMIN alone is for own-account use.
+	// CREATE USER **or** APPLICATION_PASSWORD_ADMIN, in addition to the usual
+	// ALTER authority on the target account.
 	createTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, createTK.Session().Auth(&auth.UserIdentity{Username: "dpcreate", Hostname: "%"}, sha1Password("a1"), nil, nil))
 	createTK.MustExec("ALTER USER dpvictim_create IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
@@ -148,9 +151,20 @@ func TestDualPasswordCrossUserRequiresCreateUser(t *testing.T) {
 	require.Error(t, authAs(t, tk, "dpvictim_create", "%", "v1"))
 	require.NoError(t, authAs(t, tk, "dpvictim_create", "%", "v2"))
 
+	// APPLICATION_PASSWORD_ADMIN alone is sufficient for cross-user RETAIN.
 	apOnlyTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, apOnlyTK.Session().Auth(&auth.UserIdentity{Username: "dpaponly", Hostname: "%"}, sha1Password("a1"), nil, nil))
-	err := apOnlyTK.ExecToErr("ALTER USER dpvictim_ap IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
+	apOnlyTK.MustExec("ALTER USER dpvictim_ap IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
+	require.NoError(t, authAs(t, tk, "dpvictim_ap", "%", "v1"))
+	require.NoError(t, authAs(t, tk, "dpvictim_ap", "%", "v2"))
+
+	// A user with neither CREATE USER nor APPLICATION_PASSWORD_ADMIN is
+	// denied. (We grant ALL on a single schema so the inner ALTER USER
+	// privilege check doesn't short-circuit before the dual-password gate.)
+	tk.MustExec("GRANT ALL ON test.* TO dpnopriv")
+	noprivTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, noprivTK.Session().Auth(&auth.UserIdentity{Username: "dpnopriv", Hostname: "%"}, sha1Password("a1"), nil, nil))
+	err := noprivTK.ExecToErr("ALTER USER dpvictim_nopriv IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "CREATE USER")
 }
@@ -197,16 +211,8 @@ func TestDualPasswordSetPasswordSelfByExplicitName(t *testing.T) {
 	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpself", Hostname: "%"}, sha1Password("s1"), nil, nil))
 
-	// MySQL-compatible rule: own-account secondary-password operations require
-	// APPLICATION_PASSWORD_ADMIN or CREATE USER.
-	err := selfTK.ExecToErr("SET PASSWORD FOR 'dpself'@'%' = 's2' RETAIN CURRENT PASSWORD")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "CREATE USER or APPLICATION_PASSWORD_ADMIN")
-
-	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpself")
-	selfTK = testkit.NewTestKit(t, tk.Session().GetStore())
-	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpself", Hostname: "%"}, sha1Password("s1"), nil, nil))
-
+	// MySQL: own-account RETAIN CURRENT PASSWORD requires no extra privilege
+	// beyond the normal self-password authority.
 	selfTK.MustExec("SET PASSWORD FOR 'dpself'@'%' = 's2' RETAIN CURRENT PASSWORD")
 
 	// Both passwords authenticate after the rotation.
