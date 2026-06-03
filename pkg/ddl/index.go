@@ -3894,7 +3894,7 @@ func (w *worker) logDistTaskObservedTiKVUsage(
 	})
 }
 
-func (_ *worker) logDistTaskObservedTiKVUsageSnapshot(
+func (*worker) logDistTaskObservedTiKVUsageSnapshot(
 	task *proto.Task,
 	taskMeta *BackfillTaskMeta,
 	taskKey string,
