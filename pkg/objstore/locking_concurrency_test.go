@@ -17,10 +17,14 @@ package objstore_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,6 +126,7 @@ type workerStepResult struct {
 	ok   bool
 }
 
+//revive:disable-next-line:context-as-argument
 func startProtectedWorker(t *testing.T, ctx context.Context, audit *criticalSectionAudit, ownerID, family, lockInfo string) *protectedWorker {
 	t.Helper()
 	workerCtx, cancel := context.WithCancel(ctx)
@@ -372,4 +377,188 @@ func TestLeaseLockProtectedWorkerSelfCheck(t *testing.T) {
 	default:
 	}
 	requireNoStepAfterAction(t, testStopAudit.snapshot(), "owner-b", "stopped")
+}
+
+func requireNoIntentWithPrefix(t *testing.T, strg storeapi.Storage, prefixes ...string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, prefix := range prefixes {
+		dirName := ""
+		fileName := prefix
+		if idx := strings.LastIndex(prefix, "/"); idx >= 0 {
+			dirName = prefix[:idx]
+			fileName = prefix[idx+1:]
+		}
+		require.NoError(t, strg.WalkDir(ctx, &storeapi.WalkOption{
+			SubDir:           dirName,
+			ObjPrefix:        fileName,
+			IncludeTombstone: true,
+		}, func(p string, _ int64) error {
+			require.NotContains(t, p, ".INTENT.")
+			return nil
+		}))
+	}
+}
+
+type lockAttemptResult struct {
+	ownerID string
+	lock    *objstore.RemoteLock
+	err     error
+}
+
+type lockAttemptFunc func(context.Context, storeapi.Storage) (*objstore.RemoteLock, error)
+
+func testConcurrentAcquirePair(
+	t *testing.T,
+	interleaving string,
+	lockerA lockAttemptFunc,
+	lockerB lockAttemptFunc,
+	intentPrefixes []string,
+	expectedSuccesses int,
+) {
+	t.Helper()
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	audit := newCriticalSectionAudit(interleaving)
+
+	waitSignal := func(ch <-chan struct{}, name string) {
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s", name)
+		}
+	}
+
+	phase1 := make(chan struct{}, 1)
+	releasePhase1 := make(chan struct{})
+	var phase1Mu sync.Mutex
+	phase1Count := 0
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-1",
+		func() {
+			phase1Mu.Lock()
+			phase1Count++
+			first := phase1Count == 1
+			phase1Mu.Unlock()
+			if first {
+				phase1 <- struct{}{}
+				<-releasePhase1
+			}
+		}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-1"))
+	})
+
+	phase2 := make(chan struct{}, 1)
+	var phase2Once sync.Once
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2",
+		func() {
+			phase2Once.Do(func() {
+				phase2 <- struct{}{}
+			})
+		}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2"))
+	})
+
+	resultCh := make(chan lockAttemptResult, 2)
+	go func() {
+		lock, err := lockerA(ctx, strg)
+		resultCh <- lockAttemptResult{ownerID: "owner-a", lock: lock, err: err}
+	}()
+	go func() {
+		lock, err := lockerB(ctx, strg)
+		resultCh <- lockAttemptResult{ownerID: "owner-b", lock: lock, err: err}
+	}()
+
+	waitSignal(phase1, "first acquire at phase 1")
+	waitSignal(phase2, "second acquire at phase 2")
+	close(releasePhase1)
+
+	results := []lockAttemptResult{<-resultCh, <-resultCh}
+	successes := 0
+	for _, result := range results {
+		if result.err != nil {
+			continue
+		}
+		successes++
+		require.NotNil(t, result.lock)
+		lockInfo := result.lock.String()
+		worker := startProtectedWorker(t, ctx, audit, result.ownerID, interleaving, lockInfo)
+		_, ok := worker.requestStep(t)
+		require.True(t, ok)
+		worker.stop(workerStopTestStop)
+		worker.waitStopped(t)
+		require.NoError(t, result.lock.Unlock(ctx))
+		audit.recordExit(result.ownerID, interleaving, lockInfo, "unlock")
+	}
+	require.Equal(t, expectedSuccesses, successes, "%s results=%#v", interleaving, results)
+	requireNoIntentWithPrefix(t, strg, intentPrefixes...)
+}
+
+func TestLeaseLockConcurrentAcquireExclusion(t *testing.T) {
+	t.Run("migration read and write", func(t *testing.T) {
+		testConcurrentAcquirePair(t,
+			"migration read and write",
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader", localLeaseClock())
+			},
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer", localLeaseClock())
+			},
+			[]string{"v1/LOCK.READ.", "v1/LOCK.WRIT."},
+			1,
+		)
+	})
+	t.Run("truncate writers", func(t *testing.T) {
+		testConcurrentAcquirePair(t,
+			"truncate",
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteTruncate(ctx, strg, "truncate-a", localLeaseClock())
+			},
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteTruncate(ctx, strg, "truncate-b", localLeaseClock())
+			},
+			[]string{"truncating.lock."},
+			1,
+		)
+	})
+	t.Run("migration writers", func(t *testing.T) {
+		testConcurrentAcquirePair(t,
+			"migration-write",
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer-a", localLeaseClock())
+			},
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer-b", localLeaseClock())
+			},
+			[]string{"v1/LOCK.WRIT."},
+			1,
+		)
+	})
+	t.Run("append writers", func(t *testing.T) {
+		testConcurrentAcquirePair(t,
+			"append-write",
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append-a", localLeaseClock())
+			},
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append-b", localLeaseClock())
+			},
+			[]string{"v1/APPEND_LOCK.WRIT."},
+			1,
+		)
+	})
+	t.Run("migration readers", func(t *testing.T) {
+		testConcurrentAcquirePair(t,
+			"migration-read",
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-a", localLeaseClock())
+			},
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-b", localLeaseClock())
+			},
+			[]string{"v1/LOCK.READ."},
+			2,
+		)
+	})
 }
