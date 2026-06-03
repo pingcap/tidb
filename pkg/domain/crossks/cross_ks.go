@@ -16,8 +16,6 @@ package crossks
 
 import (
 	"context"
-	"maps"
-	"slices"
 	"sync"
 	"time"
 
@@ -73,17 +71,7 @@ func NewManager(store kv.Storage) *Manager {
 	}
 }
 
-// GetAllKeyspace returns all keyspace names that have session managers.
-// used in tests.
-func (m *Manager) GetAllKeyspace() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return slices.Collect(maps.Keys(m.runtimes))
-}
-
-// Get gets a session manager for the specified keyspace.
-// exported for test only.
-func (m *Manager) Get(ks string) (*SessionManager, bool) {
+func (m *Manager) get(ks string) (*SessionManager, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.getWithoutLock(ks)
@@ -105,7 +93,7 @@ func (m *Manager) GetOrCreate(
 	if err := m.validateTargetKS(ks); err != nil {
 		return nil, err
 	}
-	if mgr, ok := m.Get(ks); ok {
+	if mgr, ok := m.get(ks); ok {
 		return mgr, nil
 	}
 	m.mu.Lock()
@@ -350,18 +338,7 @@ func (m *Manager) release(targetKS string, holderID string, entry *runtimeEntry)
 		zap.Int("activeHolderCount", len(entry.activeHolders)))
 }
 
-// CloseKS closes the session manager for the specified keyspace.
-func (m *Manager) CloseKS(targetKS string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if entry, ok := m.runtimes[targetKS]; ok {
-		entry.sessMgr.close()
-		delete(m.runtimes, targetKS)
-	}
-}
-
 // Close closes all session managers and their associated resources.
-// only used in test.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

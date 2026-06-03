@@ -47,6 +47,7 @@ go_test(
     srcs = [
         "cross_ks_internal_test.go",
         "cross_ks_test.go",
+        "export_test.go",
     ],
     embed = [":crossks"],
     flaky = True,
