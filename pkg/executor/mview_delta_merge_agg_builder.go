@@ -349,10 +349,10 @@ func mviewDeltaMergeAggArgExpr(
 				len(dependencies),
 			)
 		}
-		// MIN/MAX nullability should follow the original aggregate expression (encoded in dependency arity),
-		// instead of nullable delta payload columns.
+		// MIN/MAX nullability should follow the original aggregate argument nullability instead of
+		// nullable delta payload columns.
 		retType = retType.Clone()
-		if len(dependencies) == 4 {
+		if aggInfo.ArgNotNull {
 			retType.AddFlag(mysql.NotNullFlag)
 		} else {
 			retType.DelFlag(mysql.NotNullFlag)

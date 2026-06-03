@@ -882,6 +882,8 @@ func validateCreateMaterializedViewQuery(
 	groupBySet := make(map[string]struct{}, len(sel.GroupBy.Items))
 	groupByCols := make([]string, 0, len(sel.GroupBy.Items))
 	groupByNotNull := make(map[string]bool, len(sel.GroupBy.Items))
+	countExprCols := make(map[string]struct{})
+	nullableSumCols := make(map[string]struct{})
 	usedCols := make(map[string]struct{}, 8)
 
 	for _, item := range sel.GroupBy.Items {
@@ -960,6 +962,7 @@ func validateCreateMaterializedViewQuery(
 					if err != nil {
 						return nil, err
 					}
+					countExprCols[colName] = struct{}{}
 					usedCols[colName] = struct{}{}
 					continue
 				}
@@ -983,13 +986,13 @@ func validateCreateMaterializedViewQuery(
 				if err != nil {
 					return nil, err
 				}
-				if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
-					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SUM/MIN/MAX on NOT NULL column")
-				}
 				if aggFunc == ast.AggFuncSum {
 					tp := baseColMap[colName].GetType()
 					if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
 						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+					}
+					if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
+						nullableSumCols[colName] = struct{}{}
 					}
 				}
 				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
@@ -1005,6 +1008,13 @@ func validateCreateMaterializedViewQuery(
 	}
 	if !hasCountStarOrOne {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW must contain count(*)/count(1)")
+	}
+	for colName := range nullableSumCols {
+		if _, ok := countExprCols[colName]; !ok {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
+				fmt.Sprintf("CREATE MATERIALIZED VIEW SUM on nullable column %s requires matching COUNT(%s) in SELECT list", colName, colName),
+			)
+		}
 	}
 
 	groupByInfos := make([]mviewGroupByInfo, 0, len(sel.GroupBy.Items))

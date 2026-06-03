@@ -138,6 +138,8 @@ type AggInfo struct {
 
 	// ArgColName is the base-table column name used as the aggregate argument. Empty for COUNT(*).
 	ArgColName string
+	// ArgNotNull records whether the aggregate argument column is NOT NULL in the base table schema.
+	ArgNotNull bool
 
 	// Dependencies stores dependency offsets in merge-source output schema.
 	// The meaning depends on Kind:
@@ -151,8 +153,9 @@ type AggInfo struct {
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
 	//   - AggMax / AggMin:
-	//     - [added_val, added_cnt, removed_val, removed_cnt] when argument is NOT NULL.
-	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] otherwise.
+	//     - [added_val, added_cnt, removed_val, removed_cnt] always.
+	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] optionally when a
+	//       matching COUNT(expr) exists for a nullable argument and can be used as an optimization.
 	//     - added_cnt/removed_cnt are counts of rows whose argument equals added_val/removed_val
 	//       in the added/removed subdomain respectively (MAX/MIN_COUNT semantics).
 	Dependencies []int
@@ -446,6 +449,7 @@ func buildFromLocal(
 	outAggInfos := make([]AggInfo, 0, len(local.aggCols))
 	for i, ac := range local.aggCols {
 		di := ac.info
+		di.ArgNotNull = aggArgNotNullByOffset[di.MVOffset]
 		deps := make([]int, 0, 5)
 		if ac.deltaName != "" {
 			off, ok := deltaOffsetByName[ac.deltaName]
@@ -478,11 +482,7 @@ func buildFromLocal(
 				return nil, errors.Errorf("internal error: delta column %s not found in output", ac.removedCountDelta)
 			}
 			deps = append(deps, addedCntOff, removedValOff, removedCntOff)
-			if !aggArgNotNullByOffset[di.MVOffset] {
-				countIdx, ok := minMaxToCountExprIdx[i]
-				if !ok {
-					return nil, errors.Errorf("internal error: %v at mv offset %d has no COUNT(expr) dependency", di.Kind, di.MVOffset)
-				}
+			if countIdx, ok := minMaxToCountExprIdx[i]; ok {
 				countAgg := local.aggCols[countIdx]
 				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
 			}
@@ -808,9 +808,9 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 	return aggCols, hasMinMax, nil
 }
 
-// mapSumToCountExprDependencies finds, for every nullable SUM(expr), the unique matching
-// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve
-// SUM(NULL) semantics when applying incremental updates.
+// mapSumToCountExprDependencies finds, for every nullable SUM(expr), the first structurally
+// matching COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to
+// preserve SUM(NULL) semantics when applying incremental updates.
 func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	sumToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
@@ -831,13 +831,8 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
 				continue
 			}
-			if matchIdx >= 0 {
-				return nil, errors.Errorf(
-					"SUM expression %s at mv offset %d has multiple matching COUNT(expr) dependencies (offsets %d and %d)",
-					restoreExpr(ac.argExpr), ac.info.MVOffset, aggCols[matchIdx].info.MVOffset, cand.info.MVOffset,
-				)
-			}
 			matchIdx = j
+			break
 		}
 		if matchIdx < 0 {
 			return nil, errors.Errorf(
@@ -850,9 +845,9 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 	return sumToCountIdx, nil
 }
 
-// mapMinMaxToCountExprDependencies finds, for every nullable MIN(expr)/MAX(expr), the unique matching
-// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve NULL semantics
-// when fast-refresh applies MIN/MAX deltas and needs to distinguish "result is NULL" from "no non-NULL row remains".
+// mapMinMaxToCountExprDependencies finds an optional first matching COUNT(expr) for nullable
+// MIN/MAX(expr). Missing COUNT(expr) does not block build because MIN/MAX can fall back to
+// count(*) + full recompute when needed.
 func mapMinMaxToCountExprDependencies(aggCols []aggColInfo, aggArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	minMaxToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
@@ -873,19 +868,11 @@ func mapMinMaxToCountExprDependencies(aggCols []aggColInfo, aggArgNotNullByOffse
 			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
 				continue
 			}
-			if matchIdx >= 0 {
-				return nil, errors.Errorf(
-					"%v expression %s at mv offset %d has multiple matching COUNT(expr) dependencies (offsets %d and %d)",
-					ac.info.Kind, restoreExpr(ac.argExpr), ac.info.MVOffset, aggCols[matchIdx].info.MVOffset, cand.info.MVOffset,
-				)
-			}
 			matchIdx = j
+			break
 		}
 		if matchIdx < 0 {
-			return nil, errors.Errorf(
-				"%v expression %s at mv offset %d requires matching COUNT(expr) in SELECT list",
-				ac.info.Kind, restoreExpr(ac.argExpr), ac.info.MVOffset,
-			)
+			continue
 		}
 		minMaxToCountIdx[i] = matchIdx
 	}

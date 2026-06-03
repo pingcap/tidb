@@ -142,17 +142,27 @@ func (m *mockSingleRowRecomputeExecMulti) Next(_ context.Context, req *chunk.Chu
 	return nil
 }
 
+type mockBatchRecomputeRow struct {
+	key         int64
+	value       int64
+	valueIsNull bool
+}
+
 type mockBatchRecomputeExec struct {
 	exec.BaseExecutor
-	rows [][2]int64
+	rows []mockBatchRecomputeRow
 	idx  int
 }
 
 func (m *mockBatchRecomputeExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	for m.idx < len(m.rows) && req.NumRows() < req.Capacity() {
-		req.AppendInt64(0, m.rows[m.idx][0])
-		req.AppendInt64(1, m.rows[m.idx][1])
+		req.AppendInt64(0, m.rows[m.idx].key)
+		if m.rows[m.idx].valueIsNull {
+			req.AppendNull(1)
+		} else {
+			req.AppendInt64(1, m.rows[m.idx].value)
+		}
 		m.idx++
 	}
 	return nil
@@ -162,17 +172,26 @@ type mockBatchRecomputeBuilder struct {
 	sctx          sessionctx.Context
 	retTp         []*types.FieldType
 	values        map[int64]int64
+	nullKeys      map[int64]struct{}
 	reverseOutput bool
 	extraRows     [][2]int64
+	calls         int
 }
 
 func (b *mockBatchRecomputeBuilder) Build(_ context.Context, req *MinMaxBatchBuildRequest) (exec.Executor, error) {
-	rows := make([][2]int64, 0, len(req.LookupKeys))
+	b.calls++
+	rows := make([]mockBatchRecomputeRow, 0, len(req.LookupKeys)+len(b.extraRows))
 	for _, key := range req.LookupKeys {
 		k := key.Keys[0].GetInt64()
-		rows = append(rows, [2]int64{k, b.values[k]})
+		row := mockBatchRecomputeRow{key: k, value: b.values[k]}
+		if _, isNull := b.nullKeys[k]; isNull {
+			row.valueIsNull = true
+		}
+		rows = append(rows, row)
 	}
-	rows = append(rows, b.extraRows...)
+	for _, row := range b.extraRows {
+		rows = append(rows, mockBatchRecomputeRow{key: row[0], value: row[1]})
+	}
 	if b.reverseOutput {
 		for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 			rows[i], rows[j] = rows[j], rows[i]
@@ -1466,8 +1485,9 @@ func TestMinMaxFallbackToCountStarWithoutFinalCountDependency(t *testing.T) {
 	require.True(t, maxCol.IsNull(0))
 }
 
-func TestAllowMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
+func TestMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	sctx := mock.NewContext()
+	sctx.GetSessionVars().ExecutorConcurrency = 1
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{
 		ftInt, // [0] delta_count(*)
@@ -1479,7 +1499,16 @@ func TestAllowMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		ftInt, // [6] mv_count(*)
 		ftInt, // [7] mv_max(v)
 	}
-	src := newMockSource(sctx, fts, nil)
+	chk := chunk.NewChunkWithCapacity(fts, 1)
+	chk.AppendInt64(0, 0)
+	chk.AppendNull(1)
+	chk.AppendInt64(2, 0)
+	chk.AppendInt64(3, 10)
+	chk.AppendInt64(4, 1)
+	chk.AppendInt64(5, 1)
+	chk.AppendInt64(6, 3)
+	chk.AppendInt64(7, 10)
+	src := newMockSource(sctx, fts, []*chunk.Chunk{chk})
 
 	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	require.NoError(t, err)
@@ -1487,6 +1516,12 @@ func TestAllowMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	maxArg := &expression.Column{Index: 1, RetType: ftInt}
 	maxDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncMax, []expression.Expression{maxArg}, false)
 	require.NoError(t, err)
+
+	batchBuilder := &mockBatchRecomputeBuilder{
+		sctx:     sctx,
+		retTp:    []*types.FieldType{ftInt, ftInt},
+		nullKeys: map[int64]struct{}{1: {}},
+	}
 
 	mergeExec := &Exec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
@@ -1507,17 +1542,26 @@ func TestAllowMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		MinMaxRecompute: &MinMaxRecomputeExec{
 			KeyInputColIDs:    []int{5},
 			KeyResultColIdxes: []int{0},
-			BatchBuilder:      &mockBatchRecomputeBuilder{},
+			BatchBuilder:      batchBuilder,
 		},
 	}
-	err = mergeExec.Open(context.Background())
-	require.NoError(t, err)
-	require.Len(t, mergeExec.compiledMergers, 2)
-	maxMerger, ok := mergeExec.compiledMergers[1].(*minMaxIntMerger)
-	require.True(t, ok)
-	require.Equal(t, depFromComputed, maxMerger.countRef.source)
-	require.Equal(t, 0, maxMerger.countRef.idx)
+	writer := &collectWriter{}
+	mergeExec.Writer = writer
+
+	require.NoError(t, mergeExec.Open(context.Background()))
+	outChk := exec.NewFirstChunk(mergeExec)
+	require.NoError(t, mergeExec.Next(context.Background(), outChk))
 	require.NoError(t, mergeExec.Close())
+
+	require.Equal(t, 1, batchBuilder.calls)
+	require.Len(t, writer.results, 1)
+	res := writer.results[0]
+	require.Len(t, res.RowOps, 1)
+	require.Equal(t, RowOpUpdate, res.RowOps[0].Tp)
+
+	maxCol := res.ComputedCols[7]
+	require.NotNil(t, maxCol)
+	require.True(t, maxCol.IsNull(0))
 }
 
 func TestRejectMinMaxFinalCountForNonNullableExpr(t *testing.T) {
