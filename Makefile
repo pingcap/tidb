@@ -803,6 +803,10 @@ bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/sessiontest/...
 
+.PHONY: bazel_startertest
+bazel_startertest: failpoint-enable bazel_ci_simple_prepare
+	NEXT_GEN=1 tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh --under-cluster startertest 40m -count=1
+
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \

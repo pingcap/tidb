@@ -75,6 +75,12 @@ held client connections before shutting down the external `tidb-server`.
 
 This script is an independent entry point and is not invoked by `run-tests.sh`.
 CI jobs that need external starter coverage should call this script directly.
+For the standard next-gen RealTiKV CI flow, use the Makefile wrapper through
+`run-tests.sh`:
+
+```bash
+tests/realtikvtest/scripts/next-gen/run-tests.sh bazel_startertest
+```
 
 The `tidb-server` binary must be built as a next-gen binary before running the
 script:
