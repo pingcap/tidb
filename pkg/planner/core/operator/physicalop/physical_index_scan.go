@@ -537,6 +537,42 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 	p.SetSchema(expression.NewSchema(rowLayout...))
 }
 
+// RequestExtraBM25ScoreColumn appends the TiCI FTS BM25 score column to this scan.
+func (p *PhysicalIndexScan) RequestExtraBM25ScoreColumn() (*expression.Column, bool) {
+	if p.FtsQueryInfo == nil {
+		return nil, false
+	}
+	p.FtsQueryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
+	if scoreCol, ok := findExtraBM25ScoreColumn(p.Schema()); ok {
+		return scoreCol, true
+	}
+	scoreCol := newExtraBM25ScoreColumn(p.SCtx().GetSessionVars().AllocPlanColumnID())
+	schema := p.Schema().Clone()
+	schema.Append(scoreCol)
+	p.SetSchema(schema)
+	return scoreCol, true
+}
+
+func newExtraBM25ScoreColumn(uniqueID int64) *expression.Column {
+	scoreType := types.NewFieldType(mysql.TypeDouble)
+	scoreType.SetFlag(mysql.NotNullFlag)
+	return &expression.Column{
+		RetType:  scoreType,
+		ID:       model.ExtraBM25ScoreID,
+		UniqueID: uniqueID,
+		OrigName: model.ExtraBM25ScoreName.O,
+	}
+}
+
+func findExtraBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
+	for _, col := range schema.Columns {
+		if col.ID == model.ExtraBM25ScoreID {
+			return col, true
+		}
+	}
+	return nil, false
+}
+
 // AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
 func (p *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
 	if !p.Index.Global {
@@ -662,6 +698,8 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
 		} else if col.ID == model.ExtraVersionID {
 			columns = append(columns, model.NewExtraVersionColInfo())
+		} else if col.ID == model.ExtraBM25ScoreID {
+			columns = append(columns, model.NewExtraBM25ScoreColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}

@@ -391,6 +391,22 @@ func NewExtraVersionColInfo() *ColumnInfo {
 	return colInfo
 }
 
+// NewExtraBM25ScoreColInfo mocks a column info for the extra BM25 score column.
+func NewExtraBM25ScoreColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraBM25ScoreID,
+		Name: ExtraBM25ScoreName,
+	}
+	colInfo.SetType(mysql.TypeDouble)
+	colInfo.SetFlag(mysql.NotNullFlag)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}
+
 // NewExtraCommitTSColInfo mocks a column info for extra commit ts column.
 func NewExtraCommitTSColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{

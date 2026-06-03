@@ -17,6 +17,8 @@ package core
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
@@ -25,7 +27,15 @@ import (
 // resolveIndicesItself resolve indices for PhysicalPlan itself
 func resolveIndicesItself4PhysicalProjection(p *physicalop.PhysicalProjection) (err error) {
 	for i, expr := range p.Exprs {
-		p.Exprs[i], err = expr.ResolveIndices(p.Children()[0].Schema())
+		child := p.Children()[0]
+		if scoreExpr, rewritten, rewriteErr := rewriteTiCIFTSScoreExpr(expr, child); rewriteErr != nil {
+			return rewriteErr
+		} else if rewritten {
+			p.Exprs[i] = scoreExpr
+			continue
+		}
+
+		p.Exprs[i], err = expr.ResolveIndices(child.Schema())
 		if err != nil {
 			return err
 		}
@@ -36,6 +46,49 @@ func resolveIndicesItself4PhysicalProjection(p *physicalop.PhysicalProjection) (
 	}
 	refine4NeighbourProj(p, childProj)
 	return
+}
+
+func rewriteTiCIFTSScoreExpr(expr expression.Expression, child base.PhysicalPlan) (expression.Expression, bool, error) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst {
+		return nil, false, nil
+	}
+	scoreCol, ok, err := ensureTiCIFTSScoreColumn(child)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	expr, err = scoreCol.ResolveIndices(child.Schema())
+	return expr, true, err
+}
+
+func ensureTiCIFTSScoreColumn(child base.PhysicalPlan) (*expression.Column, bool, error) {
+	for _, col := range child.Schema().Columns {
+		if col.ID == model.ExtraBM25ScoreID {
+			return col, true, nil
+		}
+	}
+	if indexScan, ok := child.(*physicalop.PhysicalIndexScan); ok {
+		scoreCol, ok := indexScan.RequestExtraBM25ScoreColumn()
+		return scoreCol, ok, nil
+	}
+	provider, ok := child.(extraBM25ScoreProvider)
+	if !ok {
+		return nil, false, nil
+	}
+	return provider.RequestExtraBM25ScoreColumn()
+}
+
+type extraBM25ScoreProvider interface {
+	RequestExtraBM25ScoreColumn() (*expression.Column, bool, error)
+}
+
+func findExtraBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
+	for _, col := range schema.Columns {
+		if col.ID == model.ExtraBM25ScoreID {
+			return col, true
+		}
+	}
+	return nil, false
 }
 
 // resolveIndices4PhysicalProjection implements Plan interface.

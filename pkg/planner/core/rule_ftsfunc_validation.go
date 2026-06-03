@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -42,7 +43,7 @@ func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan) (b
 func (f *ftsFuncValidation) doQuickValidation(ctx context.Context, p base.LogicalPlan) error {
 	switch x := p.(type) {
 	case *logicalop.LogicalProjection:
-		if expression.ContainsFullTextSearchFn(x.Exprs...) {
+		if !allowFTSProjectionExprs(x.Exprs) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields. It can be used in WHERE only")
 		}
 	case *logicalop.LogicalSelection:
@@ -98,4 +99,19 @@ func (f *ftsFuncValidation) doQuickValidation(ctx context.Context, p base.Logica
 		}
 	}
 	return nil
+}
+
+func allowFTSProjectionExprs(exprs []expression.Expression) bool {
+	hasMatchAgainst := false
+	for _, expr := range exprs {
+		if !expression.ContainsFullTextSearchFn(expr) {
+			continue
+		}
+		sf, ok := expr.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst || hasMatchAgainst {
+			return false
+		}
+		hasMatchAgainst = true
+	}
+	return true
 }
