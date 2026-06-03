@@ -431,8 +431,20 @@ func testConcurrentAcquirePair(
 
 	phase1 := make(chan struct{}, 1)
 	releasePhase1 := make(chan struct{})
+	var releasePhase1Once sync.Once
+	releaseFirstAcquire := func() {
+		releasePhase1Once.Do(func() {
+			close(releasePhase1)
+		})
+	}
+	t.Cleanup(releaseFirstAcquire)
 	var phase1Mu sync.Mutex
 	phase1Count := 0
+	getPhase1Count := func() int {
+		phase1Mu.Lock()
+		defer phase1Mu.Unlock()
+		return phase1Count
+	}
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-1",
 		func() {
 			phase1Mu.Lock()
@@ -449,11 +461,30 @@ func testConcurrentAcquirePair(
 	})
 
 	phase2 := make(chan struct{}, 1)
+	releasePhase2 := make(chan struct{})
+	var releasePhase2Once sync.Once
+	releaseSecondAcquire := func() {
+		releasePhase2Once.Do(func() {
+			close(releasePhase2)
+		})
+	}
+	t.Cleanup(releaseSecondAcquire)
 	var phase2Once sync.Once
+	var phase2Mu sync.Mutex
+	phase2Count := 0
+	getPhase2Count := func() int {
+		phase2Mu.Lock()
+		defer phase2Mu.Unlock()
+		return phase2Count
+	}
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2",
 		func() {
+			phase2Mu.Lock()
+			phase2Count++
+			phase2Mu.Unlock()
 			phase2Once.Do(func() {
 				phase2 <- struct{}{}
+				<-releasePhase2
 			})
 		}))
 	t.Cleanup(func() {
@@ -472,12 +503,24 @@ func testConcurrentAcquirePair(
 
 	waitSignal(phase1, "first acquire at phase 1")
 	waitSignal(phase2, "second acquire at phase 2")
-	close(releasePhase1)
+	releaseFirstAcquire()
+	releaseSecondAcquire()
 
-	results := []lockAttemptResult{<-resultCh, <-resultCh}
+	results := make([]lockAttemptResult, 0, 2)
+	for len(results) < 2 {
+		select {
+		case result := <-resultCh:
+			results = append(results, result)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for acquire results: interleaving=%s phase1=%d phase2=%d partial=%#v audit=%#v",
+				interleaving, getPhase1Count(), getPhase2Count(), results, audit.snapshot())
+		}
+	}
 	successes := 0
 	for _, result := range results {
 		if result.err != nil {
+			require.Nil(t, result.lock)
+			require.ErrorContains(t, result.err, "conflict file")
 			continue
 		}
 		successes++

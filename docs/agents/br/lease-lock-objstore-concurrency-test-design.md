@@ -562,7 +562,8 @@ requireNoIntentWithPrefix(t, storage, prefixes...)
 
 覆盖：
 
-- same physical target conflict；
+- same physical target conflict：由现有 `TESTTryLockRemoteExact` legacy case 覆盖；
+  第一批 production-API concurrent acquire tests 不新增 exact-target case；
 - write/write conflict；
 - read/write conflict；
 - truncate/truncate conflict；
