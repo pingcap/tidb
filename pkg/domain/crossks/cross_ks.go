@@ -16,6 +16,8 @@ package crossks
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -69,6 +71,13 @@ func NewManager(store kv.Storage) *Manager {
 		store:    store,
 		runtimes: make(map[string]*runtimeEntry),
 	}
+}
+
+// GetAllKeyspace returns all keyspace names that have session managers.
+func (m *Manager) GetAllKeyspace() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return slices.Collect(maps.Keys(m.runtimes))
 }
 
 func (m *Manager) get(ks string) (*SessionManager, bool) {

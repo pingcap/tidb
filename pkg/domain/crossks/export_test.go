@@ -14,18 +14,6 @@
 
 package crossks
 
-import (
-	"maps"
-	"slices"
-)
-
-// GetAllKeyspace returns all keyspace names that have session managers.
-func (m *Manager) GetAllKeyspace() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return slices.Collect(maps.Keys(m.runtimes))
-}
-
 // Get returns the session manager for the specified keyspace and whether it exists.
 func (m *Manager) Get(ks string) (*SessionManager, bool) {
 	return m.get(ks)
