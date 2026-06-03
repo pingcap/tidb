@@ -87,7 +87,7 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		handle, err := mgr.Acquire("ks-runtime-classic", "test/holderID", unusedRuntimeHandleFactoryGetter(t))
 
 		require.Nil(t, handle)
-		require.ErrorContains(t, err, "cross keyspace session manager is not available in classic kernel or current keyspace")
+		require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
 	})
 
 	t.Run("tracks holder IDs", func(t *testing.T) {

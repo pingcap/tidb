@@ -61,7 +61,7 @@ func TestManagerInClassical(t *testing.T) {
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	_, err := dom.GetKSStore("aaa")
-	require.ErrorContains(t, err, "cross keyspace session manager is not available in classic kernel or current keyspace")
+	require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
 }
 
 func TestManager(t *testing.T) {
@@ -111,7 +111,7 @@ func TestManager(t *testing.T) {
 
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
-		require.ErrorContains(t, err, "cross keyspace session manager is not available in classic kernel or current keyspace")
+		require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
 	})
 
 	t.Run("failed to get store in cross keyspace manager", func(t *testing.T) {
