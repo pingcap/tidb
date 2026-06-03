@@ -1836,7 +1836,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		}
-		needAdminPrivCheck := !(alterCurrentUser && alterPassword)
+		// Self-service dual-password requires no extra privilege beyond the
+		// normal self-password path (matching MySQL). The standalone
+		// `ALTER USER USER() DISCARD OLD PASSWORD` form has no AuthOpt so
+		// alterPassword is false; we still want to skip the outer CREATE USER
+		// check on it for self-service.
+		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && spec.AuthOpt == nil
+		needAdminPrivCheck := !(alterCurrentUser && alterPassword) && !selfServiceDualPwd
 		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
 			// The MySQL manual states:
