@@ -41,8 +41,10 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -54,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -62,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -143,7 +147,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
-		err = e.executeFlush(x)
+		err = e.executeFlush(ctx, x)
 	case *ast.AlterInstanceStmt:
 		err = e.executeAlterInstance(x)
 	case *ast.BeginStmt:
@@ -209,9 +213,6 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 	}
 	sql := new(strings.Builder)
 	for _, u := range s.UserList {
-		if u.Hostname == "" {
-			u.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
@@ -260,9 +261,6 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -274,7 +272,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		}
 		for _, role := range s.RoleList {
 			checker := privilege.GetPrivilegeManager(e.Ctx())
-			ok := checker.FindEdge(e.Ctx(), role, user)
+			ok := checker.FindEdge(role, user)
 			if !ok {
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 					return rollbackErr
@@ -320,9 +318,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -351,9 +346,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (err error) {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user := s.UserList[0]
-	if user.Hostname == "" {
-		user.Hostname = "%"
-	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -388,7 +380,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 			if i > 0 {
 				sqlescape.MustFormatSQL(sql, ",")
 			}
-			ok := checker.FindEdge(e.Ctx(), role, user)
+			ok := checker.FindEdge(role, user)
 			if !ok {
 				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
 			}
@@ -409,6 +401,14 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	return nil
 }
 
+func userIdentityToUserList(specs []*auth.UserIdentity) []string {
+	users := make([]string, 0, len(specs))
+	for _, user := range specs {
+		users = append(users, user.Username)
+	}
+	return users
+}
+
 func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaultRoleStmt) (err error) {
 	sessionVars := e.Ctx().GetSessionVars()
 	checker := privilege.GetPrivilegeManager(e.Ctx())
@@ -423,7 +423,8 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 			if err != nil {
 				return err
 			}
-			return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+			users := userIdentityToUserList(s.UserList)
+			return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 		}
 	}
 
@@ -445,7 +446,8 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	if err != nil {
 		return
 	}
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	users := userIdentityToUserList(s.UserList)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
 
 func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
@@ -758,7 +760,8 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	userList := userIdentityToUserList(s.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
 func (e *SimpleExec) executeCommit() {
@@ -1265,7 +1268,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return errors.Trace(err)
 	}
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	userList := userIdentityToUserList(users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
 func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (bool, error) {
@@ -1762,15 +1766,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
-			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
-		exists, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+		exists, currentAuthPlugin, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1791,10 +1795,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := noNeedAuthTokenOptions
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
-		}
 		if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
@@ -2025,7 +2025,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	if err = domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(); err != nil {
+	users := userSpecToUserList(s.Specs)
+	if err = domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users); err != nil {
 		return err
 	}
 	if disableSandBoxMode {
@@ -2101,7 +2102,8 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return err
 	}
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	userList := userIdentityToUserList(s.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
 // Should cover same internal mysql.* tables as DROP USER, so this function is very similar
@@ -2126,7 +2128,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		if len(newUser.Hostname) > auth.HostNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
 		}
-		exists, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
+		exists, _, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2135,7 +2137,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
-		exists, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
+		exists, _, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2165,6 +2167,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		// rename privileges from mysql.tables_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.TablePrivTable, "User", "Host", userToUser); err != nil {
 			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.TablePrivTable + " error"
+			break
+		}
+
+		// rename privileges from mysql.columns_priv
+		if err = renameUserHostInSystemTable(sqlExecutor, mysql.ColumnPrivTable, "User", "Host", userToUser); err != nil {
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.ColumnPrivTable + " error"
 			break
 		}
 
@@ -2198,7 +2206,6 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
-		// TODO: need update columns_priv once we implement columns_priv functionality.
 		// When that is added, please refactor both executeRenameUser and executeDropUser to use an array of tables
 		// to loop over, so it is easier to maintain.
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
@@ -2216,7 +2223,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	userList := make([]string, 0, len(s.UserToUsers)*2)
+	for _, users := range s.UserToUsers {
+		userList = append(userList, users.OldUser.Username)
+		userList = append(userList, users.NewUser.Username)
+	}
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
 func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, usernameColumn, hostColumn string, users *ast.UserToUser) error {
@@ -2287,7 +2299,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
 		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
-		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+		if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) {
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
@@ -2391,7 +2403,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} // TODO: need delete columns_priv once we implement columns_priv functionality.
+		}
 	}
 
 	if len(failedUsers) != 0 {
@@ -2413,7 +2425,8 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 		}
 	}
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	userList := userIdentityToUserList(s.UserList)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
@@ -2427,12 +2440,12 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 }
 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
-func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
+func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, error) {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(ctx, req)
@@ -2440,11 +2453,27 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	if err == nil {
 		rows = req.NumRows()
 	}
+
+	var authPlugin string
+	colIdx := -1
+	for i, f := range recordSet.Fields() {
+		if f.ColumnAsName.L == "plugin" {
+			colIdx = i
+		}
+	}
+	if rows == 1 {
+		// rows can only be 0 or 1
+		// When user + host does not exist, the rows is 0
+		// When user + host exists, the rows is 1 because user + host is primary key of the table.
+		row := req.GetRow(0)
+		authPlugin = row.GetString(colIdx)
+	}
+
 	errClose := recordSet.Close()
 	if errClose != nil {
-		return false, errClose
+		return false, "", errClose
 	}
-	return rows > 0, err
+	return rows > 0, authPlugin, err
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
@@ -2487,7 +2516,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
-	exists, err := userExistsInternal(ctx, sqlExecutor, u, h)
+	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
 		return err
 	}
@@ -2502,10 +2531,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		disableSandboxMode = true
 	}
 
-	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(u, h)
-	if err != nil {
-		return err
-	}
 	if e.isValidatePasswordEnabled() {
 		if err := pwdValidator.ValidatePassword(e.Ctx().GetSessionVars(), s.Password); err != nil {
 			return err
@@ -2566,7 +2591,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	err = domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	err = domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege([]string{u})
 	if err != nil {
 		return err
 	}
@@ -2690,7 +2715,189 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	return err
 }
 
-func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+func restoreFlushStatsDeltaSQL(s *ast.FlushStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func appendStatsDeltaTargetTableIDs(targetIDs []int64, tableInfo *metamodel.TableInfo) []int64 {
+	targetIDs = append(targetIDs, tableInfo.ID)
+	if partitionInfo := tableInfo.GetPartitionInfo(); partitionInfo != nil {
+		for _, def := range partitionInfo.Definitions {
+			targetIDs = append(targetIDs, def.ID)
+		}
+	}
+	return targetIDs
+}
+
+func (e *SimpleExec) executeFlushStatsDelta(ctx context.Context, s *ast.FlushStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.FlushObjects {
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Flush stats delta broadcast requires database-qualified names")
+	// Note: broadcast serializes the statement back to SQL and every peer reparses it
+	// through the broadcast query path, which does not rerun plan building to fill in
+	// the current database for unqualified table names. `FLUSH STATS_DELTA tbl`
+	// executed in database `db` therefore has to be restored as
+	// `FLUSH STATS_DELTA db.tbl`; otherwise a peer without that current database
+	// cannot resolve the target table.
+	sql, err := restoreFlushStatsDeltaSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format flush stats delta statement", zap.Error(err))
+		return err
+	}
+	if e.IsFromRemote {
+		if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV from remote", zap.String("sql", sql))
+		return nil
+	}
+	if s.IsCluster {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast flush stats delta command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	// This is the local, non-CLUSTER path: remote requests are handled above to
+	// avoid rebroadcasting, and without CLUSTER we flush only the current TiDB
+	// instance because pending stats deltas are buffered per instance.
+	if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func (e *SimpleExec) executeFlushStatsDeltaOnCurrentInstance(ctx context.Context, s *ast.FlushStmt) error {
+	intest.Assert(len(s.FlushObjects) > 0, "FlushObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.FlushObjects)
+		s.DedupFlushObjects()
+		return origCount == len(s.FlushObjects)
+	}, "FlushObjects should be deduplicated in the building phase")
+
+	targetIDs := make([]int64, 0, len(s.FlushObjects))
+	isGlobalScope := len(s.FlushObjects) == 1 && s.FlushObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, flushObject := range s.FlushObjects {
+			switch flushObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				if !is.SchemaExists(flushObject.DBName) {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(flushObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, flushObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					statslogutil.StatsLogger().Info("No table in the database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				for _, tableInfo := range tables {
+					targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+				}
+			case ast.StatsObjectScopeTable:
+				tableInfo, err := is.TableInfoByName(flushObject.DBName, flushObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if tableInfo == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+					continue
+				}
+				targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		if len(targetIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to flush stats delta")
+			return nil
+		}
+	}
+	return domain.GetDomain(e.Ctx()).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+}
+
+func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	broadcastExec := &tipb.Executor{
+		Tp: tipb.ExecType_TypeBroadcastQuery,
+		BroadcastQuery: &tipb.BroadcastQuery{
+			Query: &sql,
+		},
+	}
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{broadcastExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
+		SetStoreType(kv.TiDB).
+		// Send to all TiDB instances.
+		SetTiDBServerID(0).
+		SetStartTS(math.MaxUint64).
+		Build()
+	if err != nil {
+		return err
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
+	}
+
+	return nil
+}
+
+func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
 		if s.ReadLock {
@@ -2698,7 +2905,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		}
 	case ast.FlushPrivileges:
 		dom := domain.GetDomain(e.Ctx())
-		return dom.NotifyUpdatePrivilege()
+		return dom.NotifyUpdateAllUsersPrivilege()
 	case ast.FlushTiDBPlugin:
 		dom := domain.GetDomain(e.Ctx())
 		for _, pluginName := range s.Plugins {
@@ -2709,6 +2916,8 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		}
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
+	case ast.FlushStatsDelta:
+		return e.executeFlushStatsDelta(ctx, s)
 	}
 	return nil
 }

@@ -433,3 +433,79 @@ set @@session.default_collation_for_utf8mb4=default;
 DROP TABLE IF EXISTS `t`;
 CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
 SHOW CREATE TABLE `t`;
+
+
+# TestShowColumns
+connection default;
+create database test_show_columns_db;
+create user test_show_columns_user;
+create table test_show_columns_db.t (a int, b int);
+create view test_show_columns_db.v (x, y) AS select a as aa, b as bb from test_show_columns_db.t;
+
+--echo // no grant would report error
+connect (test_show_columns_user, localhost, test_show_columns_user,,);
+--error 1142
+show columns from test_show_columns_db.t;
+--error 1142
+show columns from test_show_columns_db.v;
+
+--echo // with column privilege, specific columns are shown.
+connection default;
+grant select(a) on test_show_columns_db.t to test_show_columns_user;
+grant select(x) on test_show_columns_db.v to test_show_columns_user;
+connection test_show_columns_user;
+show columns from test_show_columns_db.t;
+show columns from test_show_columns_db.v;
+connection default;
+grant insert(b) on test_show_columns_db.t to test_show_columns_user;
+grant update(y) on test_show_columns_db.v to test_show_columns_user;
+connection test_show_columns_user;
+show columns from test_show_columns_db.t;
+show columns from test_show_columns_db.v;
+
+--echo // with table privilege, all columns are shown.
+connection default;
+revoke select(a),insert(b) on test_show_columns_db.t from test_show_columns_user;
+revoke select(x),update(y) on test_show_columns_db.v from test_show_columns_user;
+grant update on test_show_columns_db.t to test_show_columns_user;
+grant references on test_show_columns_db.v to test_show_columns_user;
+connection test_show_columns_user;
+show columns from test_show_columns_db.t;
+show columns from test_show_columns_db.v;
+
+disconnect test_show_columns_user;
+connection default;
+drop database test_show_columns_db;
+drop user test_show_columns_user;
+
+# TestShowIndex
+connection default;
+create database test_show_index_db;
+create user test_show_index_user;
+create table test_show_index_db.t (a int, b int);
+alter table test_show_index_db.t add index i1(a);
+alter table test_show_index_db.t add index i2(b);
+alter table test_show_index_db.t add index i3(a,b);
+
+--echo // no grant would report error
+connect (test_show_index_user, localhost, test_show_index_user,,);
+--error 1142
+show index from test_show_index_db.t;
+
+--echo // with any column privilege, indexes are shown.
+connection default;
+grant update(a) on test_show_index_db.t to test_show_index_user;
+connection test_show_index_user;
+show index from test_show_index_db.t;
+
+--echo // with table privilege, indexes are shown.
+connection default;
+revoke update(a) on test_show_index_db.t from test_show_index_user;
+grant references on test_show_index_db.t to test_show_index_user;
+connection test_show_index_user;
+show index from test_show_index_db.t;
+
+disconnect test_show_index_user;
+connection default;
+drop database test_show_index_db;
+drop user test_show_index_user;

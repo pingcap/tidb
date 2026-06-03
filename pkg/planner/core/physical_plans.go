@@ -836,6 +836,11 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1021,6 +1026,11 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -1089,7 +1099,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	ctx := ts.SCtx()
 	if ts.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
-		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+		idxCols, idxColLens := util.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {

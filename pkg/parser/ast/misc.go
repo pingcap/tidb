@@ -880,6 +880,7 @@ const (
 	FlushHosts
 	FlushLogs
 	FlushClientErrorsSummary
+	FlushStatsDelta
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -904,6 +905,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -963,6 +966,22 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(logType)
 	case FlushClientErrorsSummary:
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
+	case FlushStatsDelta:
+		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
+		if n.IsCluster {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("CLUSTER")
+		}
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
@@ -2842,6 +2861,8 @@ type PrivElem struct {
 
 	Priv mysql.PrivilegeType
 	Cols []*ColumnName
+
+	// Name stores the extended privilege like dynamic privilege.
 	Name string
 }
 
@@ -2931,7 +2952,7 @@ const (
 	GrantLevelGlobal
 	// GrantLevelDB means the privileges apply to all objects in a given database.
 	GrantLevelDB
-	// GrantLevelTable means the privileges apply to all columns in a given table.
+	// GrantLevelTable means the privileges apply to some or all columns in a given table.
 	GrantLevelTable
 )
 

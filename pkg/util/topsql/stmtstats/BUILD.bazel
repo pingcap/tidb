@@ -28,7 +28,7 @@ go_test(
     ],
     embed = [":stmtstats"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/topsql/state",

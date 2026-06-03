@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -115,14 +116,15 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-		PRIMARY KEY (Host, User));`
+		PRIMARY KEY (Host, User),
+		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
-		"PRIMARY KEY (Host, User)" +
-		")"
+		"PRIMARY KEY (Host, User)," +
+		"KEY i_user (User))"
 
 	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
 	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
@@ -160,7 +162,8 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		PRIMARY KEY (Host, DB, User));`
+		PRIMARY KEY (Host, DB, User),
+		KEY i_user (User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
@@ -171,7 +174,8 @@ const (
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
-		PRIMARY KEY (Host, DB, User, Table_name));`
+		PRIMARY KEY (Host, DB, User, Table_name),
+		KEY i_user (User));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(255),
@@ -181,7 +185,8 @@ const (
 		Column_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
-		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+		PRIMARY KEY (Host, DB, User, Table_name, Column_name),
+		KEY i_user (User));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
@@ -218,8 +223,8 @@ const (
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
-		INDEX idx_ver(version),
-		UNIQUE INDEX tbl(table_id)
+		PRIMARY KEY (table_id) CLUSTERED,
+		INDEX idx_ver(version)
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
@@ -237,7 +242,7 @@ const (
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
 		last_analyze_pos 	LONGBLOB DEFAULT NULL,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -251,7 +256,7 @@ const (
 		upper_bound LONGBLOB NOT NULL,
 		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
+		PRIMARY KEY (table_id, is_index, hist_id, bucket_id) CLUSTERED
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
@@ -317,7 +322,8 @@ const (
 		USER 				CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		DEFAULT_ROLE_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
 		DEFAULT_ROLE_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
+		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER),
+		KEY i_user (USER)
 	)`
 
 	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
@@ -336,7 +342,7 @@ const (
 		is_index 	TINYINT(2) NOT NULL,
 		hist_id 	BIGINT(64) NOT NULL,
 		value 		LONGBLOB,
-		INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
@@ -380,7 +386,8 @@ const (
 		HOST char(255) NOT NULL DEFAULT '',
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
-		PRIMARY KEY (USER,HOST,PRIV)
+		PRIMARY KEY (USER,HOST,PRIV),
+		KEY i_user (USER)
 	);`
 	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
 	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
@@ -424,7 +431,7 @@ const (
 		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		PRIMARY KEY (table_id, version, seq_no) CLUSTERED,
 		KEY table_create_time (table_id, create_time, seq_no),
     	KEY idx_create_time (create_time)
 	);`
@@ -436,7 +443,7 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version (table_id, version),
+		PRIMARY KEY (table_id, version) CLUSTERED,
 		KEY table_create_time (table_id, create_time),
     	KEY idx_create_time (create_time)
 	);`
@@ -503,7 +510,7 @@ const (
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
-		PRIMARY KEY (table_id));`
+		PRIMARY KEY (table_id) CLUSTERED);`
 
 	// CreatePasswordHistory is a table save history passwd.
 	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
@@ -591,6 +598,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -613,6 +621,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -852,6 +861,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the cluster id of this cluster
+	tidbClusterID = "cluster_id"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1238,16 +1249,44 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
-	// ...
-	// [version223, version238] is the version range reserved for patches of 8.5.x
-	// ...
+	// version 224
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version224 = 224
 
+	// version 225
+	// Add index on user field for some mysql tables.
+	version225 = 225
+
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	version226 = 226
+
+	// version 227
+	// Ensure `mysql.tidb_pitr_id_map` has `restore_id` and correct primary key.
+	// This fixes upgrades from customer branch `release-8.5-20250606-v8.5.2`, where
+	// version221 was used for adding `i_user` indexes on mysql privilege tables.
+	// In upstream `release-8.5`, version221 is the PITR schema change for
+	// `mysql.tidb_pitr_id_map` (`restore_id` + new primary key definition). When that
+	// customer branch later upgrades back to upstream `release-8.5`, bootstrap sees
+	// version221 as already applied and skips the upstream PITR DDL, so version227
+	// repairs the table schema.
+	version227 = 227
+
+	// version 228
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version228 = 228
+
+	// ...
+	// [version229, version238] is the version range reserved for patches of 8.5.x
+	// ...
 	// next version should start with 239
+
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version228
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1426,6 +1465,11 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer224,
+		upgradeToVer225,
+		upgradeToVer226,
+		upgradeToVer227,
+		upgradeToVer228,
 	}
 )
 
@@ -3282,7 +3326,7 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
 
@@ -3300,6 +3344,99 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
+func upgradeToVer226(s sessiontypes.Session, ver int64) {
+	if ver >= version226 {
+		return
+	}
+
+	writeClusterID(s)
+}
+
+func upgradeToVer227(s sessiontypes.Session, ver int64) {
+	if ver >= version227 {
+		return
+	}
+
+	// Make sure the table exists.
+	doReentrantDDL(s, CreatePITRIDMap)
+
+	// If the primary key columns are already as expected, the schema is already fixed.
+	expectedPKCols := []string{"restore_id", "restored_ts", "upstream_cluster_id", "segment_id"}
+	pkCols := getPrimaryKeyColsOrEmpty(s, mysql.SystemDB, "tidb_pitr_id_map")
+	if slices.Equal(pkCols, expectedPKCols) {
+		return
+	}
+
+	// Otherwise, execute the same DDLs as version221.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
+}
+
+func upgradeToVer228(s sessiontypes.Session, ver int64) {
+	if ver >= version228 {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.Off)
+}
+
+func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, `
+		SELECT COLUMN_NAME
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA=%? AND TABLE_NAME=%? AND INDEX_NAME='PRIMARY'
+		ORDER BY SEQ_IN_INDEX`,
+		dbName, tableName,
+	)
+	if err != nil {
+		logutil.BgLogger().Fatal("get primary key columns failed", zap.Error(err), zap.String("db", dbName), zap.String("table", tableName))
+	}
+	cols := make([]string, 0, len(rows))
+	for _, row := range rows {
+		cols = append(cols, row.GetString(0))
+	}
+	return cols
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3552,6 +3689,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeStmtSummaryVars(s)
 
 	writeDDLTableVersion(s)
+
+	writeClusterID(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")

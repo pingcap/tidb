@@ -15,11 +15,51 @@
 package rule
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
+
+func TestWithApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t11, t22")
+	tk.MustExec("create table t11(id int, name varchar(20))")
+	tk.MustExec("create table t22(id int, name varchar(20))")
+	tk.MustExec("insert into t11(id, name) values(1, 'test')")
+	tk.MustExec("insert into t22(id, name) values(1, 'test')")
+
+	sqls := []string{
+		`with temp as (
+select id from t22 order by name
+)
+select (select name from t11 where id = (case when temp.id = 1 then temp.id else temp.id end)) = 'test'
+from temp where id = 1`,
+		`with temp as (
+select id from t22
+)
+select (select name from t11 where id = (case when temp.id = 1 then temp.id else temp.id end)) = 'test'
+from temp where id = 1`,
+	}
+	for _, sql := range sqls {
+		tk.MustQuery(sql).Check(testkit.Rows("1"))
+		planRows := tk.MustQuery("explain " + sql).Rows()
+		hasApply := false
+		for _, row := range planRows {
+			if strings.Contains(fmt.Sprintf("%v", row), "Apply") {
+				hasApply = true
+				break
+			}
+		}
+		require.True(t, hasApply, "plan should contain Apply, sql: %s", sql)
+	}
+}
 
 func TestElinimateProjectionWithExpressionIndex(t *testing.T) {
 	originCfg := config.GetGlobalConfig()

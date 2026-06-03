@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -164,7 +165,6 @@ func TestPlanDigest4InList(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int);")
-	tk.MustExec("set global tidb_ignore_inlist_plan_digest=true;")
 	tk.Session().GetSessionVars().PlanID.Store(0)
 	queriesGroup1 := []string{
 		"select * from t where a in (1, 2);",
@@ -193,6 +193,32 @@ func TestPlanDigest4InList(t *testing.T) {
 			require.Equal(t, digest1, digest2)
 		})
 	}
+
+	// Issue 66623: same plans with different in-list lengths should have the same plan digest
+	t.Run("issue 66623: select * from t where a in (...) with varying lengths", func(t *testing.T) {
+		queries := []string{
+			"select * from t where a in (1, 2);",
+			"select * from t where a in (1, 2, 3);",
+			"select * from t where a in (1, 2, 3, 4);",
+			"select * from t where a in (1, 2, 3, 4, 5);",
+			"select * from t where a in (1, 2, 3, 4, 5, 6);",
+			"select * from t where a in (1, 2, 3, 4, 5, 6, 7);",
+		}
+		var firstDigest *parser.Digest
+		for i, query := range queries {
+			tk.MustExec(query)
+			info := tk.Session().ShowProcess()
+			require.NotNil(t, info)
+			p, ok := info.Plan.(base.Plan)
+			require.True(t, ok)
+			_, digest := core.NormalizePlan(p)
+			if i == 0 {
+				firstDigest = digest
+			} else {
+				require.Equal(t, firstDigest, digest, "query %d: %s", i, query)
+			}
+		}
+	})
 }
 
 func TestIssue47634(t *testing.T) {

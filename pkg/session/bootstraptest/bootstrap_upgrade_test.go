@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -95,6 +96,52 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 		require.Equal(t, statsMetaHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsMetaHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
 	}
+}
+
+// TestMysqlTablesWithoutClusteredPK pins the `mysql` base tables without a clustered
+// PRIMARY KEY. A diff flags a regression or a new table whose PK type was not
+// considered; the list also serves as a reference for future clustered-PK work.
+func TestMysqlTablesWithoutClusteredPK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	expected := []string{
+		"advisory_locks",
+		"bind_info",
+		"columns_priv",
+		"db",
+		"default_roles",
+		"dist_framework_meta",
+		"expr_pushdown_blacklist",
+		"gc_delete_range",
+		"gc_delete_range_done",
+		"global_grants",
+		"global_priv",
+		"global_variables",
+		"opt_rule_blacklist",
+		"password_history",
+		"plan_replayer_status",
+		"plan_replayer_task",
+		"request_unit_by_group",
+		"role_edges",
+		"stats_extended",
+		"stats_feedback",
+		"stats_top_n",
+		"tables_priv",
+		"tidb",
+		"tidb_ddl_reorg",
+		"tidb_kernel_options",
+		"tidb_pitr_id_map",
+		"tidb_runaway_queries",
+		"tidb_ttl_job_history",
+		"tidb_ttl_task",
+		"user",
+	}
+	tk.MustQuery(
+		"SELECT LOWER(table_name) FROM information_schema.tables " +
+			"WHERE table_schema = 'mysql' AND table_type = 'BASE TABLE' " +
+			"AND tidb_pk_type <> 'CLUSTERED' ORDER BY LOWER(table_name)",
+	).Check(testkit.Rows(expected...))
 }
 
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
@@ -460,7 +507,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 
 // checkDDLJobExecSucc is used to make sure the DDL operation is successful.
 func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
-	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
+	sql := fmt.Sprintf(" admin show ddl jobs 20 where job_id=%d", jobID)
 	suc := false
 	for i := 0; i < 20; i++ {
 		rows, err := execute(context.Background(), se, sql)
@@ -1057,4 +1104,28 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.Equal(t, "PREDICATE", row.GetString(0))
 		domCurrent.Close()
 	})
+}
+
+func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBAutoAnalyzeConcurrency)))
+
+	upgradeFromVersion := session.CurrentBootstrapVersion - 1
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(upgradeFromVersion))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, tk.Session(), int(upgradeFromVersion))
+	tk.MustExec("update mysql.global_variables set variable_value='8' where variable_name='tidb_auto_analyze_concurrency'")
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	testkit.NewTestKit(t, store).MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows("8"))
 }

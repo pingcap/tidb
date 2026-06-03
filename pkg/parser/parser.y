@@ -883,6 +883,7 @@ import (
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
+	statsDelta                 "STATS_DELTA"
 	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
 	statsHistograms            "STATS_HISTOGRAMS"
@@ -1176,6 +1177,7 @@ import (
 	Fields                                 "Fields clause"
 	FieldList                              "field expression list"
 	FlushOption                            "Flush option"
+	ClusterOpt                             "Cluster option"
 	ForceOpt                               "Force opt"
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
@@ -1284,6 +1286,8 @@ import (
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
+	StatsObject                            "Stats object"
+	StatsObjectList                        "Stats object list"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -7189,6 +7193,7 @@ TiDBKeyword:
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_BUCKETS"
+|	"STATS_DELTA"
 |	"STATS_EXTENDED"
 |	"STATS_HEALTHY"
 |	"STATS_HISTOGRAMS"
@@ -12209,6 +12214,14 @@ FlushOption:
 			Tp: ast.FlushClientErrorsSummary,
 		}
 	}
+|	"STATS_DELTA" StatsObjectList ClusterOpt
+	{
+		$$ = &ast.FlushStmt{
+			Tp:           ast.FlushStatsDelta,
+			FlushObjects: $2.([]*ast.StatsObject),
+			IsCluster:    $3.(bool),
+		}
+	}
 
 LogTypeOpt:
 	/* empty */
@@ -12234,6 +12247,16 @@ LogTypeOpt:
 |	"SLOW"
 	{
 		$$ = ast.LogTypeSlow
+	}
+
+ClusterOpt:
+	/* empty */
+	{
+		$$ = false
+	}
+|	"CLUSTER"
+	{
+		$$ = true
 	}
 
 NoWriteToBinLogAliasOpt:
@@ -15383,6 +15406,46 @@ UnlockStatsStmt:
 		x.PartitionNames = $6.([]model.CIStr)
 		$$ = &ast.UnlockStatsStmt{
 			Tables: []*ast.TableName{x},
+		}
+	}
+
+StatsObjectList:
+	StatsObject
+	{
+		$$ = []*ast.StatsObject{$1.(*ast.StatsObject)}
+	}
+|	StatsObjectList ',' StatsObject
+	{
+		$$ = append($1.([]*ast.StatsObject), $3.(*ast.StatsObject))
+	}
+
+StatsObject:
+	'*' '.' '*'
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeGlobal,
+		}
+	}
+|	Identifier '.' '*'
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeDatabase,
+			DBName:           model.NewCIStr($1),
+		}
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			DBName:           model.NewCIStr($1),
+			TableName:        model.NewCIStr($3),
+		}
+	}
+|	Identifier
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			TableName:        model.NewCIStr($1),
 		}
 	}
 

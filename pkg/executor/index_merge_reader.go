@@ -191,7 +191,7 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 		}
 		for i, idx := range e.indexes {
 			if idx != nil && idx.Global {
-				keyRange, _ := distsql.IndexRangesToKVRanges(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
+				keyRange, _ := distsql.IndexRangesToKVRanges(e.sctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
 				e.partitionKeyRanges[i] = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
 			} else {
 				for _, pKeyRanges := range tmpPartitionKeyRanges {

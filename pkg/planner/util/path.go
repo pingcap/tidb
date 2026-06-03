@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -107,6 +108,19 @@ type AccessPath struct {
 	IsUkShardIndexPath bool
 	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
 	IndexLookUpPushDownBy IndexLookUpPushDownByType
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -142,6 +156,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -155,6 +171,9 @@ func (path *AccessPath) Clone() *AccessPath {
 			tmp = append(tmp, oneAlternative.Clone())
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, CloneRanges(ranges))
 	}
 	return ret
 }
@@ -172,6 +191,19 @@ func (path *AccessPath) IsTiKVTablePath() bool {
 // IsTiFlashSimpleTablePath returns true if it's a TiFlash path and will not use any special indexes like vector index.
 func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 	return path.StoreType == kv.TiFlash && path.Index == nil
+}
+
+// IsFullScanRange checks whether this access path covers the full scan range without any
+// filtering that limits the scanned table or index ranges. For integer-handle table paths,
+// tableInfo is used to account for unsigned primary-key handle ranges.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	return ranger.HasFullRange(path.Ranges, unsignedIntHandle)
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.

@@ -323,10 +323,6 @@ tools/bin/golangci-lint:
 	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
-.PHONY: tools/bin/vfsgendev
-tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
-
 .PHONY: tools/bin/gotestsum
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
@@ -381,17 +377,9 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl
 
-.PHONY: lightning_web
-lightning_web:
-	@cd lightning/web && npm install && npm run build
-
 .PHONY: build_br
 build_br:
 	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
-
-.PHONY: build_lightning_for_web
-build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
 build_lightning:
@@ -475,10 +463,6 @@ br_compatibility_test_prepare:
 br_compatibility_test:
 	@cd br && tests/run_compatible.sh run
 
-.PHONY: mock_s3iface
-mock_s3iface: mockgen
-	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
-
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_lightning
 mock_lightning: mockgen
@@ -530,9 +514,8 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
-data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
+data_parsers: pkg/lightning/mydump/parser_generated.go
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling
 build_dumpling:
@@ -640,14 +623,6 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
-
-.PHONY: bazel_bin
-bazel_bin: ## Build importer/tidb binary files with Bazel build system
-	mkdir -p bin; \
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
- 	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
- 	cp -f ${IMPORTER_PATH} ./bin/ ;
 
 .PHONY: bazel_bin
 bazel_bin: ## Build importer/tidb binary files with Bazel build system

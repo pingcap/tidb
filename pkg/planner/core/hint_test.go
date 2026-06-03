@@ -15,10 +15,15 @@
 package core_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestSetVarTimestampHintsWorks(t *testing.T) {
@@ -78,4 +83,41 @@ func TestSetVarHintsWithExplain(t *testing.T) {
 	tk.MustExec(`explain select * from t where a = 1 and sleep(0.1);`)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
+}
+
+func TestWriteSlowLogHint(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec(`use test`)
+		testKit.MustExec(`create table t(a int);`)
+		testKit.MustExec(`select * from t where a = 1;`)
+
+		core, recorded := observer.New(zap.WarnLevel)
+		logger := zap.New(core)
+		prev := logutil.SlowQueryLogger
+		logutil.SlowQueryLogger = logger
+		defer func() { logutil.SlowQueryLogger = prev }()
+
+		sql := "select /*+ write_slow_log */ * from t where a = 1;"
+		checkWriteSlowLog := func(expectWrite bool) {
+			if !expectWrite {
+				require.Equal(t, 0, recorded.Len())
+			} else {
+				require.NotEqual(t, 0, recorded.Len())
+			}
+
+			writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
+				if entry.Level == zap.WarnLevel && strings.Contains(entry.Message, sql) {
+					return true
+				}
+				return false
+			})
+			require.Equal(t, expectWrite, writeMsg)
+		}
+
+		testKit.MustExec(`select * from t where a = 1;`)
+		checkWriteSlowLog(false)
+
+		testKit.MustExec(sql)
+		checkWriteSlowLog(true)
+	})
 }

@@ -421,6 +421,26 @@ func (cc *clientConn) closeWithoutLock() error {
 	return closeConn(cc)
 }
 
+func (cc *clientConn) currentResourceGroupName() string {
+	if ctx := cc.getCtx(); ctx != nil {
+		if name := ctx.GetSessionVars().ResourceGroupName; name != "" {
+			return name
+		}
+	}
+	return resourcegroup.DefaultResourceGroupName
+}
+
+func (cc *clientConn) moveResourceGroupCounter(oldGroup string) {
+	if oldGroup == "" {
+		oldGroup = resourcegroup.DefaultResourceGroupName
+	}
+	newGroup := cc.currentResourceGroupName()
+	if oldGroup != newGroup {
+		metrics.ConnGauge.WithLabelValues(oldGroup).Dec()
+		metrics.ConnGauge.WithLabelValues(newGroup).Inc()
+	}
+}
+
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
 // and auth salt to the client.
 func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
@@ -487,7 +507,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
 		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.ReadPacket()
+	data, err := cc.pkt.ReadPacket()
+	if err == nil && cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().InPacketBytes.Add(uint64(len(data)))
+	}
+	return data, err
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -496,6 +520,9 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
+	if cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
+	}
 	return cc.pkt.WritePacket(data)
 }
 
@@ -1279,6 +1306,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().InPacketBytes.Store(0)
+		cc.ctx.GetSessionVars().OutPacketBytes.Store(0)
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1968,7 +1997,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal.Value)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2070,9 +2099,17 @@ func (cc *clientConn) handleStmt(
 				//nolint: errcheck
 				rs.Finish()
 			})
+		fn := func() bool {
+			if cc.bufReadConn != nil {
+				return cc.bufReadConn.IsAlive() != 0
+			}
+			return true
+		}
+		cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
 		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
+		defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}
@@ -2484,6 +2521,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
+	oldResourceGroup := cc.currentResourceGroupName()
 	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
@@ -2516,6 +2554,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
 	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
 	err := cc.openSession()
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	if err != nil {
 		return err
 	}
@@ -2543,6 +2582,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	oldResourceGroup := cc.currentResourceGroupName()
 	user := cc.ctx.GetSessionVars().User
 	err := cc.ctx.Close()
 	if err != nil {
@@ -2558,6 +2598,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}

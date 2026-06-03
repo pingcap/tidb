@@ -179,6 +179,7 @@ go_test(
         "//pkg/util",
         "//pkg/util/benchdaily",
         "//pkg/util/chunk",
+        "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_failpoint//:failpoint",

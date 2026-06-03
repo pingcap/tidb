@@ -1453,6 +1453,18 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
+		{"flush stats_delta", false, ""},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA `cluster`"},
+		{"flush stats_delta cluster cluster", true, "FLUSH STATS_DELTA `cluster` CLUSTER"},
+		{"flush stats_delta *.*", true, "FLUSH STATS_DELTA *.*"},
+		{"flush stats_delta *.* cluster", true, "FLUSH STATS_DELTA *.* CLUSTER"},
+		{"flush stats_delta db1.*", true, "FLUSH STATS_DELTA `db1`.*"},
+		{"flush stats_delta db1.* cluster", true, "FLUSH STATS_DELTA `db1`.* CLUSTER"},
+		{"flush stats_delta t1", true, "FLUSH STATS_DELTA `t1`"},
+		{"flush stats_delta db1.t1", true, "FLUSH STATS_DELTA `db1`.`t1`"},
+		{"flush stats_delta db1.t1 cluster", true, "FLUSH STATS_DELTA `db1`.`t1` CLUSTER"},
+		{"flush stats_delta db1.t1, db2.*", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*"},
+		{"flush stats_delta db1.t1, db2.* cluster", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.* CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -4655,6 +4667,21 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints, 2)
 	require.Equal(t, "ignore_plan_cache", hints[0].HintName.L)
 	require.Equal(t, "ignore_plan_cache", hints[1].HintName.L)
+
+	// Test WRITE_SLOW_LOG
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG(), write_slow_log() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 0)
+
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG, write_slow_log*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "write_slow_log", hints[0].HintName.L)
+	require.Equal(t, "write_slow_log", hints[1].HintName.L)
 
 	// Test USE_CASCADES
 	stmt, _, err = p.Parse("select /*+ USE_CASCADES(true), use_cascades(false) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")

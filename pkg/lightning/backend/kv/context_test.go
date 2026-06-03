@@ -36,6 +36,7 @@ import (
 )
 
 func TestLitExprContext(t *testing.T) {
+	baseFlags := types.DefaultStmtFlags &^ types.FlagAllowNegativeToUnsigned
 	cases := []struct {
 		sqlMode       mysql.SQLMode
 		sysVars       map[string]string
@@ -47,7 +48,7 @@ func TestLitExprContext(t *testing.T) {
 		{
 			sqlMode:    mysql.ModeNone,
 			timestamp:  1234567,
-			checkFlags: types.DefaultStmtFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelWarn
@@ -68,7 +69,7 @@ func TestLitExprContext(t *testing.T) {
 		{
 			sqlMode: mysql.ModeStrictTransTables | mysql.ModeNoZeroDate | mysql.ModeNoZeroInDate |
 				mysql.ModeErrorForDivisionByZero,
-			checkFlags: types.DefaultStmtFlags,
+			checkFlags: baseFlags,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
@@ -80,7 +81,7 @@ func TestLitExprContext(t *testing.T) {
 		},
 		{
 			sqlMode:    mysql.ModeNoZeroDate | mysql.ModeNoZeroInDate | mysql.ModeErrorForDivisionByZero,
-			checkFlags: types.DefaultStmtFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelWarn
@@ -92,7 +93,7 @@ func TestLitExprContext(t *testing.T) {
 		},
 		{
 			sqlMode:    mysql.ModeStrictTransTables | mysql.ModeNoZeroInDate,
-			checkFlags: types.DefaultStmtFlags | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
@@ -104,7 +105,7 @@ func TestLitExprContext(t *testing.T) {
 		},
 		{
 			sqlMode:    mysql.ModeStrictTransTables | mysql.ModeNoZeroDate,
-			checkFlags: types.DefaultStmtFlags | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
@@ -116,7 +117,7 @@ func TestLitExprContext(t *testing.T) {
 		},
 		{
 			sqlMode:    mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
-			checkFlags: types.DefaultStmtFlags | types.FlagIgnoreZeroInDateErr | types.FlagIgnoreInvalidDateErr,
+			checkFlags: baseFlags | types.FlagIgnoreZeroInDateErr | types.FlagIgnoreInvalidDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
