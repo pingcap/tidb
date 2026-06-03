@@ -636,13 +636,8 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 	workerReady := make(chan *protectedWorker, 1)
 	onLeaseLost := func() {
 		leaseLostOnce.Do(func() {
-			go func() {
-				select {
-				case worker := <-workerReady:
-					worker.stop(workerStopLeaseLost)
-				case <-ctx.Done():
-				}
-			}()
+			worker := <-workerReady
+			worker.stop(workerStopLeaseLost)
 		})
 	}
 
@@ -671,13 +666,19 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 	require.NoError(t, err)
 	defer objstore.TESTStopRenewal(lock)
 
-	createdWorker := startProtectedWorker(t, ctx, audit, "owner-a", name, lock.String())
+	lockInfo := lock.String()
+	createdWorker := startProtectedWorker(t, ctx, audit, "owner-a", name, lockInfo)
+	workerReady <- createdWorker
 	step, ok := createdWorker.requestStep(t)
 	require.True(t, ok)
 	require.Equal(t, 1, step)
-	workerReady <- createdWorker
 
-	waitClosed(t, createdWorker.lostCh(), "lease lost")
+	select {
+	case <-createdWorker.lostCh():
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for lease lost: name=%s migrationWrite=%t writeError=%t lock=%s audit=%#v",
+			name, migrationWrite, writeError, lockInfo, audit.snapshot())
+	}
 	createdWorker.waitStopped(t)
 	require.Equal(t, workerStopLeaseLost, createdWorker.stopReason())
 	_, ok = createdWorker.requestStep(t)
