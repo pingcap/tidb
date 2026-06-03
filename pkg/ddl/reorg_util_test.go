@@ -665,7 +665,6 @@ func TestWaitForFreshTiKVCapacity(t *testing.T) {
 	capacityForTest := func(stores ...TiKVStoreCapacity) *TiKVClusterCapacity {
 		capacity := &TiKVClusterCapacity{Source: tikvCapacitySourcePDGRPCStoreStats}
 		for _, store := range stores {
-			store := store
 			appendTiKVStoreCapacity(capacity, &store)
 		}
 		return capacity
