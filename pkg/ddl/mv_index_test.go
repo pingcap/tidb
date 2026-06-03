@@ -130,3 +130,32 @@ func TestCreateMaterializedViewOnPartitionTable(t *testing.T) {
 		"[ddl:8200]Unsupported CREATE MATERIALIZED VIEW on partition table",
 	)
 }
+
+func TestCreateUniqueIndexOnMaterializedView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t_mv_unique (
+		id bigint not null primary key,
+		g1 int not null,
+		v1 bigint not null,
+		key idx_g1 (g1)
+	)`)
+	tk.MustExec("insert into t_mv_unique values (1, 1, 10), (2, 1, 20)")
+	tk.MustExec("create materialized view log on t_mv_unique (id, g1, v1)")
+	tk.MustExec(`create materialized view mv_unique_agg (g1, cnt)
+		refresh fast
+		as select g1, count(*) as cnt from t_mv_unique group by g1`)
+
+	tk.MustGetErrMsg(
+		"create unique index u_g1 on mv_unique_agg (g1)",
+		"[ddl:8200]Unsupported CREATE UNIQUE INDEX on materialized view table",
+	)
+	tk.MustGetErrMsg(
+		"alter table mv_unique_agg add unique key uk_g1 (g1)",
+		"[ddl:8200]Unsupported ALTER TABLE ADD UNIQUE INDEX on materialized view table",
+	)
+	tk.MustExec("create index idx_mv_g1 on mv_unique_agg (g1)")
+	tk.MustExec("alter table mv_unique_agg add key idx_mv_cnt (cnt)")
+}

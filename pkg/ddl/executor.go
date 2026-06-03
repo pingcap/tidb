@@ -1993,6 +1993,18 @@ func checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs []*ast.AlterTable
 	}
 	return nil
 }
+func hasAlterTableAddUniqueIndexOperation(specs []*ast.AlterTableSpec) bool {
+	for _, spec := range specs {
+		if spec.Tp != ast.AlterTableAddConstraint || spec.Constraint == nil {
+			continue
+		}
+		switch spec.Constraint.Tp {
+		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			return true
+		}
+	}
+	return false
+}
 
 func collectAlterTableSpecAffectedColumns(spec *ast.AlterTableSpec) []string {
 	cols := make([]string, 0, 2)
@@ -2112,6 +2124,9 @@ func checkAlterTableMaterializedViewConstraints(
 
 	if tblInfo.MaterializedView != nil {
 		// MATERIALIZED VIEW table allows TiFlash replica and index-related ALTER TABLE operations.
+		if hasAlterTableAddUniqueIndexOperation(specs) {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE ADD UNIQUE INDEX on materialized view table")
+		}
 		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) {
 			return nil
 		}
@@ -2137,13 +2152,15 @@ func checkAlterTableMaterializedViewConstraints(
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
 }
 
-func checkIndexOperationMaterializedViewConstraints(
-	sv *variable.SessionVars,
-	tblInfo *model.TableInfo,
-	op string,
-) error {
+// CheckIndexOperationMaterializedViewConstraints checks whether a CREATE, ALTER, or DROP
+// index operation is disallowed on a materialized view log table, a materialized view
+// table (for unique indexes), or a materialized view shadow table.
+func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *model.TableInfo, op string, unique bool) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
+	}
+	if unique && tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
 }
@@ -5417,7 +5434,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "CREATE INDEX"); err != nil {
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "CREATE INDEX", false); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
@@ -5534,7 +5551,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
+		if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX", false); err != nil {
 			return errors.Trace(err)
 		}
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
@@ -5544,7 +5561,11 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
+	op := "CREATE INDEX"
+	if unique {
+		op = "CREATE UNIQUE INDEX"
+	}
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), op, unique); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -6007,7 +6028,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
-	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "DROP INDEX"); err != nil {
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "DROP INDEX", false); err != nil {
 		return errors.Trace(err)
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -7523,15 +7544,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
-}
-
-func getRenameTableUniqueIDs(jobW *JobWrapper, schema bool) []int64 {
-	if !schema {
-		return []int64{jobW.TableID}
-	}
-
-	oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
-	return []int64{oldSchemaID, jobW.SchemaID}
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
