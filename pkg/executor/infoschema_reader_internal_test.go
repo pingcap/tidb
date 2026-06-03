@@ -497,7 +497,7 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 
 		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.$mlog$keep"}, pm.calls)
+		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.$mlog$keep", "test.base"}, pm.calls)
 		require.Len(t, mt.rows, 1)
 
 		row := mt.rows[0]
@@ -513,6 +513,37 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		require.Equal(t, types.NewStringDatum("DEFERRED"), row[9])
 		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP"), row[10])
 		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP + INTERVAL 1 HOUR"), row[11])
+	})
+
+	t.Run("filters invisible base table", func(t *testing.T) {
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base_hidden"), State: model.StatePublic},
+				{ID: 2, Name: pmodel.NewCIStr("base_visible"), State: model.StatePublic},
+				newMLogTableInfo(3, "$mlog$hidden_base", 1),
+				newMLogTableInfo(4, "$mlog$visible_base", 2),
+			}),
+			extractor: plannercore.NewInfoSchemaTiDBMLogsExtractor(),
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+				newColumnInfo("base_table_name"),
+			},
+		}
+
+		sctx := defaultCtx()
+		pm := &stubPrivilegeManager{
+			allow: func(_, table string) bool {
+				return table != "base_hidden"
+			},
+		}
+		privilege.BindPrivilegeManager(sctx, pm)
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{"test.$mlog$hidden_base", "test.base_hidden", "test.$mlog$visible_base", "test.base_visible"}, pm.calls)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("$mlog$visible_base"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("base_visible"), mt.rows[0][8])
 	})
 
 	t.Run("uses base predicates only", func(t *testing.T) {
@@ -681,7 +712,7 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.base_deny", "test.base_keep"}, pm.calls)
+		require.ElementsMatch(t, []string{"test.base_deny", "test.base_keep", "test.$mlog$keep", "test.mv_keep"}, pm.calls)
 		require.Len(t, mt.rows, 1)
 
 		row := mt.rows[0]
@@ -695,6 +726,42 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		require.Equal(t, types.NewStringDatum("test"), row[7])
 		require.Equal(t, types.NewIntDatum(6), row[8])
 		require.Equal(t, types.NewStringDatum("mv_keep"), row[9])
+	})
+
+	t.Run("filters invisible mlog and mviews", func(t *testing.T) {
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				newBaseTableInfoWithMViews(1, "base_with_hidden_mlog", 3, 5),
+				newBaseTableInfoWithMViews(2, "base_with_hidden_mv", 4, 6, 7),
+				newMLogTableInfo(3, "$mlog$hidden", 1),
+				newMLogTableInfo(4, "$mlog$visible", 2),
+				newMViewTableInfoWithBase(5, "mv_hidden_by_mlog", 1),
+				newMViewTableInfoWithBase(6, "mv_hidden", 2),
+				newMViewTableInfoWithBase(7, "mv_visible", 2),
+			}),
+			extractor: plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor(),
+		}
+
+		sctx := defaultCtx()
+		pm := &stubPrivilegeManager{
+			allow: func(_, table string) bool {
+				switch table {
+				case "$mlog$hidden", "mv_hidden", "mv_hidden_by_mlog":
+					return false
+				default:
+					return true
+				}
+			},
+		}
+		privilege.BindPrivilegeManager(sctx, pm)
+
+		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), sctx)
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("base_with_hidden_mv"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("$mlog$visible"), mt.rows[0][5])
+		require.Equal(t, types.NewStringDatum("mv_visible"), mt.rows[0][9])
+		require.NotContains(t, pm.calls, "test.mv_hidden_by_mlog")
 	})
 
 	t.Run("uses table predicates only", func(t *testing.T) {

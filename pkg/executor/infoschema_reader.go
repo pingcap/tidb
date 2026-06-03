@@ -1727,13 +1727,14 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 	}
 
 	rows := make([][]types.Datum, 0)
+	activeRoles := sctx.GetSessionVars().ActiveRoles
 	for i, tbl := range tables {
 		schema := schemas[i]
 		mlogInfo := tbl.MaterializedViewLog
 		if mlogInfo == nil {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
 
@@ -1742,6 +1743,10 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			baseInfo = baseInfos[i]
 		} else {
 			baseInfo = e.getMLogBaseTableInfo(ctx, schema, tbl)
+		}
+		if checker != nil && baseInfo.name != "" &&
+			!checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.AllPrivMask) {
+			continue
 		}
 
 		columnNames := make([]string, 0, len(mlogInfo.Columns))
@@ -1914,17 +1919,21 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 	}
 
 	rows := make([][]types.Datum, 0)
+	activeRoles := sctx.GetSessionVars().ActiveRoles
 	for i, tbl := range tables {
 		schema := schemas[i]
 		if tbl.MaterializedViewBase == nil {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
 
 		mlogInfo := e.getBaseTableMLogInfo(ctx, tbl)
 		if mlogInfo.id == 0 || mlogInfo.name == "" {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(activeRoles, schema.L, strings.ToLower(mlogInfo.name), "", mysql.AllPrivMask) {
 			continue
 		}
 		if hasMLogPredicates && filterMViewDependencyByMLogPredicates(ex, mlogInfo) {
@@ -1933,6 +1942,9 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 
 		deps := e.getBaseTableMViewDependencies(ctx, tbl)
 		for _, dep := range deps {
+			if checker != nil && !checker.RequestVerification(activeRoles, dep.schema.L, strings.ToLower(dep.name), "", mysql.AllPrivMask) {
+				continue
+			}
 			if hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep) {
 				continue
 			}
