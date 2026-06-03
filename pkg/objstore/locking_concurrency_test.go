@@ -105,13 +105,15 @@ type protectedWorker struct {
 	family   string
 	lockInfo string
 
-	stepReq chan chan workerStepResult
-	stopped chan struct{}
-	lost    chan struct{}
+	stepReq     chan chan workerStepResult
+	stopped     chan struct{}
+	lost        chan struct{}
+	terminating chan struct{}
 
 	stopOnce sync.Once
-	reasonMu sync.Mutex
+	stateMu  sync.Mutex
 	reason   workerStopReason
+	terminal bool
 	steps    int
 }
 
@@ -120,20 +122,26 @@ type workerStepResult struct {
 	ok   bool
 }
 
-func startProtectedWorker(ctx context.Context, audit *criticalSectionAudit, ownerID, family, lockInfo string) *protectedWorker {
+func startProtectedWorker(t *testing.T, ctx context.Context, audit *criticalSectionAudit, ownerID, family, lockInfo string) *protectedWorker {
+	t.Helper()
 	workerCtx, cancel := context.WithCancel(ctx)
 	w := &protectedWorker{
-		cancel:   cancel,
-		audit:    audit,
-		ownerID:  ownerID,
-		family:   family,
-		lockInfo: lockInfo,
-		stepReq:  make(chan chan workerStepResult),
-		stopped:  make(chan struct{}),
-		lost:     make(chan struct{}),
-		reason:   workerStopTestStop,
+		cancel:      cancel,
+		audit:       audit,
+		ownerID:     ownerID,
+		family:      family,
+		lockInfo:    lockInfo,
+		stepReq:     make(chan chan workerStepResult),
+		stopped:     make(chan struct{}),
+		lost:        make(chan struct{}),
+		terminating: make(chan struct{}),
+		reason:      workerStopTestStop,
 	}
 	go w.loop(workerCtx)
+	t.Cleanup(func() {
+		w.stop(workerStopTestStop)
+		w.waitStopped(t)
+	})
 	return w
 }
 
@@ -146,9 +154,17 @@ func (w *protectedWorker) loop(ctx context.Context) {
 			w.audit.recordStopped(w.ownerID, w.family, w.lockInfo, string(w.stopReason()))
 			return
 		case reply := <-w.stepReq:
+			w.stateMu.Lock()
+			if w.terminal {
+				w.stateMu.Unlock()
+				reply <- workerStepResult{ok: false}
+				continue
+			}
 			w.steps++
 			w.audit.recordStep(w.ownerID, w.family, w.lockInfo, fmt.Sprintf("step-%d", w.steps))
-			reply <- workerStepResult{step: w.steps, ok: true}
+			step := w.steps
+			w.stateMu.Unlock()
+			reply <- workerStepResult{step: step, ok: true}
 		}
 	}
 }
@@ -157,6 +173,8 @@ func (w *protectedWorker) requestStep(t *testing.T) (int, bool) {
 	t.Helper()
 	reply := make(chan workerStepResult, 1)
 	select {
+	case <-w.terminating:
+		return 0, false
 	case <-w.stopped:
 		return 0, false
 	case w.stepReq <- reply:
@@ -166,6 +184,8 @@ func (w *protectedWorker) requestStep(t *testing.T) (int, bool) {
 	select {
 	case result := <-reply:
 		return result.step, result.ok
+	case <-w.terminating:
+		return 0, false
 	case <-w.stopped:
 		return 0, false
 	case <-time.After(500 * time.Millisecond):
@@ -176,13 +196,15 @@ func (w *protectedWorker) requestStep(t *testing.T) (int, bool) {
 
 func (w *protectedWorker) stop(reason workerStopReason) {
 	w.stopOnce.Do(func() {
-		w.reasonMu.Lock()
+		w.stateMu.Lock()
 		w.reason = reason
-		w.reasonMu.Unlock()
+		w.terminal = true
 		if reason == workerStopLeaseLost {
 			w.audit.recordLost(w.ownerID, w.family, w.lockInfo, string(reason))
 			close(w.lost)
 		}
+		close(w.terminating)
+		w.stateMu.Unlock()
 		w.cancel()
 	})
 }
@@ -197,8 +219,8 @@ func (w *protectedWorker) waitStopped(t *testing.T) {
 }
 
 func (w *protectedWorker) stopReason() workerStopReason {
-	w.reasonMu.Lock()
-	defer w.reasonMu.Unlock()
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	return w.reason
 }
 
@@ -221,19 +243,39 @@ func requireEventAction(t *testing.T, events []criticalSectionEvent, action stri
 	t.Fatalf("missing audit action %q in %#v", action, events)
 }
 
-func requireNoStepAfterStopped(t *testing.T, events []criticalSectionEvent, ownerID string) {
+func requireActionBeforeAction(t *testing.T, events []criticalSectionEvent, ownerID, beforeAction, afterAction string) {
 	t.Helper()
-	stoppedSeq := 0
+	beforeSeq := 0
+	afterSeq := 0
 	for _, event := range events {
-		if event.OwnerID == ownerID && event.Action == "stopped" {
-			stoppedSeq = event.Seq
+		if event.OwnerID != ownerID {
+			continue
+		}
+		if event.Action == beforeAction {
+			beforeSeq = event.Seq
+		}
+		if event.Action == afterAction {
+			afterSeq = event.Seq
+		}
+	}
+	require.NotZero(t, beforeSeq, "missing %s event for %s", beforeAction, ownerID)
+	require.NotZero(t, afterSeq, "missing %s event for %s", afterAction, ownerID)
+	require.Less(t, beforeSeq, afterSeq, "%s should be recorded before %s for %s", beforeAction, afterAction, ownerID)
+}
+
+func requireNoStepAfterAction(t *testing.T, events []criticalSectionEvent, ownerID, action string) {
+	t.Helper()
+	actionSeq := 0
+	for _, event := range events {
+		if event.OwnerID == ownerID && event.Action == action {
+			actionSeq = event.Seq
 			break
 		}
 	}
-	require.NotZero(t, stoppedSeq, "missing stopped event for %s", ownerID)
+	require.NotZero(t, actionSeq, "missing %s event for %s", action, ownerID)
 	for _, event := range events {
-		require.False(t, event.OwnerID == ownerID && event.Action == "step" && event.Seq > stoppedSeq,
-			"step after stopped: %#v", event)
+		require.False(t, event.OwnerID == ownerID && event.Action == "step" && event.Seq > actionSeq,
+			"step after %s: %#v", action, event)
 	}
 }
 
@@ -274,16 +316,23 @@ func TestLeaseLockCriticalSectionAuditSelfCheck(t *testing.T) {
 
 	events = audit.snapshot()
 	require.Len(t, events, 3+goroutines*perGoroutine)
+	ownerSteps := make(map[string]int)
 	for i, event := range events {
 		require.Equal(t, i+1, event.Seq)
 		require.False(t, event.At.IsZero())
+		if event.Family == "migration-read" && event.Action == "step" {
+			ownerSteps[event.OwnerID]++
+		}
+	}
+	for i := 0; i < goroutines; i++ {
+		require.Equal(t, perGoroutine, ownerSteps[fmt.Sprintf("owner-%d", i)])
 	}
 }
 
 func TestLeaseLockProtectedWorkerSelfCheck(t *testing.T) {
 	ctx := context.Background()
 	audit := newCriticalSectionAudit("worker-self-check")
-	worker := startProtectedWorker(ctx, audit, "owner-a", "migration-write", "lock-a")
+	worker := startProtectedWorker(t, ctx, audit, "owner-a", "migration-write", "lock-a")
 
 	step, ok := worker.requestStep(t)
 	require.True(t, ok)
@@ -304,5 +353,23 @@ func TestLeaseLockProtectedWorkerSelfCheck(t *testing.T) {
 	requireEventAction(t, events, "enter")
 	requireEventAction(t, events, "lost")
 	requireEventAction(t, events, "stopped")
-	requireNoStepAfterStopped(t, events, "owner-a")
+	requireActionBeforeAction(t, events, "owner-a", "lost", "stopped")
+	requireNoStepAfterAction(t, events, "owner-a", "lost")
+	requireNoStepAfterAction(t, events, "owner-a", "stopped")
+
+	testStopAudit := newCriticalSectionAudit("worker-test-stop-self-check")
+	testStopWorker := startProtectedWorker(t, ctx, testStopAudit, "owner-b", "migration-read", "lock-b")
+	step, ok = testStopWorker.requestStep(t)
+	require.True(t, ok)
+	require.Equal(t, 1, step)
+	testStopWorker.stop(workerStopTestStop)
+	testStopWorker.stop(workerStopLeaseLost)
+	testStopWorker.waitStopped(t)
+	require.Equal(t, workerStopTestStop, testStopWorker.stopReason())
+	select {
+	case <-testStopWorker.lostCh():
+		t.Fatal("test stop should not close lost channel")
+	default:
+	}
+	requireNoStepAfterAction(t, testStopAudit.snapshot(), "owner-b", "stopped")
 }
