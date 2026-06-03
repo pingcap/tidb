@@ -331,11 +331,16 @@ func TestCheckMViewUpdatable(t *testing.T) {
 		Name:                model.NewCIStr("$mlog$t"),
 		MaterializedViewLog: &metamodel.MaterializedViewLogInfo{},
 	}
+	shadow := &metamodel.TableInfo{
+		Name:                   model.NewCIStr("__mv_shadow_1"),
+		MaterializedViewShadow: &metamodel.MaterializedViewShadowInfo{SourceMViewID: 100},
+	}
 	base := &metamodel.TableInfo{Name: model.NewCIStr("t")}
 
 	require.NoError(t, CheckMViewUpdatable(vars, base, "", "INSERT"))
 	require.Error(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
 	require.Error(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
+	require.Error(t, CheckMViewUpdatable(vars, shadow, "", "INSERT"))
 
 	// InMaterializedViewMaintenance without InRestrictedSQL is an internal error.
 	vars.InMaterializedViewMaintenance = true
@@ -344,9 +349,12 @@ func TestCheckMViewUpdatable(t *testing.T) {
 	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
 	err = CheckMViewUpdatable(vars, mlog, "", "INSERT")
 	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
+	err = CheckMViewUpdatable(vars, shadow, "", "INSERT")
+	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
 
 	// InMaterializedViewMaintenance with InRestrictedSQL should succeed.
 	vars.InRestrictedSQL = true
 	require.NoError(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
 	require.NoError(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
+	require.NoError(t, CheckMViewUpdatable(vars, shadow, "", "INSERT"))
 }

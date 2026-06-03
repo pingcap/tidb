@@ -116,6 +116,26 @@ type Executor interface {
 	DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error
 	AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewStmt) error
 	AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error
+	CreateMaterializedViewShadowTable(
+		ctx sessionctx.Context,
+		schemaID int64,
+		schemaName pmodel.CIStr,
+		shadowTableInfo *model.TableInfo,
+	) error
+	RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		ctx sessionctx.Context,
+		schemaID int64,
+		schemaName pmodel.CIStr,
+		viewName pmodel.CIStr,
+		oldMViewID int64,
+		shadowTableID int64,
+		buildReadTSO uint64,
+		expectedOldMViewRevision *uint64,
+		expectedLastSuccessReadTSO uint64,
+		expectedLastSuccessReadTSONull bool,
+		nextTime *string,
+		shouldUpdateNextTime bool,
+	) error
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
@@ -1964,8 +1984,27 @@ func checkAlterTableBaseTableMLogColumnConstraints(
 	return nil
 }
 
+func allowInternalMViewShadowBypass(sv *variable.SessionVars) bool {
+	return sv != nil && sv.InMaterializedViewMaintenance && sv.InRestrictedSQL
+}
+
+func checkProtectedMaterializedViewShadowConstraint(
+	sv *variable.SessionVars,
+	tblInfo *model.TableInfo,
+	op string,
+) error {
+	if tblInfo.MaterializedViewShadow == nil {
+		return nil
+	}
+	if allowInternalMViewShadowBypass(sv) {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view shadow table", op))
+}
+
 func checkAlterTableMaterializedViewConstraints(
 	ctx context.Context,
+	sv *variable.SessionVars,
 	is infoschema.InfoSchema,
 	tblInfo *model.TableInfo,
 	specs []*ast.AlterTableSpec,
@@ -1987,14 +2026,22 @@ func checkAlterTableMaterializedViewConstraints(
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 
+	if err := checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op); err != nil {
+		return err
+	}
+
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
 }
 
-func checkIndexOperationMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
+func checkIndexOperationMaterializedViewConstraints(
+	sv *variable.SessionVars,
+	tblInfo *model.TableInfo,
+	op string,
+) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
 	}
-	return nil
+	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraints(
@@ -2098,7 +2145,14 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		return dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 	if !allowMaterializedViewRelated {
-		if err := checkAlterTableMaterializedViewConstraints(ctx, is, tb.Meta(), validSpecs, "ALTER TABLE"); err != nil {
+		if err := checkAlterTableMaterializedViewConstraints(
+			ctx,
+			sctx.GetSessionVars(),
+			is,
+			tb.Meta(),
+			validSpecs,
+			"ALTER TABLE",
+		); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4565,7 +4619,7 @@ func (e *executor) dropTableObject(
 				continue
 			}
 			if !allowMaterializedViewRelated {
-				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
+				if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tableInfo.Meta(), "DROP TABLE"); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -4686,7 +4740,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view log table")
 	}
-	if err := checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
+	if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -4731,17 +4785,25 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return nil
 }
 
-func checkTableMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
-	return checkTableMaterializedViewConstraintsWithOptions(tblInfo, op, false)
+func checkTableMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *model.TableInfo, op string) error {
+	return checkTableMaterializedViewConstraintsWithOptions(sv, tblInfo, op, false)
 }
 
-func checkTableMaterializedViewConstraintsAllowMVTable(tblInfo *model.TableInfo, op string) error {
-	return checkTableMaterializedViewConstraintsWithOptions(tblInfo, op, true)
+func checkTableMaterializedViewConstraintsAllowMVTable(sv *variable.SessionVars, tblInfo *model.TableInfo, op string) error {
+	return checkTableMaterializedViewConstraintsWithOptions(sv, tblInfo, op, true)
 }
 
-func checkTableMaterializedViewConstraintsWithOptions(tblInfo *model.TableInfo, op string, allowMVTable bool) error {
+func checkTableMaterializedViewConstraintsWithOptions(
+	sv *variable.SessionVars,
+	tblInfo *model.TableInfo,
+	op string,
+	allowMVTable bool,
+) error {
 	if !allowMVTable && tblInfo.MaterializedView != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
+	}
+	if err := checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op); err != nil {
+		return err
 	}
 	if tblInfo.MaterializedViewBase != nil &&
 		len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
@@ -4784,7 +4846,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 	}
 
 	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
-		if err := checkTableMaterializedViewConstraints(tbl.Meta(), "RENAME TABLE"); err != nil {
+		if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tbl.Meta(), "RENAME TABLE"); err != nil {
 			return errors.Trace(err)
 		}
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -4834,7 +4896,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		}
 
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
-			if err := checkTableMaterializedViewConstraints(t.Meta(), "RENAME TABLE"); err != nil {
+			if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "RENAME TABLE"); err != nil {
 				return errors.Trace(err)
 			}
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -5297,7 +5359,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkIndexOperationMaterializedViewConstraints(t.Meta(), "CREATE INDEX"); err != nil {
+		if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
 			return errors.Trace(err)
 		}
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
@@ -5307,7 +5369,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkIndexOperationMaterializedViewConstraints(t.Meta(), "CREATE INDEX"); err != nil {
+	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -5759,7 +5821,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
-	if err := checkIndexOperationMaterializedViewConstraints(t.Meta(), "DROP INDEX"); err != nil {
+	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "DROP INDEX"); err != nil {
 		return errors.Trace(err)
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -7388,7 +7450,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
-	case model.ActionCreateTable, model.ActionCreateSchema:
+	case model.ActionCreateTable, model.ActionCreateMaterializedViewShadow, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
 	case model.ActionCreateMaterializedView:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)

@@ -210,6 +210,64 @@ func TestTruncateTable(t *testing.T) {
 	require.NotEqual(t, version, rows[0][0].(string))
 }
 
+func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	originalHistoricalStats := testKit.MustQuery("select @@global.tidb_enable_historical_stats").Rows()[0][0]
+	testKit.MustExec("set global tidb_enable_historical_stats = 1")
+	defer testKit.MustExec(fmt.Sprintf("set global tidb_enable_historical_stats = %v", originalHistoricalStats))
+	testKit.MustExec("create table t_mv_oop_stats (a int not null, b int not null)")
+	testKit.MustExec("insert into t_mv_oop_stats values (1, 10), (1, 5), (2, 7)")
+	testKit.MustExec("create materialized view log on t_mv_oop_stats (a, b) purge next date_add(now(), interval 1 hour)")
+	testKit.MustExec("create materialized view mv_oop_stats (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_oop_stats group by a")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_oop_stats"))
+	require.NoError(t, err)
+	oldTableInfo := tbl.Meta()
+	testKit.MustExec("analyze table mv_oop_stats")
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTbl := h.GetPhysicalTableStats(oldTableInfo.ID, oldTableInfo)
+	require.False(t, statsTbl.Pseudo)
+
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		oldTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	oldVersion := rows[0][0].(string)
+
+	testKit.MustExec("insert into t_mv_oop_stats values (3, 4)")
+	testKit.MustExec("refresh materialized view mv_oop_stats complete out of place")
+	cutoverEvent := findEvent(h.DDLEventCh(), model.ActionMViewRefreshOutOfPlaceCutover)
+	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, cutoverEvent))
+
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_oop_stats"))
+	require.NoError(t, err)
+	newTableInfo := tbl.Meta()
+	require.NotEqual(t, oldTableInfo.ID, newTableInfo.ID)
+
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		newTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		oldTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, oldVersion, rows[0][0].(string))
+	testKit.MustQuery(
+		"select count(*) from mysql.stats_meta_history where table_id = ? and source = ?",
+		oldTableInfo.ID,
+		statsutil.StatsMetaHistorySourceSchemaChange,
+	).Check(testkit.Rows("1"))
+}
+
 func TestTruncateAPartitionedTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
