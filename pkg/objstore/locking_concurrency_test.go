@@ -826,3 +826,188 @@ func TestLeaseLockUnlockWaitsForInFlightRenewal(t *testing.T) {
 	require.NoError(t, next.Unlock(ctx))
 	requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
 }
+
+func TestLeaseLockStaleCleanupDoesNotDeleteLiveHolder(t *testing.T) {
+	for _, family := range []string{"truncate", "migration-write", "migration-read", "append-write"} {
+		t.Run(family, func(t *testing.T) {
+			testStaleCleanupDoesNotDeleteLiveHolder(t, family)
+		})
+	}
+}
+
+func TestLeaseLockStaleCleanupReclaimsOnlyExpiredEligibleInstance(t *testing.T) {
+	for _, family := range []string{"truncate", "migration-write", "migration-read", "append-write"} {
+		t.Run(family, func(t *testing.T) {
+			testStaleCleanupReclaimsOnlyExpiredEligibleInstance(t, family)
+		})
+	}
+}
+
+func testStaleCleanupDoesNotDeleteLiveHolder(t *testing.T, family string) {
+	t.Helper()
+	ctx := context.Background()
+	defer objstore.TESTSetStaleReclaimGrace(30 * time.Millisecond)()
+	strg, pth := createMockStorage(t)
+	audit := newCriticalSectionAudit("cleanup-live-" + family)
+
+	lock, prefix, cleanupAttempt := acquireLiveLockForCleanupTest(ctx, t, strg, family)
+	physicalPath := requireSinglePathWithPrefix(t, strg, prefix)
+	originalMeta, err := getLockMetaForTest(t, strg, physicalPath)
+	require.NoError(t, err)
+
+	worker := startProtectedWorker(t, ctx, audit, "owner-a", family, lock.String())
+	step, ok := worker.requestStep(t)
+	require.True(t, ok)
+	require.Equal(t, 1, step)
+
+	cleanupAttempt()
+	requireFileExists(t, filepath.Join(pth, physicalPath))
+	metaAfterCleanup, err := getLockMetaForTest(t, strg, physicalPath)
+	require.NoError(t, err)
+	require.Equal(t, originalMeta.TxnID, metaAfterCleanup.TxnID)
+
+	step, ok = worker.requestStep(t)
+	require.True(t, ok)
+	require.Equal(t, 2, step)
+	worker.stop(workerStopTestStop)
+	worker.waitStopped(t)
+
+	require.NoError(t, lock.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(pth, physicalPath))
+}
+
+func acquireLiveLockForCleanupTest(
+	ctx context.Context,
+	t *testing.T,
+	strg storeapi.Storage,
+	family string,
+) (*objstore.RemoteLock, string, func()) {
+	t.Helper()
+	switch family {
+	case "truncate":
+		lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "live-truncate", localLeaseClock())
+		require.NoError(t, err)
+		return lock, "truncating.lock.", func() {
+			reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg, localLeaseClock())
+			require.NoError(t, err)
+			require.False(t, reclaimed)
+		}
+	case "migration-write":
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "live-writer", localLeaseClock())
+		require.NoError(t, err)
+		return lock, "v1/LOCK.WRIT.", func() {
+			runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/LOCK")
+		}
+	case "migration-read":
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "live-reader", localLeaseClock())
+		require.NoError(t, err)
+		return lock, "v1/LOCK.READ.", func() {
+			runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/LOCK")
+		}
+	case "append-write":
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "live-append", localLeaseClock())
+		require.NoError(t, err)
+		return lock, "v1/APPEND_LOCK.WRIT.", func() {
+			runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/APPEND_LOCK")
+		}
+	default:
+		t.Fatalf("unknown cleanup family %s", family)
+		return nil, "", nil
+	}
+}
+
+func runCleanupAttemptThroughLockWithRetry(
+	t *testing.T,
+	strg storeapi.Storage,
+	locker objstore.Locker,
+	lockPath string,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(ctx, locker, strg, lockPath, "cleanup-contender", func() {}, localLeaseClock())
+	require.Error(t, err)
+	require.Nil(t, lock)
+}
+
+func testStaleCleanupReclaimsOnlyExpiredEligibleInstance(t *testing.T, family string) {
+	t.Helper()
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetStaleReclaimGrace(30 * time.Millisecond)()
+
+	now := time.Now()
+	stalePath, livePath, intentPath, unknownPath, zeroExpirePath, cleanupAttempt := cleanupBoundaryFixture(t, strg, family)
+
+	writeLockMeta(t, strg, stalePath, objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "past-reclaim-grace",
+	})
+	writeLockMeta(t, strg, livePath, objstore.LockMeta{
+		LockedAt: now,
+		ExpireAt: now.Add(time.Hour),
+		TxnID:    []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		Hint:     "live",
+	})
+	writeLockMeta(t, strg, zeroExpirePath, objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "zero-expire",
+	})
+	require.NoError(t, strg.WriteFile(ctx, intentPath, []byte{}))
+	writeLockMeta(t, strg, unknownPath, staleLockMeta(now, "unknown"))
+
+	cleanupAttempt()
+	requireFileNotExists(t, filepath.Join(pth, stalePath))
+	requireFileExists(t, filepath.Join(pth, livePath))
+	requireFileExists(t, filepath.Join(pth, intentPath))
+	requireFileExists(t, filepath.Join(pth, unknownPath))
+	requireFileExists(t, filepath.Join(pth, zeroExpirePath))
+}
+
+func cleanupBoundaryFixture(
+	t *testing.T,
+	strg storeapi.Storage,
+	family string,
+) (stalePath, livePath, intentPath, unknownPath, zeroExpirePath string, cleanupAttempt func()) {
+	t.Helper()
+	switch family {
+	case "truncate":
+		return "truncating.lock.0123456789abcdef0123456789abcdef",
+			"truncating.lock.33333333333333333333333333333333",
+			"truncating.lock.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"truncating.lock.backup",
+			"truncating.lock.55555555555555555555555555555555",
+			func() {
+				reclaimed, err := objstore.CleanUpStaleTruncateLock(context.Background(), strg, localLeaseClock())
+				require.NoError(t, err)
+				require.True(t, reclaimed)
+			}
+	case "migration-write":
+		return "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef",
+			"v1/LOCK.WRIT.33333333333333333333333333333333",
+			"v1/LOCK.WRIT.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"v1/LOCK.WRIT",
+			"v1/LOCK.WRIT.55555555555555555555555555555555",
+			func() { runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/LOCK") }
+	case "migration-read":
+		return "v1/LOCK.READ.0123456789abcdef0123456789abcdef",
+			"v1/LOCK.READ.33333333333333333333333333333333",
+			"v1/LOCK.READ.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"v1/LOCK.READ.cafef00d12345678",
+			"v1/LOCK.READ.55555555555555555555555555555555",
+			func() { runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/LOCK") }
+	case "append-write":
+		return "v1/APPEND_LOCK.WRIT.0123456789abcdef0123456789abcdef",
+			"v1/APPEND_LOCK.WRIT.33333333333333333333333333333333",
+			"v1/APPEND_LOCK.WRIT.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"v1/APPEND_LOCK.WRIT",
+			"v1/APPEND_LOCK.WRIT.55555555555555555555555555555555",
+			func() { runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/APPEND_LOCK") }
+	default:
+		t.Fatalf("unknown cleanup family %s", family)
+		return "", "", "", "", "", nil
+	}
+}
