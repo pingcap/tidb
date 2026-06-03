@@ -51,9 +51,9 @@ import (
 const crossKSSessPoolSize = 5
 
 type runtimeEntry struct {
-	sessMgr           *SessionManager
-	activeBookkeepers map[string]struct{}
-	lastReleaseAt     time.Time
+	sessMgr       *SessionManager
+	activeHolders map[string]struct{}
+	lastReleaseAt time.Time
 }
 
 // Manager manages all cross keyspace sessions.
@@ -118,15 +118,17 @@ func (m *Manager) GetOrCreate(
 	return entry.sessMgr, nil
 }
 
-// Acquire acquires a runtime handle for the specified keyspace and bookkeeper.
-// one bookkeeper is not allowed to acquire the same keyspace multiple times.
+// Acquire acquires a runtime handle for the specified keyspace and holderID.
+// one holderID is not allowed to acquire the same keyspace multiple times.
+// Acquired handle must be released after use, otherwise the resources might
+// not be cleaned up in time.
 func (m *Manager) Acquire(
 	ks string,
-	bookkeeper string,
+	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (sqlsvrapi.KSRuntimeHandle, error) {
-	if bookkeeper == "" {
-		return nil, errors.New("cross keyspace runtime bookkeeper must not be empty")
+	if holderID == "" {
+		return nil, errors.New("cross keyspace runtime holderID must not be empty")
 	}
 	if err := m.validateTargetKS(ks); err != nil {
 		return nil, err
@@ -139,23 +141,23 @@ func (m *Manager) Acquire(
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := entry.activeBookkeepers[bookkeeper]; ok {
+	if _, ok := entry.activeHolders[holderID]; ok {
 		logutil.BgLogger().Warn("cross keyspace runtime already acquired",
 			zap.String("targetKS", ks),
-			zap.String("bookkeeper", bookkeeper),
-			zap.Int("activeBookkeeperCount", len(entry.activeBookkeepers)))
-		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by bookkeeper %s", ks, bookkeeper)
+			zap.String("holderID", holderID),
+			zap.Int("activeHolderCount", len(entry.activeHolders)))
+		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
 	}
-	entry.activeBookkeepers[bookkeeper] = struct{}{}
+	entry.activeHolders[holderID] = struct{}{}
 	logutil.BgLogger().Info("acquire cross keyspace runtime",
 		zap.String("targetKS", ks),
-		zap.String("bookkeeper", bookkeeper),
-		zap.Int("activeBookkeeperCount", len(entry.activeBookkeepers)))
+		zap.String("holderID", holderID),
+		zap.Int("activeHolderCount", len(entry.activeHolders)))
 	return &runtimeHandle{
-		manager:    m,
-		targetKS:   ks,
-		bookkeeper: bookkeeper,
-		entry:      entry,
+		manager:  m,
+		targetKS: ks,
+		holderID: holderID,
+		entry:    entry,
 	}, nil
 }
 
@@ -183,8 +185,8 @@ func (m *Manager) getOrCreateEntryWithoutLock(
 		return nil, err
 	}
 	entry := &runtimeEntry{
-		sessMgr:           mgr,
-		activeBookkeepers: make(map[string]struct{}),
+		sessMgr:       mgr,
+		activeHolders: make(map[string]struct{}),
 	}
 	m.runtimes[ks] = entry
 	return entry, nil
@@ -323,22 +325,29 @@ func (*Manager) createSessionManager(
 	return mgr, nil
 }
 
-func (m *Manager) release(targetKS string, bookkeeper string, entry *runtimeEntry) {
+// release releases the runtime handle for the specified keyspace and holderID.
+// the resources will be cleaned up if there is no active holder after enough
+// time. we will impl this part later.
+func (m *Manager) release(targetKS string, holderID string, entry *runtimeEntry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// there are still APIs which creates runtimeEntry without holderID now.
+	// if it's closed and created again, the got entry might be different.
+	// we will remove those APIs without holderID in the future, and then we can
+	// remove this check.
 	current, ok := m.runtimes[targetKS]
 	if !ok || current != entry {
 		return
 	}
-	delete(entry.activeBookkeepers, bookkeeper)
-	if len(entry.activeBookkeepers) == 0 {
+	delete(entry.activeHolders, holderID)
+	if len(entry.activeHolders) == 0 {
 		entry.lastReleaseAt = time.Now()
 	}
 	logutil.BgLogger().Info("release cross keyspace runtime",
 		zap.String("targetKS", targetKS),
-		zap.String("bookkeeper", bookkeeper),
-		zap.Int("activeBookkeeperCount", len(entry.activeBookkeepers)))
+		zap.String("holderID", holderID),
+		zap.Int("activeHolderCount", len(entry.activeHolders)))
 }
 
 // CloseKS closes the session manager for the specified keyspace.
@@ -352,6 +361,7 @@ func (m *Manager) CloseKS(targetKS string) {
 }
 
 // Close closes all session managers and their associated resources.
+// only used in test.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -370,11 +380,11 @@ func getOrCreateStore(targetKS string) (kv.Storage, error) {
 }
 
 type runtimeHandle struct {
-	manager    *Manager
-	targetKS   string
-	bookkeeper string
-	entry      *runtimeEntry
-	release    sync.Once
+	manager     *Manager
+	targetKS    string
+	holderID    string
+	entry       *runtimeEntry
+	releaseOnce sync.Once
 }
 
 func (h *runtimeHandle) Store() kv.Storage {
@@ -386,8 +396,8 @@ func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
 }
 
 func (h *runtimeHandle) Release() {
-	h.release.Do(func() {
-		h.manager.release(h.targetKS, h.bookkeeper, h.entry)
+	h.releaseOnce.Do(func() {
+		h.manager.release(h.targetKS, h.holderID, h.entry)
 	})
 }
 

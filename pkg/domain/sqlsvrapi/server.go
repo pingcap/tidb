@@ -29,13 +29,19 @@ type KSRuntime interface {
 // KSRuntimeHandle is an acquired runtime handle for a target keyspace.
 type KSRuntimeHandle interface {
 	KSRuntime
+	// Release releases the holding of the runtime handle. After calling Release,
+	// the handle should not be used anymore.
+	// the underlying runtime have different lifecycle, the handle is just a view
+	// and does not manage the lifecycle of the runtime.
 	Release()
 }
 
 // Server defines the interface for a SQL server.
 // The SQL server manages nearly everything related to SQL execution.
 type Server interface {
-	AcquireKSRuntime(targetKS string, bookkeeper string) (KSRuntimeHandle, error)
+	// AcquireKSRuntime acquires a runtime handle for the target keyspace.
+	// The acquired handle should be released after use.
+	AcquireKSRuntime(targetKS string, holderID string) (KSRuntimeHandle, error)
 	GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error)
 	GetKSStore(targetKS string) (store kv.Storage, err error)
 	GetDDLOwnerMgr() owner.Manager

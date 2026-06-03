@@ -165,7 +165,8 @@ func TestManager(t *testing.T) {
 			t.Cleanup(func() {
 				// we have to close the cross keyspace session manager, as the
 				// store will be closed by testkit.CreateMockStoreAndDomainForKS
-				sysKSDom.CloseKSSessMgr(ks)
+				ksMgr := sysKSDom.GetCrossKSMgr()
+				ksMgr.CloseKS(ks)
 			})
 			mgr := storage.NewTaskManager(pool)
 			ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
@@ -224,7 +225,8 @@ func TestManager(t *testing.T) {
 		t.Cleanup(func() {
 			// we have to close the cross keyspace session manager, as the
 			// store will be closed by testkit.CreateMockStoreAndDomainForKS
-			sysKSDom.CloseKSSessMgr(userKS)
+			ksMgr := sysKSDom.GetCrossKSMgr()
+			ksMgr.CloseKS(userKS)
 		})
 
 		crossKSMgr := sysKSDom.GetCrossKSMgr()
@@ -320,7 +322,8 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		handle.Release()
-		sysKSDom.CloseKSSessMgr(targetKS)
+		ksMgr := sysKSDom.GetCrossKSMgr()
+		ksMgr.CloseKS(targetKS)
 	})
 	require.Same(t, targetStore, handle.Store())
 
