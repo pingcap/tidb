@@ -58,3 +58,51 @@ Sort	166.42	root		information_schema.cluster_slow_query.time:desc
 └─TableReader	166.42	root		data:Selection
   └─Selection	166.42	cop[tidb]		ne(information_schema.cluster_slow_query.query, "x")
     └─MemTableScan	250.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t1, t2, t3;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a, b));
+select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+a	b	a	b	a	b	rn
+create session binding from history using plan digest 'bf8a410ea0ef99fd7b5e27c2d932a0c76d8995c92ec2893638aee30250e38bdb';
+show warnings;
+Level	Code	Message
+Warning	1105	auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding. Plan Digest: bf8a410ea0ef99fd7b5e27c2d932a0c76d8995c92ec2893638aee30250e38bdb
+show bindings where default_db='infoschema__cluster_tables';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from ( `infoschema__cluster_tables` . `t1` join `infoschema__cluster_tables` . `t2` on `t1` . `a` = `t2` . `a` ) join ( select `a` , `b` , `row_number` ( ) `over` ( partition by `a` order by `b` desc ) as `rn` from `infoschema__cluster_tables` . `t3` ) as `dt` on `t2` . `a` = `dt` . `a` where `dt` . `rn` = ?	SELECT /*+ hash_join_build(`infoschema__cluster_tables`.`dt`) leading(`infoschema__cluster_tables`.`t1`, `infoschema__cluster_tables`.`t2`, `infoschema__cluster_tables`.`dt`) hash_join_build(`infoschema__cluster_tables`.`t2`) use_index(@`sel_1` `infoschema__cluster_tables`.`t1` ) use_index(@`sel_1` `infoschema__cluster_tables`.`t2` ) use_index(@`sel_2` `infoschema__cluster_tables`.`t3` `a`) no_order_index(@`sel_2` `infoschema__cluster_tables`.`t3` `a`)*/ * FROM (`infoschema__cluster_tables`.`t1` JOIN `infoschema__cluster_tables`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN (SELECT `a`,`b`,row_number() OVER (PARTITION BY `a` ORDER BY `b` DESC) AS `rn` FROM `infoschema__cluster_tables`.`t3`) AS `dt` ON `t2`.`a` = `dt`.`a` WHERE `dt`.`rn` = 1	infoschema__cluster_tables	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	history	55c615a4cc1cf3fc4af81556b4425b0a20a3d043d818ed7ffcbfdcac88c832c1	bf8a410ea0ef99fd7b5e27c2d932a0c76d8995c92ec2893638aee30250e38bdb
+select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+a	b	a	b	a	b	rn
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+drop session binding for select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+set global tidb_enable_stmt_summary = default;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t1, t2, t3, t4, t5, t6, t7;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+create table t4(a int, b int, key(a));
+create table t5(a int, b int, key(a));
+create table t6(a int, b int, key(a));
+create table t7(a int, b int, key(a));
+with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a;
+a	b	a
+create session binding from history using plan digest 'b1e841a9bda2c8191ba9b9cea14ccbe0da9e8e14cc41c7c7a0d4db06025d28d5';
+show warnings;
+Level	Code	Message
+Warning	1105	auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding. Plan Digest: b1e841a9bda2c8191ba9b9cea14ccbe0da9e8e14cc41c7c7a0d4db06025d28d5
+show bindings where default_db='infoschema__cluster_tables';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+with `channel` as ( select `t2` . `a` from ( `infoschema__cluster_tables` . `t2` join `infoschema__cluster_tables` . `t3` on `t2` . `a` = `t3` . `a` ) join `infoschema__cluster_tables` . `t6` on `t3` . `a` = `t6` . `a` union select `t4` . `a` from ( `infoschema__cluster_tables` . `t4` join `infoschema__cluster_tables` . `t5` on `t4` . `a` = `t5` . `a` ) join `infoschema__cluster_tables` . `t7` on `t5` . `a` = `t7` . `a` ) select * from `infoschema__cluster_tables` . `t1` join `channel` on `t1` . `a` = `channel` . `a`	WITH `channel` AS (SELECT `t2`.`a` FROM (`infoschema__cluster_tables`.`t2` JOIN `infoschema__cluster_tables`.`t3` ON `t2`.`a` = `t3`.`a`) JOIN `infoschema__cluster_tables`.`t6` ON `t3`.`a` = `t6`.`a` UNION SELECT `t4`.`a` FROM (`infoschema__cluster_tables`.`t4` JOIN `infoschema__cluster_tables`.`t5` ON `t4`.`a` = `t5`.`a`) JOIN `infoschema__cluster_tables`.`t7` ON `t5`.`a` = `t7`.`a`) SELECT /*+ hash_join_probe(`infoschema__cluster_tables`.`t1`) use_index(@`sel_1` `infoschema__cluster_tables`.`t1` ) hash_agg(@`sel_1`) merge_join(@`sel_2` `infoschema__cluster_tables`.`t6`@`sel_2`) leading(@`sel_2` `infoschema__cluster_tables`.`t2`@`sel_2`, `infoschema__cluster_tables`.`t3`@`sel_2`, `infoschema__cluster_tables`.`t6`@`sel_2`) merge_join(@`sel_2` `infoschema__cluster_tables`.`t2`@`sel_2`) use_index(@`sel_2` `infoschema__cluster_tables`.`t2` `a`) order_index(@`sel_2` `infoschema__cluster_tables`.`t2` `a`) use_index(@`sel_2` `infoschema__cluster_tables`.`t3` `a`) order_index(@`sel_2` `infoschema__cluster_tables`.`t3` `a`) use_index(@`sel_2` `infoschema__cluster_tables`.`t6` `a`) order_index(@`sel_2` `infoschema__cluster_tables`.`t6` `a`) merge_join(@`sel_3` `infoschema__cluster_tables`.`t7`@`sel_3`) leading(@`sel_3` `infoschema__cluster_tables`.`t4`@`sel_3`, `infoschema__cluster_tables`.`t5`@`sel_3`, `infoschema__cluster_tables`.`t7`@`sel_3`) merge_join(@`sel_3` `infoschema__cluster_tables`.`t4`@`sel_3`) use_index(@`sel_3` `infoschema__cluster_tables`.`t4` `a`) order_index(@`sel_3` `infoschema__cluster_tables`.`t4` `a`) use_index(@`sel_3` `infoschema__cluster_tables`.`t5` `a`) order_index(@`sel_3` `infoschema__cluster_tables`.`t5` `a`) use_index(@`sel_3` `infoschema__cluster_tables`.`t7` `a`) order_index(@`sel_3` `infoschema__cluster_tables`.`t7` `a`)*/ * FROM `infoschema__cluster_tables`.`t1` JOIN `channel` ON `t1`.`a` = `channel`.`a`	infoschema__cluster_tables	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	history	4c49de5d3fdce8b6d7e03591f1be936786257ceb45b1fb3a4d02d6218b644488	b1e841a9bda2c8191ba9b9cea14ccbe0da9e8e14cc41c7c7a0d4db06025d28d5
+with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a;
+a	b	a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+drop session binding for with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a;
+set global tidb_enable_stmt_summary = default;
