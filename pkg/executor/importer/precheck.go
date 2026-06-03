@@ -69,7 +69,7 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
 		}
 		if checkTotalFileSize {
-			if err := e.checkTotalFileSize(); err != nil {
+			if err := e.CheckTotalFileSize(); err != nil {
 				return err
 			}
 		}
@@ -88,7 +88,8 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 	return nil
 }
 
-func (e *LoadDataController) checkTotalFileSize() error {
+// CheckTotalFileSize checks whether source data files were discovered and are within configured size limits.
+func (e *LoadDataController) CheckTotalFileSize() error {
 	if e.TotalFileSize == 0 {
 		// this happens when:
 		// 1. no file matched when using wildcard
