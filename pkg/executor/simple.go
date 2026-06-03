@@ -2812,10 +2812,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	sessUser := e.Ctx().GetSessionVars().User
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	// setPwdForSelf matches executeAlterUser's alterCurrentUser idiom: treat an
-	// explicit `FOR 'self'@'host'` that names the caller as self-service.
+	// setPwdForSelf treats an explicit `FOR 'self'@'host'` that names the
+	// caller as self-service. Match on the AUTHENTICATED identity
+	// (AuthUsername/AuthHostname), not the claimed Username: for a proxy/mapped
+	// login the two differ, and the self path operates on the authenticated
+	// account (u = sessUser.AuthUsername below), so matching on AuthUsername
+	// keeps the self-classification consistent with the row actually modified.
 	setPwdForSelf := s.User == nil || s.User.CurrentUser ||
-		(sessUser != nil && sessUser.Username == s.User.Username && sessUser.AuthHostname == s.User.Hostname)
+		(sessUser != nil && sessUser.AuthUsername == s.User.Username && sessUser.AuthHostname == s.User.Hostname)
 	if setPwdForSelf {
 		if sessUser == nil {
 			return errors.New("Session error is empty")
