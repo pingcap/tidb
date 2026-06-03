@@ -55,17 +55,17 @@ func selectTiCIShardAddr(addrs []string, addrLoad map[string]int) string {
 		return addrs[0]
 	}
 
-	start_idx := rand.Intn(len(addrs))
-	selected := addrs[start_idx]
+	startIdx := rand.Intn(len(addrs))
+	selected := addrs[startIdx]
 	selectedLoad := addrLoad[selected]
-	for _, addr := range addrs[start_idx:] {
+	for _, addr := range addrs[startIdx:] {
 		load := addrLoad[addr]
 		if load < selectedLoad {
 			selected = addr
 			selectedLoad = load
 		}
 	}
-	for _, addr := range addrs[:start_idx] {
+	for _, addr := range addrs[:startIdx] {
 		load := addrLoad[addr]
 		if load < selectedLoad {
 			selected = addr
