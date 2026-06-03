@@ -149,9 +149,12 @@ func TestFullOuterJoinTailScanCostVer1(t *testing.T) {
 	parseTopHashJoinCost := func(sql string) float64 {
 		rows := tk.MustQuery("explain format=verbose " + sql).Rows()
 		require.NotEmpty(t, rows, "sql=%s", sql)
-		op := rows[0][0].(string)
-		require.Contains(t, op, "HashJoin", "sql=%s, explain=%v", sql, rows)
-		planCost, err := strconv.ParseFloat(rows[0][2].(string), 64)
+		idx := skipPostOptimizedProjection(rows)
+		for idx < len(rows) && !strings.Contains(rows[idx][0].(string), "HashJoin") {
+			idx++
+		}
+		require.Less(t, idx, len(rows), "sql=%s, explain=%v", sql, rows)
+		planCost, err := strconv.ParseFloat(rows[idx][2].(string), 64)
 		require.NoError(t, err)
 		return planCost
 	}

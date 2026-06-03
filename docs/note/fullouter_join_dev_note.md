@@ -1,7 +1,5 @@
 # TiDB FULL OUTER JOIN (Phase 1: HashJoin v1) Development Notes
 
-Last updated: 2026-02-23
-
 ---
 
 ## 1. Goal
