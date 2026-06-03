@@ -1205,6 +1205,70 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverCASMismatch(t *testing.
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }
 
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverRevisionCASMismatch(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+
+	const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
+	require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+		}
+	}()
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete out of place")
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Rows()) == 1
+	}, 30*time.Second, 100*time.Millisecond)
+
+	tkConcurrent := testkit.NewTestKit(t, store)
+	tkConcurrent.MustExec("use test")
+	tkConcurrent.MustExec("create index idx_mv_s_refresh_ddl on mv (s)")
+
+	require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+	enabled = false
+
+	err = <-refreshDone
+	require.Error(t, err)
+	require.ErrorContains(t, err, "stale old materialized view revision detected before cutover")
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	require.Equal(t, mviewID, mvTable.Meta().ID)
+
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("failed complete manually 1 1"))
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+	require.NotEmpty(t, tk.MustQuery("show index from mv where Key_name = 'idx_mv_s_refresh_ddl'").Rows())
+}
+
 func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

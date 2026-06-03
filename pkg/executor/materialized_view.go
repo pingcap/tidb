@@ -1371,6 +1371,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", buildReadTSO)
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func() {})
 	var shadowTableID int64
+	expectedOldMViewRevision := tblInfo.Revision
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceCutover, func() error {
 		var lookupErr error
 		shadowTableID, lookupErr = getMVRefreshOutOfPlaceShadowTableID(kctx, buildSctx, schemaName, shadowTableName)
@@ -1406,6 +1407,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			tblInfo.ID,
 			shadowTableID,
 			buildReadTSO,
+			&expectedOldMViewRevision,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,
 			nextTime,

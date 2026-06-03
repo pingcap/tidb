@@ -414,6 +414,7 @@ func (*SchemaTracker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	int64,
 	int64,
 	uint64,
+	*uint64,
 	uint64,
 	bool,
 	*string,

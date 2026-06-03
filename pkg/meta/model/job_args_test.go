@@ -626,11 +626,13 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 
 func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 	nextTime := "2026-03-24 12:34:56.123456"
+	expectedOldMViewRevision := uint64(505)
 	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		{
 			OldMViewID:                     101,
 			ShadowTableID:                  202,
 			BuildReadTSO:                   303,
+			ExpectedOldMViewRevision:       &expectedOldMViewRevision,
 			ExpectedLastSuccessReadTSO:     404,
 			ExpectedLastSuccessReadTSONull: false,
 			NextTime:                       &nextTime,

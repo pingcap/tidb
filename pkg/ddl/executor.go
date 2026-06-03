@@ -130,6 +130,7 @@ type Executor interface {
 		oldMViewID int64,
 		shadowTableID int64,
 		buildReadTSO uint64,
+		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,
 		nextTime *string,

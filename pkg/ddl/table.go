@@ -1198,6 +1198,16 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
 	}
+	if args.ExpectedOldMViewRevision != nil && oldMViewTblInfo.Revision != *args.ExpectedOldMViewRevision {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			fmt.Sprintf(
+				"refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover, expected %d but got %d",
+				*args.ExpectedOldMViewRevision,
+				oldMViewTblInfo.Revision,
+			),
+		)
+	}
 	if len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
