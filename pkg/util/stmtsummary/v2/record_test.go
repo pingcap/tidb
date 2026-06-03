@@ -15,6 +15,7 @@
 package stmtsummary
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,4 +84,11 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
+
+	b, err := marshalEvictedStmtRecord(record2)
+	require.NoError(t, err)
+	items := make(map[string]any)
+	require.NoError(t, json.Unmarshal(b, &items))
+	require.Equal(t, true, items["evicted"])
+	require.Equal(t, record2.Digest, items["digest"])
 }
