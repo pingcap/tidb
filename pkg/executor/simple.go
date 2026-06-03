@@ -1760,6 +1760,16 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 
+	// Resolve default_authentication_plugin once per statement. Used by
+	// effectiveAuthPlugin() when an existing mysql.user row has an empty
+	// `plugin` column, matching how the privilege cache resolves it. An
+	// error here is non-fatal: effectiveAuthPlugin falls back to
+	// mysql_native_password when the sysvar is unreadable.
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+	if err != nil {
+		defaultAuthPlugin = ""
+	}
+
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -1890,7 +1900,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt == nil || !(spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString) {
 				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
-			if spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin) != effectiveAuthPlugin(currentAuthPlugin) {
+			if spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) != effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin) {
 				return exeerrors.ErrPasswordCannotBeRetainedOnPluginChange.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
 			if (spec.AuthOpt.ByAuthString && spec.AuthOpt.AuthString == "") ||
@@ -1944,7 +1954,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			}
 			// changing the auth method prunes history.
-			if effectiveAuthPlugin(spec.AuthOpt.AuthPlugin) != effectiveAuthPlugin(currentAuthPlugin) {
+			if effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) != effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin) {
 				// delete password history from mysql.password_history.
 				sql := new(strings.Builder)
 				sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
@@ -2082,7 +2092,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// DISCARD OLD PASSWORD removes the secondary password.
 		// MySQL also silently drops the secondary when the auth plugin is changed.
 		dropSecondary := specDiscardOldPassword ||
-			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin) != effectiveAuthPlugin(currentAuthPlugin))
+			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) != effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin))
 		// RETAIN always writes a fresh secondary, so any pending drop is moot.
 		if specRetainCurrentPassword {
 			dropSecondary = false
@@ -2653,15 +2663,25 @@ func isDualPasswordCapablePlugin(plugin string) bool {
 }
 
 // effectiveAuthPlugin normalizes an auth-plugin name for equality comparisons.
-// Legacy mysql.user rows can have an empty `plugin` column, but the auth
-// path resolves them as mysql_native_password. Comparing raw plugin strings
-// without this normalization mis-classifies a no-op ALTER ... IDENTIFIED WITH
-// mysql_native_password ... on such a row as a plugin switch.
-func effectiveAuthPlugin(plugin string) string {
-	if plugin == "" {
+// Legacy mysql.user rows can have an empty `plugin` column, and the privilege
+// cache resolves them via the `default_authentication_plugin` session
+// variable (see privileges.MySQLPrivilege.decodeUserTableRow). The default
+// itself defaults to mysql_native_password but operators can set it to
+// caching_sha2_password / tidb_sm3_password.  Use the resolved default when
+// normalizing so plugin-change checks behave consistently with the cache.
+//
+// The defaultPlugin argument is the value returned by `GetGlobalSysVar(
+// vardef.DefaultAuthPlugin)`. Callers SHOULD resolve it once per statement.
+// An empty defaultPlugin (sysvar not set or unreadable) falls back to
+// mysql_native_password, matching the cache's behavior.
+func effectiveAuthPlugin(plugin, defaultPlugin string) string {
+	if plugin != "" {
+		return plugin
+	}
+	if defaultPlugin == "" {
 		return mysql.AuthNativePassword
 	}
-	return plugin
+	return defaultPlugin
 }
 
 // readAuthenticationString returns the current authentication_string for the

@@ -110,10 +110,11 @@ func TestDualPasswordRejectsPluginChange(t *testing.T) {
 }
 
 // TestDualPasswordLegacyEmptyPluginAcceptsNative guards the legacy-row case:
-// a mysql.user record whose `plugin` column is empty is resolved at auth
-// time as mysql_native_password. An explicit `IDENTIFIED WITH
-// mysql_native_password ... RETAIN CURRENT PASSWORD` against such a row must
-// not be misclassified as a plugin switch.
+// a mysql.user record whose `plugin` column is empty is resolved by the
+// privilege cache via the `default_authentication_plugin` session variable.
+// With the default (mysql_native_password), an explicit
+// `IDENTIFIED WITH mysql_native_password ... RETAIN CURRENT PASSWORD` against
+// such a row must not be misclassified as a plugin switch.
 func TestDualPasswordLegacyEmptyPluginAcceptsNative(t *testing.T) {
 	tk := rootTK(t)
 
@@ -133,6 +134,31 @@ func TestDualPasswordLegacyEmptyPluginAcceptsNative(t *testing.T) {
 	// The secondary slot is actually populated (the legacy-row case
 	// previously took the plugin-change branch and dropped it).
 	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dplegacy'").Check(testkit.Rows("1"))
+}
+
+// TestDualPasswordLegacyEmptyPluginHonorsDefaultPlugin guards the non-native
+// default_authentication_plugin case: when an operator sets the default to
+// caching_sha2_password, a legacy empty-plugin row resolves to that plugin,
+// and an explicit `IDENTIFIED WITH mysql_native_password ... RETAIN CURRENT
+// PASSWORD` IS a plugin switch and must be rejected.
+func TestDualPasswordLegacyEmptyPluginHonorsDefaultPlugin(t *testing.T) {
+	tk := rootTK(t)
+	prevDefault := tk.MustQuery("SELECT @@global.default_authentication_plugin").Rows()[0][0]
+	defer tk.MustExec(fmt.Sprintf("SET GLOBAL default_authentication_plugin = '%s'", prevDefault))
+
+	tk.MustExec("SET GLOBAL default_authentication_plugin = 'caching_sha2_password'")
+
+	tk.MustExec("DROP USER IF EXISTS dplegacy_sha2")
+	tk.MustExec("CREATE USER dplegacy_sha2 IDENTIFIED WITH caching_sha2_password BY 'p1'")
+	// Simulate a legacy row by clearing the plugin column: with the new
+	// default the row resolves to caching_sha2_password.
+	tk.MustExec("UPDATE mysql.user SET plugin = '' WHERE User = 'dplegacy_sha2'")
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	// Now an explicit native plugin IS a plugin switch — RETAIN must fail.
+	err := tk.ExecToErr("ALTER USER dplegacy_sha2 IDENTIFIED WITH mysql_native_password BY 'p2' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "authentication plugin is being changed")
 }
 
 func TestDualPasswordPluginChangeSilentlyDiscardsSecondary(t *testing.T) {
