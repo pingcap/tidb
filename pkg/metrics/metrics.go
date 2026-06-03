@@ -97,6 +97,7 @@ func InitMetrics() {
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
+	InitStmtSummaryMetrics()
 	timermetrics.InitTimerMetrics()
 
 	// For now, those metrics are initialized but not registered.
@@ -319,6 +320,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(IndexLookRowsCounter)
 	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 	prometheus.MustRegister(IndexLookUpCopTaskCount)
+
+	// StmtSummary
+	prometheus.MustRegister(StmtSummaryWindowRecordCount)
+	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
 }
 
 var mode struct {

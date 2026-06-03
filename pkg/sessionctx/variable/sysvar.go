@@ -880,6 +880,10 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxSQLLength(TidbOptInt(val, DefTiDBStmtSummaryMaxSQLLength))
 		}},
+	{Scope: ScopeGlobal, Name: TiDBStmtSummaryPersistEvicted, Value: BoolToOnOff(DefTiDBStmtSummaryPersistEvicted), Type: TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetPersistEvicted(TiDBOptOn(val))
+		}},
 	{Scope: ScopeGlobal, Name: TiDBStmtSummaryGroupByUser, Value: BoolToOnOff(DefTiDBStmtSummaryGroupByUser), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetGroupByUser(TiDBOptOn(val))
