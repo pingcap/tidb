@@ -179,19 +179,21 @@ func TestDualPasswordPluginChangeSilentlyDiscardsSecondary(t *testing.T) {
 func TestDualPasswordCrossUserRequiresCreateUser(t *testing.T) {
 	tk := rootTK(t)
 
-	tk.MustExec("DROP USER IF EXISTS dpcreate, dpaponly, dpnopriv, dpvictim_create, dpvictim_ap, dpvictim_nopriv")
+	tk.MustExec("DROP USER IF EXISTS dpcreate, dpaponly, dpvictim_create, dpvictim_ap")
 	tk.MustExec("CREATE USER dpvictim_create IDENTIFIED BY 'v1'")
 	tk.MustExec("CREATE USER dpvictim_ap IDENTIFIED BY 'v1'")
-	tk.MustExec("CREATE USER dpvictim_nopriv IDENTIFIED BY 'v1'")
 	tk.MustExec("CREATE USER dpcreate IDENTIFIED BY 'a1'")
 	tk.MustExec("CREATE USER dpaponly IDENTIFIED BY 'a1'")
-	tk.MustExec("CREATE USER dpnopriv IDENTIFIED BY 'a1'")
 	tk.MustExec("GRANT CREATE USER ON *.* TO dpcreate")
+	// dpaponly gets APPLICATION_PASSWORD_ADMIN but no authority over other
+	// accounts; ALL on test.* ensures the cross-user denial comes from the
+	// account-authority check, not an unrelated missing privilege.
 	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpaponly")
+	tk.MustExec("GRANT ALL ON test.* TO dpaponly")
 
-	// MySQL-compatible rule: cross-user secondary-password operations require
-	// CREATE USER **or** APPLICATION_PASSWORD_ADMIN, in addition to the usual
-	// ALTER authority on the target account.
+	// MySQL-compatible rule: cross-user secondary-password operations require the
+	// normal ALTER USER authority (CREATE USER). APPLICATION_PASSWORD_ADMIN is
+	// NOT a substitute for authority over other accounts.
 	createTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, createTK.Session().Auth(&auth.UserIdentity{Username: "dpcreate", Hostname: "%"}, sha1Password("a1"), nil, nil))
 	createTK.MustExec("ALTER USER dpvictim_create IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
@@ -203,22 +205,20 @@ func TestDualPasswordCrossUserRequiresCreateUser(t *testing.T) {
 	require.Error(t, authAs(t, tk, "dpvictim_create", "%", "v1"))
 	require.NoError(t, authAs(t, tk, "dpvictim_create", "%", "v2"))
 
-	// APPLICATION_PASSWORD_ADMIN alone is sufficient for cross-user RETAIN.
+	// APPLICATION_PASSWORD_ADMIN alone is NOT sufficient for cross-user RETAIN
+	// or DISCARD — that would be a privilege escalation (resetting another
+	// account's password without CREATE USER).
 	apOnlyTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, apOnlyTK.Session().Auth(&auth.UserIdentity{Username: "dpaponly", Hostname: "%"}, sha1Password("a1"), nil, nil))
-	apOnlyTK.MustExec("ALTER USER dpvictim_ap IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
-	require.NoError(t, authAs(t, tk, "dpvictim_ap", "%", "v1"))
-	require.NoError(t, authAs(t, tk, "dpvictim_ap", "%", "v2"))
-
-	// A user with neither CREATE USER nor APPLICATION_PASSWORD_ADMIN is
-	// denied. (We grant ALL on a single schema so the inner ALTER USER
-	// privilege check doesn't short-circuit before the dual-password gate.)
-	tk.MustExec("GRANT ALL ON test.* TO dpnopriv")
-	noprivTK := testkit.NewTestKit(t, tk.Session().GetStore())
-	require.NoError(t, noprivTK.Session().Auth(&auth.UserIdentity{Username: "dpnopriv", Hostname: "%"}, sha1Password("a1"), nil, nil))
-	err := noprivTK.ExecToErr("ALTER USER dpvictim_nopriv IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
+	err := apOnlyTK.ExecToErr("ALTER USER dpvictim_ap IDENTIFIED BY 'v2' RETAIN CURRENT PASSWORD")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "CREATE USER")
+	err = apOnlyTK.ExecToErr("ALTER USER dpvictim_ap DISCARD OLD PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+	// The victim's password was not changed by the denied statements.
+	require.NoError(t, authAs(t, tk, "dpvictim_ap", "%", "v1"))
+	require.Error(t, authAs(t, tk, "dpvictim_ap", "%", "v2"))
 }
 
 // TestDualPasswordRejectsEmptyPrimary guards the MySQL-compatible
@@ -263,8 +263,19 @@ func TestDualPasswordSetPasswordSelfByExplicitName(t *testing.T) {
 	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpself", Hostname: "%"}, sha1Password("s1"), nil, nil))
 
-	// MySQL: own-account RETAIN CURRENT PASSWORD requires no extra privilege
-	// beyond the normal self-password authority.
+	// MySQL: own-account RETAIN CURRENT PASSWORD requires APPLICATION_PASSWORD_ADMIN.
+	// Without it, even the explicit-self form is denied.
+	err := selfTK.ExecToErr("SET PASSWORD FOR 'dpself'@'%' = 's2' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "APPLICATION_PASSWORD_ADMIN")
+	// The denied statement must not have changed the password.
+	require.NoError(t, authAs(t, tk, "dpself", "%", "s1"))
+	require.Error(t, authAs(t, tk, "dpself", "%", "s2"))
+
+	// With APPLICATION_PASSWORD_ADMIN, self-service RETAIN succeeds.
+	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpself")
+	selfTK = testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpself", Hostname: "%"}, sha1Password("s1"), nil, nil))
 	selfTK.MustExec("SET PASSWORD FOR 'dpself'@'%' = 's2' RETAIN CURRENT PASSWORD")
 
 	// Both passwords authenticate after the rotation.
@@ -438,13 +449,17 @@ func TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated(t *testing.T) 
 	tk.MustExec("DROP USER IF EXISTS dpguard")
 	tk.MustExec("CREATE USER dpguard IDENTIFIED BY 'p1'")
 	tk.MustExec("GRANT USAGE ON *.* TO dpguard")
+	// dpguard holds APPLICATION_PASSWORD_ADMIN (so self-service dual-password is
+	// allowed) but NOT CREATE USER (so any extra privileged option must be
+	// denied).
+	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpguard")
 	// Plant a secondary password so DISCARD has something to remove.
 	tk.MustExec("ALTER USER dpguard IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
 
 	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpguard", Hostname: "%"}, sha1Password("p2"), nil, nil))
 
-	// Standalone self-service DISCARD: allowed.
+	// Standalone self-service DISCARD: allowed with APPLICATION_PASSWORD_ADMIN.
 	selfTK.MustExec("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD")
 
 	// Plant another secondary so the next DISCARD has something to remove.
@@ -452,7 +467,8 @@ func TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated(t *testing.T) 
 	selfTK = testkit.NewTestKit(t, tk.Session().GetStore())
 	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpguard", Hostname: "%"}, sha1Password("p3"), nil, nil))
 
-	// DISCARD combined with ACCOUNT LOCK must still require CREATE USER.
+	// DISCARD combined with ACCOUNT LOCK must still require CREATE USER —
+	// APPLICATION_PASSWORD_ADMIN does not authorize the extra option.
 	err := selfTK.ExecToErr("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD ACCOUNT LOCK")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "CREATE USER")
@@ -496,4 +512,60 @@ func TestDualPasswordLegacyEmptyPluginRejectsLDAPDefault(t *testing.T) {
 	err := tk.ExecToErr("ALTER USER dplegacy_ldap IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Dual password is not supported")
+}
+
+// TestDualPasswordSecondaryLoginWithEmptyPrimary guards the auth-path fix where
+// the dual-password fallback was unreachable when the primary
+// authentication_string is empty. After RETAIN then blanking the primary, the
+// retained secondary must still authenticate.
+func TestDualPasswordSecondaryLoginWithEmptyPrimary(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpemptyfb")
+	tk.MustExec("CREATE USER dpemptyfb IDENTIFIED BY 'primary1'")
+	// RETAIN: primary='primary2', secondary='primary1'.
+	tk.MustExec("ALTER USER dpemptyfb IDENTIFIED BY 'primary2' RETAIN CURRENT PASSWORD")
+	// Blank the primary (same plugin, no DISCARD) — secondary is preserved.
+	tk.MustExec("ALTER USER dpemptyfb IDENTIFIED BY ''")
+	tk.MustQuery("SELECT authentication_string = '' FROM mysql.user WHERE User = 'dpemptyfb'").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpemptyfb'").Check(testkit.Rows("1"))
+
+	// The retained secondary still authenticates despite the empty primary.
+	require.NoError(t, authAs(t, tk, "dpemptyfb", "%", "primary1"))
+	// The overwritten primary no longer authenticates.
+	require.Error(t, authAs(t, tk, "dpemptyfb", "%", "primary2"))
+}
+
+// TestDualPasswordDiscardNoopOnIncapablePlugin guards that DISCARD OLD PASSWORD
+// is a harmless no-op (no error) on a non-password plugin, matching MySQL,
+// rather than being rejected by the dual-password capability gate (which now
+// only applies to RETAIN).
+func TestDualPasswordDiscardNoopOnIncapablePlugin(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpldap")
+	tk.MustExec("CREATE USER dpldap IDENTIFIED WITH authentication_ldap_simple AS 'uid=x,ou=People,dc=example,dc=com'")
+	// DISCARD on an LDAP account is accepted and changes nothing (no secondary).
+	tk.MustExec("ALTER USER dpldap DISCARD OLD PASSWORD")
+	tk.MustQuery("SELECT user_attributes IS NULL FROM mysql.user WHERE User = 'dpldap'").Check(testkit.Rows("1"))
+}
+
+// TestDualPasswordDiscardCollapsesEmptyAttributesToNull guards the {} -> NULL
+// fix: after DISCARD removes the only attribute, user_attributes must collapse
+// to NULL rather than being left as a literal empty object '{}'.
+func TestDualPasswordDiscardCollapsesEmptyAttributesToNull(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpnull")
+	tk.MustExec("CREATE USER dpnull IDENTIFIED BY 'p1'")
+	// DISCARD with no secondary present must not leave a literal '{}'.
+	tk.MustExec("ALTER USER dpnull DISCARD OLD PASSWORD")
+	tk.MustQuery("SELECT user_attributes IS NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
+
+	// RETAIN then DISCARD on a row whose only attribute was additional_password
+	// also collapses back to NULL rather than '{}'.
+	tk.MustExec("ALTER USER dpnull IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
+	tk.MustExec("ALTER USER dpnull DISCARD OLD PASSWORD")
+	tk.MustQuery("SELECT user_attributes IS NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
 }

@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
@@ -1836,23 +1835,33 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		}
-		// Self-service dual-password requires no extra privilege beyond the
-		// normal self-password path (matching MySQL). The standalone
-		// `ALTER USER USER() DISCARD OLD PASSWORD` form has no AuthOpt so
-		// alterPassword is false; we still want to skip the outer CREATE USER
-		// check on it for self-service.
+		// MySQL dual-password privilege model
+		// (https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password):
+		//   - A RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD that targets your
+		//     OWN account requires APPLICATION_PASSWORD_ADMIN (CREATE USER /
+		//     UPDATE-mysql also suffice, being a superset of self authority).
+		//   - The same clause targeting ANOTHER account requires the normal
+		//     ALTER USER authority (CREATE USER, or UPDATE on the mysql schema).
+		//     APPLICATION_PASSWORD_ADMIN is NOT a substitute for that authority —
+		//     it never grants power over other accounts.
 		//
-		// Restrict the bypass to truly standalone statements: any extra
-		// per-statement option (REQUIRE/TLS, RESOURCE OPTIONS, PASSWORD
-		// EXPIRE / ACCOUNT LOCK, COMMENT/ATTRIBUTE, RESOURCE GROUP) carries
-		// authority beyond the secondary-password slot and must still go
-		// through the standard CREATE USER / UPDATE-mysql check.
+		// hasOtherStmtOptions: the statement carries options beyond the password
+		// / dual-password clause, so it is not a pure self-service password
+		// change and must go through the standard admin check. Keep this list in
+		// sync with the mutating option fields on ast.AlterUserStmt; the
+		// default-deny posture below means a forgotten field falls back to
+		// requiring admin authority, not to bypassing it.
 		hasOtherStmtOptions := len(s.AuthTokenOrTLSOptions) > 0 ||
 			len(s.ResourceOptions) > 0 ||
 			len(s.PasswordOrLockOptions) > 0 ||
 			s.CommentOrAttributeOption != nil ||
 			s.ResourceGroupNameOption != nil
-		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && spec.AuthOpt == nil && !hasOtherStmtOptions
+		// selfServiceDualPwd: a dual-password change to the current user's own
+		// account that carries no other privileged options (the new password for
+		// RETAIN is allowed). Such a statement is governed by
+		// APPLICATION_PASSWORD_ADMIN, not the CREATE USER admin check.
+		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && !hasOtherStmtOptions &&
+			(spec.AuthOpt == nil || spec.AuthOpt.AuthPlugin == "")
 		needAdminPrivCheck := !(alterCurrentUser && alterPassword) && !selfServiceDualPwd
 		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
@@ -1870,19 +1879,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
 			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
-
-			// MySQL contract: for ALTER USER that carries RETAIN/DISCARD,
-			// APPLICATION_PASSWORD_ADMIN is an alternative to CREATE USER on
-			// the target account. Honor that here so a caller with only
-			// APPLICATION_PASSWORD_ADMIN can manage someone else's secondary
-			// password.
-			dualPwdBypass := specDualPwdRequested && hasApplicationPasswordAdminPriv
-			if !(hasCreateUserPriv || hasSystemSchemaPriv || dualPwdBypass) {
+			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
 		}
+		// Self-service dual-password additionally requires APPLICATION_PASSWORD_ADMIN
+		// (CREATE USER / UPDATE-mysql holders already passed needAdminPrivCheck or
+		// are accepted here as a superset).
+		if selfServiceDualPwd && !(hasCreateUserPriv || hasSystemSchemaPriv || hasApplicationPasswordAdminPriv) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
+		}
 
-		exists, currentAuthPlugin, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
+		exists, currentAuthPlugin, currentAuthString, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1900,16 +1908,16 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
-		// MySQL-compatible dual password: RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD validation.
+		// MySQL-compatible dual password: RETAIN CURRENT PASSWORD validation.
 		// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password
-		// Self-service needs no extra privilege beyond the standard
-		// self-password path. Cross-user gating is handled by the outer
-		// needAdminPrivCheck above, which now also accepts
-		// APPLICATION_PASSWORD_ADMIN when dual-password is in play.
-		if specDualPwdRequested {
-			// Only password-based auth plugins can hold a secondary password.
-			// Resolve the empty-plugin legacy case via default_authentication_plugin
-			// so an LDAP-default deployment is correctly rejected.
+		// Only RETAIN is gated on plugin capability: a secondary password can
+		// only be retained for password-based plugins. DISCARD OLD PASSWORD is
+		// a harmless removal that MySQL treats as a no-op regardless of plugin,
+		// so it is not gated here (the JSON_REMOVE below is a no-op when no
+		// secondary exists). Resolve the empty-plugin legacy case via
+		// default_authentication_plugin so an LDAP-default deployment is
+		// correctly rejected for RETAIN.
+		if specRetainCurrentPassword {
 			resolvedPlugin := effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin)
 			if !isDualPasswordCapablePlugin(resolvedPlugin) {
 				return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedPlugin)
@@ -2103,7 +2111,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// capture the current authentication_string as the secondary password before
 		// overwriting it in this UPDATE.
 		if specRetainCurrentPassword {
-			entry, err := buildAdditionalPasswordEntry(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+			entry, err := buildAdditionalPasswordEntry(currentAuthString, spec.User.Username, spec.User.Hostname)
 			if err != nil {
 				return err
 			}
@@ -2135,7 +2143,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		case dropSecondary:
-			fields = append(fields, alterField{"user_attributes=json_remove(coalesce(user_attributes, '{}'), '$.additional_password')", nil})
+			// NULLIF collapses a now-empty object back to NULL so DISCARD on a
+			// row whose only attribute was additional_password (or a row that
+			// never had user_attributes) leaves NULL rather than a literal '{}',
+			// matching MySQL and the NULL-preserving behavior in
+			// deletePasswordLockingAttribute.
+			fields = append(fields, alterField{"user_attributes=nullif(json_remove(coalesce(user_attributes, '{}'), '$.additional_password'), cast('{}' as json))", nil})
 		}
 
 		switch authTokenOptionHandler {
@@ -2316,7 +2329,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		if len(newUser.Hostname) > auth.HostNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
 		}
-		exists, _, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
+		exists, _, _, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2325,7 +2338,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
-		exists, _, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
+		exists, _, _, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2644,19 +2657,19 @@ func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, n
 
 // userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
 // using the supplied SQL executor and also returns the resolved auth plugin.
-func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, error) {
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, string, error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
-		exists, authPlugin, err := userExistsInternal(ctx, sqlExecutor, variant, host)
+		exists, authPlugin, authString, err := userExistsInternal(ctx, sqlExecutor, variant, host)
 		if err != nil {
-			return false, "", err
+			return false, "", "", err
 		}
 		if exists {
 			*name = variant
-			return true, authPlugin, nil
+			return true, authPlugin, authString, nil
 		}
 	}
 	if skipExactUsernameLookup(*name) {
-		return false, "", nil
+		return false, "", "", nil
 	}
 	return userExistsInternal(ctx, sqlExecutor, *name, host)
 }
@@ -2706,44 +2719,14 @@ func effectiveAuthPlugin(plugin, defaultPlugin string) string {
 	return defaultPlugin
 }
 
-// readAuthenticationString returns the current authentication_string for the
-// given user, using the supplied system session's executor. The second return
-// value is true when a row was found, false otherwise — callers must check it
-// before treating an empty string as a legitimate empty password vs. a missing
-// user. Used when RETAIN CURRENT PASSWORD needs to capture the pre-change hash
-// as the secondary password.
-func readAuthenticationString(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (string, bool, error) {
-	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, `SELECT authentication_string FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
-	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return "", false, err
-	}
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk(nil)
-	if err := rs.Next(ctx, req); err != nil {
-		return "", false, err
-	}
-	if req.NumRows() == 0 {
-		return "", false, nil
-	}
-	return req.GetRow(0).GetString(0), true, nil
-}
-
-// buildAdditionalPasswordEntry reads the user's current authentication_string
-// and returns a JSON key/value fragment `"additional_password": "<hash>"`
-// suitable for embedding inside a user_attributes JSON object (e.g. via
-// JSON_MERGE_PATCH). The caller composes the surrounding object.
-// It fails when the user doesn't exist or when the current primary password is
-// empty — MySQL rejects RETAIN CURRENT PASSWORD in both situations.
-func buildAdditionalPasswordEntry(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (string, error) {
-	oldPwd, found, err := readAuthenticationString(ctx, sqlExecutor, name, host)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "", exeerrors.ErrPasswordNoMatch
-	}
+// buildAdditionalPasswordEntry turns the user's current authentication_string
+// (already read by the caller from the same FOR UPDATE'd row) into a JSON
+// key/value fragment `"additional_password": "<hash>"` suitable for embedding
+// inside a user_attributes JSON object (e.g. via JSON_MERGE_PATCH). The caller
+// composes the surrounding object.
+// It fails when the current primary password is empty — MySQL rejects RETAIN
+// CURRENT PASSWORD in that situation.
+func buildAdditionalPasswordEntry(oldPwd, name, host string) (string, error) {
 	if oldPwd == "" {
 		return "", exeerrors.ErrSecondPasswordCannotBeEmpty.GenWithStackByArgs(name, host)
 	}
@@ -2754,12 +2737,17 @@ func buildAdditionalPasswordEntry(ctx context.Context, sqlExecutor sqlexec.SQLEx
 	return fmt.Sprintf(`"additional_password": %s`, encoded), nil
 }
 
-func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, error) {
+// userExistsInternal reports whether the (name, host) account exists and returns
+// its current plugin and authentication_string. The authentication_string is
+// returned so RETAIN CURRENT PASSWORD can capture the pre-change primary hash
+// from the row already read here (under the same FOR UPDATE lock) instead of
+// issuing a second locking read.
+func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, string, error) {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(ctx, req)
@@ -2768,11 +2756,14 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		rows = req.NumRows()
 	}
 
-	var authPlugin string
-	colIdx := -1
+	var authPlugin, authString string
+	pluginColIdx, authStringColIdx := -1, -1
 	for i, f := range recordSet.Fields() {
-		if f.ColumnAsName.L == "plugin" {
-			colIdx = i
+		switch f.ColumnAsName.L {
+		case "plugin":
+			pluginColIdx = i
+		case "authentication_string":
+			authStringColIdx = i
 		}
 	}
 	if rows == 1 {
@@ -2780,14 +2771,19 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		// When user + host does not exist, the rows is 0
 		// When user + host exists, the rows is 1 because user + host is primary key of the table.
 		row := req.GetRow(0)
-		authPlugin = row.GetString(colIdx)
+		if pluginColIdx >= 0 {
+			authPlugin = row.GetString(pluginColIdx)
+		}
+		if authStringColIdx >= 0 {
+			authString = row.GetString(authStringColIdx)
+		}
 	}
 
 	errClose := recordSet.Close()
 	if errClose != nil {
-		return false, "", errClose
+		return false, "", "", errClose
 	}
-	return rows > 0, authPlugin, err
+	return rows > 0, authPlugin, authString, err
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
@@ -2816,12 +2812,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	sessUser := e.Ctx().GetSessionVars().User
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	hasCreateUserPriv := false
-	hasApplicationPasswordAdminPriv := false
-	if checker != nil && s.RetainCurrentPassword {
-		hasCreateUserPriv = checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
-		hasApplicationPasswordAdminPriv = checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
-	}
 	// setPwdForSelf matches executeAlterUser's alterCurrentUser idiom: treat an
 	// explicit `FOR 'self'@'host'` that names the caller as self-service.
 	setPwdForSelf := s.User == nil || s.User.CurrentUser ||
@@ -2836,21 +2826,28 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		u = s.User.Username
 		h = s.User.Hostname
 
-		if checker != nil && s.RetainCurrentPassword {
-			// MySQL: cross-user RETAIN requires CREATE USER or
-			// APPLICATION_PASSWORD_ADMIN, in addition to the usual SET
-			// PASSWORD authority on the target account.
-			if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
-			}
-		} else if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		// MySQL dual-password privilege model: changing ANOTHER account's
+		// password (with or without RETAIN CURRENT PASSWORD) requires the
+		// normal cross-user SET PASSWORD authority — here SUPER (or UPDATE on
+		// the mysql schema). APPLICATION_PASSWORD_ADMIN governs only
+		// self-account secondary passwords and is NOT a substitute for that
+		// authority, so RETAIN must not relax this check.
+		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := sessUser
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
-	// Self-service SET PASSWORD ... RETAIN CURRENT PASSWORD needs no extra
-	// privilege beyond the normal self-password path (matching MySQL).
-	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
+	// Self-service SET PASSWORD ... RETAIN CURRENT PASSWORD requires
+	// APPLICATION_PASSWORD_ADMIN (CREATE USER / UPDATE-mysql also suffice as a
+	// superset), matching MySQL's self-account dual-password rule.
+	if setPwdForSelf && s.RetainCurrentPassword && checker != nil {
+		hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+		hasApplicationPasswordAdminPriv := checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
+		if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
+		}
+	}
+	exists, authplugin, currentAuthString, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
 		return err
 	}
@@ -2935,7 +2932,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if s.RetainCurrentPassword {
 		// If RETAIN CURRENT PASSWORD is specified, promote the current authentication_string
 		// to user_attributes.$.additional_password as part of this UPDATE.
-		entry, err := buildAdditionalPasswordEntry(ctx, sqlExecutor, u, h)
+		entry, err := buildAdditionalPasswordEntry(currentAuthString, u, h)
 		if err != nil {
 			return err
 		}
