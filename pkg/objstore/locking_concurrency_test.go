@@ -699,3 +699,86 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 	requireNoStepAfterAction(t, events, "owner-a", "lost")
 	requireNoStepAfterAction(t, events, "owner-a", "stopped")
 }
+
+type renewalBlockingStorage struct {
+	storeapi.Storage
+
+	mu          sync.Mutex
+	block       bool
+	blockPath   string
+	started     chan struct{}
+	startedOnce sync.Once
+}
+
+func newRenewalBlockingStorage(base storeapi.Storage) *renewalBlockingStorage {
+	return &renewalBlockingStorage{
+		Storage: base,
+		started: make(chan struct{}),
+	}
+}
+
+func (s *renewalBlockingStorage) enableBlock(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blockPath = path
+	s.block = true
+}
+
+func (s *renewalBlockingStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	s.mu.Lock()
+	shouldBlock := s.block && name == s.blockPath
+	s.mu.Unlock()
+	if shouldBlock {
+		s.startedOnce.Do(func() { close(s.started) })
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func TestLeaseLockUnlockWaitsForInFlightRenewal(t *testing.T) {
+	ctx := context.Background()
+	defer objstore.TESTSetLeaseConstants(300*time.Millisecond, 10*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(100*time.Millisecond, time.Millisecond)()
+
+	base, pth := createMockStorage(t)
+	wrapped := newRenewalBlockingStorage(base)
+	lock, err := objstore.TryLockRemoteWrite(ctx, wrapped, "v1/LOCK", "owner", localLeaseClock())
+	require.NoError(t, err)
+	require.NotNil(t, lock)
+	physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+	wrapped.enableBlock(physicalPath)
+
+	objstore.TESTStartRenewal(ctx, lock, nil)
+	t.Cleanup(func() {
+		objstore.TESTStopRenewal(lock)
+	})
+
+	waitClosed(t, wrapped.started, "renewal write started")
+
+	unlockDone := make(chan error, 1)
+	go func() {
+		unlockDone <- lock.Unlock(ctx)
+	}()
+	select {
+	case err := <-unlockDone:
+		require.NoError(t, err)
+		t.Fatal("Unlock returned before in-flight renewal write left WriteFile")
+	case <-time.After(5 * time.Millisecond):
+	}
+
+	select {
+	case err := <-unlockDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Unlock to finish after renewal write timeout")
+	}
+	requireFileNotExists(t, filepath.Join(pth, physicalPath))
+	time.Sleep(30 * time.Millisecond)
+	requireFileNotExists(t, filepath.Join(pth, physicalPath))
+
+	next, err := objstore.TryLockRemoteWrite(ctx, base, "v1/LOCK", "next-owner", localLeaseClock())
+	require.NoError(t, err)
+	require.NoError(t, next.Unlock(ctx))
+	requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+}
