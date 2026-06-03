@@ -320,8 +320,6 @@ func initDeployMode(cfg *config.Config) error {
 }
 
 func main() {
-	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
-
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
 		if args[0] == "collect-log" && len(args) > 1 {
@@ -351,6 +349,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name, standby mode or keyspace-activate mode is not supported for classic TiDB")
 		os.Exit(0)
 	}
+
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
 
 	var standbyController server.StandbyController
 	var activationMetadata map[string]string
