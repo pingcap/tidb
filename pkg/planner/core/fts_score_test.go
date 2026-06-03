@@ -30,19 +30,17 @@ import (
 )
 
 func TestResolveProjectionRewritesTiCIFTSMatchAgainstToBM25ScoreColumn(t *testing.T) {
+	t.Parallel()
 	ctx := mock.NewContext()
 	stringTp := types.NewFieldType(mysql.TypeVarchar)
 	stringTp.SetCollate(mysql.DefaultCollationName)
-	scoreTp := types.NewFieldType(mysql.TypeDouble)
-	scoreTp.SetFlag(mysql.NotNullFlag)
 
-	contentCol := &expression.Column{ID: 1, UniqueID: 1, RetType: stringTp, OrigName: "content"}
-	scoreCol := &expression.Column{ID: model.VirtualColFTSBM25ScoreID, UniqueID: 2, RetType: scoreTp, OrigName: model.FTSBM25ScoreName.O}
+	contentCol := &expression.Column{ID: 1, UniqueID: 10, RetType: stringTp, OrigName: "content"}
 	indexScan := (&physicalop.PhysicalIndexScan{
 		DataSourceSchema: expression.NewSchema(contentCol),
-		FtsQueryInfo:     &tipb.FTSQueryInfo{},
+		FtsQueryInfo:     &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeNoScore},
 	}).Init(ctx, 0)
-	indexScan.SetSchema(expression.NewSchema(contentCol, scoreCol))
+	indexScan.SetSchema(expression.NewSchema(contentCol))
 	indexReader := (&physicalop.PhysicalIndexReader{IndexPlan: indexScan}).Init(ctx, 0)
 	require.Equal(t, 1, indexReader.Schema().Len())
 
@@ -64,8 +62,88 @@ func TestResolveProjectionRewritesTiCIFTSMatchAgainstToBM25ScoreColumn(t *testin
 	col, ok := proj.Exprs[0].(*expression.Column)
 	require.True(t, ok)
 	require.Equal(t, model.VirtualColFTSBM25ScoreID, col.ID)
+	require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, indexScan.FtsQueryInfo.QueryType)
+	require.Equal(t, model.VirtualColFTSBM25ScoreID, indexScan.Schema().Columns[1].ID)
 	require.Equal(t, 1, col.Index)
 	require.Equal(t, 2, indexReader.Schema().Len())
 	require.Equal(t, model.VirtualColFTSBM25ScoreID, indexReader.OutputColumns[1].ID)
 	require.Equal(t, 1, indexReader.OutputColumns[1].Index)
+}
+
+func TestResolveProjectionContinuesAfterTiCIFTSScoreRewrite(t *testing.T) {
+	t.Parallel()
+	ctx := mock.NewContext()
+	stringTp := types.NewFieldType(mysql.TypeVarchar)
+	stringTp.SetCollate(mysql.DefaultCollationName)
+	scoreTp := types.NewFieldType(mysql.TypeDouble)
+	scoreTp.SetFlag(mysql.NotNullFlag)
+	idTp := types.NewFieldType(mysql.TypeLonglong)
+
+	contentCol := &expression.Column{ID: 1, UniqueID: 10, RetType: stringTp, OrigName: "content"}
+	idCol := &expression.Column{ID: 2, UniqueID: 20, RetType: idTp, OrigName: "id"}
+	scoreCol := &expression.Column{ID: model.VirtualColFTSBM25ScoreID, UniqueID: 30, RetType: scoreTp, OrigName: model.FTSBM25ScoreName.O}
+	indexScan := (&physicalop.PhysicalIndexScan{
+		DataSourceSchema: expression.NewSchema(contentCol, idCol),
+		FtsQueryInfo:     &tipb.FTSQueryInfo{},
+	}).Init(ctx, 0)
+	indexScan.SetSchema(expression.NewSchema(contentCol, idCol, scoreCol))
+	indexReader := (&physicalop.PhysicalIndexReader{IndexPlan: indexScan}).Init(ctx, 0)
+
+	matchAgainst, err := expression.NewFunction(
+		ctx,
+		ast.FTSMysqlMatchAgainst,
+		types.NewFieldType(mysql.TypeDouble),
+		&expression.Constant{Value: types.NewStringDatum("hello"), RetType: stringTp},
+		contentCol,
+	)
+	require.NoError(t, err)
+	sf := matchAgainst.(*expression.ScalarFunction)
+	require.NoError(t, expression.SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+
+	proj := (&physicalop.PhysicalProjection{Exprs: []expression.Expression{matchAgainst, idCol}}).Init(ctx, &property.StatsInfo{}, 0)
+	proj.SetChildren(indexReader)
+	require.NoError(t, resolveIndicesItself4PhysicalProjection(proj))
+
+	resolvedID, ok := proj.Exprs[1].(*expression.Column)
+	require.True(t, ok)
+	require.Equal(t, 1, resolvedID.Index)
+}
+
+func TestResolveProjectionRequestsTiCIFTSScoreThroughIndexPlanLimit(t *testing.T) {
+	t.Parallel()
+	ctx := mock.NewContext()
+	stringTp := types.NewFieldType(mysql.TypeVarchar)
+	stringTp.SetCollate(mysql.DefaultCollationName)
+
+	contentCol := &expression.Column{ID: 1, UniqueID: 10, RetType: stringTp, OrigName: "content"}
+	indexScan := (&physicalop.PhysicalIndexScan{
+		DataSourceSchema: expression.NewSchema(contentCol),
+		FtsQueryInfo:     &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeNoScore},
+	}).Init(ctx, 0)
+	indexScan.SetSchema(expression.NewSchema(contentCol))
+	limit := (&physicalop.PhysicalLimit{}).Init(ctx, &property.StatsInfo{}, 0)
+	limit.SetChildren(indexScan)
+	limit.SetSchema(indexScan.Schema())
+	indexReader := (&physicalop.PhysicalIndexReader{IndexPlan: limit}).Init(ctx, 0)
+
+	matchAgainst, err := expression.NewFunction(
+		ctx,
+		ast.FTSMysqlMatchAgainst,
+		types.NewFieldType(mysql.TypeDouble),
+		&expression.Constant{Value: types.NewStringDatum("hello"), RetType: stringTp},
+		contentCol,
+	)
+	require.NoError(t, err)
+	sf := matchAgainst.(*expression.ScalarFunction)
+	require.NoError(t, expression.SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+
+	proj := (&physicalop.PhysicalProjection{Exprs: []expression.Expression{matchAgainst}}).Init(ctx, &property.StatsInfo{}, 0)
+	proj.SetChildren(indexReader)
+	require.NoError(t, resolveIndicesItself4PhysicalProjection(proj))
+
+	col, ok := proj.Exprs[0].(*expression.Column)
+	require.True(t, ok)
+	require.Equal(t, model.VirtualColFTSBM25ScoreID, col.ID)
+	require.Equal(t, model.VirtualColFTSBM25ScoreID, limit.Schema().Columns[1].ID)
+	require.Equal(t, 1, col.Index)
 }

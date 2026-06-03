@@ -528,18 +528,6 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 		}
 	}
 
-	if p.FtsQueryInfo != nil {
-		p.FtsQueryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
-		scoreType := types.NewFieldType(mysql.TypeDouble)
-		scoreType.SetFlag(mysql.NotNullFlag)
-		rowLayout = append(rowLayout, &expression.Column{
-			RetType:  scoreType,
-			ID:       model.VirtualColFTSBM25ScoreID,
-			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			OrigName: model.FTSBM25ScoreName.O,
-		})
-	}
-
 	rowLayout = append(rowLayout, &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		ID:       model.ExtraVersionID,
