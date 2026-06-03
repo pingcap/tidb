@@ -109,7 +109,7 @@ func TestResolveProjectionContinuesAfterTiCIFTSScoreRewrite(t *testing.T) {
 	require.Equal(t, 1, resolvedID.Index)
 }
 
-func TestResolveProjectionRequestsTiCIFTSScoreThroughIndexPlanLimit(t *testing.T) {
+func TestResolveProjectionLeavesTiCIFTSScoreUnsupportedIndexPlanUnchanged(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
 	stringTp := types.NewFieldType(mysql.TypeVarchar)
@@ -141,9 +141,9 @@ func TestResolveProjectionRequestsTiCIFTSScoreThroughIndexPlanLimit(t *testing.T
 	proj.SetChildren(indexReader)
 	require.NoError(t, resolveIndicesItself4PhysicalProjection(proj))
 
-	col, ok := proj.Exprs[0].(*expression.Column)
+	sf, ok := proj.Exprs[0].(*expression.ScalarFunction)
 	require.True(t, ok)
-	require.Equal(t, model.VirtualColFTSBM25ScoreID, col.ID)
-	require.Equal(t, model.VirtualColFTSBM25ScoreID, limit.Schema().Columns[1].ID)
-	require.Equal(t, 1, col.Index)
+	require.Equal(t, ast.FTSMysqlMatchAgainst, sf.FuncName.L)
+	require.Equal(t, tipb.FTSQueryType_FTSQueryTypeNoScore, indexScan.FtsQueryInfo.QueryType)
+	require.Equal(t, 1, limit.Schema().Len())
 }

@@ -19,12 +19,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // resolveIndicesItself resolve indices for PhysicalPlan itself
@@ -70,99 +67,15 @@ func ensureTiCIFTSScoreColumn(child base.PhysicalPlan) (*expression.Column, bool
 			return col, true, nil
 		}
 	}
-	indexReader, ok := child.(*physicalop.PhysicalIndexReader)
+	provider, ok := child.(ftsBM25ScoreProvider)
 	if !ok {
 		return nil, false, nil
 	}
-	schemaCol, outputCol, ok, err := ensureIndexReaderFTSBM25ScoreColumn(indexReader)
-	if err != nil || !ok {
-		return nil, ok, err
-	}
-	schema := child.Schema().Clone()
-	schema.Append(schemaCol)
-	indexReader.PhysicalSchemaProducer.SetSchema(schema)
-	indexReader.OutputColumns = append(indexReader.OutputColumns, outputCol.(*expression.Column))
-	return schemaCol, true, nil
+	return provider.RequestFTSBM25ScoreColumn()
 }
 
-func ensureIndexReaderFTSBM25ScoreColumn(indexReader *physicalop.PhysicalIndexReader) (*expression.Column, expression.Expression, bool, error) {
-	if scoreCol, ok := findFTSBM25ScoreColumn(indexReader.IndexPlan.Schema()); ok {
-		outputCol, err := scoreCol.ResolveIndices(indexReader.IndexPlan.Schema())
-		if err != nil {
-			return nil, nil, false, err
-		}
-		return scoreCol.Clone().(*expression.Column), outputCol, true, nil
-	}
-	indexScan, ok := findTiCIFTSIndexScan(indexReader)
-	if !ok {
-		return nil, nil, false, nil
-	}
-	scoreCol, ok := findFTSBM25ScoreColumn(indexScan.Schema())
-	if !ok {
-		scoreCol = newFTSBM25ScoreColumn(indexScan.SCtx().GetSessionVars().AllocPlanColumnID())
-	}
-	indexScan.FtsQueryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
-	appendFTSBM25ScoreColumn(indexScan, scoreCol)
-	propagateIndexReaderFTSBM25ScoreColumn(indexReader, indexScan, scoreCol)
-	outputCol, err := scoreCol.ResolveIndices(indexReader.IndexPlan.Schema())
-	if err != nil {
-		return nil, nil, false, err
-	}
-	return scoreCol.Clone().(*expression.Column), outputCol, true, nil
-}
-
-type schemaProducer interface {
-	Schema() *expression.Schema
-	SetSchema(*expression.Schema)
-}
-
-func appendFTSBM25ScoreColumn(plan schemaProducer, scoreCol *expression.Column) {
-	if _, ok := findFTSBM25ScoreColumn(plan.Schema()); ok {
-		return
-	}
-	schema := plan.Schema().Clone()
-	schema.Append(scoreCol)
-	plan.SetSchema(schema)
-}
-
-func propagateIndexReaderFTSBM25ScoreColumn(indexReader *physicalop.PhysicalIndexReader, indexScan *physicalop.PhysicalIndexScan, scoreCol *expression.Column) {
-	foundIndexScan := false
-	for _, plan := range indexReader.IndexPlans {
-		if plan == indexScan {
-			foundIndexScan = true
-			continue
-		}
-		if !foundIndexScan {
-			continue
-		}
-		switch p := plan.(type) {
-		case *physicalop.PhysicalLimit:
-			appendFTSBM25ScoreColumn(p, scoreCol)
-		case *physicalop.PhysicalTopN:
-			appendFTSBM25ScoreColumn(p, scoreCol)
-		}
-	}
-}
-
-func findTiCIFTSIndexScan(indexReader *physicalop.PhysicalIndexReader) (*physicalop.PhysicalIndexScan, bool) {
-	for _, plan := range indexReader.IndexPlans {
-		indexScan, ok := plan.(*physicalop.PhysicalIndexScan)
-		if ok && indexScan.FtsQueryInfo != nil {
-			return indexScan, true
-		}
-	}
-	return nil, false
-}
-
-func newFTSBM25ScoreColumn(uniqueID int64) *expression.Column {
-	scoreType := types.NewFieldType(mysql.TypeDouble)
-	scoreType.SetFlag(mysql.NotNullFlag)
-	return &expression.Column{
-		RetType:  scoreType,
-		ID:       model.VirtualColFTSBM25ScoreID,
-		UniqueID: uniqueID,
-		OrigName: model.FTSBM25ScoreName.O,
-	}
+type ftsBM25ScoreProvider interface {
+	RequestFTSBM25ScoreColumn() (*expression.Column, bool, error)
 }
 
 func findFTSBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {

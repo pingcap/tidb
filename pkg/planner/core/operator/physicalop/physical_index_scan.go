@@ -537,6 +537,42 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 	p.SetSchema(expression.NewSchema(rowLayout...))
 }
 
+// RequestFTSBM25ScoreColumn appends the TiCI FTS BM25 score column to this scan.
+func (p *PhysicalIndexScan) RequestFTSBM25ScoreColumn() (*expression.Column, bool) {
+	if p.FtsQueryInfo == nil {
+		return nil, false
+	}
+	p.FtsQueryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
+	if scoreCol, ok := findFTSBM25ScoreColumn(p.Schema()); ok {
+		return scoreCol, true
+	}
+	scoreCol := newFTSBM25ScoreColumn(p.SCtx().GetSessionVars().AllocPlanColumnID())
+	schema := p.Schema().Clone()
+	schema.Append(scoreCol)
+	p.SetSchema(schema)
+	return scoreCol, true
+}
+
+func newFTSBM25ScoreColumn(uniqueID int64) *expression.Column {
+	scoreType := types.NewFieldType(mysql.TypeDouble)
+	scoreType.SetFlag(mysql.NotNullFlag)
+	return &expression.Column{
+		RetType:  scoreType,
+		ID:       model.VirtualColFTSBM25ScoreID,
+		UniqueID: uniqueID,
+		OrigName: model.FTSBM25ScoreName.O,
+	}
+}
+
+func findFTSBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
+	for _, col := range schema.Columns {
+		if col.ID == model.VirtualColFTSBM25ScoreID {
+			return col, true
+		}
+	}
+	return nil, false
+}
+
 // AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
 func (p *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
 	if !p.Index.Global {
