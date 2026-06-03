@@ -208,9 +208,6 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 			switch x := plan[0].(type) {
 			case *plannercore.PhysicalIndexScan:
 				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
-<<<<<<< HEAD
-			case *plannercore.PhysicalTableScan:
-=======
 				if err != nil {
 					return err
 				}
@@ -220,8 +217,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 						return err
 					}
 				}
-			case *physicalop.PhysicalTableScan:
->>>>>>> 173eaf24799 (planner, executor: support merge sort for IN conditions in IndexMerge partial paths (#67771))
+			case *plannercore.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
 				if err != nil {
 					return err
@@ -250,22 +246,6 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 	e.partialWorkerKVRanges = make([][]*kvRangesWithPhysicalTblID, len(e.partialPlans))
 
 	for i, plan := range e.partialPlans {
-<<<<<<< HEAD
-		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
-		if !ok {
-			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
-			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges)
-			if err != nil {
-				return nil, err
-			}
-			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges)
-			if err != nil {
-				return nil, err
-			}
-			keyRanges := append(firstKeyRanges.FirstPartitionRange(), secondKeyRanges.FirstPartitionRange()...)
-			ranges = append(ranges, keyRanges)
-			continue
-=======
 		// Determine grouped ranges: use GroupedRanges from the physical plan if available,
 		// otherwise wrap the flat ranges as a single group.
 		var (
@@ -273,12 +253,11 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 			isIdxScan     bool
 		)
 		switch x := plan[0].(type) {
-		case *physicalop.PhysicalIndexScan:
+		case *plannercore.PhysicalIndexScan:
 			isIdxScan = true
 			groupedRanges = x.GroupedRanges
-		case *physicalop.PhysicalTableScan:
+		case *plannercore.PhysicalTableScan:
 			groupedRanges = x.GroupedRanges
->>>>>>> 173eaf24799 (planner, executor: support merge sort for IN conditions in IndexMerge partial paths (#67771))
 		}
 		if len(groupedRanges) == 0 {
 			groupedRanges = [][]*ranger.Range{e.ranges[i]}

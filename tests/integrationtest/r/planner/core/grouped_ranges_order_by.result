@@ -1300,10 +1300,10 @@ analyze table t_im_in;
 explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
 id	estRows	task	access object	operator info
 IndexMerge	7.00	root		type: union, limit embedded(offset:0, count:7)
-├─Limit(Build)	1.05	cop[tikv]		offset:0, count:7
-│ └─IndexRangeScan	1.05	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[4,4], keep order:true
-├─Limit(Build)	6.80	cop[tikv]		offset:0, count:7
-│ └─IndexRangeScan	6.80	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+├─Limit(Build)	1.12	cop[tikv]		offset:0, count:7
+│ └─IndexRangeScan	1.12	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[4,4], keep order:true
+├─Limit(Build)	6.72	cop[tikv]		offset:0, count:7
+│ └─IndexRangeScan	6.72	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
 └─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
 id	a	b	c	padding
@@ -1317,36 +1317,36 @@ id	a	b	c	padding
 explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
 id	estRows	task	access object	operator info
 IndexMerge	7.00	root		type: union, limit embedded(offset:0, count:7)
-├─Limit(Build)	2.97	cop[tikv]		offset:0, count:7
-│ └─IndexRangeScan	2.97	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], [4,4], keep order:true
-├─Limit(Build)	6.44	cop[tikv]		offset:0, count:7
-│ └─IndexRangeScan	6.44	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+├─Limit(Build)	3.11	cop[tikv]		offset:0, count:7
+│ └─IndexRangeScan	3.11	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], [4,4], keep order:true
+├─Limit(Build)	6.22	cop[tikv]		offset:0, count:7
+│ └─IndexRangeScan	6.22	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
 └─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
 id	a	b	c	padding
 8	1	1	5	row8
 1	1	1	10	row1
-9	2	3	15	row9
 2	1	2	20	row2
-10	3	3	25	row10
 3	2	1	30	row3
 11	4	5	35	row11
+12	4	4	45	row12
+5	1	3	50	row5
 explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c desc limit 6;
 id	estRows	task	access object	operator info
 IndexMerge	6.00	root		type: union, limit embedded(offset:0, count:6)
-├─Limit(Build)	0.90	cop[tikv]		offset:0, count:6
-│ └─IndexRangeScan	0.90	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[4,4], keep order:true, desc
-├─Limit(Build)	5.83	cop[tikv]		offset:0, count:6
-│ └─IndexRangeScan	5.83	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true, desc
+├─Limit(Build)	0.96	cop[tikv]		offset:0, count:6
+│ └─IndexRangeScan	0.96	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[4,4], keep order:true, desc
+├─Limit(Build)	5.76	cop[tikv]		offset:0, count:6
+│ └─IndexRangeScan	5.76	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true, desc
 └─TableRowIDScan(Probe)	6.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c desc limit 6;
 id	a	b	c	padding
 16	6	5	85	row16
-15	5	1	75	row15
 14	2	5	65	row14
-6	3	1	60	row6
 13	5	5	55	row13
 5	1	3	50	row5
+12	4	4	45	row12
+11	4	5	35	row11
 # Prepare/Execute with parameterized IN values
 prepare stmt_im from 'select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ id,a,b,c from t_im_in where a = ? or b in (?, ?, ?) order by c limit ?';
 set @im_a = 4, @im_b1 = 1, @im_b2 = 3, @im_b3 = 5, @im_limit = 6;
@@ -1383,8 +1383,8 @@ id	estRows	task	access object	operator info
 Limit	7.00	root		offset:0, count:7
 └─UnionScan	7.00	root		or(eq(planner__core__grouped_ranges_order_by.t_im_in.a, 4), in(planner__core__grouped_ranges_order_by.t_im_in.b, 1, 3, 5))
   └─IndexMerge	7.00	root		type: union
-    ├─IndexRangeScan(Build)	1.05	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[4,4], keep order:true
-    ├─IndexRangeScan(Build)	6.80	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+    ├─IndexRangeScan(Build)	1.12	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[4,4], keep order:true
+    ├─IndexRangeScan(Build)	6.72	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
     └─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ id,a,b,c from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
 id	a	b	c
@@ -1409,17 +1409,17 @@ order by i.c limit 1
 ) as first_id
 from t_im_outer o order by o.k;
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN left outer join, left side:IndexReader
-├─IndexReader(Build)	10000.00	root		index:IndexFullScan
-│ └─IndexFullScan	10000.00	cop[tikv]	table:o, index:idx_k(k)	keep order:true, stats:pseudo
-└─MaxOneRow(Probe)	10000.00	root		
-  └─Projection	10000.00	root		planner__core__grouped_ranges_order_by.t_im_in.id
+Projection	10000.00	root		planner__core__grouped_ranges_order_by.t_im_outer.k, planner__core__grouped_ranges_order_by.t_im_in.id
+└─Apply	10000.00	root		CARTESIAN left outer join
+  ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
+  │ └─IndexFullScan	10000.00	cop[tikv]	table:o, index:idx_k(k)	keep order:true, stats:pseudo
+  └─MaxOneRow(Probe)	10000.00	root		
     └─IndexMerge	10000.00	root		type: union, limit embedded(offset:0, count:1)
-      ├─Limit(Build)	1656.41	cop[tikv]		offset:0, count:1
-      │ └─Selection	1656.41	cop[tikv]		eq(planner__core__grouped_ranges_order_by.t_im_in.a, planner__core__grouped_ranges_order_by.t_im_outer.k)
-      │   └─IndexRangeScan	9938.46	cop[tikv]	table:i, index:idx_a_c(a, c)	range:[1,1], [4,4], [6,6], keep order:true
-      ├─Limit(Build)	9230.77	cop[tikv]		offset:0, count:1
-      │ └─IndexRangeScan	9230.77	cop[tikv]	table:i, index:idx_b_c(b, c)	range:[2,2], [5,5], keep order:true
+      ├─Limit(Build)	1523.81	cop[tikv]		offset:0, count:1
+      │ └─Selection	1523.81	cop[tikv]		eq(planner__core__grouped_ranges_order_by.t_im_in.a, planner__core__grouped_ranges_order_by.t_im_outer.k)
+      │   └─IndexRangeScan	9142.86	cop[tikv]	table:i, index:idx_a_c(a, c)	range:[1,1], [4,4], [6,6], keep order:true
+      ├─Limit(Build)	9142.86	cop[tikv]		offset:0, count:1
+      │ └─IndexRangeScan	9142.86	cop[tikv]	table:i, index:idx_b_c(b, c)	range:[2,2], [5,5], keep order:true
       └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:i	keep order:false
 select o.k, (
 select /*+ no_decorrelate() use_index_merge(i, idx_a_c, idx_b_c) */ id
@@ -1492,10 +1492,10 @@ analyze table t_im_table_path;
 explain format = 'brief' select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
 id	estRows	task	access object	operator info
 IndexMerge	7.00	root		type: union, limit embedded(offset:0, count:7)
-├─Limit(Build)	3.00	cop[tikv]		offset:0, count:7
-│ └─TableRangeScan	3.00	cop[tikv]	table:t_im_table_path	range:[1,1], [4,4], keep order:true
-├─Limit(Build)	6.44	cop[tikv]		offset:0, count:7
-│ └─IndexRangeScan	6.44	cop[tikv]	table:t_im_table_path, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+├─Limit(Build)	3.11	cop[tikv]		offset:0, count:7
+│ └─TableRangeScan	3.11	cop[tikv]	table:t_im_table_path	range:[1,1], [4,4], keep order:true
+├─Limit(Build)	6.22	cop[tikv]		offset:0, count:7
+│ └─IndexRangeScan	6.22	cop[tikv]	table:t_im_table_path, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
 └─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_table_path	keep order:false
 select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
 a	b	c	d
@@ -1513,8 +1513,8 @@ id	estRows	task	access object	operator info
 Limit	7.00	root		offset:0, count:7
 └─UnionScan	7.00	root		or(in(planner__core__grouped_ranges_order_by.t_im_table_path.a, 1, 4), in(planner__core__grouped_ranges_order_by.t_im_table_path.b, 1, 3, 5))
   └─IndexMerge	7.00	root		type: union
-    ├─TableRangeScan(Build)	3.00	cop[tikv]	table:t_im_table_path	range:[1,1], [4,4], keep order:true
-    ├─IndexRangeScan(Build)	6.44	cop[tikv]	table:t_im_table_path, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+    ├─TableRangeScan(Build)	3.11	cop[tikv]	table:t_im_table_path	range:[1,1], [4,4], keep order:true
+    ├─IndexRangeScan(Build)	6.22	cop[tikv]	table:t_im_table_path, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
     └─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_table_path	keep order:false
 select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
 a	b	c	d
