@@ -310,14 +310,15 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"}},
-		NoSchema:            false,
-		LoadStats:           true,
-		PDConcurrency:       0x1,
-		StatsConcurrency:    0xc,
-		BatchFlushInterval:  16000000000,
-		DdlBatchSize:        0x80,
-		WithPlacementPolicy: "STRICT",
-		UseCheckpoint:       true,
+		NoSchema:              false,
+		LoadStats:             true,
+		PDConcurrency:         0x1,
+		StatsConcurrency:      0xc,
+		BatchFlushInterval:    16000000000,
+		DdlBatchSize:          0x80,
+		RegionScanConcurrency: 256,
+		WithPlacementPolicy:   "STRICT",
+		UseCheckpoint:         true,
 	}
 }
 
