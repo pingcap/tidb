@@ -511,18 +511,8 @@ var (
 	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
 	// ErrStorageClassInvalidSpec is reserved for future use.
 	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
-<<<<<<< HEAD
-=======
-	// ErrCannotSetAffinityOnTable is returned when set an invalid affinity on a table
-	ErrCannotSetAffinityOnTable = ClassDDL.NewStdErr(
-		mysql.ErrInvalidAffinityOption,
-		parser_mysql.Message("Can not set %s on a %s.", nil),
-	)
-	// ErrInvalidTableAffinity is returned when set an invalid affinity value on a table
-	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
 	// ErrForbiddenDDL is returned when a DDL operation is forbidden.
 	ErrForbiddenDDL = ClassDDL.NewStd(mysql.ErrForbiddenDDL)
->>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

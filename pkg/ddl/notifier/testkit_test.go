@@ -46,11 +46,7 @@ func TestPublishToTableStore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	t.Cleanup(func() {
-<<<<<<< HEAD
-		tk.MustExec("TRUNCATE mysql." + ddl.NotifierTableName)
-=======
-		tk.MustExec("delete from mysql." + metadef.NotifierTableName)
->>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
+		tk.MustExec("delete from mysql." + ddl.NotifierTableName)
 	})
 
 	ctx := context.Background()

@@ -1146,11 +1146,7 @@ const (
 	ErrBDRRestrictedDDL                   = 8263
 	ErrGlobalIndexNotExplicitlySet        = 8264
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
-<<<<<<< HEAD
-=======
-	ErrInvalidAffinityOption              = 8266
 	ErrForbiddenDDL                       = 8267
->>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

@@ -2376,16 +2376,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
-<<<<<<< HEAD
-=======
 	if isReservedSchemaObjInNextGen(meta.ID) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
 	}
-	if t.Meta().Affinity != nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE PARTITIONING of a table with AFFINITY option")
-	}
-
->>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
 	piOld := meta.GetPartitionInfo()
 	var partNames []string
 	if piOld != nil {
@@ -7016,20 +7009,6 @@ func getAnalyzeVersion(sctx sessionctx.Context) string {
 	}
 	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
 }
-<<<<<<< HEAD
-=======
-
-// checkColumnReferencedByPartialCondition checks whether alter column is referenced by a partial index condition
-func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIStr) error {
-	for _, idx := range t.Indices {
-		_, ic := model.FindIndexColumnByName(idx.AffectColumn, colName.L)
-		if ic != nil {
-			return dbterror.ErrModifyColumnReferencedByPartialCondition.GenWithStackByArgs(colName.O, idx.Name.O)
-		}
-	}
-
-	return nil
-}
 
 func isReservedSchemaObjInNextGen(id int64) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
@@ -7037,4 +7016,3 @@ func isReservedSchemaObjInNextGen(id int64) bool {
 	})
 	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
 }
->>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
