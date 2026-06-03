@@ -698,13 +698,8 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	{
 		naturalMatchAgainst := buildMatchAgainst("hello")
 		require.NoError(t, SetFTSMysqlMatchAgainstModifier(naturalMatchAgainst, ast.FulltextSearchModifierNaturalLanguageMode))
-		expr, changed, err := RewriteMySQLMatchAgainstRecursively(ctx, naturalMatchAgainst, model.FullTextParserTypeStandardV1)
-		require.NoError(t, err)
-		require.True(t, changed)
-		require.False(t, hasMySQLMatchAgainst(expr))
-		require.ElementsMatch(t, []ftsLeaf{
-			{funcName: ast.FTSMatchWord, query: "hello", columns: []string{"title"}},
-		}, collectFTSLeaves(expr))
+		_, _, err := RewriteMySQLMatchAgainstRecursively(ctx, naturalMatchAgainst, model.FullTextParserTypeStandardV1)
+		require.ErrorContains(t, err, "Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
 	}
 
 	expr, _, err := RewriteMySQLMatchAgainstRecursively(ctx, matchAgainst, model.FullTextParserTypeStandardV1)

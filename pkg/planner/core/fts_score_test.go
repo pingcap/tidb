@@ -94,7 +94,7 @@ func TestResolveProjectionRewritesTiCIFTSMatchAgainstOnIndexScan(t *testing.T) {
 	)
 	require.NoError(t, err)
 	sf := matchAgainst.(*expression.ScalarFunction)
-	require.NoError(t, expression.SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierNaturalLanguageMode))
+	require.NoError(t, expression.SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
 
 	proj := (&physicalop.PhysicalProjection{Exprs: []expression.Expression{matchAgainst}}).Init(ctx, &property.StatsInfo{}, 0)
 	proj.SetChildren(indexScan)
@@ -207,9 +207,9 @@ func TestFTSFuncValidationAllowsTopLevelMatchAgainstProjection(t *testing.T) {
 	require.NoError(t, (&ftsFuncValidation{}).doQuickValidation(context.Background(), proj))
 }
 
-func TestFTSSupportedModifierAllowsDefaultNaturalLanguageMode(t *testing.T) {
+func TestFTSSupportedModifierOnlyAllowsBooleanMode(t *testing.T) {
 	t.Parallel()
-	require.True(t, isFTSSupportedModifier(ast.FulltextSearchModifierNaturalLanguageMode))
+	require.False(t, isFTSSupportedModifier(ast.FulltextSearchModifierNaturalLanguageMode))
 	require.True(t, isFTSSupportedModifier(ast.FulltextSearchModifierBooleanMode))
 	require.False(t, isFTSSupportedModifier(ast.FulltextSearchModifierNaturalLanguageMode|ast.FulltextSearchModifierWithQueryExpansion))
 }

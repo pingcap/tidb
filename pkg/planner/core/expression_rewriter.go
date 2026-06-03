@@ -2404,14 +2404,12 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 //   - the originating table has an available TiFlash replica;
 //   - the column is covered by a public FULLTEXT index on that table.
 //
-// In addition, WITH QUERY EXPANSION is not supported by the native path today.
-// The default natural-language mode and existing Boolean-mode predicate queries
-// are normalized by FTS index analysis.
+// In addition, the modifier must be BOOLEAN MODE. Other modes are not encoded in
+// the tipb pushdown today, so native pushdown only admits boolean-mode predicates.
 func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
 	if numCols <= 0 {
 		return false
 	}
-	// The current native path has no implementation for query expansion.
 	if !isFTSSupportedModifier(modifier) {
 		return false
 	}
@@ -2452,10 +2450,9 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 	return true
 }
 
-// isFTSSupportedModifier returns true for modifiers the current native FTS path
-// can preserve or normalize without extra tipb metadata.
+// isFTSSupportedModifier returns true for currently supported FTS modifiers.
 func isFTSSupportedModifier(modifier ast.FulltextSearchModifier) bool {
-	return !modifier.WithQueryExpansion()
+	return !modifier.IsNaturalLanguageMode() && !modifier.WithQueryExpansion()
 }
 
 // tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT
@@ -2478,9 +2475,7 @@ func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string
 // builtin scalar function which can be pushed down to TiFlash for execution
 // against a fulltext index.
 func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
-	// Reject modifiers the current native path cannot represent. Default
-	// natural-language mode and Boolean-mode predicate queries are normalized by
-	// FTS index analysis.
+	// Reject modifiers the current native path cannot represent.
 	if !isFTSSupportedModifier(v.Modifier) && !er.matchHasLikeFallbackRescue() {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
 			"MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)")
