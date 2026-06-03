@@ -47,7 +47,11 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 13,
+=======
+    shard_count = 18,
+>>>>>>> 6c431044127 (util/stmtsummary: add tidb_stmt_summary_persist_evicted (#68513))
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/auth",
@@ -58,5 +62,7 @@ go_test(
         "//pkg/util/set",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )

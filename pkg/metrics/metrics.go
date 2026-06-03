@@ -321,6 +321,29 @@ func RegisterMetrics() {
 	prometheus.MustRegister(IndexLookRowsCounter)
 	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 	prometheus.MustRegister(IndexLookUpCopTaskCount)
+<<<<<<< HEAD
+=======
+
+	// StmtSummary
+	prometheus.MustRegister(StmtSummaryWindowRecordCount)
+	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
+
+	// Channelz
+	setupChannelzCollector()
+}
+
+// Register registers custom collectors.
+func Register(cs ...prometheus.Collector) {
+	prometheus.MustRegister(cs...)
+}
+
+// Unregister unregisters custom collectors.
+func Unregister(cs ...prometheus.Collector) {
+	for _, c := range cs {
+		prometheus.Unregister(c)
+	}
+>>>>>>> 6c431044127 (util/stmtsummary: add tidb_stmt_summary_persist_evicted (#68513))
 }
 
 var mode struct {

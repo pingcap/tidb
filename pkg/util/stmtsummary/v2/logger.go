@@ -17,9 +17,15 @@ package stmtsummary
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/log"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/metrics"
+>>>>>>> 6c431044127 (util/stmtsummary: add tidb_stmt_summary_persist_evicted (#68513))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
@@ -58,16 +64,52 @@ func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 		r.Unlock()
 	}
 	w.evicted.Lock()
-	if w.evicted.other.ExecCount > 0 {
-		w.evicted.other.Begin = begin
-		w.evicted.other.End = end.Unix()
-		s.log(w.evicted.other)
+	if w.evicted.otherForPersist.ExecCount > 0 {
+		w.evicted.otherForPersist.Begin = begin
+		w.evicted.otherForPersist.End = end.Unix()
+		s.log(w.evicted.otherForPersist)
 	}
 	w.evicted.Unlock()
 }
 
 func (s *stmtLogStorage) sync() error {
 	return s.logger.Sync()
+}
+
+// logEvicted writes evicted records to the stmt log with an `"evicted":true`
+// marker so downstream consumers can distinguish per-record eviction events
+// from rotated-window records.
+func (s *stmtLogStorage) logEvicted(records []*StmtRecord) {
+	var builder strings.Builder
+	persisted := 0
+	for _, r := range records {
+		b, err := marshalEvictedStmtRecord(r)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to marshal evicted statement summary", zap.Error(err))
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		_, _ = builder.Write(b)
+		persisted++
+	}
+	if builder.Len() == 0 {
+		return
+	}
+	s.logger.Info(builder.String())
+	metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+		metrics.StmtSummaryTypeV2,
+		metrics.StmtSummaryEvictedLogResultPersisted,
+	).Add(float64(persisted))
+}
+
+// evictedStmtRecord embeds *StmtRecord and adds an "evicted" JSON tag.
+// Keeping the embedded pointer means the JSON field order matches StmtRecord
+// and parsers tolerant of the extra field work unchanged.
+type evictedStmtRecord struct {
+	*StmtRecord
+	Evicted bool `json:"evicted"`
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
@@ -79,6 +121,49 @@ func (s *stmtLogStorage) log(r *StmtRecord) {
 	s.logger.Info(string(b))
 }
 
+<<<<<<< HEAD
+=======
+func marshalStmtRecord(r *StmtRecord) ([]byte, error) {
+	return marshalStmtRecordWithEvicted(r, false)
+}
+
+func marshalEvictedStmtRecord(r *StmtRecord) ([]byte, error) {
+	return marshalStmtRecordWithEvicted(r, true)
+}
+
+func marshalStmtRecordWithEvicted(r *StmtRecord, evicted bool) ([]byte, error) {
+	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
+	if len(fields) == 0 {
+		if evicted {
+			return json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+		}
+		return json.Marshal(r)
+	}
+	if evicted {
+		return json.Marshal(evictedStmtRecordWithAdditionalFields{
+			StmtRecord:       r,
+			AdditionalFields: fields,
+			Evicted:          true,
+		})
+	}
+	return json.Marshal(stmtRecordWithAdditionalFields{
+		StmtRecord:       r,
+		AdditionalFields: fields,
+	})
+}
+
+type stmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
+}
+
+type evictedStmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
+	Evicted          bool              `json:"evicted"`
+}
+
+>>>>>>> 6c431044127 (util/stmtsummary: add tidb_stmt_summary_persist_evicted (#68513))
 type stmtLogEncoder struct{}
 
 func (*stmtLogEncoder) EncodeEntry(entry zapcore.Entry, _ []zapcore.Field) (*buffer.Buffer, error) {
