@@ -379,13 +379,11 @@ func TestReplaceTablesDowngrade(t *testing.T) {
 				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
 			},
 		},
-<<<<<<< HEAD
 	}, snapclient.SchemaVersionPairT{
 		UpstreamVersionMajor:   8,
 		UpstreamVersionMinor:   5,
 		DownstreamVersionMajor: 8,
 		DownstreamVersionMinor: 1,
-=======
 	}, 123, true, true, nil, false, 1)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
@@ -464,6 +462,11 @@ func TestReplaceTablesWithoutUpdateStatsMeta(t *testing.T) {
 				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
 			},
 		},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
 	}, 123, true, true, nil, false, 1)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
@@ -541,7 +544,11 @@ func TestReplaceTablesWithoutUpdateStatsMeta2(t *testing.T) {
 				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
 			},
 		},
->>>>>>> fad8e671542 (ddl: forbid drop/rename on system tables in nextgen and change BR to never physical restore system tables (#65756))
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   1,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 1,
 	}, 123, true, true, nil, false, 1)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
