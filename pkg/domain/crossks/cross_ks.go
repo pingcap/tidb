@@ -177,7 +177,9 @@ func (m *Manager) getOrCreateEntryWithoutLock(
 		return entry, nil
 	}
 
-	mgr, err := m.createSessionManager(ks, ksSessFactoryGetter)
+	createSessionManager := m.createSessionManager
+	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
+	mgr, err := createSessionManager(ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -325,16 +327,12 @@ func (*Manager) createSessionManager(
 // release releases the runtime handle for the specified keyspace and holderID.
 // the resources will be cleaned up if there is no active holder after enough
 // time. we will impl this part later.
-func (m *Manager) release(targetKS string, holderID string, entry *runtimeEntry) {
+func (m *Manager) release(targetKS string, holderID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// there are still APIs which creates runtimeEntry without holderID now.
-	// if it's closed and created again, the got entry might be different.
-	// we will remove those APIs without holderID in the future, and then we can
-	// remove this check.
-	current, ok := m.runtimes[targetKS]
-	if !ok || current != entry {
+	entry, ok := m.runtimes[targetKS]
+	if !ok {
 		return
 	}
 	delete(entry.activeHolders, holderID)
@@ -383,7 +381,7 @@ func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
 
 func (h *runtimeHandle) Release() {
 	h.releaseOnce.Do(func() {
-		h.manager.release(h.targetKS, h.holderID, h.entry)
+		h.manager.release(h.targetKS, h.holderID)
 	})
 }
 
