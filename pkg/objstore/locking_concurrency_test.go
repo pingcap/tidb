@@ -989,21 +989,21 @@ func cleanupBoundaryFixture(
 		return "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef",
 			"v1/LOCK.WRIT.33333333333333333333333333333333",
 			"v1/LOCK.WRIT.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"v1/LOCK.WRIT",
+			"v1/LOCK.WRIT.backup",
 			"v1/LOCK.WRIT.55555555555555555555555555555555",
 			func() { runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/LOCK") }
 	case "migration-read":
 		return "v1/LOCK.READ.0123456789abcdef0123456789abcdef",
 			"v1/LOCK.READ.33333333333333333333333333333333",
 			"v1/LOCK.READ.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"v1/LOCK.READ.cafef00d12345678",
+			"v1/LOCK.READ.backup",
 			"v1/LOCK.READ.55555555555555555555555555555555",
 			func() { runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/LOCK") }
 	case "append-write":
 		return "v1/APPEND_LOCK.WRIT.0123456789abcdef0123456789abcdef",
 			"v1/APPEND_LOCK.WRIT.33333333333333333333333333333333",
 			"v1/APPEND_LOCK.WRIT.44444444444444444444444444444444.INTENT.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"v1/APPEND_LOCK.WRIT",
+			"v1/APPEND_LOCK.WRIT.backup",
 			"v1/APPEND_LOCK.WRIT.55555555555555555555555555555555",
 			func() { runCleanupAttemptThroughLockWithRetry(t, strg, objstore.TryLockRemoteWrite, "v1/APPEND_LOCK") }
 	default:
