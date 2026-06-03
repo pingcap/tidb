@@ -534,6 +534,13 @@ func TestDualPasswordSecondaryLoginWithEmptyPrimary(t *testing.T) {
 	require.NoError(t, authAs(t, tk, "dpemptyfb", "%", "primary1"))
 	// The overwritten primary no longer authenticates.
 	require.Error(t, authAs(t, tk, "dpemptyfb", "%", "primary2"))
+	// Passwordless login (empty primary, empty client auth) must still succeed
+	// even though a retained secondary is present — the dual-password fallback
+	// must not hijack the no-password success path. A real passwordless client
+	// sends empty authentication bytes, so pass nil here (sha1Password("") would
+	// instead send a non-empty scramble of the empty string).
+	sub := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, sub.Session().Auth(&auth.UserIdentity{Username: "dpemptyfb", Hostname: "%"}, nil, nil, nil))
 }
 
 // TestDualPasswordDiscardNoopOnIncapablePlugin guards that DISCARD OLD PASSWORD
@@ -568,4 +575,24 @@ func TestDualPasswordDiscardCollapsesEmptyAttributesToNull(t *testing.T) {
 	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
 	tk.MustExec("ALTER USER dpnull DISCARD OLD PASSWORD")
 	tk.MustQuery("SELECT user_attributes IS NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
+}
+
+// TestDualPasswordSelfSetPasswordRetainAcceptsMysqlUpdate guards that the self
+// SET PASSWORD ... RETAIN CURRENT PASSWORD gate accepts the UPDATE privilege on
+// the mysql schema as a superset authority, matching executeAlterUser's
+// needAdminPrivCheck (a user with UPDATE on mysql.* but no CREATE USER /
+// APPLICATION_PASSWORD_ADMIN must not be wrongly denied).
+func TestDualPasswordSelfSetPasswordRetainAcceptsMysqlUpdate(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpupd")
+	tk.MustExec("CREATE USER dpupd IDENTIFIED BY 'u1'")
+	tk.MustExec("GRANT UPDATE ON mysql.* TO dpupd")
+
+	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpupd", Hostname: "%"}, sha1Password("u1"), nil, nil))
+	selfTK.MustExec("SET PASSWORD FOR 'dpupd'@'%' = 'u2' RETAIN CURRENT PASSWORD")
+
+	require.NoError(t, authAs(t, tk, "dpupd", "%", "u1"))
+	require.NoError(t, authAs(t, tk, "dpupd", "%", "u2"))
 }

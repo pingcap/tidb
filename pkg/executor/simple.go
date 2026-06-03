@@ -2842,12 +2842,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		}
 	}
 	// Self-service SET PASSWORD ... RETAIN CURRENT PASSWORD requires
-	// APPLICATION_PASSWORD_ADMIN (CREATE USER / UPDATE-mysql also suffice as a
-	// superset), matching MySQL's self-account dual-password rule.
+	// APPLICATION_PASSWORD_ADMIN (CREATE USER or the UPDATE privilege on the
+	// mysql schema also suffice as a superset), matching MySQL's self-account
+	// dual-password rule and executeAlterUser's needAdminPrivCheck.
 	if setPwdForSelf && s.RetainCurrentPassword && checker != nil {
 		hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
 		hasApplicationPasswordAdminPriv := checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
-		if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
+		hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+		if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv || hasSystemSchemaPriv) {
 			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
 		}
 	}
