@@ -83,6 +83,15 @@ var dynamicPrivs = []string{
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
 
+// dualPasswordFallbackLogger rate-limits the "authenticated using retained
+// (secondary) password" info log so a partially-rotated high-churn service
+// doesn't flood logs. One entry per minute per process is enough for an
+// operator to confirm a rotation is in progress; auth events themselves are
+// recorded separately.
+var dualPasswordFallbackLogger = logutil.SampleLoggerFactory(
+	time.Minute, 1, zap.String(logutil.LogFieldCategory, "auth"),
+)
+
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
@@ -735,7 +744,9 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if secondaryAccepted {
 			// Surface fallback logins so operators can tell which accounts
 			// have finished rotating and can safely DISCARD OLD PASSWORD.
-			logutil.BgLogger().Info("authenticated using retained (secondary) password",
+			// Sampled to avoid log flooding on high-churn services that
+			// are mid-rotation.
+			dualPasswordFallbackLogger().Info("authenticated using retained (secondary) password",
 				zap.String("auth_user", authUser),
 				zap.String("auth_host", authHost),
 				zap.String("auth_plugin", record.AuthPlugin))
