@@ -634,9 +634,21 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 
 	var leaseLostOnce sync.Once
 	workerReady := make(chan *protectedWorker, 1)
+	var releaseWorkerOnce sync.Once
+	releaseWorkerForLeaseLost := func(worker *protectedWorker) {
+		releaseWorkerOnce.Do(func() {
+			workerReady <- worker
+		})
+	}
+	t.Cleanup(func() {
+		releaseWorkerForLeaseLost(nil)
+	})
 	onLeaseLost := func() {
 		leaseLostOnce.Do(func() {
 			worker := <-workerReady
+			if worker == nil {
+				return
+			}
 			worker.stop(workerStopLeaseLost)
 		})
 	}
@@ -668,10 +680,10 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 
 	lockInfo := lock.String()
 	createdWorker := startProtectedWorker(t, ctx, audit, "owner-a", name, lockInfo)
-	workerReady <- createdWorker
 	step, ok := createdWorker.requestStep(t)
 	require.True(t, ok)
 	require.Equal(t, 1, step)
+	releaseWorkerForLeaseLost(createdWorker)
 
 	select {
 	case <-createdWorker.lostCh():
