@@ -16,7 +16,11 @@
 # production environment, please refer to https://github.com/PingCAP-QE/artifacts/blob/main/dockerfiles/cd/builders/tidb/Dockerfile.
 
 # Builder image
+<<<<<<< HEAD
 FROM golang:1.25.8 as builder
+=======
+FROM golang:1.25.10 as builder
+>>>>>>> a2a22ec341c (build: upgrade Go to 1.25.10 (#68902))
 WORKDIR /tidb
 
 COPY . .

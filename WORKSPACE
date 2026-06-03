@@ -106,7 +106,11 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
+<<<<<<< HEAD
     version = "1.25.8",
+=======
+    version = "1.25.10",
+>>>>>>> a2a22ec341c (build: upgrade Go to 1.25.10 (#68902))
 )
 
 gazelle_dependencies(go_sdk = "go_sdk")

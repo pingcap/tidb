@@ -14,7 +14,11 @@
 
 FROM rockylinux:9
 
+<<<<<<< HEAD
 ENV GOLANG_VERSION 1.25.8
+=======
+ENV GOLANG_VERSION 1.25.10
+>>>>>>> a2a22ec341c (build: upgrade Go to 1.25.10 (#68902))
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /home/prow/go

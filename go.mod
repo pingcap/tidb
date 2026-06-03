@@ -1,6 +1,10 @@
 module github.com/pingcap/tidb
 
+<<<<<<< HEAD
 go 1.25.8
+=======
+go 1.25.10
+>>>>>>> a2a22ec341c (build: upgrade Go to 1.25.10 (#68902))
 
 require (
 	cloud.google.com/go/kms v1.15.8
