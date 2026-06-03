@@ -420,7 +420,8 @@ func testConcurrentAcquirePair(
 ) {
 	t.Helper()
 	ctx := context.Background()
-	strg, _ := createMockStorage(t)
+	strg, pth := createMockStorage(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(pth, "v1"), 0o755))
 	audit := newCriticalSectionAudit(interleaving)
 
 	waitSignal := func(ch <-chan struct{}, name string) {
@@ -540,61 +541,6 @@ func testConcurrentAcquirePair(
 	requireNoIntentWithPrefix(t, strg, intentPrefixes...)
 }
 
-func testConcurrentCompatibleReaders(t *testing.T) {
-	t.Helper()
-	ctx := context.Background()
-	strg, pth := createMockStorage(t)
-	require.NoError(t, os.MkdirAll(filepath.Join(pth, "v1"), 0o755))
-	audit := newCriticalSectionAudit("migration-read")
-
-	resultCh := make(chan lockAttemptResult, 2)
-	go func() {
-		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-a", localLeaseClock())
-		resultCh <- lockAttemptResult{ownerID: "owner-a", lock: lock, err: err}
-	}()
-	go func() {
-		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-b", localLeaseClock())
-		resultCh <- lockAttemptResult{ownerID: "owner-b", lock: lock, err: err}
-	}()
-
-	results := make([]lockAttemptResult, 0, 2)
-	for len(results) < 2 {
-		select {
-		case result := <-resultCh:
-			results = append(results, result)
-		case <-time.After(2 * time.Second):
-			t.Fatalf("timed out waiting for compatible reader acquire results: partial=%#v audit=%#v", results, audit.snapshot())
-		}
-	}
-	for _, result := range results {
-		require.NoError(t, result.err, "reader %s failed: results=%#v", result.ownerID, results)
-		require.NotNil(t, result.lock)
-	}
-
-	type readerHolder struct {
-		result   lockAttemptResult
-		lockInfo string
-		worker   *protectedWorker
-	}
-
-	holders := make([]readerHolder, 0, 2)
-	for _, result := range results {
-		lockInfo := result.lock.String()
-		worker := startProtectedWorker(t, ctx, audit, result.ownerID, "migration-read", lockInfo)
-		_, ok := worker.requestStep(t)
-		require.True(t, ok)
-		holders = append(holders, readerHolder{result: result, lockInfo: lockInfo, worker: worker})
-	}
-
-	for _, holder := range holders {
-		holder.worker.stop(workerStopTestStop)
-		holder.worker.waitStopped(t)
-		require.NoError(t, holder.result.lock.Unlock(ctx))
-		audit.recordExit(holder.result.ownerID, "migration-read", holder.lockInfo, "unlock")
-	}
-	requireNoIntentWithPrefix(t, strg, "v1/LOCK.READ.")
-}
-
 func TestLeaseLockConcurrentAcquireExclusion(t *testing.T) {
 	t.Run("migration read and write", func(t *testing.T) {
 		testConcurrentAcquirePair(t,
@@ -649,7 +595,17 @@ func TestLeaseLockConcurrentAcquireExclusion(t *testing.T) {
 		)
 	})
 	t.Run("migration readers", func(t *testing.T) {
-		testConcurrentCompatibleReaders(t)
+		testConcurrentAcquirePair(t,
+			"migration-read",
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-a", localLeaseClock())
+			},
+			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-b", localLeaseClock())
+			},
+			[]string{"v1/LOCK.READ."},
+			2,
+		)
 	})
 }
 

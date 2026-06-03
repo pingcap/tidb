@@ -483,6 +483,8 @@ Also add missing imports:
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -522,7 +524,8 @@ func testConcurrentAcquirePair(
 ) {
 	t.Helper()
 	ctx := context.Background()
-	strg, _ := createMockStorage(t)
+	strg, pth := createMockStorage(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(pth, "v1"), 0o755))
 	audit := newCriticalSectionAudit(interleaving)
 
 	waitRecvTwice := func(ch chan<- struct{}) func() {
