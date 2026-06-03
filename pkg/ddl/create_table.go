@@ -617,12 +617,14 @@ func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, 
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		replicas, err := infoschema.GetTiFlashStoreCount(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+		if config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
+			replicas, err := infoschema.GetTiFlashStoreCount(store)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if replicas == 0 {
+				return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+			}
 		}
 
 		// Always try to set to 1 as the default replica count.
