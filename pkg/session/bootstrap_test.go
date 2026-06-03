@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/telemetry"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
@@ -279,6 +280,7 @@ func TestBootstrapWithError(t *testing.T) {
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
@@ -2509,6 +2511,7 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 }
 
 func TestIssue61890(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
