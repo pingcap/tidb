@@ -640,9 +640,6 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 			workerReady <- worker
 		})
 	}
-	t.Cleanup(func() {
-		releaseWorkerForLeaseLost(nil)
-	})
 	onLeaseLost := func() {
 		leaseLostOnce.Do(func() {
 			worker := <-workerReady
@@ -677,6 +674,7 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 	}
 	require.NoError(t, err)
 	defer objstore.TESTStopRenewal(lock)
+	defer releaseWorkerForLeaseLost(nil)
 
 	lockInfo := lock.String()
 	createdWorker := startProtectedWorker(t, ctx, audit, "owner-a", name, lockInfo)
