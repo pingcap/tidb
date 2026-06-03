@@ -1,0 +1,308 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package objstore_test
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+type criticalSectionEvent struct {
+	Seq          int
+	At           time.Time
+	Interleaving string
+	OwnerID      string
+	Family       string
+	LockInfo     string
+	Action       string
+	Detail       string
+}
+
+type criticalSectionAudit struct {
+	mu           sync.Mutex
+	interleaving string
+	nextSeq      int
+	events       []criticalSectionEvent
+}
+
+func newCriticalSectionAudit(interleaving string) *criticalSectionAudit {
+	return &criticalSectionAudit{interleaving: interleaving}
+}
+
+func (a *criticalSectionAudit) record(action, ownerID, family, lockInfo, detail string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nextSeq++
+	a.events = append(a.events, criticalSectionEvent{
+		Seq:          a.nextSeq,
+		At:           time.Now(),
+		Interleaving: a.interleaving,
+		OwnerID:      ownerID,
+		Family:       family,
+		LockInfo:     lockInfo,
+		Action:       action,
+		Detail:       detail,
+	})
+}
+
+func (a *criticalSectionAudit) recordEnter(ownerID, family, lockInfo, detail string) {
+	a.record("enter", ownerID, family, lockInfo, detail)
+}
+
+func (a *criticalSectionAudit) recordStep(ownerID, family, lockInfo, detail string) {
+	a.record("step", ownerID, family, lockInfo, detail)
+}
+
+func (a *criticalSectionAudit) recordExit(ownerID, family, lockInfo, detail string) {
+	a.record("exit", ownerID, family, lockInfo, detail)
+}
+
+func (a *criticalSectionAudit) recordLost(ownerID, family, lockInfo, detail string) {
+	a.record("lost", ownerID, family, lockInfo, detail)
+}
+
+func (a *criticalSectionAudit) recordStopped(ownerID, family, lockInfo, detail string) {
+	a.record("stopped", ownerID, family, lockInfo, detail)
+}
+
+func (a *criticalSectionAudit) snapshot() []criticalSectionEvent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]criticalSectionEvent, len(a.events))
+	copy(out, a.events)
+	return out
+}
+
+type workerStopReason string
+
+const (
+	workerStopTestStop  workerStopReason = "test_stop"
+	workerStopLeaseLost workerStopReason = "lease_lost"
+)
+
+type protectedWorker struct {
+	cancel context.CancelFunc
+	audit  *criticalSectionAudit
+
+	ownerID  string
+	family   string
+	lockInfo string
+
+	stepReq chan chan workerStepResult
+	stopped chan struct{}
+	lost    chan struct{}
+
+	stopOnce sync.Once
+	reasonMu sync.Mutex
+	reason   workerStopReason
+	steps    int
+}
+
+type workerStepResult struct {
+	step int
+	ok   bool
+}
+
+func startProtectedWorker(ctx context.Context, audit *criticalSectionAudit, ownerID, family, lockInfo string) *protectedWorker {
+	workerCtx, cancel := context.WithCancel(ctx)
+	w := &protectedWorker{
+		cancel:   cancel,
+		audit:    audit,
+		ownerID:  ownerID,
+		family:   family,
+		lockInfo: lockInfo,
+		stepReq:  make(chan chan workerStepResult),
+		stopped:  make(chan struct{}),
+		lost:     make(chan struct{}),
+		reason:   workerStopTestStop,
+	}
+	go w.loop(workerCtx)
+	return w
+}
+
+func (w *protectedWorker) loop(ctx context.Context) {
+	defer close(w.stopped)
+	w.audit.recordEnter(w.ownerID, w.family, w.lockInfo, "enter")
+	for {
+		select {
+		case <-ctx.Done():
+			w.audit.recordStopped(w.ownerID, w.family, w.lockInfo, string(w.stopReason()))
+			return
+		case reply := <-w.stepReq:
+			w.steps++
+			w.audit.recordStep(w.ownerID, w.family, w.lockInfo, fmt.Sprintf("step-%d", w.steps))
+			reply <- workerStepResult{step: w.steps, ok: true}
+		}
+	}
+}
+
+func (w *protectedWorker) requestStep(t *testing.T) (int, bool) {
+	t.Helper()
+	reply := make(chan workerStepResult, 1)
+	select {
+	case <-w.stopped:
+		return 0, false
+	case w.stepReq <- reply:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out requesting protected worker step")
+	}
+	select {
+	case result := <-reply:
+		return result.step, result.ok
+	case <-w.stopped:
+		return 0, false
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for protected worker step")
+	}
+	return 0, false
+}
+
+func (w *protectedWorker) stop(reason workerStopReason) {
+	w.stopOnce.Do(func() {
+		w.reasonMu.Lock()
+		w.reason = reason
+		w.reasonMu.Unlock()
+		if reason == workerStopLeaseLost {
+			w.audit.recordLost(w.ownerID, w.family, w.lockInfo, string(reason))
+			close(w.lost)
+		}
+		w.cancel()
+	})
+}
+
+func (w *protectedWorker) lostCh() <-chan struct{} {
+	return w.lost
+}
+
+func (w *protectedWorker) waitStopped(t *testing.T) {
+	t.Helper()
+	waitClosed(t, w.stopped, "protected worker stopped")
+}
+
+func (w *protectedWorker) stopReason() workerStopReason {
+	w.reasonMu.Lock()
+	defer w.reasonMu.Unlock()
+	return w.reason
+}
+
+func waitClosed(t *testing.T, ch <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+	}
+}
+
+func requireEventAction(t *testing.T, events []criticalSectionEvent, action string) {
+	t.Helper()
+	for _, event := range events {
+		if event.Action == action {
+			return
+		}
+	}
+	t.Fatalf("missing audit action %q in %#v", action, events)
+}
+
+func requireNoStepAfterStopped(t *testing.T, events []criticalSectionEvent, ownerID string) {
+	t.Helper()
+	stoppedSeq := 0
+	for _, event := range events {
+		if event.OwnerID == ownerID && event.Action == "stopped" {
+			stoppedSeq = event.Seq
+			break
+		}
+	}
+	require.NotZero(t, stoppedSeq, "missing stopped event for %s", ownerID)
+	for _, event := range events {
+		require.False(t, event.OwnerID == ownerID && event.Action == "step" && event.Seq > stoppedSeq,
+			"step after stopped: %#v", event)
+	}
+}
+
+func TestLeaseLockCriticalSectionAuditSelfCheck(t *testing.T) {
+	audit := newCriticalSectionAudit("self-check")
+
+	audit.recordEnter("owner-a", "migration-write", "lock-a", "enter")
+	audit.recordStep("owner-a", "migration-write", "lock-a", "step-1")
+	audit.recordExit("owner-a", "migration-write", "lock-a", "exit")
+
+	events := audit.snapshot()
+	require.Len(t, events, 3)
+	require.Equal(t, 1, events[0].Seq)
+	require.Equal(t, "self-check", events[0].Interleaving)
+	require.Equal(t, "owner-a", events[0].OwnerID)
+	require.Equal(t, "migration-write", events[0].Family)
+	require.Equal(t, "lock-a", events[0].LockInfo)
+	require.Equal(t, "enter", events[0].Action)
+	require.Equal(t, "enter", events[0].Detail)
+
+	events[0].OwnerID = "mutated"
+	require.Equal(t, "owner-a", audit.snapshot()[0].OwnerID)
+
+	const goroutines = 8
+	const perGoroutine = 5
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		ownerID := fmt.Sprintf("owner-%d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perGoroutine; j++ {
+				audit.recordStep(ownerID, "migration-read", "lock", fmt.Sprintf("step-%d", j))
+			}
+		}()
+	}
+	wg.Wait()
+
+	events = audit.snapshot()
+	require.Len(t, events, 3+goroutines*perGoroutine)
+	for i, event := range events {
+		require.Equal(t, i+1, event.Seq)
+		require.False(t, event.At.IsZero())
+	}
+}
+
+func TestLeaseLockProtectedWorkerSelfCheck(t *testing.T) {
+	ctx := context.Background()
+	audit := newCriticalSectionAudit("worker-self-check")
+	worker := startProtectedWorker(ctx, audit, "owner-a", "migration-write", "lock-a")
+
+	step, ok := worker.requestStep(t)
+	require.True(t, ok)
+	require.Equal(t, 1, step)
+	step, ok = worker.requestStep(t)
+	require.True(t, ok)
+	require.Equal(t, 2, step)
+
+	worker.stop(workerStopLeaseLost)
+	waitClosed(t, worker.lostCh(), "lost")
+	worker.waitStopped(t)
+	require.Equal(t, workerStopLeaseLost, worker.stopReason())
+
+	_, ok = worker.requestStep(t)
+	require.False(t, ok)
+
+	events := audit.snapshot()
+	requireEventAction(t, events, "enter")
+	requireEventAction(t, events, "lost")
+	requireEventAction(t, events, "stopped")
+	requireNoStepAfterStopped(t, events, "owner-a")
+}
