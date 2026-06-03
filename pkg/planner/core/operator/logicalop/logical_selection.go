@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
@@ -232,7 +233,13 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	if !reload && p.StatsInfo() != nil {
 		return p.StatsInfo(), false, nil
 	}
-	p.SetStats(childStats[0].Scale(p.SCtx().GetSessionVars(), cost.SelectionFactor))
+	selectivity := cost.SelectionFactor
+	if expression.ContainsLocalFullTextSearchFn(p.Conditions...) && childStats[0].HistColl != nil {
+		if sel, err := cardinality.Selectivity(p.SCtx(), childStats[0].HistColl, p.Conditions, nil); err == nil {
+			selectivity = sel
+		}
+	}
+	p.SetStats(childStats[0].Scale(p.SCtx().GetSessionVars(), selectivity))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), true, nil
 }

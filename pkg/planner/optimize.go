@@ -595,8 +595,11 @@ func buildAndOptimizeLogicalPlanRound(
 	// alternative round reads this signal to decide whether to build a competing
 	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
 	// two wins via the normal alt-rounds cost comparison.
-	if builder.HasPredicateMatch() {
+	if builder.HasPredicateMatch() && !sctx.GetSessionVars().EnableLocalMatchAgainst {
 		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+	if builder.HasLocalMatchCandidate() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasLocalMatchCandidate = true
 	}
 
 	if *bestPlan == nil || cost < *bestCost {
@@ -629,6 +632,12 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
+func shouldTryFTSLocalResidualRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.EnableLocalMatchAgainst &&
+		sessVars.StmtCtx.AlternativeLogicalPlanHasLocalMatchCandidate
+}
+
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
@@ -658,6 +667,17 @@ var alternativeRounds = [...]alternativeRound{
 		enabled:    shouldTryCorrelateRound,
 		setup: func(sv *variable.SessionVars) {
 			sv.EnableCorrelateSubquery = true
+		},
+	},
+	{
+		// fts-local-residual: rebuild the plan keeping eligible
+		// MATCH...AGAINST predicates as TiDB-side local residual filters, so
+		// normal table/index paths can compete with the default TiCI FTS path.
+		name:    "fts-local-residual",
+		enabled: shouldTryFTSLocalResidualRound,
+		setup: func(sv *variable.SessionVars) {
+			sv.StmtCtx.AlternativeLogicalPlanFTSLocalResidual = true
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = false
 		},
 	},
 	{
@@ -735,9 +755,16 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
 		//     driver propagates this into stmtctx to trigger the
 		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasLocalMatchCandidate: a direct-filter boolean MATCH that can be
+		//     planned as a local residual Selection in a separate alternative
+		//     round when local MATCH and alternative plans are both enabled.
 		//     ILIKE-based plan; the cheaper of the two wins. If the real native
 		//     planning path later fails, maybeArmFTSLikeFallback forces the LIKE
 		//     round from the native error.
+		//   * HasLocalMatchCandidate: a direct-filter boolean MATCH that can be
+		//     planned as a local residual Selection in a separate alternative
+		//     round when local MATCH and alternative plans are both enabled.
 	}
 
 	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
@@ -793,12 +820,14 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			if round.setup != nil {
 				prevEnableCorrelateSubquery := sessVars.EnableCorrelateSubquery
 				prevFTSLikeFallback := sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+				prevFTSLocalResidual := sessVars.StmtCtx.AlternativeLogicalPlanFTSLocalResidual
 				defer func() {
 					if round.cleanup != nil {
 						round.cleanup(sessVars)
 					}
 					sessVars.EnableCorrelateSubquery = prevEnableCorrelateSubquery
 					sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = prevFTSLikeFallback
+					sessVars.StmtCtx.AlternativeLogicalPlanFTSLocalResidual = prevFTSLocalResidual
 				}()
 				round.setup(sessVars)
 			}

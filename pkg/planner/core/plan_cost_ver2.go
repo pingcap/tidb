@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -1019,7 +1020,7 @@ func netCostVer2(option *costusage.PlanCostOption, rows, rowSize float64, netFac
 }
 
 func filterCostVer2(option *costusage.PlanCostOption, rows float64, filters []expression.Expression, cpuFactor costusage.CostVer2Factor) costusage.CostVer2 {
-	numFuncs := numFunctions(filters)
+	numFuncs := numFunctions(filters) + localMatchAgainstFilterCostWeight(filters)
 	return costusage.NewCostVer2(option, cpuFactor,
 		rows*numFuncs*cpuFactor.Value,
 		func() string { return fmt.Sprintf("cpu(%v*filters(%v)*%v)", rows, numFuncs, cpuFactor) })
@@ -1049,6 +1050,38 @@ func numFunctions(exprs []expression.Expression) float64 {
 		}
 	}
 	return num
+}
+
+func localMatchAgainstFilterCostWeight(exprs []expression.Expression) float64 {
+	weight := 0.0
+	for _, expr := range exprs {
+		weight += localMatchAgainstExprCostWeight(expr)
+	}
+	return weight
+}
+
+func localMatchAgainstExprCostWeight(expr expression.Expression) float64 {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return 0
+	}
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+		if info, ok := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf); ok && info.NoScore {
+			columnCount := len(info.ColumnUniqueIDs)
+			if columnCount == 0 {
+				columnCount = len(info.ColumnIDs)
+			}
+			if columnCount == 0 {
+				columnCount = 1
+			}
+			return 8 + float64(columnCount)*0.5
+		}
+	}
+	weight := 0.0
+	for _, arg := range sf.GetArgs() {
+		weight += localMatchAgainstExprCostWeight(arg)
+	}
+	return weight
 }
 
 func orderCostVer2(option *costusage.PlanCostOption, rows, n float64, byItems []*util.ByItems, cpuFactor costusage.CostVer2Factor) costusage.CostVer2 {
