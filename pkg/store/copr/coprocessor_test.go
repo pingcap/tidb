@@ -1081,7 +1081,7 @@ func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 		Region:        parentTask.region,
 		BucketVersion: parentTask.bucketsVer,
 	}
-	bucketKeys := [][]byte{[]byte("m"), []byte("n"), []byte{}}
+	bucketKeys := [][]byte{[]byte("m"), []byte("n"), {}}
 	resp := &coprocessor.Response{
 		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
 			{

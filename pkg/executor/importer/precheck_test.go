@@ -136,9 +136,16 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "there is active job on the target table already")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
 	// cancel the job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
 
+	// async-prepare submit path skips file-size check before InitDataFiles.
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.DisablePrecheck = false
 	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)
 

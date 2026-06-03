@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.9
+go 1.25.10
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -123,8 +123,8 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260511022933-fb7ee09992a7
-	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
+	github.com/tikv/client-go/v2 v2.0.8-0.20260602013621-8804d7c60a7e
+	github.com/tikv/pd/client v0.0.0-20260601035915-3ef6a3b10c84
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

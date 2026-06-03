@@ -277,7 +277,9 @@ type StmtExecInfo struct {
 	PlanInBinding  bool
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
-	execdetails.StmtExecDetails
+
+	WriteSQLRespDuration time.Duration
+
 	ResultRows        int64
 	TiKVExecDetails   *util.ExecDetails
 	Prepared          bool
@@ -935,7 +937,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
 	ssStats.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssStats.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
-	ssStats.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssStats.sumWriteSQLRespTotal += sei.WriteSQLRespDuration
 	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
