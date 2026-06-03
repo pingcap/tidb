@@ -1074,6 +1074,42 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 	tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + jobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + jobID + ")) > 0").Check(testkit.Rows("1"))
 }
 
+func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailureRollsBackRefreshInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	originErrLimit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(0)
+	defer variable.SetDDLErrorCountLimit(originErrLimit)
+
+	const cutoverAfterMigrateRefreshInfoErrorFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError"
+	require.NoError(t, failpoint.Enable(cutoverAfterMigrateRefreshInfoErrorFailpoint, "1*return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(cutoverAfterMigrateRefreshInfoErrorFailpoint))
+	}()
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+	err = tk.ExecToErr("refresh materialized view mv complete out of place")
+	require.Error(t, err)
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	require.Equal(t, oldMViewID, mvTable.Meta().ID)
+	tk.MustQuery("select MVIEW_ID from mysql.tidb_mview_refresh_info").Check(testkit.Rows(fmt.Sprintf("%d", oldMViewID)))
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+}
+
 func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

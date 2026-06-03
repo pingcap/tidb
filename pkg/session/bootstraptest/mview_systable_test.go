@@ -18,7 +18,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -39,6 +41,12 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
+	// The out-of-place MV refresh cutover path updates this table through the
+	// table API in migrateMViewRefreshInfoForOutOfPlaceCutover. If this schema
+	// or the MVIEW_ID handle property changes, update that function together
+	// with this test.
+	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' order by ordinal_position").
+		Check(testkit.Rows("mview_id bigint(20) NO", "last_success_read_tso bigint(20) unsigned YES", "next_time datetime YES"))
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
@@ -75,6 +83,15 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_TIME', 'PURGE_ENDTIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
+
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	refreshInfoTbl, err := is.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("tidb_mview_refresh_info"))
+	require.NoError(t, err)
+	refreshInfoMeta := refreshInfoTbl.Meta()
+	require.True(t, refreshInfoMeta.PKIsHandle)
+	require.False(t, refreshInfoMeta.IsCommonHandle)
+	require.Len(t, refreshInfoMeta.Columns, 3)
+	require.Equal(t, "MVIEW_ID", refreshInfoMeta.Columns[0].Name.O)
 }
 
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
