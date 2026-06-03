@@ -433,6 +433,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	for i, arg := range sf.GetArgs() {
 		sf.GetArgs()[i] = arg.Decorrelate(schema)
 	}
+	sf.CleanHashCode()
 	return sf
 }
 
@@ -573,6 +574,13 @@ func (sf *ScalarFunction) CanonicalHashCode() []byte {
 	}
 	simpleCanonicalizedHashCode(sf)
 	return sf.canonicalhashcode
+}
+
+// CleanHashCode cleans the cached hashcode and canonical hashcode.
+// It should be called after the function is mutated in-place.
+func (sf *ScalarFunction) CleanHashCode() {
+	sf.hashcode = sf.hashcode[:0]
+	sf.canonicalhashcode = sf.canonicalhashcode[:0]
 }
 
 // ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
@@ -727,6 +735,7 @@ func (sf *ScalarFunction) Equals(other any) bool {
 // ReHashCode is used after we change the argument in place.
 func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
+	sf.canonicalhashcode = sf.canonicalhashcode[:0]
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
@@ -804,8 +813,7 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 		}
 		newSf.GetArgs()[i] = newArg
 	}
-	// clear hash code
-	newSf.hashcode = nil
+	newSf.CleanHashCode()
 	return newSf, nil
 }
 

@@ -2415,6 +2415,10 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThroughProj, Value: BoolToOnOff(DefTiDBOptJoinReorderThroughProj), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptJoinReorderThroughProj = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(DefTiDBOptJoinReorderThroughSel), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
 		return nil
