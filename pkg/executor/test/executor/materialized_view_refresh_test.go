@@ -443,7 +443,7 @@ func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextTime(t *testing.
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		oldMViewID,
-	)).Check(testkit.Rows("complete out of place auto"))
+	)).Check(testkit.Rows("complete automatically"))
 }
 
 func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T) {
