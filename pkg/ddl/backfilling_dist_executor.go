@@ -52,7 +52,6 @@ type BackfillTaskMeta struct {
 	MergeTempIndex                           bool                 `json:"merge_temp_index"`
 	InitialTiKVCapacity                      *TiKVClusterCapacity `json:"initial_tikv_capacity,omitempty"`
 	BlockSampleSteadyPredictedTiKVIndexBytes uint64               `json:"block_sample_steady_predicted_tikv_index_bytes,omitempty"`
-	BlockSamplePeakPredictedTiKVIndexBytes   uint64               `json:"block_sample_peak_predicted_tikv_index_bytes,omitempty"`
 	BlockSampleMVCCOverheadTotalBytes        uint64               `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
 	BlockSampleUseStats                      bool                 `json:"block_sample_use_stats,omitempty"`
 	TiKVReplicaCount                         uint64               `json:"tikv_replica_count,omitempty"`
@@ -75,6 +74,7 @@ type TiKVStoreCapacity struct {
 	TotalBytes     uint64 `json:"total_bytes"`
 	AvailableBytes uint64 `json:"available_bytes"`
 	UsedBytes      uint64 `json:"used_bytes"`
+	LastHeartbeat  int64  `json:"last_heartbeat,omitempty"`
 }
 
 // TiKVClusterCapacity is the aggregated TiKV capacity snapshot collected from PD.

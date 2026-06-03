@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	sd "github.com/tikv/pd/client/servicediscovery"
 	"google.golang.org/grpc"
@@ -82,6 +83,19 @@ func (s mockHelperStorage) GetPDHTTPClient() pdhttp.Client {
 
 func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 	return nil
+}
+
+type mockStorageWithPDClient struct {
+	mockHelperStorage
+	pdClient pd.Client
+}
+
+func (s mockStorageWithPDClient) GetPDClient() pd.Client {
+	return s.pdClient
+}
+
+type mockPDClient struct {
+	pd.Client
 }
 
 type blockSamplePredictionTestStore struct {
@@ -208,7 +222,6 @@ func sortedKVsForTest(kvs []sampledIndexKV) []sampledIndexKV {
 type mockPDHTTPClient struct {
 	pdhttp.Client
 	regionInfos     []*pdhttp.RegionsInfo
-	storesInfo      *pdhttp.StoresInfo
 	replicateConfig map[string]any
 	callCount       int
 	firstRange      *pdhttp.KeyRange
@@ -230,13 +243,6 @@ func (c *mockPDHTTPClient) GetRegionsByKeyRange(_ context.Context, keyRange *pdh
 	info := c.regionInfos[c.callCount]
 	c.callCount++
 	return info, nil
-}
-
-func (c *mockPDHTTPClient) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
-	if c.storesInfo == nil {
-		return &pdhttp.StoresInfo{}, nil
-	}
-	return c.storesInfo, nil
 }
 
 func (c *mockPDHTTPClient) GetReplicateConfig(context.Context) (map[string]any, error) {
@@ -438,6 +444,13 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 			pdCli: &mockPDHTTPClient{},
 		})
 		require.NoError(t, err)
+		require.False(t, ok)
+
+		ok, err = canRunTiKVSpacePrecheck(mockStorageWithPDClient{
+			mockHelperStorage: mockHelperStorage{codec: mockCodec{}},
+			pdClient:          &mockPDClient{},
+		})
+		require.NoError(t, err)
 		require.True(t, ok)
 	})
 
@@ -595,58 +608,9 @@ func TestPredictTiKVIndexBytesBlockSample(t *testing.T) {
 	require.Equal(t, 1, pdCli.callCount)
 }
 
-func TestSumTiKVStoreCapacity(t *testing.T) {
-	stores := []pdhttp.StoreInfo{
-		{
-			Store: pdhttp.MetaStore{
-				ID:     1,
-				Labels: []pdhttp.StoreLabel{{Key: "zone", Value: "z1"}},
-			},
-			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "896B"},
-		},
-		{
-			Store: pdhttp.MetaStore{
-				ID:     2,
-				Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tikv"}},
-			},
-			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "768B"},
-		},
-		{
-			Store: pdhttp.MetaStore{
-				ID:     3,
-				Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash"}},
-			},
-			Status: pdhttp.StoreStatus{Capacity: "2KiB", Available: "1KiB"},
-		},
-		{
-			Store: pdhttp.MetaStore{
-				ID:     5,
-				Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash_compute"}},
-			},
-			Status: pdhttp.StoreStatus{Capacity: "2KiB", Available: "512B"},
-		},
-		{
-			Store:  pdhttp.MetaStore{ID: 4},
-			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "1KiB"},
-		},
-	}
-
-	t.Run("capacity snapshot", func(t *testing.T) {
-		capacity, err := sumTiKVStoreCapacity(stores)
-		require.NoError(t, err)
-		require.Equal(t, 3, capacity.StoreCount)
-		require.EqualValues(t, 3*1024, capacity.TotalBytes)
-		require.EqualValues(t, 3*1024-384, capacity.AvailableBytes)
-		require.EqualValues(t, 384, capacity.UsedBytes)
-		require.Len(t, capacity.Stores, 3)
-		require.EqualValues(t, 1, capacity.Stores[0].StoreID)
-		require.EqualValues(t, 2, capacity.Stores[1].StoreID)
-		require.EqualValues(t, 4, capacity.Stores[2].StoreID)
-	})
-}
-
 func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
-	store := &metapb.Store{Id: 1}
+	lastHeartbeat := time.Date(2026, 6, 3, 12, 0, 0, 123, time.UTC).UnixNano()
+	store := &metapb.Store{Id: 1, LastHeartbeat: lastHeartbeat}
 	stats := &pdpb.StoreStats{
 		StoreId:   1,
 		Capacity:  1024,
@@ -661,6 +625,7 @@ func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
 	require.EqualValues(t, 1024, got.TotalBytes)
 	require.EqualValues(t, 960, got.AvailableBytes)
 	require.EqualValues(t, 321, got.UsedBytes)
+	require.EqualValues(t, lastHeartbeat, got.LastHeartbeat)
 }
 
 func TestCalcObservedTiKVCapacityIncrease(t *testing.T) {
@@ -696,15 +661,60 @@ func TestCalcObservedTiKVCapacityIncrease(t *testing.T) {
 	require.Equal(t, "initial_store_details_unavailable", observed.reason)
 }
 
-func TestBuildAddIndexPostTaskObservationDelays(t *testing.T) {
-	require.Nil(t, buildAddIndexPostTaskObservationDelays(0))
-	require.Nil(t, buildAddIndexPostTaskObservationDelays(-time.Second))
+func TestWaitForFreshTiKVCapacity(t *testing.T) {
+	capacityForTest := func(stores ...TiKVStoreCapacity) *TiKVClusterCapacity {
+		capacity := &TiKVClusterCapacity{Source: tikvCapacitySourcePDGRPCStoreStats}
+		for _, store := range stores {
+			store := store
+			appendTiKVStoreCapacity(capacity, &store)
+		}
+		return capacity
+	}
 
-	delays := buildAddIndexPostTaskObservationDelays(4 * time.Second)
-	require.Equal(t, []time.Duration{2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 12 * time.Minute}, delays)
+	finishMarker := capacityForTest(
+		TiKVStoreCapacity{StoreID: 1, TotalBytes: 1000, AvailableBytes: 900, UsedBytes: 100, LastHeartbeat: 10},
+		TiKVStoreCapacity{StoreID: 2, TotalBytes: 1000, AvailableBytes: 800, UsedBytes: 200, LastHeartbeat: 20},
+	)
+	snapshots := []*TiKVClusterCapacity{
+		capacityForTest(
+			TiKVStoreCapacity{StoreID: 1, TotalBytes: 1000, AvailableBytes: 890, UsedBytes: 110, LastHeartbeat: 11},
+			TiKVStoreCapacity{StoreID: 2, TotalBytes: 1000, AvailableBytes: 800, UsedBytes: 200, LastHeartbeat: 20},
+		),
+		capacityForTest(
+			TiKVStoreCapacity{StoreID: 1, TotalBytes: 1000, AvailableBytes: 880, UsedBytes: 120, LastHeartbeat: 12},
+			TiKVStoreCapacity{StoreID: 2, TotalBytes: 1000, AvailableBytes: 770, UsedBytes: 230, LastHeartbeat: 21},
+		),
+	}
+	nextSnapshot := 0
+	finalCapacity, freshness := waitForFreshTiKVCapacity(context.Background(), finishMarker,
+		func(context.Context) (*TiKVClusterCapacity, error) {
+			require.Less(t, nextSnapshot, len(snapshots))
+			snapshot := snapshots[nextSnapshot]
+			nextSnapshot++
+			return snapshot, nil
+		},
+		time.Nanosecond,
+		time.Second)
+	require.Equal(t, "ok", freshness.reliableReason)
+	require.Equal(t, 2, freshness.refreshedStoreCount)
+	require.Equal(t, 2, freshness.expectedStoreCount)
+	require.Equal(t, 2, nextSnapshot)
+	require.Equal(t, "ok", calcObservedTiKVCapacityIncrease(finishMarker, finalCapacity).reason)
+	require.EqualValues(t, 110, finalCapacity.Stores[0].UsedBytes)
+	require.EqualValues(t, 230, finalCapacity.Stores[1].UsedBytes)
+	require.EqualValues(t, 11, finalCapacity.Stores[0].LastHeartbeat)
+	require.EqualValues(t, 21, finalCapacity.Stores[1].LastHeartbeat)
 
-	delays = buildAddIndexPostTaskObservationDelays(10 * time.Minute)
-	require.Equal(t, []time.Duration{5 * time.Minute, 10 * time.Minute, 20 * time.Minute, 30 * time.Minute}, delays)
+	timeoutFinal, timeoutFreshness := waitForFreshTiKVCapacity(context.Background(), finishMarker,
+		func(context.Context) (*TiKVClusterCapacity, error) {
+			return snapshots[0], nil
+		},
+		time.Nanosecond,
+		time.Millisecond)
+	require.Equal(t, "pd_heartbeat_refresh_timeout", timeoutFreshness.reliableReason)
+	require.Equal(t, 1, timeoutFreshness.refreshedStoreCount)
+	require.EqualValues(t, 110, timeoutFinal.Stores[0].UsedBytes)
+	require.EqualValues(t, 200, timeoutFinal.Stores[1].UsedBytes)
 }
 
 func TestObservedTiKVUsageTaskTiming(t *testing.T) {
@@ -735,38 +745,6 @@ func TestObservedTiKVUsageTaskTiming(t *testing.T) {
 }
 
 func TestCollectTiKVStoreCapacity(t *testing.T) {
-	pdCli := &mockPDHTTPClient{
-		storesInfo: &pdhttp.StoresInfo{
-			Stores: []pdhttp.StoreInfo{
-				{
-					Store: pdhttp.MetaStore{
-						ID:     1,
-						Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tikv"}},
-					},
-					Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "960B"},
-				},
-				{
-					Store: pdhttp.MetaStore{
-						ID:     2,
-						Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash"}},
-					},
-					Status: pdhttp.StoreStatus{Capacity: "2KiB", Available: "1KiB"},
-				},
-			},
-		},
-	}
-
-	t.Run("capacity snapshot", func(t *testing.T) {
-		capacity, err := collectTiKVStoreCapacity(context.Background(), mockHelperStorage{codec: mockCodec{}, pdCli: pdCli})
-		require.NoError(t, err)
-		require.Equal(t, 1, capacity.StoreCount)
-		require.EqualValues(t, 1024, capacity.TotalBytes)
-		require.EqualValues(t, 960, capacity.AvailableBytes)
-		require.EqualValues(t, 64, capacity.UsedBytes)
-		require.Len(t, capacity.Stores, 1)
-		require.EqualValues(t, 1, capacity.Stores[0].StoreID)
-	})
-
 	t.Run("space precheck", func(t *testing.T) {
 		err := checkTiKVSpaceForAddIndex(&TiKVClusterCapacity{
 			TotalBytes:     1000,
@@ -911,12 +889,6 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.EqualValues(t, 300, scalePredictedBytesByReplicaCount(100, 3))
 		require.EqualValues(t, 100, scalePredictedBytesByReplicaCount(100, 1))
 		require.Equal(t, uint64(math.MaxUint64), scalePredictedBytesByReplicaCount(math.MaxUint64, 2))
-	})
-
-	t.Run("block sample peak prediction uses steady factor with saturation", func(t *testing.T) {
-		require.Zero(t, estimateBlockSamplePeakPredictedTiKVIndexBytes(0))
-		require.EqualValues(t, 300, estimateBlockSamplePeakPredictedTiKVIndexBytes(100))
-		require.Equal(t, uint64(math.MaxUint64), estimateBlockSamplePeakPredictedTiKVIndexBytes(math.MaxUint64))
 	})
 
 	t.Run("virtual column filler populates generated column values", func(t *testing.T) {
@@ -1220,19 +1192,5 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.Greater(t,
 			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), encodedKeyOf),
 			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), rawKeyOf))
-	})
-}
-
-func TestSumTiKVStoreCapacityError(t *testing.T) {
-	stores := []pdhttp.StoreInfo{
-		{
-			Store:  pdhttp.MetaStore{ID: 7},
-			Status: pdhttp.StoreStatus{Capacity: "broken", Available: "1KiB"},
-		},
-	}
-	t.Run("capacity snapshot", func(t *testing.T) {
-		capacity, err := sumTiKVStoreCapacity(stores)
-		require.Nil(t, capacity)
-		require.ErrorContains(t, err, "parse store 7 capacity")
 	})
 }

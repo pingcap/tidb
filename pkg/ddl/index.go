@@ -119,30 +119,20 @@ const (
 var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 
 const (
-	tikvCapacitySourcePDGRPCStoreStats         = "pd_grpc_store_stats"
-	tikvCapacitySourcePDHTTPCapacityMinusAvail = "pd_http_capacity_minus_available"
-	pdStoreStatsRequestTimeout                 = 3 * time.Second
+	tikvCapacitySourcePDGRPCStoreStats = "pd_grpc_store_stats"
+	pdStoreStatsRequestTimeout         = 3 * time.Second
 
 	defaultTiKVReplicaCount                         = 3
 	tikvReplicaCountSourceInfoSchemaPlacementBundle = "infoschema_placement_bundle"
 	tikvReplicaCountSourcePDMaxReplicas             = "pd_replicate_config_max_replicas"
 	tikvReplicaCountSourceFallbackDefault           = "fallback_default_3"
-	blockSamplePeakPredictionFactor                 = 3
 
-	observedTiKVUsagePhaseTaskEnd  = "task_end"
-	observedTiKVUsagePhasePostTask = "post_task"
+	observedTiKVUsagePhaseTaskEnd          = "task_end"
+	observedTiKVUsagePhasePDHeartbeatFresh = "pd_heartbeat_fresh"
+
+	addIndexFinalTiKVCapacityPollInterval = 2 * time.Second
+	addIndexFinalTiKVCapacityPollTimeout  = 30 * time.Second
 )
-
-var addIndexPostTaskObservationDelays = []struct {
-	durationMultiplierNumerator   int
-	durationMultiplierDenominator int
-	minDelay                      time.Duration
-}{
-	{durationMultiplierNumerator: 1, durationMultiplierDenominator: 2, minDelay: 2 * time.Minute},
-	{durationMultiplierNumerator: 1, durationMultiplierDenominator: 1, minDelay: 4 * time.Minute},
-	{durationMultiplierNumerator: 2, durationMultiplierDenominator: 1, minDelay: 8 * time.Minute},
-	{durationMultiplierNumerator: 3, durationMultiplierDenominator: 1, minDelay: 12 * time.Minute},
-}
 
 type observedTiKVCapacityIncrease struct {
 	increase int64
@@ -151,10 +141,13 @@ type observedTiKVCapacityIncrease struct {
 }
 
 type observedTiKVUsageLogOptions struct {
-	phase          string
-	sequence       int
-	scheduledDelay time.Duration
-	observedAt     time.Time
+	phase                             string
+	sequence                          int
+	observedAt                        time.Time
+	pdHeartbeatWait                   time.Duration
+	pdHeartbeatRefreshedStoreCount    int
+	pdHeartbeatExpectedStoreCount     int
+	pdHeartbeatReliableReasonOverride string
 }
 
 type pdStoreStatsClient interface {
@@ -3240,7 +3233,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		// When task in succeed state, we can skip the dist task execution/scheduling process.
 		if task.State == proto.TaskStateSucceed {
 			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
-			w.logDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
@@ -3286,19 +3278,17 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
 		var (
-			initialCapacity                   *TiKVClusterCapacity
-			blockSamplePrediction             sampleTiKVIndexPredictionResult
-			blockSamplePeakPredictedTiKVBytes uint64
-			tikvReplicaCount                  uint64
-			tikvReplicaCountSource            string
-			tikvReplicaCountPhysicalID        int64
+			initialCapacity            *TiKVClusterCapacity
+			blockSamplePrediction      sampleTiKVIndexPredictionResult
+			tikvReplicaCount           uint64
+			tikvReplicaCountSource     string
+			tikvReplicaCountPhysicalID int64
 		)
 		if !reorgInfo.mergingTmpIdx {
 			runTiKVSpacePrecheck := false
 			predictionOK := true
 			clearPrediction := func() {
 				blockSamplePrediction = sampleTiKVIndexPredictionResult{}
-				blockSamplePeakPredictedTiKVBytes = 0
 				tikvReplicaCount = 0
 				tikvReplicaCountSource = ""
 				tikvReplicaCountPhysicalID = 0
@@ -3324,20 +3314,19 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				} else {
 					blockSamplePrediction.PredictedBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.PredictedBytes, tikvReplicaCount)
 					blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.MVCCOverheadBytes, tikvReplicaCount)
-					blockSamplePeakPredictedTiKVBytes = estimateBlockSamplePeakPredictedTiKVIndexBytes(blockSamplePrediction.PredictedBytes)
 				}
 			}
 			if predictionOK {
 				runTiKVSpacePrecheck, err = canRunTiKVSpacePrecheck(w.store)
 				if err != nil {
-					logutil.DDLLogger().Warn("skip TiKV space precheck for add-index task because PD HTTP client capability check failed",
+					logutil.DDLLogger().Warn("skip TiKV space precheck for add-index task because PD gRPC client capability check failed",
 						zap.Int64("jobID", job.ID),
 						zap.String("task-key", taskKey),
 						zap.Error(err))
 					runTiKVSpacePrecheck = false
 				}
 				if !runTiKVSpacePrecheck {
-					logutil.DDLLogger().Info("skip TiKV space precheck for add-index task because PD HTTP client is unavailable",
+					logutil.DDLLogger().Info("skip TiKV space precheck for add-index task because PD gRPC client is unavailable",
 						zap.Int64("jobID", job.ID),
 						zap.String("task-key", taskKey))
 				}
@@ -3362,10 +3351,10 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			if predictionOK && runTiKVSpacePrecheck {
 				enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
 				precheckLogFields := addIndexTiKVSpacePrecheckLogFields(
-					job.ID, taskKey, blockSamplePrediction, blockSamplePeakPredictedTiKVBytes,
+					job.ID, taskKey, blockSamplePrediction,
 					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID,
 					initialCapacity, enforceTiKVSpacePrecheck)
-				precheckErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(initialCapacity, blockSamplePeakPredictedTiKVBytes, enforceTiKVSpacePrecheck)
+				precheckErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(initialCapacity, blockSamplePrediction.PredictedBytes, enforceTiKVSpacePrecheck)
 				if precheckErr != nil {
 					logutil.DDLLogger().Warn("insufficient TiKV space predicted for add-index task",
 						append(precheckLogFields, zap.Error(precheckErr))...)
@@ -3393,7 +3382,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EstimateRowSize:                          rowSize,
 			InitialTiKVCapacity:                      initialCapacity,
 			BlockSampleSteadyPredictedTiKVIndexBytes: blockSamplePrediction.PredictedBytes,
-			BlockSamplePeakPredictedTiKVIndexBytes:   blockSamplePeakPredictedTiKVBytes,
 			BlockSampleMVCCOverheadTotalBytes:        blockSamplePrediction.MVCCOverheadBytes,
 			BlockSampleUseStats:                      blockSamplePrediction.UseStats,
 			TiKVReplicaCount:                         tikvReplicaCount,
@@ -3469,8 +3457,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	err = g.Wait()
 	if err == nil {
-		w.logDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
-		w.scheduleDelayedDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
+		w.scheduleDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
 	}
 	return err
 }
@@ -3668,38 +3655,11 @@ func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
 	if pdStore, ok := store.(kv.StorageWithPD); ok && pdStore.GetPDClient() != nil {
 		return true, nil
 	}
-	hStore, err := helperStorageFromKV(store)
-	if err != nil {
-		return false, err
-	}
-	return hStore.GetPDHTTPClient() != nil, nil
+	return false, nil
 }
 
 func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
-	capacity, err := collectTiKVStoreCapacityFromPDGRPC(ctx, store)
-	if err == nil {
-		return capacity, nil
-	}
-	logutil.DDLLogger().Warn("failed to collect TiKV store capacity from PD gRPC, fallback to PD HTTP",
-		zap.Error(err))
-	return collectTiKVStoreCapacityFromPDHTTP(ctx, store)
-}
-
-func collectTiKVStoreCapacityFromPDHTTP(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
-	_, pdCli, err := pdHTTPClientFromStorage(store)
-	if err != nil {
-		return nil, err
-	}
-	storesInfo, err := pdCli.GetStores(ctx)
-	if err != nil {
-		return nil, err
-	}
-	capacity, err := sumTiKVStoreCapacity(storesInfo.Stores)
-	if err != nil {
-		return nil, err
-	}
-	capacity.Source = tikvCapacitySourcePDHTTPCapacityMinusAvail
-	return capacity, nil
+	return collectTiKVStoreCapacityFromPDGRPC(ctx, store)
 }
 
 func collectTiKVStoreCapacityFromPDGRPC(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
@@ -3733,19 +3693,25 @@ func collectTiKVStoreCapacityFromStoreStats(ctx context.Context, pdCli pdStoreSt
 	if store == nil {
 		return nil, errors.New("store is nil")
 	}
-	stats, err := getPDStoreStats(ctx, pdCli, store.GetId())
+	snapshot, err := getPDStoreStats(ctx, pdCli, store.GetId())
 	if err != nil {
 		return nil, errors.Annotatef(err, "get store %d stats", store.GetId())
 	}
 	return &TiKVStoreCapacity{
 		StoreID:        int64(store.GetId()),
-		TotalBytes:     stats.GetCapacity(),
-		AvailableBytes: stats.GetAvailable(),
-		UsedBytes:      stats.GetUsedSize(),
+		TotalBytes:     snapshot.stats.GetCapacity(),
+		AvailableBytes: snapshot.stats.GetAvailable(),
+		UsedBytes:      snapshot.stats.GetUsedSize(),
+		LastHeartbeat:  snapshot.lastHeartbeat,
 	}, nil
 }
 
-func getPDStoreStats(ctx context.Context, pdCli pdStoreStatsClient, storeID uint64) (*pdpb.StoreStats, error) {
+type pdStoreStatsSnapshot struct {
+	stats         *pdpb.StoreStats
+	lastHeartbeat int64
+}
+
+func getPDStoreStats(ctx context.Context, pdCli pdStoreStatsClient, storeID uint64) (*pdStoreStatsSnapshot, error) {
 	serviceDiscovery := pdCli.GetServiceDiscovery()
 	if serviceDiscovery == nil {
 		return nil, errors.New("pd service discovery unavailable")
@@ -3792,7 +3758,10 @@ func getPDStoreStats(ctx context.Context, pdCli pdStoreStatsClient, storeID uint
 	if stats == nil {
 		return nil, errors.Errorf("store %d stats is nil", storeID)
 	}
-	return stats, nil
+	return &pdStoreStatsSnapshot{
+		stats:         stats,
+		lastHeartbeat: resp.GetStore().GetLastHeartbeat(),
+	}, nil
 }
 
 func needRetryPDStoreStats(serviceClient sd.ServiceClient, resp *pdpb.GetStoreResponse, err error) bool {
@@ -3805,65 +3774,12 @@ func needRetryPDStoreStats(serviceClient sd.ServiceClient, resp *pdpb.GetStoreRe
 	return serviceClient.NeedRetry(resp.GetHeader().GetError(), err)
 }
 
-func sumTiKVStoreUsage(stores []pdhttp.StoreInfo) (*TiKVStoreUsageSnapshot, error) {
-	capacity, err := sumTiKVStoreCapacity(stores)
-	if err != nil {
-		return nil, err
-	}
-	return &TiKVStoreUsageSnapshot{
-		UsedBytes:  capacity.UsedBytes,
-		StoreCount: capacity.StoreCount,
-	}, nil
-}
-
-func sumTiKVStoreCapacity(stores []pdhttp.StoreInfo) (*TiKVClusterCapacity, error) {
-	capacity := &TiKVClusterCapacity{Source: tikvCapacitySourcePDHTTPCapacityMinusAvail}
-	for _, store := range stores {
-		if isNonTiKVStoreInfo(store) {
-			continue
-		}
-		storeCapacity, err := buildTiKVStoreCapacity(store)
-		if err != nil {
-			return nil, errors.Annotatef(err, "parse store %d capacity", store.Store.ID)
-		}
-		appendTiKVStoreCapacity(capacity, storeCapacity)
-	}
-	return capacity, nil
-}
-
 func appendTiKVStoreCapacity(capacity *TiKVClusterCapacity, storeCapacity *TiKVStoreCapacity) {
 	capacity.StoreCount++
 	capacity.TotalBytes += storeCapacity.TotalBytes
 	capacity.AvailableBytes += storeCapacity.AvailableBytes
 	capacity.UsedBytes += storeCapacity.UsedBytes
 	capacity.Stores = append(capacity.Stores, *storeCapacity)
-}
-
-func buildTiKVStoreCapacity(store pdhttp.StoreInfo) (*TiKVStoreCapacity, error) {
-	capacityBytes, err := units.RAMInBytes(store.Status.Capacity)
-	if err != nil {
-		return nil, err
-	}
-	availableBytes, err := units.RAMInBytes(store.Status.Available)
-	if err != nil {
-		return nil, err
-	}
-	usedBytes := int64(0)
-	if capacityBytes <= availableBytes {
-		availableBytes = capacityBytes
-	} else {
-		usedBytes = capacityBytes - availableBytes
-	}
-	return &TiKVStoreCapacity{
-		StoreID:        store.Store.ID,
-		TotalBytes:     uint64(capacityBytes),
-		AvailableBytes: uint64(availableBytes),
-		UsedBytes:      uint64(usedBytes),
-	}, nil
-}
-
-func isNonTiKVStoreInfo(store pdhttp.StoreInfo) bool {
-	return engine.IsTiFlashHTTPResp(&store.Store)
 }
 
 func isNonTiKVMetaStore(store *metapb.Store) bool {
@@ -3922,36 +3838,6 @@ func calcObservedTiKVCapacityIncrease(initial, final *TiKVClusterCapacity) obser
 	return observedTiKVCapacityIncrease{increase: int64(increase), reliable: true, reason: "ok"}
 }
 
-func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
-	w.logDistTaskObservedTiKVUsageWithOptions(taskMgr, taskKey, jobID, observedTiKVUsageLogOptions{
-		phase:      observedTiKVUsagePhaseTaskEnd,
-		observedAt: time.Now(),
-	})
-}
-
-func buildAddIndexPostTaskObservationDelays(taskExecutionDuration time.Duration) []time.Duration {
-	if taskExecutionDuration <= 0 {
-		return nil
-	}
-	delays := make([]time.Duration, 0, len(addIndexPostTaskObservationDelays))
-	for _, observationDelay := range addIndexPostTaskObservationDelays {
-		if observationDelay.durationMultiplierDenominator <= 0 {
-			continue
-		}
-		delay := taskExecutionDuration *
-			time.Duration(observationDelay.durationMultiplierNumerator) /
-			time.Duration(observationDelay.durationMultiplierDenominator)
-		if delay < observationDelay.minDelay {
-			delay = observationDelay.minDelay
-		}
-		if delay <= 0 {
-			continue
-		}
-		delays = append(delays, delay)
-	}
-	return delays
-}
-
 func observedTiKVUsageTaskTiming(task *proto.Task, fallbackObservedAt time.Time) (time.Time, time.Duration) {
 	if task == nil {
 		return time.Time{}, 0
@@ -3966,67 +3852,25 @@ func observedTiKVUsageTaskTiming(task *proto.Task, fallbackObservedAt time.Time)
 	return taskEndTime, taskEndTime.Sub(task.StartTime)
 }
 
-func (w *worker) scheduleDelayedDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
-	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
-	if err != nil {
-		logutil.DDLLogger().Warn("cannot get add-index task for delayed TiKV capacity logging",
-			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Error(err))
-		return
-	}
-	if task == nil || task.State != proto.TaskStateSucceed {
-		return
-	}
-
-	now := time.Now()
-	taskEndTime, taskExecutionDuration := observedTiKVUsageTaskTiming(task, now)
-	delays := buildAddIndexPostTaskObservationDelays(taskExecutionDuration)
-	if len(delays) == 0 {
-		logutil.DDLLogger().Info("skip delayed TiKV capacity logging because task execution duration is unavailable for add-index task",
-			zap.String("task_key", taskKey),
-			zap.Int64("jobID", jobID),
-			zap.Int64("taskID", task.ID))
-		return
-	}
-
-	delayMillis := make([]int64, 0, len(delays))
-	for i, delay := range delays {
-		delayMillis = append(delayMillis, delay.Milliseconds())
-		sequence := i + 1
-		remainingDelay := delay
-		if !taskEndTime.IsZero() && !now.Before(taskEndTime) {
-			elapsedSinceTaskEnd := now.Sub(taskEndTime)
-			if elapsedSinceTaskEnd >= delay {
-				remainingDelay = 0
-			} else {
-				remainingDelay = delay - elapsedSinceTaskEnd
-			}
+func (w *worker) scheduleDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
+	w.wg.Run(func() {
+		finishMarker, err := collectTiKVStoreCapacity(w.workCtx, w.store)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to collect finish-marker TiKV store usage for add-index task",
+				zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Error(err))
+			return
 		}
-		w.wg.Run(func() {
-			timer := time.NewTimer(remainingDelay)
-			defer timer.Stop()
-			select {
-			case <-w.workCtx.Done():
-				return
-			case <-timer.C:
-			}
-			w.logDistTaskObservedTiKVUsageWithOptions(taskMgr, taskKey, jobID, observedTiKVUsageLogOptions{
-				phase:          observedTiKVUsagePhasePostTask,
-				sequence:       sequence,
-				scheduledDelay: delay,
-				observedAt:     time.Now(),
-			})
-		})
-	}
-
-	logutil.DDLLogger().Info("scheduled delayed TiKV capacity logging for add-index task",
-		zap.Int64("jobID", jobID),
-		zap.Int64("taskID", task.ID),
-		zap.String("task_key", taskKey),
-		zap.Int64("task_execution_duration_ms", taskExecutionDuration.Milliseconds()),
-		zap.Int64s("scheduled_delay_ms", delayMillis))
+		w.logDistTaskObservedTiKVUsage(taskMgr, taskKey, jobID, finishMarker, time.Now())
+	})
 }
 
-func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskManager, taskKey string, jobID int64, opts observedTiKVUsageLogOptions) {
+func (w *worker) logDistTaskObservedTiKVUsage(
+	taskMgr *storage.TaskManager,
+	taskKey string,
+	jobID int64,
+	finishMarker *TiKVClusterCapacity,
+	finishMarkerObservedAt time.Time,
+) {
 	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get add-index task for observed TiKV capacity logging",
@@ -4050,13 +3894,6 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		return
 	}
 
-	finalCapacity, err := collectTiKVStoreCapacity(w.workCtx, w.store)
-	if err != nil {
-		logutil.DDLLogger().Warn("failed to collect final TiKV store usage for add-index task",
-			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
-		return
-	}
-
 	subtasks, err := taskMgr.GetSubtasksWithHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		logutil.DDLLogger().Warn("failed to collect read-index subtasks for add-index task",
@@ -4070,7 +3907,48 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		return
 	}
 
+	w.logDistTaskObservedTiKVUsageSnapshot(task, taskMeta, taskKey, jobID, initialCapacity, finishMarker, logicalIndexKVBytes, observedTiKVUsageLogOptions{
+		phase:                         observedTiKVUsagePhaseTaskEnd,
+		sequence:                      1,
+		observedAt:                    finishMarkerObservedAt,
+		pdHeartbeatExpectedStoreCount: finishMarker.StoreCount,
+	})
+
+	finalCapacity, freshness := waitForFreshTiKVCapacity(w.workCtx, finishMarker, func(ctx context.Context) (*TiKVClusterCapacity, error) {
+		return collectTiKVStoreCapacity(ctx, w.store)
+	}, addIndexFinalTiKVCapacityPollInterval, addIndexFinalTiKVCapacityPollTimeout)
+	if freshness.err != nil && freshness.reliableReason != "ok" {
+		logutil.DDLLogger().Warn("failed to collect fully refreshed TiKV store usage for add-index task",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(freshness.err))
+	}
+	w.logDistTaskObservedTiKVUsageSnapshot(task, taskMeta, taskKey, jobID, initialCapacity, finalCapacity, logicalIndexKVBytes, observedTiKVUsageLogOptions{
+		phase:                             observedTiKVUsagePhasePDHeartbeatFresh,
+		sequence:                          2,
+		observedAt:                        time.Now(),
+		pdHeartbeatWait:                   freshness.wait,
+		pdHeartbeatRefreshedStoreCount:    freshness.refreshedStoreCount,
+		pdHeartbeatExpectedStoreCount:     freshness.expectedStoreCount,
+		pdHeartbeatReliableReasonOverride: freshness.reliableReason,
+	})
+}
+
+func (w *worker) logDistTaskObservedTiKVUsageSnapshot(
+	task *proto.Task,
+	taskMeta *BackfillTaskMeta,
+	taskKey string,
+	jobID int64,
+	initialCapacity *TiKVClusterCapacity,
+	finalCapacity *TiKVClusterCapacity,
+	logicalIndexKVBytes int64,
+	opts observedTiKVUsageLogOptions,
+) {
 	observedIncrease := calcObservedTiKVCapacityIncrease(initialCapacity, finalCapacity)
+	if observedIncrease.reliable && opts.pdHeartbeatReliableReasonOverride != "" && opts.pdHeartbeatReliableReasonOverride != "ok" {
+		observedIncrease = observedTiKVCapacityIncrease{
+			increase: observedIncrease.increase,
+			reason:   opts.pdHeartbeatReliableReasonOverride,
+		}
+	}
 	phase := opts.phase
 	if phase == "" {
 		phase = observedTiKVUsagePhaseTaskEnd
@@ -4079,11 +3957,12 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 	if observedAt.IsZero() {
 		observedAt = time.Now()
 	}
-	taskEndTime, taskExecutionDuration := observedTiKVUsageTaskTiming(task, observedAt)
-	actualDelay := time.Duration(0)
-	if !taskEndTime.IsZero() && !observedAt.Before(taskEndTime) {
-		actualDelay = observedAt.Sub(taskEndTime)
+	_, taskExecutionDuration := observedTiKVUsageTaskTiming(task, observedAt)
+	pdHeartbeatExpectedStoreCount := opts.pdHeartbeatExpectedStoreCount
+	if pdHeartbeatExpectedStoreCount == 0 && finalCapacity != nil {
+		pdHeartbeatExpectedStoreCount = finalCapacity.StoreCount
 	}
+	finalMinLastHeartbeat, finalMaxLastHeartbeat := tiKVCapacityLastHeartbeatRange(finalCapacity)
 	logFields := []zap.Field{
 		zap.Int64("jobID", jobID),
 		zap.Int64("taskID", task.ID),
@@ -4091,8 +3970,11 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.String("observation_phase", phase),
 		zap.Int("observation_sequence", opts.sequence),
 		zap.Int64("task_execution_duration_ms", taskExecutionDuration.Milliseconds()),
-		zap.Int64("scheduled_delay_ms", opts.scheduledDelay.Milliseconds()),
-		zap.Int64("actual_delay_ms", actualDelay.Milliseconds()),
+		zap.Int64("pd_heartbeat_wait_ms", opts.pdHeartbeatWait.Milliseconds()),
+		zap.Int("pd_heartbeat_refreshed_store_count", opts.pdHeartbeatRefreshedStoreCount),
+		zap.Int("pd_heartbeat_expected_store_count", pdHeartbeatExpectedStoreCount),
+		zap.Time("final_tikv_min_last_heartbeat_ts", finalMinLastHeartbeat),
+		zap.Time("final_tikv_max_last_heartbeat_ts", finalMaxLastHeartbeat),
 	}
 	logFields = appendBlockSamplePredictionLogFields(logFields, sampleTiKVIndexPredictionResult{
 		PredictedBytes:                 taskMeta.BlockSampleSteadyPredictedTiKVIndexBytes,
@@ -4105,7 +3987,6 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		RawKeySharedPrefixAvgBytes:     taskMeta.BlockSampleRawKeySharedPrefixAvg,
 		RawKeyLengthAvgBytes:           taskMeta.BlockSampleRawKeyLengthAvg,
 	},
-		taskMeta.BlockSamplePeakPredictedTiKVIndexBytes,
 		taskMeta.TiKVReplicaCount,
 		taskMeta.TiKVReplicaCountSource,
 		taskMeta.TiKVReplicaCountPhysicalID)
@@ -4125,6 +4006,169 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 	failpoint.InjectCall("afterLogObservedTiKVCapacityIncrease",
 		task.ID, logicalIndexKVBytes, observedIncrease.increase,
 		int64(initialCapacity.UsedBytes), int64(finalCapacity.UsedBytes))
+}
+
+type tiKVCapacityFreshness struct {
+	wait                time.Duration
+	refreshedStoreCount int
+	expectedStoreCount  int
+	reliableReason      string
+	err                 error
+}
+
+type tiKVCapacityCollector func(context.Context) (*TiKVClusterCapacity, error)
+
+func waitForFreshTiKVCapacity(
+	ctx context.Context,
+	finishMarker *TiKVClusterCapacity,
+	collect tiKVCapacityCollector,
+	pollInterval time.Duration,
+	timeout time.Duration,
+) (*TiKVClusterCapacity, tiKVCapacityFreshness) {
+	if pollInterval <= 0 {
+		pollInterval = addIndexFinalTiKVCapacityPollInterval
+	}
+	if timeout <= 0 {
+		timeout = addIndexFinalTiKVCapacityPollTimeout
+	}
+	freshness := tiKVCapacityFreshness{reliableReason: "ok"}
+	if finishMarker == nil {
+		freshness.reliableReason = "finish_marker_capacity_unavailable"
+		return nil, freshness
+	}
+	markerStores, ok := tiKVCapacityStoresByID(finishMarker)
+	if !ok {
+		freshness.reliableReason = "duplicate_store_id"
+		return finishMarker, freshness
+	}
+	freshness.expectedStoreCount = len(markerStores)
+	if len(markerStores) == 0 {
+		freshness.reliableReason = "finish_marker_store_details_unavailable"
+		return finishMarker, freshness
+	}
+
+	refreshedStores := make(map[int64]TiKVStoreCapacity, len(markerStores))
+	storeSetChanged := false
+	start := time.Now()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			freshness.wait = time.Since(start)
+			freshness.refreshedStoreCount = len(refreshedStores)
+			freshness.reliableReason = "pd_heartbeat_wait_context_canceled"
+			freshness.err = ctx.Err()
+			return buildTiKVCapacityWithRefreshedStores(finishMarker, refreshedStores), freshness
+		case <-timer.C:
+			freshness.wait = time.Since(start)
+			freshness.refreshedStoreCount = len(refreshedStores)
+			freshness.reliableReason = "pd_heartbeat_refresh_timeout"
+			return buildTiKVCapacityWithRefreshedStores(finishMarker, refreshedStores), freshness
+		case <-ticker.C:
+		}
+
+		snapshot, err := collect(ctx)
+		if err != nil {
+			freshness.err = err
+			continue
+		}
+		currentStores, ok := tiKVCapacityStoresByID(snapshot)
+		if !ok {
+			freshness.err = errors.New("duplicate store id in TiKV capacity snapshot")
+			continue
+		}
+		if !sameTiKVCapacityStoreSet(markerStores, currentStores) {
+			storeSetChanged = true
+		}
+		for storeID, markerStore := range markerStores {
+			if _, ok := refreshedStores[storeID]; ok {
+				continue
+			}
+			currentStore, ok := currentStores[storeID]
+			if !ok {
+				continue
+			}
+			if currentStore.LastHeartbeat > markerStore.LastHeartbeat {
+				refreshedStores[storeID] = currentStore
+			}
+		}
+		if len(refreshedStores) == len(markerStores) {
+			freshness.wait = time.Since(start)
+			freshness.refreshedStoreCount = len(refreshedStores)
+			if storeSetChanged {
+				freshness.reliableReason = "store_set_changed"
+			} else {
+				freshness.reliableReason = "ok"
+			}
+			return buildTiKVCapacityWithRefreshedStores(finishMarker, refreshedStores), freshness
+		}
+	}
+}
+
+func tiKVCapacityStoresByID(capacity *TiKVClusterCapacity) (map[int64]TiKVStoreCapacity, bool) {
+	if capacity == nil {
+		return nil, true
+	}
+	stores := make(map[int64]TiKVStoreCapacity, len(capacity.Stores))
+	for _, store := range capacity.Stores {
+		if _, ok := stores[store.StoreID]; ok {
+			return nil, false
+		}
+		stores[store.StoreID] = store
+	}
+	return stores, true
+}
+
+func sameTiKVCapacityStoreSet(a, b map[int64]TiKVStoreCapacity) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for storeID := range a {
+		if _, ok := b[storeID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func buildTiKVCapacityWithRefreshedStores(finishMarker *TiKVClusterCapacity, refreshedStores map[int64]TiKVStoreCapacity) *TiKVClusterCapacity {
+	if finishMarker == nil {
+		return nil
+	}
+	capacity := &TiKVClusterCapacity{Source: finishMarker.Source}
+	for _, markerStore := range finishMarker.Stores {
+		store := markerStore
+		if refreshedStore, ok := refreshedStores[markerStore.StoreID]; ok {
+			store = refreshedStore
+		}
+		appendTiKVStoreCapacity(capacity, &store)
+	}
+	return capacity
+}
+
+func tiKVCapacityLastHeartbeatRange(capacity *TiKVClusterCapacity) (time.Time, time.Time) {
+	if capacity == nil {
+		return time.Time{}, time.Time{}
+	}
+	var minLastHeartbeat, maxLastHeartbeat int64
+	for _, store := range capacity.Stores {
+		if store.LastHeartbeat <= 0 {
+			continue
+		}
+		if minLastHeartbeat == 0 || store.LastHeartbeat < minLastHeartbeat {
+			minLastHeartbeat = store.LastHeartbeat
+		}
+		if store.LastHeartbeat > maxLastHeartbeat {
+			maxLastHeartbeat = store.LastHeartbeat
+		}
+	}
+	if minLastHeartbeat == 0 {
+		return time.Time{}, time.Time{}
+	}
+	return time.Unix(0, minLastHeartbeat), time.Unix(0, maxLastHeartbeat)
 }
 
 func checkTiKVSpaceForAddIndex(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64) error {
@@ -4363,10 +4407,6 @@ func scalePredictedBytesByReplicaCount(predictedBytes, replicaCount uint64) uint
 	return saturatingMulUint64(predictedBytes, replicaCount)
 }
 
-func estimateBlockSamplePeakPredictedTiKVIndexBytes(steadyPredictedBytes uint64) uint64 {
-	return saturatingMulUint64(steadyPredictedBytes, blockSamplePeakPredictionFactor)
-}
-
 func saturatingMulUint64(value, factor uint64) uint64 {
 	if value == 0 || factor == 0 {
 		return 0
@@ -4380,13 +4420,12 @@ func saturatingMulUint64(value, factor uint64) uint64 {
 func appendBlockSamplePredictionLogFields(
 	fields []zap.Field,
 	prediction sampleTiKVIndexPredictionResult,
-	peakPredictedBytes, replicaCount uint64,
+	replicaCount uint64,
 	replicaCountSource string,
 	replicaCountPhysicalID int64,
 ) []zap.Field {
 	return append(fields,
 		zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", prediction.PredictedBytes),
-		zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", peakPredictedBytes),
 		zap.Uint64("block_sample_mvcc_overhead_total_bytes", prediction.MVCCOverheadBytes),
 		zap.Bool("use_stats", prediction.UseStats),
 		zap.Uint64("tikv_replica_count", replicaCount),
@@ -4405,7 +4444,6 @@ func addIndexTiKVSpacePrecheckLogFields(
 	jobID int64,
 	taskKey string,
 	prediction sampleTiKVIndexPredictionResult,
-	peakPredictedBytes uint64,
 	replicaCount uint64,
 	replicaCountSource string,
 	replicaCountPhysicalID int64,
@@ -4416,9 +4454,8 @@ func addIndexTiKVSpacePrecheckLogFields(
 		zap.Int64("jobID", jobID),
 		zap.String("task-key", taskKey),
 	}
-	fields = appendBlockSamplePredictionLogFields(fields, prediction, peakPredictedBytes, replicaCount, replicaCountSource, replicaCountPhysicalID)
+	fields = appendBlockSamplePredictionLogFields(fields, prediction, replicaCount, replicaCountSource, replicaCountPhysicalID)
 	fields = append(fields,
-		zap.Uint64("block_sample_peak_prediction_factor", blockSamplePeakPredictionFactor),
 		zap.Bool("enforce_disk_space_precheck_before_add_index", enforce))
 	if capacity != nil {
 		fields = append(fields,
