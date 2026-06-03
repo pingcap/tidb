@@ -1679,16 +1679,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
-	if err != nil {
-		return err
-	}
-
-	logFilesIter, err := client.LoadDMLFiles(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
@@ -1696,6 +1686,25 @@ func restoreStream(
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
+	// Pre-split regions based on total data volume across ALL files.
+	// On success the pipeline-level per-batch split is skipped to avoid
+	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
+	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
+	if preSplitErr != nil {
+		log.Warn("pre-split regions failed, continuing with per-batch splitting",
+			zap.Error(preSplitErr))
+	}
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
+	if err != nil {
+		return err
+	}
 
 	addedSSTsIter := client.LogFileManager.GetIngestedSSTs(ctx)
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
@@ -1726,9 +1735,20 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
-		if err != nil {
-			return errors.Trace(err)
+		// Skip per-batch splitting when pre-split already covered all files;
+		// doing both passes would produce redundant split+scatter calls.
+		// Checkpoint filtering must still be applied on the pre-split path.
+		var logFilesIterWithSplit logclient.LogIter
+		if preSplitDone {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		if cfg.UseCheckpoint {
