@@ -92,11 +92,12 @@ type SnapClient struct {
 	pdHTTPClient pdhttp.Client
 
 	// User configurable parameters
-	cipher              *backuppb.CipherInfo
-	concurrencyPerStore uint
-	keepaliveConf       keepalive.ClientParameters
-	rateLimit           uint64
-	tlsConf             *tls.Config
+	cipher                *backuppb.CipherInfo
+	concurrencyPerStore   uint
+	regionScanConcurrency uint
+	keepaliveConf         keepalive.ClientParameters
+	rateLimit             uint64
+	tlsConf               *tls.Config
 
 	switchCh chan struct{}
 
@@ -173,7 +174,7 @@ type SnapClient struct {
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
 
-	checkPrivilegeTableRowsCollateCompatiblity bool
+	privilegeTableRowsCollateCompatibility bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -276,16 +277,16 @@ func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// SetCheckPrivilegeTableRowsCollateCompatibility set switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
-	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatibility(v bool) {
+	rc.privilegeTableRowsCollateCompatibility = v
 }
 
-// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// GetCheckPrivilegeTableRowsCollateCompatibility get switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
-	return rc.checkPrivilegeTableRowsCollateCompatiblity
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatibility() bool {
+	return rc.privilegeTableRowsCollateCompatibility
 }
 
 func (rc *SnapClient) updateConcurrency() {
@@ -302,6 +303,17 @@ func (rc *SnapClient) updateConcurrency() {
 func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	log.Info("per-store download worker pool", zap.Uint("size", c))
 	rc.concurrencyPerStore = c
+}
+
+// SetRegionScanConcurrency sets max in-flight region scan requests during import.
+func (rc *SnapClient) SetRegionScanConcurrency(c uint) {
+	log.Info("region scan request concurrency", zap.Uint("size", c))
+	rc.regionScanConcurrency = c
+}
+
+// GetRegionScanConcurrency returns max in-flight region scan requests during import.
+func (rc *SnapClient) GetRegionScanConcurrency() uint {
+	return rc.regionScanConcurrency
 }
 
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
@@ -745,7 +757,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw

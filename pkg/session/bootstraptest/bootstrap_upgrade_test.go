@@ -1106,6 +1106,55 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 	})
 }
 
+func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 7.5.0 to 8.5+ or above.
+	ver750 := 180
+	seV7 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver750))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV7, ver750)
+	session.MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeDistSQLScanConcurrency))
+	session.MustExec(t, seV7, "commit")
+	session.UnsetStoreBootstrapped(store.UUID())
+
+	// We are now in 7.5.0, check tidb_analyze_distsql_scan_concurrency should not exist.
+	res := session.MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeDistSQLScanConcurrency))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+
+	// Change the global variable tidb_distsql_scan_concurrency to 32.
+	session.MustExec(t, seV7, "set @@global.tidb_distsql_scan_concurrency = 32")
+
+	seV7.Close()
+	dom.Close()
+	domCurVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := session.CreateSessionAndSetID(t, store)
+	defer seCurVer.Close()
+	// We are now in version no lower than 8.5, tidb_analyze_distsql_scan_concurrency should be 32.
+	res = session.MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_analyze_distsql_scan_concurrency")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(32), row.GetInt64(0))
+}
+
 func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
