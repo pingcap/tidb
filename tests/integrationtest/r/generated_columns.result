@@ -291,18 +291,18 @@ set SQL_MODE=default;
 insert into t1 (s) values ('b\\\\c');
 select * from t1 order by s;
 s	g
-a\\\\b	a\\\\b\\\\\\\\c
-b\\c	b\\c\\\\\\\\c
+a\\\\b	a\\\\b\\\\c
+b\\c	b\\c\\\\c
 set SQL_MODE=default;
 select * from t1 order by s;
 s	g
-a\\\\b	a\\\\b\\\\\\\\c
-b\\c	b\\c\\\\\\\\c
+a\\\\b	a\\\\b\\\\c
+b\\c	b\\c\\\\c
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `s` varchar(10) DEFAULT NULL,
-  `g` varchar(20) GENERATED ALWAYS AS (concat(`s`, _utf8mb4'\\\\\\\\\\\\\\\\c')) VIRTUAL
+  `g` varchar(20) GENERATED ALWAYS AS (concat(`s`, _utf8mb4'\\\\\\\\c')) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t1;
 set SQL_MODE=default;
@@ -314,18 +314,18 @@ set SQL_MODE='NO_BACKSLASH_ESCAPES';
 insert into t1 (s) values ('b\\\\c');
 select * from t1 order by s;
 s	g
-a\\b	a\\b\\\\\\\\c
-b\\\\c	b\\\\c\\\\\\\\c
+a\\b	a\\b\\\\c
+b\\\\c	b\\\\c\\\\c
 set SQL_MODE=default;
 select * from t1 order by s;
 s	g
-a\\b	a\\b\\\\\\\\c
-b\\\\c	b\\\\c\\\\\\\\c
+a\\b	a\\b\\\\c
+b\\\\c	b\\\\c\\\\c
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `s` varchar(10) DEFAULT NULL,
-  `g` varchar(20) GENERATED ALWAYS AS (concat(`s`, _utf8mb4'\\\\\\\\\\\\\\\\c')) VIRTUAL
+  `g` varchar(20) GENERATED ALWAYS AS (concat(`s`, _utf8mb4'\\\\\\\\c')) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t1;
 set SQL_MODE=default;
