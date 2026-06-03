@@ -90,46 +90,43 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 // TestParseURL tests the ParseURL function with various inputs.
 func TestParseURL(t *testing.T) {
 	tests := []struct {
-		rawURL string
-		prefix string
-		host   string
-		port   string
-		err    bool
+		rawURL   string
+		prefix   string
+		hostPort string
+		err      bool
 	}{
 		// Successful test cases
-		{"http://example.com:8080", "http://", "example.com", "8080", false},
-		{"https://localhost:443", "https://", "localhost", "443", false}, // Specified port for HTTPS
-		{"http://[2001:db8::1]:2379", "http://", "2001:db8::1", "2379", false},
-		{"https://[2001:db8::1]:443", "https://", "2001:db8::1", "443", false},
+		{"http://example.com:8080", "http://", "example.com:8080", false},
+		{"https://localhost:443", "https://", "localhost:443", false},
+		{"http://[2001:db8::1]:2379", "http://", "[2001:db8::1]:2379", false},
+		{"https://[2001:db8::1]:443", "https://", "[2001:db8::1]:443", false},
 
 		// Unsuccessful test cases
-		{"ftp://example.com", "ftp://", "", "", true},              // Invalid prefix
-		{"unix://localhost:m0", "unix://", "", "", true},           // Unix schema is unsupported
-		{"unix://localhost", "unix://", "", "", true},              // Unix schema is unsupported
-		{"http://example.com:8080:extra", "http://", "", "", true}, // Extra part after port
-		{"https://:8080", "https://", "", "", true},                // Missing host
-		{"http://", "http://", "", "", true},                       // Incomplete URL
-		{"https://example.com", "https://", "", "", true},          // Missing port
-		{"http://localhost", "http://", "", "", true},              // Missing port
-		{"https://[2001:db8::1]", "https://", "", "", true},        // Missing port
-		{"http://2001:db8::1:2379", "http://", "", "", true},       // Unbracketed IPv6 with port
-		{"https://[2001:db8::1", "https://", "", "", true},         // Invalid bracketed IPv6
+		{"ftp://example.com", "ftp://", "", true},              // Invalid prefix
+		{"unix://localhost:m0", "unix://", "", true},           // Unix schema is unsupported
+		{"unix://localhost", "unix://", "", true},              // Unix schema is unsupported
+		{"http://example.com:8080:extra", "http://", "", true}, // Extra part after port
+		{"https://:8080", "https://", "", true},                // Missing host
+		{"http://", "http://", "", true},                       // Incomplete URL
+		{"https://example.com", "https://", "", true},          // Missing port
+		{"http://localhost", "http://", "", true},              // Missing port
+		{"https://[2001:db8::1]", "https://", "", true},        // Missing port
+		{"http://2001:db8::1:2379", "http://", "", true},       // Unbracketed IPv6 with port
+		{"https://[2001:db8::1", "https://", "", true},         // Invalid bracketed IPv6
 	}
 
 	for _, test := range tests {
-		prefix, host, port, err := ParseURL(test.rawURL)
+		prefix, hostPort, err := ParseURL(test.rawURL)
 
 		// Check if the error status matches the expectation
 		if test.err {
 			require.Error(t, err, "Expected an error for input: "+test.rawURL)
 			require.Empty(t, prefix, "Expected an error for input: "+test.rawURL)
-			require.Empty(t, host, "Host should be empty for input: "+test.rawURL)
-			require.Empty(t, port, "Port should be empty for input: "+test.rawURL)
+			require.Empty(t, hostPort, "hostPort should be empty for input: "+test.rawURL)
 		} else {
 			require.NoError(t, err, "Did not expect an error for input: "+test.rawURL)
 			require.Equal(t, test.prefix, prefix, "prefix mismatch for input: "+test.rawURL)
-			require.Equal(t, test.host, host, "Host mismatch for input: "+test.rawURL)
-			require.Equal(t, test.port, port, "Port mismatch for input: "+test.rawURL)
+			require.Equal(t, test.hostPort, hostPort, "hostPort mismatch for input: "+test.rawURL)
 		}
 	}
 }

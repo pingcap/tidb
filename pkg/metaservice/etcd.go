@@ -77,11 +77,10 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 		}
 		for _, member := range members.GetMembers() {
 			if len(member.ClientUrls) > 0 {
-				prefix, host, port, err := ParseURL(member.ClientUrls[0])
+				prefix, hostPort, err := ParseURL(member.ClientUrls[0])
 				if err != nil {
 					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
 				}
-				hostPort := net.JoinHostPort(host, port)
 				var pdAddr string
 				if withSchema {
 					pdAddr = prefix + hostPort // http://ip:port
@@ -99,11 +98,11 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 	}
 }
 
-// ParseURL parses the given URL to get the host and port.
-func ParseURL(rawURL string) (prefix string, host string, port string, err error) {
+// ParseURL parses the given URL to get the host:port.
+func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
 	u, parseErr := url.Parse(rawURL)
 	if parseErr != nil {
-		return "", "", "", invalidURLHostPortErr()
+		return "", "", invalidURLHostPortErr()
 	}
 
 	switch u.Scheme {
@@ -112,28 +111,15 @@ func ParseURL(rawURL string) (prefix string, host string, port string, err error
 	case "https":
 		prefix = "https://"
 	default:
-		return "", "", "", fmt.Errorf("invalid URL prefix")
+		return "", "", fmt.Errorf("invalid URL prefix")
 	}
 
-	host, port, err = parseHostPort(u.Host)
-	if err != nil {
-		return "", "", "", invalidURLHostPortErr()
+	host, port, splitErr := net.SplitHostPort(u.Host)
+	if splitErr != nil || host == "" || port == "" {
+		return "", "", invalidURLHostPortErr()
 	}
 
-	return prefix, host, port, nil
-}
-
-func parseHostPort(rawHostPort string) (host string, port string, err error) {
-	host, port, err = net.SplitHostPort(rawHostPort)
-	if err != nil {
-		return "", "", err
-	}
-
-	if host == "" || port == "" {
-		return "", "", errors.New("invalid host or port")
-	}
-
-	return host, port, nil
+	return prefix, u.Host, nil
 }
 
 func invalidURLHostPortErr() error {
