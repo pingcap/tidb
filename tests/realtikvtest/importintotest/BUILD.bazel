@@ -28,8 +28,6 @@ go_test(
         "//br/pkg/mock/mocklocal",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
-        "//pkg/config",
-        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",

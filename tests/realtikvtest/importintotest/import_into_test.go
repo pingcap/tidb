@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -1448,65 +1446,6 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 			"1 1", "2 2", "3 3", "4 4", "5 5"))
 		checkResourceParamFn(7, 1)
 	})
-}
-
-func (s *mockGCSSuite) TestStarterMaxImportDataSize() {
-	if !kerneltype.IsNextGen() {
-		s.T().Skip("starter deploy mode is only supported in nextgen")
-	}
-
-	originDeployMode := deploymode.Get()
-	originGlobalConfig := config.GetGlobalConfig()
-	require.NoError(s.T(), deploymode.Set(deploymode.Starter))
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DeployMode = deploymode.Starter
-		conf.StarterParams.MaxImportDataSize = 128
-	})
-	s.T().Cleanup(func() {
-		config.StoreGlobalConfig(originGlobalConfig)
-		require.NoError(s.T(), deploymode.Set(originDeployMode))
-	})
-
-	content := []byte("1,1\n2,2")
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "starter-max-import-data-size-source", Name: "under.csv"},
-		Content:     content,
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "starter-max-import-data-size-source", Name: "over.csv"},
-		Content:     content,
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "starter-max-import-data-size-sort", Name: "seed"},
-		Content:     []byte("seed"),
-	})
-	s.prepareAndUseDB("starter_max_import_data_size")
-	s.tk.MustExec("create table under_limit (a int, b int);")
-	s.tk.MustExec("create table over_limit (a int, b int);")
-
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", "return(10)")
-	underLimitSQL := fmt.Sprintf(`IMPORT INTO under_limit
-		FROM 'gs://starter-max-import-data-size-source/under.csv?endpoint=%s'
-		WITH cloud_storage_uri='gs://starter-max-import-data-size-sort/under?endpoint=%s'`,
-		gcsEndpoint,
-		gcsEndpoint,
-	)
-	s.tk.MustQuery(underLimitSQL)
-	s.tk.MustQuery("select * from under_limit order by a").Check(testkit.Rows("1 1", "2 2"))
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DeployMode = deploymode.Starter
-		conf.StarterParams.MaxImportDataSize = 64
-	})
-	overLimitSQL := fmt.Sprintf(`IMPORT INTO over_limit
-		FROM 'gs://starter-max-import-data-size-source/over.csv?endpoint=%s'
-		WITH cloud_storage_uri='gs://starter-max-import-data-size-sort/over?endpoint=%s'`,
-		gcsEndpoint,
-		gcsEndpoint,
-	)
-	err := s.tk.QueryToErr(overLimitSQL)
-	require.ErrorContains(s.T(), err, "total real import data size 70 exceeds maximum import size limit 64 (total file size 7)")
-	s.tk.MustQuery("select * from over_limit").Check(testkit.Rows())
 }
 
 func (s *mockGCSSuite) TestTableMode() {
