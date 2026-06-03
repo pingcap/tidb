@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -93,7 +95,23 @@ func (e *LoadDataController) checkTotalFileSize() error {
 		// 2. all matched file is empty(with or without wildcard)
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("No file matched, or the file is empty. Please provide a valid file location.")
 	}
-	return nil
+	return e.checkStarterMaxImportDataSize()
+}
+
+func (e *LoadDataController) checkStarterMaxImportDataSize() error {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+	maxImportDataSize := tidb.GetGlobalConfig().StarterParams.MaxImportDataSize
+	if maxImportDataSize == 0 || e.TotalRealSize <= 0 || uint64(e.TotalRealSize) <= uint64(maxImportDataSize) {
+		return nil
+	}
+	return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf(
+		"total real import data size %d exceeds maximum import size limit %d (total file size %d)",
+		e.TotalRealSize,
+		maxImportDataSize,
+		e.TotalFileSize,
+	))
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {

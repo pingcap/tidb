@@ -1314,9 +1314,20 @@ dxf-resource-limit = 101`), 0644))
 	require.True(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+max-import-data-size = "1MiB"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true
 	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	conf = NewConfig()
+	conf.StarterParams.MaxImportDataSize = 1
+	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 [standby]
