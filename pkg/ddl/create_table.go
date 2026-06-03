@@ -298,12 +298,16 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	}
 	if baseTblInfo.MaterializedViewBase != nil && baseTblInfo.MaterializedViewBase.MLogID != 0 {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(job.SchemaName), Name: mlogTblInfo.Name})
+		return ver, ErrMLogAlreadyExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(job.SchemaName), Name: baseTblInfo.Name})
 	}
 
 	mlogTblInfo.State = model.StateNone
 	mlogTblInfo, err = createTable(jobCtx, job, &model.CreateTableArgs{TableInfo: mlogTblInfo, FKCheck: false})
 	if err != nil {
+		if infoschema.ErrTableExists.Equal(err) || meta.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+			return ver, ErrMLogTableNameConflict.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(job.SchemaName), Name: mlogTblInfo.Name})
+		}
 		return ver, errors.Trace(err)
 	}
 

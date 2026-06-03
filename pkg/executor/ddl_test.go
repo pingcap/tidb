@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -57,7 +58,29 @@ func (m *mockMLogDDLExecutor) CreateMaterializedViewLog(_ sessionctx.Context, _ 
 
 func TestDDLExecExecuteCreateMaterializedViewLog(t *testing.T) {
 	tableExistsErr := infoschema.ErrTableExists.GenWithStackByArgs("mlog")
+	mlogAlreadyExistsErr := ddl.ErrMLogAlreadyExists.GenWithStackByArgs("test.t")
+	tableNameConflictErr := ddl.ErrMLogTableNameConflict.GenWithStackByArgs("mlog")
 	otherErr := errors.New("non table exists error")
+	oldBackoff := waitCreateMLogNameConflictRetry
+	waitCreateMLogNameConflictRetry = func(context.Context, int) error { return nil }
+	defer func() {
+		waitCreateMLogNameConflictRetry = oldBackoff
+	}()
+
+	repeatNames := func(name string, n int) []string {
+		names := make([]string, n)
+		for i := range names {
+			names[i] = name
+		}
+		return names
+	}
+	repeatErrs := func(err error, n int) []error {
+		errs := make([]error, n)
+		for i := range errs {
+			errs[i] = err
+		}
+		return errs
+	}
 
 	tests := []struct {
 		name           string
@@ -67,10 +90,31 @@ func TestDDLExecExecuteCreateMaterializedViewLog(t *testing.T) {
 		expectedErr    error
 	}{
 		{
-			name:           "retry on table exists",
+			name:           "return ordinary table exists error",
+			generatedNames: []string{"$mlog$t"},
+			createErrs:     []error{tableExistsErr},
+			expectedNames:  []string{"$mlog$t"},
+			expectedErr:    tableExistsErr,
+		},
+		{
+			name:           "return base mlog already exists error",
+			generatedNames: []string{"$mlog$t"},
+			createErrs:     []error{mlogAlreadyExistsErr},
+			expectedNames:  []string{"$mlog$t"},
+			expectedErr:    mlogAlreadyExistsErr,
+		},
+		{
+			name:           "retry on generated table name conflict",
 			generatedNames: []string{"$mlog$t", "$mlog$1"},
-			createErrs:     []error{tableExistsErr, nil},
+			createErrs:     []error{tableNameConflictErr, nil},
 			expectedNames:  []string{"$mlog$t", "$mlog$1"},
+		},
+		{
+			name:           "return generated table name conflict after retry limit",
+			generatedNames: repeatNames("$mlog$t", maxCreateMLogNameConflictRetries+1),
+			createErrs:     repeatErrs(tableNameConflictErr, maxCreateMLogNameConflictRetries+1),
+			expectedNames:  repeatNames("$mlog$t", maxCreateMLogNameConflictRetries+1),
+			expectedErr:    tableNameConflictErr,
 		},
 		{
 			name:           "return non table exists error",
@@ -98,7 +142,7 @@ func TestDDLExecExecuteCreateMaterializedViewLog(t *testing.T) {
 				ddlExecutor:  ddlExecutor,
 			}
 
-			err := exec.executeCreateMaterializedViewLog(&ast.CreateMaterializedViewLogStmt{})
+			err := exec.executeCreateMaterializedViewLog(context.Background(), &ast.CreateMaterializedViewLogStmt{})
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
 			} else {

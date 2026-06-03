@@ -20,7 +20,6 @@ package schematracker
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -273,7 +272,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	if baseTable.MaterializedViewBase != nil && baseTable.MaterializedViewBase.MLogID != 0 {
-		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Name.O))
+		return ddl.ErrMLogAlreadyExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: baseTable.Name})
 	}
 
 	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Columns))

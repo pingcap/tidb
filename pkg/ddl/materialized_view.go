@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -65,7 +66,23 @@ var (
 	// MLogShortTableNameSeq allocates numeric components for shortened mlog names
 	// used when the derived name exceeds TiDB's table-name length limit.
 	MLogShortTableNameSeq atomic.Uint64
+	// ErrMLogAlreadyExists is returned when the base table already has an mlog.
+	ErrMLogAlreadyExists = dbterror.ClassSchema.NewStdErr(
+		mysql.ErrTableExists,
+		mysql.Message("materialized view log for base table '%-.192s' already exists", nil),
+	)
+	// ErrMLogTableNameConflict is returned when a generated mlog table name is
+	// occupied by a concurrent DDL. It is an internal retry signal for executor.
+	ErrMLogTableNameConflict = dbterror.ClassDDL.NewStdErr(
+		mysql.ErrTableExists,
+		mysql.Message("generated materialized view log table name '%-.192s' already exists", nil),
+	)
 )
+
+// IsMLogTableNameConflict reports whether err is a generated mlog table-name conflict.
+func IsMLogTableNameConflict(err error) bool {
+	return terror.ErrorEqual(err, ErrMLogTableNameConflict)
+}
 
 // GenerateMLogTableName generates an available mlog table name for the base table.
 func GenerateMLogTableName(

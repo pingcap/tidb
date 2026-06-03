@@ -132,8 +132,50 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.True(t, hasDMLType)
 	require.True(t, hasOldNew)
 
-	// Duplicated MV LOG should fail (same derived table name).
-	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'mlog of test.t has been created before' already exists")
+	// Duplicated MV LOG should fail because the base table already has one.
+	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]materialized view log for base table 'test.t' already exists")
+}
+
+func TestCreateMaterializedViewLogRetriesWhenGeneratedNameStolen(t *testing.T) {
+	resetMLogNameSeqForTest(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	if ttlJobManager := dom.TTLJobManager(); ttlJobManager != nil {
+		ttlJobManager.Stop()
+		require.NoError(t, ttlJobManager.WaitStopped(context.Background(), 10*time.Second))
+	}
+	tk := testkit.NewTestKit(t, store)
+	thief := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	thief.MustExec("use test")
+	tk.MustExec("create table t_retry_mlog_name (a int)")
+
+	const stolenMLogName = "$mlog$t_retry_mlog_name"
+	var stolen atomic.Bool
+	failpointName := "github.com/pingcap/tidb/pkg/executor/afterCreateMaterializedViewLogNameGenerated"
+	require.NoError(t, failpoint.EnableCall(failpointName, func(mlogTableName string) {
+		if mlogTableName != stolenMLogName {
+			return
+		}
+		if stolen.CompareAndSwap(false, true) {
+			thief.MustExec(fmt.Sprintf("create table `%s` (a int)", mlogTableName))
+		}
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	tk.MustExec("create materialized view log on t_retry_mlog_name (a)")
+	require.True(t, stolen.Load())
+	tk.MustQuery("show tables like '$mlog$t_retry_mlog_name'").Check(testkit.Rows("$mlog$t_retry_mlog_name"))
+	tk.MustQuery("show tables like '$mlog$1'").Check(testkit.Rows("$mlog$1"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_retry_mlog_name"))
+	require.NoError(t, err)
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$1"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.Equal(t, mlogTable.Meta().ID, baseTable.Meta().MaterializedViewBase.MLogID)
 }
 
 func TestCreateMaterializedViewLogPrivilege(t *testing.T) {

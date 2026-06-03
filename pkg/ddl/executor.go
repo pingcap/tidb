@@ -1083,7 +1083,7 @@ func (e *executor) GenerateMLogTableName(ctx sessionctx.Context, s *ast.CreateMa
 		return "", dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	if baseInfo := baseTable.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
-		return "", infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Meta().Name.O))
+		return "", ErrMLogAlreadyExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: baseTable.Meta().Name})
 	}
 
 	mlogName, err := GenerateMLogTableName(
@@ -1120,7 +1120,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	if baseInfo := baseTable.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
-		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Meta().Name.O))
+		return ErrMLogAlreadyExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: baseTable.Meta().Name})
 	}
 
 	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))

@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -57,6 +59,31 @@ type DDLExec struct {
 	is           infoschema.InfoSchema
 	tempTableDDL temptable.TemporaryTableDDL
 	done         bool
+}
+
+const (
+	maxCreateMLogNameConflictRetries = 8
+	createMLogNameConflictBackoff    = time.Millisecond
+	maxCreateMLogNameConflictBackoff = 32 * time.Millisecond
+)
+
+var waitCreateMLogNameConflictRetry = func(ctx context.Context, retry int) error {
+	delay := createMLogNameConflictBackoff
+	for i := 0; i < retry && delay < maxCreateMLogNameConflictBackoff; i++ {
+		delay *= 2
+		if delay > maxCreateMLogNameConflictBackoff {
+			delay = maxCreateMLogNameConflictBackoff
+		}
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -166,7 +193,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.CreateMaterializedViewStmt:
 		err = e.ddlExecutor.CreateMaterializedView(e.Ctx(), x)
 	case *ast.CreateMaterializedViewLogStmt:
-		err = e.executeCreateMaterializedViewLog(x)
+		err = e.executeCreateMaterializedViewLog(ctx, x)
 	case *ast.AlterMaterializedViewStmt:
 		err = e.ddlExecutor.AlterMaterializedView(e.Ctx(), x)
 	case *ast.AlterMaterializedViewLogStmt:
@@ -330,16 +357,25 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
-func (e *DDLExec) executeCreateMaterializedViewLog(stmt *ast.CreateMaterializedViewLogStmt) error {
+func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	retries := 0
 	for {
 		mlogTableName, err := e.ddlExecutor.GenerateMLogTableName(e.Ctx(), stmt)
 		if err != nil {
 			return err
 		}
 
+		failpoint.InjectCall("afterCreateMaterializedViewLogNameGenerated", mlogTableName)
 		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), stmt, mlogTableName)
 		if err != nil {
-			if infoschema.ErrTableExists.Equal(err) {
+			if ddl.IsMLogTableNameConflict(err) {
+				if retries >= maxCreateMLogNameConflictRetries {
+					return err
+				}
+				if backoffErr := waitCreateMLogNameConflictRetry(ctx, retries); backoffErr != nil {
+					return backoffErr
+				}
+				retries++
 				continue
 			}
 			return err
