@@ -1429,10 +1429,16 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 
 // SecureText implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureText() string {
-	if n.RetainCurrentPassword {
-		return fmt.Sprintf("set password for user %s RETAIN CURRENT PASSWORD", n.User)
+	// n.User can be nil for the current-user form (`SET PASSWORD = '...'`),
+	// matching Restore's handling. Avoid leaking `<nil>` into redacted SQL.
+	base := "set password"
+	if n.User != nil {
+		base = fmt.Sprintf("set password for user %s", n.User)
 	}
-	return fmt.Sprintf("set password for user %s", n.User)
+	if n.RetainCurrentPassword {
+		return base + " RETAIN CURRENT PASSWORD"
+	}
+	return base
 }
 
 // Accept implements Node Accept interface.
