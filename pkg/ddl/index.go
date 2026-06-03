@@ -3894,7 +3894,7 @@ func (w *worker) logDistTaskObservedTiKVUsage(
 	})
 }
 
-func (w *worker) logDistTaskObservedTiKVUsageSnapshot(
+func (_ *worker) logDistTaskObservedTiKVUsageSnapshot(
 	task *proto.Task,
 	taskMeta *BackfillTaskMeta,
 	taskKey string,
@@ -4111,7 +4111,7 @@ func buildTiKVCapacityWithRefreshedStores(finishMarker *TiKVClusterCapacity, ref
 	return capacity
 }
 
-func tiKVCapacityLastHeartbeatRange(capacity *TiKVClusterCapacity) (time.Time, time.Time) {
+func tiKVCapacityLastHeartbeatRange(capacity *TiKVClusterCapacity) (minLastHeartbeatTS time.Time, maxLastHeartbeatTS time.Time) {
 	if capacity == nil {
 		return time.Time{}, time.Time{}
 	}
