@@ -63,24 +63,24 @@ func rewriteTiCIFTSScoreExpr(expr expression.Expression, child base.PhysicalPlan
 
 func ensureTiCIFTSScoreColumn(child base.PhysicalPlan) (*expression.Column, bool, error) {
 	for _, col := range child.Schema().Columns {
-		if col.ID == model.VirtualColFTSBM25ScoreID {
+		if col.ID == model.ExtraBM25ScoreID {
 			return col, true, nil
 		}
 	}
-	provider, ok := child.(ftsBM25ScoreProvider)
+	provider, ok := child.(extraBM25ScoreProvider)
 	if !ok {
 		return nil, false, nil
 	}
-	return provider.RequestFTSBM25ScoreColumn()
+	return provider.RequestExtraBM25ScoreColumn()
 }
 
-type ftsBM25ScoreProvider interface {
-	RequestFTSBM25ScoreColumn() (*expression.Column, bool, error)
+type extraBM25ScoreProvider interface {
+	RequestExtraBM25ScoreColumn() (*expression.Column, bool, error)
 }
 
-func findFTSBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
+func findExtraBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
 	for _, col := range schema.Columns {
-		if col.ID == model.VirtualColFTSBM25ScoreID {
+		if col.ID == model.ExtraBM25ScoreID {
 			return col, true
 		}
 	}

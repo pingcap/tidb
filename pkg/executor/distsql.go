@@ -893,22 +893,6 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 	return !(len(e.handleCols) == 1 && e.handleCols[0].ID == model.ExtraHandleID) && e.table.Meta() != nil && e.table.Meta().IsCommonHandle
 }
 
-func (e *IndexLookUpExecutor) ticiBM25ScoreOutputOffset() int {
-	if e.index == nil || !e.index.IsTiCIIndex() || e.dagPB == nil || len(e.idxPlans) == 0 {
-		return -1
-	}
-	cols := e.idxPlans[0].Schema().Columns
-	for outputOffset, schemaOffset := range e.dagPB.OutputOffsets {
-		if int(schemaOffset) >= len(cols) {
-			continue
-		}
-		if cols[schemaOffset].ID == model.VirtualColFTSBM25ScoreID {
-			return outputOffset
-		}
-	}
-	return -1
-}
-
 func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	if e.checkIndexValue != nil {
 		return e.idxColTps
@@ -918,11 +902,6 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 		for _, item := range e.byItems {
 			tps = append(tps, item.Expr.GetType(e.ectx.GetEvalCtx()))
 		}
-	}
-	if e.ticiBM25ScoreOutputOffset() >= 0 {
-		scoreType := types.NewFieldType(mysql.TypeDouble)
-		scoreType.SetFlag(mysql.NotNullFlag)
-		tps = append(tps, scoreType)
 	}
 	if e.isCommonHandle() {
 		for _, handleCol := range e.handleCols {
@@ -1886,8 +1865,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 					return handles, handleVersionMap, nil, nil
 				}
 			}
-			row := chk.GetRow(i)
-			h, version, err := w.idxLookup.getHandle(row, handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
+			h, version, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return nil, nil, retChk, err
 			}

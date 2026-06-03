@@ -95,16 +95,16 @@ func (p *PhysicalIndexReader) SetChildren(children ...base.PhysicalPlan) {
 	p.SetSchema(nil)
 }
 
-// RequestFTSBM25ScoreColumn appends the TiCI FTS BM25 score column to this reader.
-func (p *PhysicalIndexReader) RequestFTSBM25ScoreColumn() (*expression.Column, bool, error) {
-	if scoreCol, ok := findFTSBM25ScoreColumn(p.Schema()); ok {
+// RequestExtraBM25ScoreColumn appends the TiCI FTS BM25 score column to this reader.
+func (p *PhysicalIndexReader) RequestExtraBM25ScoreColumn() (*expression.Column, bool, error) {
+	if scoreCol, ok := findExtraBM25ScoreColumn(p.Schema()); ok {
 		return scoreCol, true, nil
 	}
 	indexScan, ok := p.IndexPlan.(*PhysicalIndexScan)
 	if !ok || indexScan.FtsQueryInfo == nil {
 		return nil, false, nil
 	}
-	scoreCol, ok := indexScan.RequestFTSBM25ScoreColumn()
+	scoreCol, ok := indexScan.RequestExtraBM25ScoreColumn()
 	if !ok {
 		return nil, false, nil
 	}

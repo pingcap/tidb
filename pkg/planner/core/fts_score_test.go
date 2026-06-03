@@ -61,12 +61,12 @@ func TestResolveProjectionRewritesTiCIFTSMatchAgainstToBM25ScoreColumn(t *testin
 
 	col, ok := proj.Exprs[0].(*expression.Column)
 	require.True(t, ok)
-	require.Equal(t, model.VirtualColFTSBM25ScoreID, col.ID)
+	require.Equal(t, model.ExtraBM25ScoreID, col.ID)
 	require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, indexScan.FtsQueryInfo.QueryType)
-	require.Equal(t, model.VirtualColFTSBM25ScoreID, indexScan.Schema().Columns[1].ID)
+	require.Equal(t, model.ExtraBM25ScoreID, indexScan.Schema().Columns[1].ID)
 	require.Equal(t, 1, col.Index)
 	require.Equal(t, 2, indexReader.Schema().Len())
-	require.Equal(t, model.VirtualColFTSBM25ScoreID, indexReader.OutputColumns[1].ID)
+	require.Equal(t, model.ExtraBM25ScoreID, indexReader.OutputColumns[1].ID)
 	require.Equal(t, 1, indexReader.OutputColumns[1].Index)
 }
 
@@ -81,7 +81,7 @@ func TestResolveProjectionContinuesAfterTiCIFTSScoreRewrite(t *testing.T) {
 
 	contentCol := &expression.Column{ID: 1, UniqueID: 10, RetType: stringTp, OrigName: "content"}
 	idCol := &expression.Column{ID: 2, UniqueID: 20, RetType: idTp, OrigName: "id"}
-	scoreCol := &expression.Column{ID: model.VirtualColFTSBM25ScoreID, UniqueID: 30, RetType: scoreTp, OrigName: model.FTSBM25ScoreName.O}
+	scoreCol := &expression.Column{ID: model.ExtraBM25ScoreID, UniqueID: 30, RetType: scoreTp, OrigName: model.ExtraBM25ScoreName.O}
 	indexScan := (&physicalop.PhysicalIndexScan{
 		DataSourceSchema: expression.NewSchema(contentCol, idCol),
 		FtsQueryInfo:     &tipb.FTSQueryInfo{},

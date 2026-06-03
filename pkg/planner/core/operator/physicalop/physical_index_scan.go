@@ -537,36 +537,36 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 	p.SetSchema(expression.NewSchema(rowLayout...))
 }
 
-// RequestFTSBM25ScoreColumn appends the TiCI FTS BM25 score column to this scan.
-func (p *PhysicalIndexScan) RequestFTSBM25ScoreColumn() (*expression.Column, bool) {
+// RequestExtraBM25ScoreColumn appends the TiCI FTS BM25 score column to this scan.
+func (p *PhysicalIndexScan) RequestExtraBM25ScoreColumn() (*expression.Column, bool) {
 	if p.FtsQueryInfo == nil {
 		return nil, false
 	}
 	p.FtsQueryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
-	if scoreCol, ok := findFTSBM25ScoreColumn(p.Schema()); ok {
+	if scoreCol, ok := findExtraBM25ScoreColumn(p.Schema()); ok {
 		return scoreCol, true
 	}
-	scoreCol := newFTSBM25ScoreColumn(p.SCtx().GetSessionVars().AllocPlanColumnID())
+	scoreCol := newExtraBM25ScoreColumn(p.SCtx().GetSessionVars().AllocPlanColumnID())
 	schema := p.Schema().Clone()
 	schema.Append(scoreCol)
 	p.SetSchema(schema)
 	return scoreCol, true
 }
 
-func newFTSBM25ScoreColumn(uniqueID int64) *expression.Column {
+func newExtraBM25ScoreColumn(uniqueID int64) *expression.Column {
 	scoreType := types.NewFieldType(mysql.TypeDouble)
 	scoreType.SetFlag(mysql.NotNullFlag)
 	return &expression.Column{
 		RetType:  scoreType,
-		ID:       model.VirtualColFTSBM25ScoreID,
+		ID:       model.ExtraBM25ScoreID,
 		UniqueID: uniqueID,
-		OrigName: model.FTSBM25ScoreName.O,
+		OrigName: model.ExtraBM25ScoreName.O,
 	}
 }
 
-func findFTSBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
+func findExtraBM25ScoreColumn(schema *expression.Schema) (*expression.Column, bool) {
 	for _, col := range schema.Columns {
-		if col.ID == model.VirtualColFTSBM25ScoreID {
+		if col.ID == model.ExtraBM25ScoreID {
 			return col, true
 		}
 	}
@@ -698,8 +698,8 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
 		} else if col.ID == model.ExtraVersionID {
 			columns = append(columns, model.NewExtraVersionColInfo())
-		} else if col.ID == model.VirtualColFTSBM25ScoreID {
-			columns = append(columns, model.NewFTSBM25ScoreColInfo())
+		} else if col.ID == model.ExtraBM25ScoreID {
+			columns = append(columns, model.NewExtraBM25ScoreColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}

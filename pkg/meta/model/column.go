@@ -391,11 +391,11 @@ func NewExtraVersionColInfo() *ColumnInfo {
 	return colInfo
 }
 
-// NewFTSBM25ScoreColInfo mocks a column info for the TiCI FTS BM25 score column.
-func NewFTSBM25ScoreColInfo() *ColumnInfo {
+// NewExtraBM25ScoreColInfo mocks a column info for the extra BM25 score column.
+func NewExtraBM25ScoreColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
-		ID:   VirtualColFTSBM25ScoreID,
-		Name: FTSBM25ScoreName,
+		ID:   ExtraBM25ScoreID,
+		Name: ExtraBM25ScoreName,
 	}
 	colInfo.SetType(mysql.TypeDouble)
 	colInfo.SetFlag(mysql.NotNullFlag)
