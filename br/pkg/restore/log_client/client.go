@@ -1522,11 +1522,106 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return wrapper.WithSplit(ctx, logIter, strategy), nil
+}
+
+// WrapLogFilesIterWithCheckpointFilter applies only the checkpoint skip filter to
+// the log files iterator, without performing any region splitting. Used when
+// pre-split has already been done and per-batch splitting is skipped, but
+// checkpoint-based file filtering still needs to happen.
+func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
+	ctx context.Context,
+	logIter LogIter,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+) (LogIter, error) {
+	// splitFileThreshold is unused here: Accumulate is never called on this path.
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(file *LogDataFileInfo) bool {
+		return strategy.ShouldSkip(file)
+	}), nil
+}
+
+// PreSplitRegions performs a full pre-scan over ALL DML files and issues region
+// splits based on the total cumulative data volume. This avoids the problem where
+// per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
+// boundary, producing insufficient splits for workloads that spread data across many
+// regions (e.g., secondary index builds).
+//
+// Returns (true, nil) when splits were successfully issued; (false, nil) when
+// there are no DML files to split; (false, err) on any failure. Callers that
+// receive true should skip the fallback per-batch split to avoid redundant
+// split+scatter work.
+func (rc *LogClient) PreSplitRegions(
+	ctx context.Context,
+	rules map[int64]*restoreutils.RewriteRules,
+	splitSize uint64,
+	splitKeys int64,
+) (bool, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
+	strategy := split.NewBaseSplitStrategy(rules)
+
+	logIter, err := rc.LoadDMLFiles(ctx)
+	if err != nil {
+		return false, errors.Annotate(err, "pre-split: load DML files")
+	}
+
+	var fileCount int
+	startTime := time.Now()
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
+		if r.Err != nil {
+			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
+		}
+		file := r.Item
+		if file.IsMeta {
+			continue
+		}
+		if _, exist := rules[file.TableId]; !exist {
+			continue
+		}
+		splitHelper, exist := strategy.TableSplitter[file.TableId]
+		if !exist {
+			splitHelper = split.NewSplitHelper()
+			strategy.TableSplitter[file.TableId] = splitHelper
+		}
+		splitHelper.Merge(split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
+			},
+		})
+		fileCount++
+	}
+	log.Info("pre-split: merged all files",
+		zap.Int("file-count", fileCount),
+		zap.Duration("merge-took", time.Since(startTime)))
+
+	if fileCount == 0 {
+		return false, nil
+	}
+
+	splitStart := time.Now()
+	accumulations := strategy.GetAccumulations()
+	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
+		return false, errors.Annotate(err, "pre-split: execute regions")
+	}
+	log.Info("pre-split: completed",
+		zap.Duration("split-took", time.Since(splitStart)),
+		zap.Duration("total-took", time.Since(startTime)))
+	return true, nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
