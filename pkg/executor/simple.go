@@ -1890,7 +1890,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt == nil || !(spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString) {
 				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
-			if spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin {
+			if spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin) != effectiveAuthPlugin(currentAuthPlugin) {
 				return exeerrors.ErrPasswordCannotBeRetainedOnPluginChange.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
 			if (spec.AuthOpt.ByAuthString && spec.AuthOpt.AuthString == "") ||
@@ -1944,7 +1944,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			}
 			// changing the auth method prunes history.
-			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
+			if effectiveAuthPlugin(spec.AuthOpt.AuthPlugin) != effectiveAuthPlugin(currentAuthPlugin) {
 				// delete password history from mysql.password_history.
 				sql := new(strings.Builder)
 				sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
@@ -2082,7 +2082,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// DISCARD OLD PASSWORD removes the secondary password.
 		// MySQL also silently drops the secondary when the auth plugin is changed.
 		dropSecondary := specDiscardOldPassword ||
-			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin)
+			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin) != effectiveAuthPlugin(currentAuthPlugin))
 		// RETAIN always writes a fresh secondary, so any pending drop is moot.
 		if specRetainCurrentPassword {
 			dropSecondary = false
@@ -2650,6 +2650,18 @@ func isDualPasswordCapablePlugin(plugin string) bool {
 		return true
 	}
 	return false
+}
+
+// effectiveAuthPlugin normalizes an auth-plugin name for equality comparisons.
+// Legacy mysql.user rows can have an empty `plugin` column, but the auth
+// path resolves them as mysql_native_password. Comparing raw plugin strings
+// without this normalization mis-classifies a no-op ALTER ... IDENTIFIED WITH
+// mysql_native_password ... on such a row as a plugin switch.
+func effectiveAuthPlugin(plugin string) string {
+	if plugin == "" {
+		return mysql.AuthNativePassword
+	}
+	return plugin
 }
 
 // readAuthenticationString returns the current authentication_string for the

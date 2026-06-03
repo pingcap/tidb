@@ -109,6 +109,32 @@ func TestDualPasswordRejectsPluginChange(t *testing.T) {
 	require.Contains(t, err.Error(), "authentication plugin is being changed")
 }
 
+// TestDualPasswordLegacyEmptyPluginAcceptsNative guards the legacy-row case:
+// a mysql.user record whose `plugin` column is empty is resolved at auth
+// time as mysql_native_password. An explicit `IDENTIFIED WITH
+// mysql_native_password ... RETAIN CURRENT PASSWORD` against such a row must
+// not be misclassified as a plugin switch.
+func TestDualPasswordLegacyEmptyPluginAcceptsNative(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dplegacy")
+	tk.MustExec("CREATE USER dplegacy IDENTIFIED BY 'p1'")
+	// Simulate a legacy row by clearing the plugin column.
+	tk.MustExec("UPDATE mysql.user SET plugin = '' WHERE User = 'dplegacy'")
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	// Explicit native plugin with RETAIN must succeed on the legacy row.
+	tk.MustExec("ALTER USER dplegacy IDENTIFIED WITH mysql_native_password BY 'p2' RETAIN CURRENT PASSWORD")
+
+	// Both passwords authenticate.
+	require.NoError(t, authAs(t, tk, "dplegacy", "%", "p1"))
+	require.NoError(t, authAs(t, tk, "dplegacy", "%", "p2"))
+
+	// The secondary slot is actually populated (the legacy-row case
+	// previously took the plugin-change branch and dropped it).
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dplegacy'").Check(testkit.Rows("1"))
+}
+
 func TestDualPasswordPluginChangeSilentlyDiscardsSecondary(t *testing.T) {
 	tk := rootTK(t)
 
