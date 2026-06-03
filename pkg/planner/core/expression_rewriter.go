@@ -2404,17 +2404,14 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 //   - the originating table has an available TiFlash replica;
 //   - the column is covered by a public FULLTEXT index on that table.
 //
-// In addition, the modifier must be the default natural-language mode. Boolean
-// mode and WITH QUERY EXPANSION are not encoded in the tipb pushdown today
-// (only ScalarFuncSig_FTSMatchExpression is emitted regardless of modifier),
-// so a native plan that wins on cost would execute on TiFlash with the modifier
-// silently dropped. Until the modifier is carried in the pushdown protocol, we
-// treat those modifiers as non-viable for native pushdown.
+// In addition, WITH QUERY EXPANSION is not supported by the native path today.
+// The default natural-language mode and existing Boolean-mode predicate queries
+// are normalized by FTS index analysis.
 func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
 	if numCols <= 0 {
 		return false
 	}
-	// fts native viable: only support boolean mode, others are not.
+	// The current native path has no implementation for query expansion.
 	if !isFTSSupportedModifier(modifier) {
 		return false
 	}
@@ -2455,9 +2452,10 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 	return true
 }
 
-// isFTSSupportedModifier returns true for currently supported FTS modifiers. (currently only boolean mode, compatible with fts branch code)
+// isFTSSupportedModifier returns true for modifiers the current native FTS path
+// can preserve or normalize without extra tipb metadata.
 func isFTSSupportedModifier(modifier ast.FulltextSearchModifier) bool {
-	return !modifier.IsNaturalLanguageMode() && !modifier.WithQueryExpansion()
+	return !modifier.WithQueryExpansion()
 }
 
 // tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT
@@ -2480,20 +2478,9 @@ func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string
 // builtin scalar function which can be pushed down to TiFlash for execution
 // against a fulltext index.
 func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
-	// Reject non-default modifiers when native is the final plan. The tipb
-	// pushdown protocol (see expression/distsql_builtin.go for the explicit
-	// note) does not serialize the FTS modifier, so TiFlash would silently
-	// execute Boolean-mode / query-expansion searches as natural-language
-	// mode. Until the modifier rides through pushdown, refuse to emit
-	// native here unless the alt-rounds driver is expected to discard this
-	// emission and rebuild via the fts-like-fallback round (which handles
-	// Boolean mode correctly via ILIKE; query expansion still errors there
-	// with a specific message).
-	//
-	// merge detail: here we allow natural language mode, boolean mode and query expansion mode
-	// natural language mode: can be written as ILike(round2)
-	// boolean mode:          can be executed on tiFlash(round1) or through ILike rewrite(round2)
-	// query expansion mode:  can error out with a specific message in both rounds.
+	// Reject modifiers the current native path cannot represent. Default
+	// natural-language mode and Boolean-mode predicate queries are normalized by
+	// FTS index analysis.
 	if !isFTSSupportedModifier(v.Modifier) && !er.matchHasLikeFallbackRescue() {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
 			"MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)")
@@ -2518,7 +2505,6 @@ func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols
 		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
 		return
 	}
-	// merge detail: common set modifier interface.
 	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
 		er.err = err
 		return

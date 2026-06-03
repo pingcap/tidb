@@ -293,8 +293,8 @@ func rewriteOneMySQLMatchAgainst(
 	if !ok {
 		return nil, false, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, scalarFunc.Function)
 	}
-	if sig.modifier != ast.FulltextSearchModifierBooleanMode {
-		return nil, false, errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+	if sig.modifier.WithQueryExpansion() {
+		return nil, false, errors.Errorf("Currently TiDB does not support WITH QUERY EXPANSION in MATCH AGAINST")
 	}
 	if scalarFunc.GetArgs()[0].(*Constant).Value.IsNull() {
 		return &Constant{

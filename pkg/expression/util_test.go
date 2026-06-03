@@ -695,6 +695,18 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	matchAgainst := buildMatchAgainst("hello")
 	require.True(t, ContainsFullTextSearchFn(matchAgainst))
 
+	{
+		naturalMatchAgainst := buildMatchAgainst("hello")
+		require.NoError(t, SetFTSMysqlMatchAgainstModifier(naturalMatchAgainst, ast.FulltextSearchModifierNaturalLanguageMode))
+		expr, changed, err := RewriteMySQLMatchAgainstRecursively(ctx, naturalMatchAgainst, model.FullTextParserTypeStandardV1)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, hasMySQLMatchAgainst(expr))
+		require.ElementsMatch(t, []ftsLeaf{
+			{funcName: ast.FTSMatchWord, query: "hello", columns: []string{"title"}},
+		}, collectFTSLeaves(expr))
+	}
+
 	expr, _, err := RewriteMySQLMatchAgainstRecursively(ctx, matchAgainst, model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.False(t, hasMySQLMatchAgainst(expr))

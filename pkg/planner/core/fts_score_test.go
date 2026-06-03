@@ -15,12 +15,14 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
@@ -68,6 +70,42 @@ func TestResolveProjectionRewritesTiCIFTSMatchAgainstToBM25ScoreColumn(t *testin
 	require.Equal(t, 2, indexReader.Schema().Len())
 	require.Equal(t, model.ExtraBM25ScoreID, indexReader.OutputColumns[1].ID)
 	require.Equal(t, 1, indexReader.OutputColumns[1].Index)
+}
+
+func TestResolveProjectionRewritesTiCIFTSMatchAgainstOnIndexScan(t *testing.T) {
+	t.Parallel()
+	ctx := mock.NewContext()
+	stringTp := types.NewFieldType(mysql.TypeVarchar)
+	stringTp.SetCollate(mysql.DefaultCollationName)
+
+	contentCol := &expression.Column{ID: 1, UniqueID: 10, RetType: stringTp, OrigName: "content"}
+	indexScan := (&physicalop.PhysicalIndexScan{
+		DataSourceSchema: expression.NewSchema(contentCol),
+		FtsQueryInfo:     &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeNoScore},
+	}).Init(ctx, 0)
+	indexScan.SetSchema(expression.NewSchema(contentCol))
+
+	matchAgainst, err := expression.NewFunction(
+		ctx,
+		ast.FTSMysqlMatchAgainst,
+		types.NewFieldType(mysql.TypeDouble),
+		&expression.Constant{Value: types.NewStringDatum("hello"), RetType: stringTp},
+		contentCol,
+	)
+	require.NoError(t, err)
+	sf := matchAgainst.(*expression.ScalarFunction)
+	require.NoError(t, expression.SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierNaturalLanguageMode))
+
+	proj := (&physicalop.PhysicalProjection{Exprs: []expression.Expression{matchAgainst}}).Init(ctx, &property.StatsInfo{}, 0)
+	proj.SetChildren(indexScan)
+	require.NoError(t, resolveIndicesItself4PhysicalProjection(proj))
+
+	col, ok := proj.Exprs[0].(*expression.Column)
+	require.True(t, ok)
+	require.Equal(t, model.ExtraBM25ScoreID, col.ID)
+	require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, indexScan.FtsQueryInfo.QueryType)
+	require.Equal(t, model.ExtraBM25ScoreID, indexScan.Schema().Columns[1].ID)
+	require.Equal(t, 1, col.Index)
 }
 
 func TestResolveProjectionContinuesAfterTiCIFTSScoreRewrite(t *testing.T) {
@@ -146,4 +184,32 @@ func TestResolveProjectionLeavesTiCIFTSScoreUnsupportedIndexPlanUnchanged(t *tes
 	require.Equal(t, ast.FTSMysqlMatchAgainst, sf.FuncName.L)
 	require.Equal(t, tipb.FTSQueryType_FTSQueryTypeNoScore, indexScan.FtsQueryInfo.QueryType)
 	require.Equal(t, 1, limit.Schema().Len())
+}
+
+func TestFTSFuncValidationAllowsTopLevelMatchAgainstProjection(t *testing.T) {
+	t.Parallel()
+	ctx := mock.NewContext()
+	stringTp := types.NewFieldType(mysql.TypeVarchar)
+	stringTp.SetCollate(mysql.DefaultCollationName)
+	contentCol := &expression.Column{ID: 1, UniqueID: 10, RetType: stringTp, OrigName: "content"}
+	matchAgainst, err := expression.NewFunction(
+		ctx,
+		ast.FTSMysqlMatchAgainst,
+		types.NewFieldType(mysql.TypeDouble),
+		&expression.Constant{Value: types.NewStringDatum("hello"), RetType: stringTp},
+		contentCol,
+	)
+	require.NoError(t, err)
+	sf := matchAgainst.(*expression.ScalarFunction)
+	require.NoError(t, expression.SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+
+	proj := (&logicalop.LogicalProjection{Exprs: []expression.Expression{matchAgainst}}).Init(ctx, 0)
+	require.NoError(t, (&ftsFuncValidation{}).doQuickValidation(context.Background(), proj))
+}
+
+func TestFTSSupportedModifierAllowsDefaultNaturalLanguageMode(t *testing.T) {
+	t.Parallel()
+	require.True(t, isFTSSupportedModifier(ast.FulltextSearchModifierNaturalLanguageMode))
+	require.True(t, isFTSSupportedModifier(ast.FulltextSearchModifierBooleanMode))
+	require.False(t, isFTSSupportedModifier(ast.FulltextSearchModifierNaturalLanguageMode|ast.FulltextSearchModifierWithQueryExpansion))
 }

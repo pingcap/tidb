@@ -67,6 +67,10 @@ func ensureTiCIFTSScoreColumn(child base.PhysicalPlan) (*expression.Column, bool
 			return col, true, nil
 		}
 	}
+	if indexScan, ok := child.(*physicalop.PhysicalIndexScan); ok {
+		scoreCol, ok := indexScan.RequestExtraBM25ScoreColumn()
+		return scoreCol, ok, nil
+	}
 	provider, ok := child.(extraBM25ScoreProvider)
 	if !ok {
 		return nil, false, nil
