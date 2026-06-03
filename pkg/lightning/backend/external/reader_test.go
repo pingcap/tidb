@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
+	"golang.org/x/net/http2"
 )
 
 func TestReadAllDataBasic(t *testing.T) {
@@ -201,4 +203,72 @@ func TestReadKVFilesAsync(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, expectedKVs, readKVs)
+}
+
+func TestDoReadAllDataWithGCSResetRetry(t *testing.T) {
+	ctx := context.Background()
+	output := &memKVsAndBuffers{}
+	pool := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(1024))
+	defer pool.Destroy()
+
+	attempts := 0
+	resets := 0
+	err := doReadAllDataWithGCSResetRetry(
+		ctx,
+		output,
+		func(roundCtx context.Context) error {
+			attempts++
+			if attempts > 1 {
+				require.Nil(t, output.kvs)
+				require.Nil(t, output.memKVBuffers)
+				require.Nil(t, output.kvsPerFile)
+				require.Nil(t, output.droppedSizePerFile)
+				require.Zero(t, output.size)
+				require.Zero(t, output.droppedSize)
+			}
+			if attempts < 3 {
+				output.kvs = []KVPair{{Key: []byte("k"), Value: []byte("v")}}
+				output.memKVBuffers = []*membuf.Buffer{pool.NewBuffer()}
+				output.kvsPerFile = [][]KVPair{{{Key: []byte("k"), Value: []byte("v")}}}
+				output.size = 2
+				output.droppedSize = 1
+				output.droppedSizePerFile = []int{1}
+				return fmt.Errorf("wrapped: %w", http2.StreamError{Code: http2.ErrCodeInternal})
+			}
+			return nil
+		},
+		func(context.Context) error {
+			resets++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 3, attempts)
+	require.Equal(t, 2, resets)
+	require.Nil(t, output.kvs)
+	require.Nil(t, output.memKVBuffers)
+	require.Zero(t, output.size)
+}
+
+func TestDoReadAllDataWithGCSResetRetryNonTargetError(t *testing.T) {
+	ctx := context.Background()
+	output := &memKVsAndBuffers{}
+	attempts := 0
+	resets := 0
+
+	err := doReadAllDataWithGCSResetRetry(
+		ctx,
+		output,
+		func(context.Context) error {
+			attempts++
+			return io.EOF
+		},
+		func(context.Context) error {
+			resets++
+			return nil
+		},
+	)
+	require.ErrorIs(t, err, io.EOF)
+	require.Equal(t, 1, attempts)
+	require.Zero(t, resets)
 }

@@ -20,6 +20,10 @@ import (
 	"encoding/hex"
 	goerrors "errors"
 	"io"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,7 +37,174 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultGlobalSortReadConn = 1000
+	minGlobalSortReadConn     = 1
+	maxGlobalSortReadConn     = 4096
+	// TIDB_GLOBAL_SORT_READ_CONN controls max goroutines used to read files in
+	// one readAllData round.
+	globalSortReadConnEnv = "TIDB_GLOBAL_SORT_READ_CONN"
+	globalSortReadMarker  = "global-sort-read-conn-tuning"
+
+	globalSortGCSReadMaxAttempts = 32
+	globalSortGCSMaxRoundRetry   = 3
+	globalSortGCSResetRetryLog   = "global-sort-gcs-reset-retry"
+)
+
+var (
+	globalSortReadConnOnce sync.Once
+	globalSortReadConn     = defaultGlobalSortReadConn
+)
+
+func getGlobalSortReadConnLimit() int {
+	globalSortReadConnOnce.Do(func() {
+		v := strings.TrimSpace(os.Getenv(globalSortReadConnEnv))
+		if v == "" {
+			return
+		}
+
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			logutil.BgLogger().Warn("invalid global sort read conn tuning value, fallback to default",
+				zap.String("marker", globalSortReadMarker),
+				zap.String("env", globalSortReadConnEnv),
+				zap.String("value", v),
+				zap.Int("default", defaultGlobalSortReadConn),
+				zap.Error(err))
+			return
+		}
+		if n < minGlobalSortReadConn {
+			logutil.BgLogger().Warn("global sort read conn tuning value too small, clamped",
+				zap.String("marker", globalSortReadMarker),
+				zap.String("env", globalSortReadConnEnv),
+				zap.Int("value", n),
+				zap.Int("min", minGlobalSortReadConn))
+			n = minGlobalSortReadConn
+		} else if n > maxGlobalSortReadConn {
+			logutil.BgLogger().Warn("global sort read conn tuning value too large, clamped",
+				zap.String("marker", globalSortReadMarker),
+				zap.String("env", globalSortReadConnEnv),
+				zap.Int("value", n),
+				zap.Int("max", maxGlobalSortReadConn))
+			n = maxGlobalSortReadConn
+		}
+		globalSortReadConn = n
+		logutil.BgLogger().Info("global sort read conn tuning applied",
+			zap.String("marker", globalSortReadMarker),
+			zap.String("env", globalSortReadConnEnv),
+			zap.Int("read-conn", n))
+	})
+	return globalSortReadConn
+}
+
 func readAllData(
+	ctx context.Context,
+	store storeapi.Storage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) error {
+	if gcs, ok := store.(*objstore.GCSStorage); ok {
+		return readAllDataWithGCSResetRetry(
+			ctx,
+			gcs,
+			dataFiles,
+			statsFiles,
+			startKey,
+			endKey,
+			smallBlockBufPool,
+			largeBlockBufPool,
+			output,
+		)
+	}
+	return readAllDataOnce(
+		ctx,
+		store,
+		dataFiles,
+		statsFiles,
+		startKey,
+		endKey,
+		smallBlockBufPool,
+		largeBlockBufPool,
+		output,
+	)
+}
+
+func readAllDataWithGCSResetRetry(
+	ctx context.Context,
+	store *objstore.GCSStorage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) error {
+	return doReadAllDataWithGCSResetRetry(
+		ctx,
+		output,
+		func(roundCtx context.Context) error {
+			return readAllDataOnce(
+				roundCtx,
+				store,
+				dataFiles,
+				statsFiles,
+				startKey,
+				endKey,
+				smallBlockBufPool,
+				largeBlockBufPool,
+				output,
+			)
+		},
+		store.Reset,
+	)
+}
+
+func doReadAllDataWithGCSResetRetry(
+	ctx context.Context,
+	output *memKVsAndBuffers,
+	readOnce func(context.Context) error,
+	resetStorage func(context.Context) error,
+) error {
+	logger := logutil.Logger(ctx)
+	for attempt := 0; ; attempt++ {
+		roundCtx := objstore.WithGlobalSortGCSReadRetry(ctx, globalSortGCSReadMaxAttempts)
+		err := readOnce(roundCtx)
+		if err == nil {
+			return nil
+		}
+		if !objstore.IsRetryableGCSHTTP2InternalError(err) {
+			return err
+		}
+		if attempt == globalSortGCSMaxRoundRetry {
+			logger.Warn("global sort gcs reset retry budget exhausted",
+				zap.String("marker", globalSortGCSResetRetryLog),
+				zap.Int("round-attempt", attempt+1),
+				zap.Int("max-round-retries", globalSortGCSMaxRoundRetry),
+				zap.Int("max-request-attempts", globalSortGCSReadMaxAttempts),
+				zap.Error(err))
+			return err
+		}
+
+		output.reset()
+		logger.Warn("retrying global sort read after resetting gcs storage",
+			zap.String("marker", globalSortGCSResetRetryLog),
+			zap.Int("failed-round-attempt", attempt+1),
+			zap.Int("next-round-attempt", attempt+2),
+			zap.Int("max-round-retries", globalSortGCSMaxRoundRetry),
+			zap.Int("max-request-attempts", globalSortGCSReadMaxAttempts),
+			zap.Error(err))
+		if err := resetStorage(ctx); err != nil {
+			return errors.Annotate(err, "failed to reset gcs storage for global sort retry")
+		}
+		logger.Info("reset gcs storage for global sort read retry",
+			zap.String("marker", globalSortGCSResetRetryLog),
+			zap.Int("next-round-attempt", attempt+2))
+	}
+}
+
+func readAllDataOnce(
 	ctx context.Context,
 	store storeapi.Storage,
 	dataFiles, statsFiles []string,
@@ -51,11 +222,7 @@ func readAllData(
 	)
 	defer func() {
 		if err != nil {
-			output.kvsPerFile = nil
-			for _, b := range output.memKVBuffers {
-				b.Destroy()
-			}
-			output.memKVBuffers = nil
+			output.reset()
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
 			if gcs, ok := store.(*objstore.GCSStorage); ok {
@@ -77,7 +244,7 @@ func readAllData(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
+	readConn := getGlobalSortReadConnLimit()
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
