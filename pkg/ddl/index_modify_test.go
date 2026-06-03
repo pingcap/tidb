@@ -30,6 +30,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 const indexModifyLease = 600 * time.Millisecond
@@ -1539,6 +1541,7 @@ func TestHybridIndexOnPartitionedTable(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockGetCloudStoragePrefix", `return("s3://mock-tici/t_{table_id}/i_{index_id}/import/mock_job,1")`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
@@ -2323,6 +2326,129 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	require.Len(t, idx.HybridInfo.Sharding.Columns, 2)
 	require.Equal(t, "col1", idx.HybridInfo.Sharding.Columns[0].Name.O)
 	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
+}
+
+func TestHybridIndexVectorValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	integration.BeforeTestExternal(t)
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer testEtcdCluster.Terminate(t)
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Path = testEtcdCluster.Members[0].ClientURLs[0].String()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b text, v1 vector(3), v2 vector(5))")
+
+	// Multiple vector columns in one component should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1, v2) using hybrid parameter '{
+		"vector":[{"columns":["v1","v2"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify exactly one column")
+
+	// Missing index_info entirely should default to COSINE and materialize dimension.
+	tk.MustExec(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	idx := external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("idx")
+	require.NotNil(t, idx)
+	require.Len(t, idx.HybridInfo.Vector, 1)
+	require.NotNil(t, idx.HybridInfo.Vector[0].IndexInfo)
+	require.Equal(t, string(model.DistanceMetricCosine), idx.HybridInfo.Vector[0].IndexInfo.DistanceMetric)
+	require.NotNil(t, idx.HybridInfo.Vector[0].IndexInfo.Dimension)
+	require.EqualValues(t, 3, *idx.HybridInfo.Vector[0].IndexInfo.Dimension)
+	tk.MustExec("drop index idx on t")
+
+	// Empty index_info should also default to COSINE and materialize dimension.
+	tk.MustExec(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	idx = external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("idx")
+	require.NotNil(t, idx)
+	require.Len(t, idx.HybridInfo.Vector, 1)
+	require.NotNil(t, idx.HybridInfo.Vector[0].IndexInfo)
+	require.Equal(t, string(model.DistanceMetricCosine), idx.HybridInfo.Vector[0].IndexInfo.DistanceMetric)
+	require.NotNil(t, idx.HybridInfo.Vector[0].IndexInfo.Dimension)
+	require.EqualValues(t, 3, *idx.HybridInfo.Vector[0].IndexInfo.Dimension)
+	tk.MustExec("drop index idx on t")
+
+	// Missing distance_metric with only dimension should default to COSINE.
+	tk.MustExec(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":3}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	idx = external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("idx")
+	require.NotNil(t, idx)
+	require.Len(t, idx.HybridInfo.Vector, 1)
+	require.NotNil(t, idx.HybridInfo.Vector[0].IndexInfo)
+	require.Equal(t, string(model.DistanceMetricCosine), idx.HybridInfo.Vector[0].IndexInfo.DistanceMetric)
+	require.NotNil(t, idx.HybridInfo.Vector[0].IndexInfo.Dimension)
+	require.EqualValues(t, 3, *idx.HybridInfo.Vector[0].IndexInfo.Dimension)
+	tk.MustExec("drop index idx on t")
+
+	// Unsupported distance metric should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"HAMMING"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "unsupported distance metric")
+
+	// Zero dimension should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":0, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "dimension must be greater than 0")
+
+	// Dimension mismatch with column definition should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":10, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "does not match column")
+
+	// Valid L2 metric should succeed (dimension auto-materialized from column).
+	tk.MustExec(`create columnar index idx_l2 on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	tk.MustExec("drop index idx_l2 on t")
+
+	// Valid COSINE metric should succeed (dimension auto-materialized from column).
+	tk.MustExec(`create columnar index idx_cos on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"COSINE"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	tk.MustExec("drop index idx_cos on t")
+
+	// Matching dimension should succeed.
+	tk.MustExec(`create columnar index idx_dim on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":3, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	tk.MustExec("drop index idx_dim on t")
+
+	tk.MustExec("drop table if exists t_var")
+	tk.MustExec("create table t_var(a int, b text, v vector)")
+
+	// Variable-length vector columns should be rejected even if dimension is specified explicitly.
+	tk.MustContainErrMsg(`create columnar index idx_var on t_var(b, v) using hybrid parameter '{
+		"vector":[{"columns":["v"], "index_info":{"dimension":3, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "can only be defined on fixed-dimension vector columns")
 }
 
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {
