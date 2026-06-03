@@ -53,7 +53,7 @@ Output behavior:
    - whether any difference exists;
    - the number of differing rows.
 2. Recommended output text follows the current spec direction:
-   - `There are ... differencies result in ... compared to source base tables at timestamp 'xxxx'`
+   - `There are ... differences result in ... compared to source base tables at timestamp 'xxxx'`
    - the rendered timestamp should be `R` (the base-query comparison snapshot), because the comparison source side is `BaseQuery@R`.
 3. With `OUTPUT INTO TABLE`:
    - TiDB automatically creates the target table;

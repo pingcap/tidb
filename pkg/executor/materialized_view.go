@@ -2256,13 +2256,13 @@ func formatCompareMaterializedViewSummary(lastSuccessReadTSO uint64, diffRows in
 	resultTime := oracle.GetTimeFromTS(lastSuccessReadTSO).Format(types.TimeFSPFormat)
 	if diffRows == 0 {
 		return fmt.Sprintf(
-			"There are no differencies result in %d rows compared to source base tables at timestamp '%s'",
+			"There are no differences result in %d rows compared to source base tables at timestamp '%s'",
 			diffRows,
 			resultTime,
 		)
 	}
 	return fmt.Sprintf(
-		"There are differencies result in %d rows compared to source base tables at timestamp '%s'",
+		"There are differences result in %d rows compared to source base tables at timestamp '%s'",
 		diffRows,
 		resultTime,
 	)
