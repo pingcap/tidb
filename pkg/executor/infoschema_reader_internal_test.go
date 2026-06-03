@@ -508,7 +508,7 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		require.Equal(t, types.NewStringDatum("a,b"), row[4])
 		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[5])
 		require.Equal(t, types.NewStringDatum("test"), row[6])
-		require.Equal(t, types.NewStringDatum("1"), row[7])
+		require.Equal(t, types.NewIntDatum(1), row[7])
 		require.Equal(t, types.NewStringDatum("base"), row[8])
 		require.Equal(t, types.NewStringDatum("DEFERRED"), row[9])
 		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP"), row[10])
@@ -693,7 +693,7 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		require.Equal(t, types.NewStringDatum("$mlog$keep"), row[5])
 		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[6])
 		require.Equal(t, types.NewStringDatum("test"), row[7])
-		require.Equal(t, types.NewStringDatum("6"), row[8])
+		require.Equal(t, types.NewIntDatum(6), row[8])
 		require.Equal(t, types.NewStringDatum("mv_keep"), row[9])
 	})
 

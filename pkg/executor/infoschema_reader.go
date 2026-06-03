@@ -1757,7 +1757,7 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			strings.Join(columnNames, ","), // MLOG_COLUMNS
 			baseInfo.catalog,               // BASE_TABLE_CATALOG
 			baseInfo.schema,                // BASE_TABLE_SCHEMA
-			baseInfo.idStr,                 // BASE_TABLE_ID
+			baseInfo.id,                    // BASE_TABLE_ID
 			baseInfo.name,                  // BASE_TABLE_NAME
 			mlogInfo.PurgeMethod,           // PURGE_METHOD
 			mlogInfo.PurgeStartWith,        // PURGE_START
@@ -1945,7 +1945,7 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 				mlogInfo.name,         // MLOG_NAME
 				dep.catalog,           // MVIEW_CATALOG
 				dep.schema.O,          // MVIEW_SCHEMA
-				dep.idStr,             // MVIEW_ID
+				dep.id,                // MVIEW_ID
 				dep.name,              // MVIEW_NAME
 			)
 			rows = append(rows, record)
