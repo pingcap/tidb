@@ -164,7 +164,7 @@ func (m *Manager) validateTargetKS(ks string) error {
 	// so we use runtime check instead of intest.Assert here, in case some code
 	// paths are not covered by tests.
 	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
-		return errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
+		return errors.New("cross keyspace is not available in classic kernel or current keyspace")
 	}
 	return nil
 }
