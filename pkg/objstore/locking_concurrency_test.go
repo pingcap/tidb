@@ -17,6 +17,7 @@ package objstore_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -539,6 +540,61 @@ func testConcurrentAcquirePair(
 	requireNoIntentWithPrefix(t, strg, intentPrefixes...)
 }
 
+func testConcurrentCompatibleReaders(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(pth, "v1"), 0o755))
+	audit := newCriticalSectionAudit("migration-read")
+
+	resultCh := make(chan lockAttemptResult, 2)
+	go func() {
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-a", localLeaseClock())
+		resultCh <- lockAttemptResult{ownerID: "owner-a", lock: lock, err: err}
+	}()
+	go func() {
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-b", localLeaseClock())
+		resultCh <- lockAttemptResult{ownerID: "owner-b", lock: lock, err: err}
+	}()
+
+	results := make([]lockAttemptResult, 0, 2)
+	for len(results) < 2 {
+		select {
+		case result := <-resultCh:
+			results = append(results, result)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for compatible reader acquire results: partial=%#v audit=%#v", results, audit.snapshot())
+		}
+	}
+	for _, result := range results {
+		require.NoError(t, result.err, "reader %s failed: results=%#v", result.ownerID, results)
+		require.NotNil(t, result.lock)
+	}
+
+	type readerHolder struct {
+		result   lockAttemptResult
+		lockInfo string
+		worker   *protectedWorker
+	}
+
+	holders := make([]readerHolder, 0, 2)
+	for _, result := range results {
+		lockInfo := result.lock.String()
+		worker := startProtectedWorker(t, ctx, audit, result.ownerID, "migration-read", lockInfo)
+		_, ok := worker.requestStep(t)
+		require.True(t, ok)
+		holders = append(holders, readerHolder{result: result, lockInfo: lockInfo, worker: worker})
+	}
+
+	for _, holder := range holders {
+		holder.worker.stop(workerStopTestStop)
+		holder.worker.waitStopped(t)
+		require.NoError(t, holder.result.lock.Unlock(ctx))
+		audit.recordExit(holder.result.ownerID, "migration-read", holder.lockInfo, "unlock")
+	}
+	requireNoIntentWithPrefix(t, strg, "v1/LOCK.READ.")
+}
+
 func TestLeaseLockConcurrentAcquireExclusion(t *testing.T) {
 	t.Run("migration read and write", func(t *testing.T) {
 		testConcurrentAcquirePair(t,
@@ -593,17 +649,7 @@ func TestLeaseLockConcurrentAcquireExclusion(t *testing.T) {
 		)
 	})
 	t.Run("migration readers", func(t *testing.T) {
-		testConcurrentAcquirePair(t,
-			"migration-read",
-			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
-				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-a", localLeaseClock())
-			},
-			func(ctx context.Context, strg storeapi.Storage) (*objstore.RemoteLock, error) {
-				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader-b", localLeaseClock())
-			},
-			[]string{"v1/LOCK.READ."},
-			2,
-		)
+		testConcurrentCompatibleReaders(t)
 	})
 }
 
@@ -703,17 +749,25 @@ func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWri
 type renewalBlockingStorage struct {
 	storeapi.Storage
 
-	mu          sync.Mutex
-	block       bool
-	blockPath   string
-	started     chan struct{}
-	startedOnce sync.Once
+	mu                    sync.Mutex
+	block                 bool
+	blockPath             string
+	writeExited           bool
+	deleteBeforeWriteExit bool
+	started               chan struct{}
+	writeExitedCh         chan struct{}
+	deleteStarted         chan struct{}
+	startedOnce           sync.Once
+	writeExitedOnce       sync.Once
+	deleteStartedOnce     sync.Once
 }
 
 func newRenewalBlockingStorage(base storeapi.Storage) *renewalBlockingStorage {
 	return &renewalBlockingStorage{
-		Storage: base,
-		started: make(chan struct{}),
+		Storage:       base,
+		started:       make(chan struct{}),
+		writeExitedCh: make(chan struct{}),
+		deleteStarted: make(chan struct{}),
 	}
 }
 
@@ -731,15 +785,39 @@ func (s *renewalBlockingStorage) WriteFile(ctx context.Context, name string, dat
 	if shouldBlock {
 		s.startedOnce.Do(func() { close(s.started) })
 		<-ctx.Done()
+		s.mu.Lock()
+		s.writeExited = true
+		s.mu.Unlock()
+		s.writeExitedOnce.Do(func() { close(s.writeExitedCh) })
 		return ctx.Err()
 	}
 	return s.Storage.WriteFile(ctx, name, data)
 }
 
+func (s *renewalBlockingStorage) DeleteFile(ctx context.Context, name string) error {
+	s.mu.Lock()
+	trackDelete := s.block && name == s.blockPath
+	if trackDelete && !s.writeExited {
+		s.deleteBeforeWriteExit = true
+	}
+	s.mu.Unlock()
+	if trackDelete {
+		s.deleteStartedOnce.Do(func() { close(s.deleteStarted) })
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
+func (s *renewalBlockingStorage) requireNoDeleteBeforeWriteExit(t *testing.T) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	require.False(t, s.deleteBeforeWriteExit, "DeleteFile for %s happened before blocked renewal WriteFile exited", s.blockPath)
+}
+
 func TestLeaseLockUnlockWaitsForInFlightRenewal(t *testing.T) {
 	ctx := context.Background()
-	defer objstore.TESTSetLeaseConstants(300*time.Millisecond, 10*time.Millisecond, 3, 5*time.Millisecond)()
-	defer objstore.TESTSetRenewalProofConstants(100*time.Millisecond, time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(2*time.Second, 10*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(1500*time.Millisecond, time.Millisecond)()
 
 	base, pth := createMockStorage(t)
 	wrapped := newRenewalBlockingStorage(base)
@@ -760,12 +838,23 @@ func TestLeaseLockUnlockWaitsForInFlightRenewal(t *testing.T) {
 	go func() {
 		unlockDone <- lock.Unlock(ctx)
 	}()
-	select {
-	case err := <-unlockDone:
-		require.NoError(t, err)
-		t.Fatal("Unlock returned before in-flight renewal write left WriteFile")
-	case <-time.After(5 * time.Millisecond):
+	deleteStarted := wrapped.deleteStarted
+	writeExitTimeout := time.After(3 * time.Second)
+	for waitingForWriteExit := true; waitingForWriteExit; {
+		select {
+		case err := <-unlockDone:
+			require.NoError(t, err)
+			t.Fatal("Unlock returned before in-flight renewal write left WriteFile")
+		case <-deleteStarted:
+			wrapped.requireNoDeleteBeforeWriteExit(t)
+			deleteStarted = nil
+		case <-wrapped.writeExitedCh:
+			waitingForWriteExit = false
+		case <-writeExitTimeout:
+			t.Fatal("timed out waiting for blocked renewal WriteFile to exit")
+		}
 	}
+	wrapped.requireNoDeleteBeforeWriteExit(t)
 
 	select {
 	case err := <-unlockDone:
@@ -773,8 +862,7 @@ func TestLeaseLockUnlockWaitsForInFlightRenewal(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for Unlock to finish after renewal write timeout")
 	}
-	requireFileNotExists(t, filepath.Join(pth, physicalPath))
-	time.Sleep(30 * time.Millisecond)
+	waitClosed(t, wrapped.deleteStarted, "unlock delete started")
 	requireFileNotExists(t, filepath.Join(pth, physicalPath))
 
 	next, err := objstore.TryLockRemoteWrite(ctx, base, "v1/LOCK", "next-owner", localLeaseClock())
