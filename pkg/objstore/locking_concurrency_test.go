@@ -17,6 +17,7 @@ package objstore_test
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -604,4 +605,86 @@ func TestLeaseLockConcurrentAcquireExclusion(t *testing.T) {
 			2,
 		)
 	})
+}
+
+func TestLeaseLockRenewalLostStopsCriticalSection(t *testing.T) {
+	t.Run("migration write block", func(t *testing.T) {
+		testRenewalLostStopsCriticalSection(t, "migration-write-block", true, false)
+	})
+	t.Run("migration write error", func(t *testing.T) {
+		testRenewalLostStopsCriticalSection(t, "migration-write-error", true, true)
+	})
+	t.Run("truncate block", func(t *testing.T) {
+		testRenewalLostStopsCriticalSection(t, "truncate-block", false, false)
+	})
+	t.Run("truncate error", func(t *testing.T) {
+		testRenewalLostStopsCriticalSection(t, "truncate-error", false, true)
+	})
+}
+
+func testRenewalLostStopsCriticalSection(t *testing.T, name string, migrationWrite bool, writeError bool) {
+	t.Helper()
+	defer objstore.TESTSetLeaseConstants(120*time.Millisecond, 10*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(15*time.Millisecond, time.Millisecond)()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	strg, _ := createMockStorage(t)
+	audit := newCriticalSectionAudit(name)
+
+	var leaseLostOnce sync.Once
+	workerReady := make(chan *protectedWorker, 1)
+	onLeaseLost := func() {
+		leaseLostOnce.Do(func() {
+			go func() {
+				select {
+				case worker := <-workerReady:
+					worker.stop(workerStopLeaseLost)
+				case <-ctx.Done():
+				}
+			}()
+		})
+	}
+
+	if writeError {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error",
+			fmt.Sprintf(`return("signal-dir=%s")`, t.TempDir())))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error"))
+		})
+	} else {
+		marker := filepath.Join(t.TempDir(), "blocked")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block",
+			fmt.Sprintf(`return("signal=%s")`, marker)))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block"))
+		})
+	}
+
+	var lock *objstore.RemoteLock
+	var err error
+	if migrationWrite {
+		lock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "lost-owner", onLeaseLost, localLeaseClock())
+	} else {
+		lock, err = objstore.LockRemoteTruncate(ctx, strg, "lost-owner", onLeaseLost, localLeaseClock())
+	}
+	require.NoError(t, err)
+	defer objstore.TESTStopRenewal(lock)
+
+	createdWorker := startProtectedWorker(t, ctx, audit, "owner-a", name, lock.String())
+	step, ok := createdWorker.requestStep(t)
+	require.True(t, ok)
+	require.Equal(t, 1, step)
+	workerReady <- createdWorker
+
+	waitClosed(t, createdWorker.lostCh(), "lease lost")
+	createdWorker.waitStopped(t)
+	require.Equal(t, workerStopLeaseLost, createdWorker.stopReason())
+	_, ok = createdWorker.requestStep(t)
+	require.False(t, ok)
+
+	events := audit.snapshot()
+	requireActionBeforeAction(t, events, "owner-a", "lost", "stopped")
+	requireNoStepAfterAction(t, events, "owner-a", "lost")
+	requireNoStepAfterAction(t, events, "owner-a", "stopped")
 }
