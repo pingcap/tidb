@@ -1724,7 +1724,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// form (where CurrentAuth is nil).
 		spec := &ast.UserSpec{
 			User:               &userCopy,
-			AuthOpt:             s.CurrentAuth,
+			AuthOpt:            s.CurrentAuth,
 			DualPasswordOption: s.CurrentDualPasswordOption,
 		}
 		s.Specs = []*ast.UserSpec{spec}
