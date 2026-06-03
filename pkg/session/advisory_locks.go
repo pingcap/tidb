@@ -72,10 +72,12 @@ func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
 	a.ctx = kv.WithInternalSourceType(a.ctx, kv.InternalTxnOthers)
 	_, err := a.session.ExecuteInternal(a.ctx, "SET innodb_lock_wait_timeout = %?", timeout)
 	if err != nil {
+		a.Close()
 		return err
 	}
 	_, err = a.session.ExecuteInternal(a.ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
+		a.Close()
 		return err
 	}
 	_, err = a.session.ExecuteInternal(a.ctx, "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)

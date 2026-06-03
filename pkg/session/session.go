@@ -1683,12 +1683,13 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 	if err != nil {
 		return err
 	}
-	infosync.StoreInternalSession(sess)
+	failpoint.InjectCall("afterCreateAdvisoryLockSession", sess)
 	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.getAdvisoryLockOwner()}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
 	}
+	infosync.StoreInternalSession(sess)
 	s.advisoryLocks[lockName] = lock
 	return nil
 }

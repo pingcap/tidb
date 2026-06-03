@@ -1008,7 +1008,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			stepSet,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,
-			refreshExecutionVars.maintainMemQuota,
+			refreshExecutionVars,
 		)
 		if err != nil {
 			return finalizeFailure(err)
@@ -1251,7 +1251,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	stepSet mvRefreshStepSet,
 	expectedLastSuccessReadTSO uint64,
 	expectedLastSuccessReadTSONull bool,
-	targetMaintainMemQuota int64,
+	refreshExecutionVars refreshExecutionSessionVars,
 ) (buildReadTSO uint64, err error) {
 	buildSctx, err := e.GetSysSession()
 	if err != nil {
@@ -1260,12 +1260,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	defer e.ReleaseSysSession(kctx, buildSctx)
 
 	buildSessVars := buildSctx.GetSessionVars()
-	restoreBuildMemQuota, err := applyMVMaintenanceMemQuota(buildSessVars, targetMaintainMemQuota)
+	restoreBuildRefreshExecutionVars, err := applyRefreshExecutionSessionVars(buildSessVars, refreshExecutionVars)
 	if err != nil {
 		return 0, err
 	}
-	defer restoreBuildMemQuota()
-	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession", buildSessVars.MemQuotaQuery, targetMaintainMemQuota)
+	defer restoreBuildRefreshExecutionVars()
+	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession", buildSessVars.MemQuotaQuery, refreshExecutionVars.maintainMemQuota)
 
 	restoreBuildSessVars, err := initRefreshMaterializedViewSession(buildSessVars, tblInfo.MaterializedView)
 	if err != nil {
