@@ -1800,17 +1800,9 @@ func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID 
 		return nil, errors.New("No shard info found")
 	}
 
-	storeShard := make(map[string][]*coprocessor.ShardInfo)
-	for _, shard := range ret {
-		// Always use the first local cache address as the store address.
-		if _, ok := storeShard[shard.localCacheAddrs[0]]; !ok {
-			storeShard[shard.localCacheAddrs[0]] = make([]*coprocessor.ShardInfo, 0)
-		}
-		storeShard[shard.localCacheAddrs[0]] = append(storeShard[shard.localCacheAddrs[0]], &coprocessor.ShardInfo{
-			ShardId:    shard.ShardID,
-			ShardEpoch: shard.Epoch,
-			Ranges:     shard.Ranges.ToPBRanges(),
-		})
+	storeShard, err := buildTiCIShardInfosByAddrFromLocations(ret)
+	if err != nil {
+		return nil, err
 	}
 
 	for addr, shardInfos := range storeShard {

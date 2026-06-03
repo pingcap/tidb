@@ -14,6 +14,7 @@ go_library(
         "region_cache.go",
         "store.go",
         "tici_estimate_count.go",
+        "tici_shard_balance.go",
         "tici_shard_cache.go",
         "tici_sorted_shards.go",
     ],
