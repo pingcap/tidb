@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -470,6 +472,43 @@ func TestDebugRoutes(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("GET route %s failed", route))
 		require.NoError(t, resp.Body.Close())
 	}
+}
+
+func TestAutoIDOwnerRouteRegistration(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		defer func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		}()
+	}
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	resp, err := ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	ts.stopServer(t)
+
+	// Starter deploy mode only exists for NextGen. In classic builds, deploymode.IsStarter()
+	// is always false, so only the non-Starter route-registration case applies.
+	if !kerneltype.IsNextGen() {
+		return
+	}
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	ts = createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	resp, err = ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.JSONEq(t, `{"is_owner": false}`, string(body))
 }
 
 func TestFailpointHandler(t *testing.T) {

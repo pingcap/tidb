@@ -457,7 +457,7 @@ func TestCalResourceParams(t *testing.T) {
 		t.Skip("we only cal resource related params in nextgen")
 	}
 	_, tm, ctx := testutil.InitTableTest(t)
-
+	testutil.MockNodeResource(t, 8)
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", handle.GetTargetScope()))
 	c := &importer.LoadDataController{TotalRealSize: 200 * units.TiB, Plan: &importer.Plan{TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)

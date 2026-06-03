@@ -110,7 +110,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 28,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -156,6 +156,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/etcd",
         "//pkg/util/mock",
         "@com_github_docker_go_units//:go-units",

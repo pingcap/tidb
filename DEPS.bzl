@@ -6596,11 +6596,11 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "b879b704317f07d5e2697b778ad1ea63dd723532bebb238a781f913cb4c09b5e",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260601085006-f2ffb0f83e51",
+        sha256 = "472a85fb7dccdeb0f69c6a96666a62fb41dacb73c15415707f323b9e82ba8378",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260602013621-8804d7c60a7e",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260601085006-f2ffb0f83e51.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260601085006-f2ffb0f83e51.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260602013621-8804d7c60a7e.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260602013621-8804d7c60a7e.zip",
         ],
     )
     go_repository(
@@ -6608,11 +6608,11 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "82bae6c124099e1dd0cc921c8512f5581ace19506f9ab816d0c8eda35a7d316b",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260404141330-8a6813497b52",
+        sha256 = "8f82128d68f3765fc4d71fa69b7f537cee62173968544b360786d480d6b17230",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260601035915-3ef6a3b10c84",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260404141330-8a6813497b52.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260404141330-8a6813497b52.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260601035915-3ef6a3b10c84.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260601035915-3ef6a3b10c84.zip",
         ],
     )
     go_repository(
