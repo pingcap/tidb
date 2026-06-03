@@ -1406,11 +1406,11 @@ func createMockInfoSchemaWithDBs(dbNameToID map[string]int64) infoschema.InfoSch
 		// Create a dummy table for this database to make MockInfoSchema work
 		tableInfo := &model.TableInfo{
 			ID:   id*1000 + 1, // Use a unique table ID
-			Name: ast.NewCIStr("dummy_table"),
+			Name: pmodel.NewCIStr("dummy_table"),
 			Columns: []*model.ColumnInfo{
 				{
 					ID:     1,
-					Name:   ast.NewCIStr("id"),
+					Name:   pmodel.NewCIStr("id"),
 					Offset: 0,
 					State:  model.StatePublic,
 				},
@@ -1420,7 +1420,7 @@ func createMockInfoSchemaWithDBs(dbNameToID map[string]int64) infoschema.InfoSch
 
 		dbInfo := &model.DBInfo{
 			ID:   id,
-			Name: ast.NewCIStr(name),
+			Name: pmodel.NewCIStr(name),
 		}
 		dbInfo.Deprecated.Tables = []*model.TableInfo{tableInfo}
 		tableInfo.DBID = id
@@ -1450,7 +1450,7 @@ type mockInfoSchemaWrapper struct {
 	dbInfos    []*model.DBInfo
 }
 
-func (m *mockInfoSchemaWrapper) SchemaByName(schema ast.CIStr) (val *model.DBInfo, ok bool) {
+func (m *mockInfoSchemaWrapper) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
 	// Check our custom database map first
 	for _, dbInfo := range m.dbInfos {
 		if dbInfo.Name.L == schema.L {

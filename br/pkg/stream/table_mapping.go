@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -754,7 +754,7 @@ func (tm *TableMappingManager) ReuseExistingDatabaseIDs(infoschema infoschema.In
 		if dbReplace.FilteredOut || dbReplace.DbID > 0 {
 			continue
 		}
-		if dbInfo, exists := infoschema.SchemaByName(ast.NewCIStr(dbReplace.Name)); exists {
+		if dbInfo, exists := infoschema.SchemaByName(pmodel.NewCIStr(dbReplace.Name)); exists {
 			dbReplace.DbID = dbInfo.ID
 			dbReplace.Reused = true
 			log.Info("reuse existing database id",

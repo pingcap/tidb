@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -519,7 +519,7 @@ func TestPreventConcurrentRestoreOfTheSameDatabase(t *testing.T) {
 			for _, dbName := range cs.snapshotDBNames {
 				dbs = append(dbs, &metautil.Database{
 					Info: &model.DBInfo{
-						Name: ast.NewCIStr(dbName),
+						Name: pmodel.NewCIStr(dbName),
 					},
 				})
 			}
