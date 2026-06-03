@@ -19,6 +19,8 @@ go_library(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/util",
+        "//pkg/dumpformat/parquetfile",
+        "//pkg/dumpformat/parsedef",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",
@@ -117,7 +119,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 39,
+    shard_count = 40,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -491,9 +492,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, reader,
-			dataFileMeta.Path, mydump.ParquetFileMeta{},
+			dataFileMeta.Path, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -667,9 +668,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, reader,
-			sampleFile.Path, mydump.ParquetFileMeta{},
+			sampleFile.Path, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)

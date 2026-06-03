@@ -37,7 +37,7 @@ func TestParquetWriterWritesArrowReadableRows(t *testing.T) {
 		{Name: "flag", DatabaseTypeName: "BOOLEAN", Nullable: true},
 	}
 
-	pw, err := NewParquetWriter(
+	pw, err := NewWriter(
 		&buf,
 		columns,
 		WithCompression(compress.Codecs.Zstd),
@@ -89,24 +89,24 @@ func TestParquetWriterWritesArrowReadableRows(t *testing.T) {
 	readByteArrayColumn(t, rowGroup, 4, 2, []string{"true", "false"}, []int16{1, 1}, 2)
 
 	t.Run("validates writer constructor inputs", func(t *testing.T) {
-		_, err := NewParquetWriter(nil, columns)
+		_, err := NewWriter(nil, columns)
 		require.ErrorContains(t, err, "parquet output buffer is nil")
 
-		_, err = NewParquetWriter(&bytes.Buffer{}, []*ColumnInfo{nil})
+		_, err = NewWriter(&bytes.Buffer{}, []*ColumnInfo{nil})
 		require.ErrorContains(t, err, "parquet column info is nil")
 
-		_, err = NewParquetWriter(&bytes.Buffer{}, []*ColumnInfo{{Name: "", DatabaseTypeName: "INT"}})
+		_, err = NewWriter(&bytes.Buffer{}, []*ColumnInfo{{Name: "", DatabaseTypeName: "INT"}})
 		require.ErrorContains(t, err, "parquet column name is empty")
 
 		require.NotPanics(t, func() {
-			_, err = NewParquetWriter(&bytes.Buffer{}, []*ColumnInfo{
+			_, err = NewWriter(&bytes.Buffer{}, []*ColumnInfo{
 				{Name: "bad_scale_gt_precision", DatabaseTypeName: "DECIMAL", Precision: 10, Scale: 11},
 			})
 			require.ErrorContains(t, err, "parquet decimal column bad_scale_gt_precision has invalid scale 11 for precision 10")
 		})
 
 		require.NotPanics(t, func() {
-			_, err = NewParquetWriter(&bytes.Buffer{}, []*ColumnInfo{
+			_, err = NewWriter(&bytes.Buffer{}, []*ColumnInfo{
 				{Name: "bad_negative_scale", DatabaseTypeName: "DECIMAL", Precision: 10, Scale: -1},
 			})
 			require.ErrorContains(t, err, "parquet decimal column bad_negative_scale has invalid scale -1 for precision 10")
@@ -115,7 +115,7 @@ func TestParquetWriterWritesArrowReadableRows(t *testing.T) {
 
 	t.Run("Close closes writer and Write fails afterwards", func(t *testing.T) {
 		var buf bytes.Buffer
-		pw, err := NewParquetWriter(&buf, []*ColumnInfo{
+		pw, err := NewWriter(&buf, []*ColumnInfo{
 			{Name: "id", DatabaseTypeName: "INT"},
 		})
 		require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestParquetWriterWritesArrowReadableRows(t *testing.T) {
 
 func TestParquetWriterMapsUnsignedBigIntAsFixedDecimal(t *testing.T) {
 	var buf bytes.Buffer
-	pw, err := NewParquetWriter(&buf, []*ColumnInfo{
+	pw, err := NewWriter(&buf, []*ColumnInfo{
 		{Name: "u", DatabaseTypeName: "UNSIGNED BIGINT"},
 	}, WithCompression(compress.Codecs.Uncompressed))
 	require.NoError(t, err)

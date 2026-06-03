@@ -37,6 +37,7 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -237,8 +238,8 @@ func (t DataSourceType) String() string {
 }
 
 var (
-	// NewClientWithContext returns a kv.Client.
-	NewClientWithContext = pd.NewClientWithContext
+	// NewClientWithAPIContext returns a kv.Client.
+	NewClientWithAPIContext = pd.NewClientWithAPIContext
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -320,7 +321,7 @@ type Plan struct {
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// only initialized for IMPORT INTO, used when format is detected automatically
-	specifiedOptions map[string]*plannercore.LoadDataOpt
+	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -762,7 +763,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
-	p.specifiedOptions = specifiedOptions
+	p.SpecifiedOptionNames = make(map[string]struct{}, len(specifiedOptions))
+	for k := range specifiedOptions {
+		p.SpecifiedOptionNames[k] = struct{}{}
+	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
@@ -1316,7 +1320,7 @@ func estimateCompressionRatio(
 			failpoint.Return(2.0, nil)
 		}
 	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, filePath, store)
 	if err != nil {
 		return 1.0, err
 	}
@@ -1500,7 +1504,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
-			ParquetMeta: mydump.ParquetFileMeta{Loc: e.location},
+			ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
@@ -1557,7 +1561,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
-					ParquetMeta: mydump.ParquetFileMeta{Loc: e.location},
+					ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 				}
 				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
 				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
@@ -1573,7 +1577,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
-		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
+		if err2 = e.CheckNonCSVFormatOptions(); err2 != nil {
 			return err2
 		}
 	}
@@ -1621,6 +1625,9 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
+		zap.String("db", e.DBName),
+		zap.String("table", e.TableInfo.Name.O),
+		zap.Int64("tableID", e.TableInfo.ID),
 		zap.Int("thread", e.ThreadCnt),
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
@@ -1642,7 +1649,10 @@ func (e *LoadDataController) detectAndUpdateFormat(path string) {
 		e.Format = parseFileType(path)
 		e.logger.Info("detect and update import plan format based on file extension",
 			zap.String("file", path), zap.String("detected format", e.Format))
-		e.Parameters.Format = e.Format
+		// Plan.Parameters doesn't exist if we run with async prepare.
+		if e.Parameters != nil {
+			e.Parameters.Format = e.Format
+		}
 	}
 }
 
@@ -1743,7 +1753,7 @@ func newLoadDataParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
 			reader,
@@ -1828,11 +1838,11 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// non CSV format should not specify CSV only options, we check it again if the
-// format is detected automatically.
-func (p *Plan) checkNonCSVFormatOptions() error {
+// CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
+// we check it again if the format is detected automatically.
+func (p *Plan) CheckNonCSVFormatOptions() error {
 	for k := range csvOnlyOptions {
-		if _, ok := p.specifiedOptions[k]; ok {
+		if _, ok := p.SpecifiedOptionNames[k]; ok {
 			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
 		}
 	}

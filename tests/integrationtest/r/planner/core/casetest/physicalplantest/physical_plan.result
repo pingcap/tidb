@@ -2004,6 +2004,7 @@ a	a
 show warnings;
 Level	Code	Message
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_build(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -2016,6 +2017,7 @@ a	a
 1	1
 show warnings;
 Level	Code	Message
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_build(t1) hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
@@ -2204,6 +2206,7 @@ a	a
 show warnings;
 Level	Code	Message
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_probe(t2) hash_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -2216,6 +2219,7 @@ a	a
 1	1
 show warnings;
 Level	Code	Message
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_build(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
@@ -2256,6 +2260,7 @@ a	a
 show warnings;
 Level	Code	Message
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_probe(t2) INL_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -2268,6 +2273,7 @@ a	a
 1	1
 show warnings;
 Level	Code	Message
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_build(t1) INL_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
@@ -2308,6 +2314,7 @@ a	a
 show warnings;
 Level	Code	Message
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_probe(t2) INL_HASH_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -2320,6 +2327,7 @@ a	a
 1	1
 show warnings;
 Level	Code	Message
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 explain format = 'plan_tree' select /*+ hash_join_build(t1) INL_HASH_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info

@@ -44,6 +44,7 @@ go_library(
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
         "//br/pkg/stream",
+        "//br/pkg/stream/crr/service",
         "//br/pkg/streamhelper",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/daemon",
@@ -125,7 +126,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 45,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
