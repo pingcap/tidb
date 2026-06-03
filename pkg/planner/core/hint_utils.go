@@ -368,8 +368,10 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	if hintQBName != nil {
 		newHint.QBName = *hintQBName
 	} else if effectiveHintTbls[0].QBName.L != "" {
-		// For replayable exported hints, inner query-block join hints still need a hint-level QB target even when
-		// the join children could not all provide stable QB offsets.
+		// TODO: This fallback only preserves the existing replay behavior for join-method hints that finally export a
+		// single effective inner query-block table. Mixed-QB replay correctness still needs a dedicated fix here,
+		// instead of opportunistically suppressing the hint or generalizing table-level QB inference, because analogous
+		// single-table inner-QB hints (for example LEADING(@sel_2 t3@sel_2)) can still produce warnings on replay.
 		newHint.QBName = effectiveHintTbls[0].QBName
 	}
 
