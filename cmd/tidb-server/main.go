@@ -32,6 +32,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -94,6 +95,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -347,6 +349,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name, standby mode or keyspace-activate mode is not supported for classic TiDB")
 		os.Exit(0)
 	}
+
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
 
 	var standbyController server.StandbyController
 	var activationMetadata map[string]string

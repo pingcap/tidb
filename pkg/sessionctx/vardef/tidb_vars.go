@@ -726,6 +726,11 @@ const (
 	// Off by default because it adds log volume proportional to eviction rate.
 	TiDBStmtSummaryPersistEvicted = "tidb_stmt_summary_persist_evicted"
 
+	// TiDBStmtSummaryGroupByUser, when enabled, adds the executing user to the
+	// statement summary grouping key so the same digest run by different users
+	// produces separate rows. Off by default to avoid cardinality growth.
+	TiDBStmtSummaryGroupByUser = "tidb_stmt_summary_group_by_user"
+
 	// TiDBIgnoreInlistPlanDigest enables TiDB to generate the same plan digest with SQL using different in-list arguments.
 	TiDBIgnoreInlistPlanDigest = "tidb_ignore_inlist_plan_digest"
 
@@ -1628,6 +1633,7 @@ const (
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBStmtSummaryPersistEvicted                  = false
+	DefTiDBStmtSummaryGroupByUser                     = false
 	DefTiDBCapturePlanBaseline                        = Off
 	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true

@@ -321,7 +321,7 @@ type Plan struct {
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// only initialized for IMPORT INTO, used when format is detected automatically
-	specifiedOptions map[string]*plannercore.LoadDataOpt
+	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -763,7 +763,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
-	p.specifiedOptions = specifiedOptions
+	p.SpecifiedOptionNames = make(map[string]struct{}, len(specifiedOptions))
+	for k := range specifiedOptions {
+		p.SpecifiedOptionNames[k] = struct{}{}
+	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
@@ -1574,7 +1577,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
-		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
+		if err2 = e.CheckNonCSVFormatOptions(); err2 != nil {
 			return err2
 		}
 	}
@@ -1622,6 +1625,9 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
+		zap.String("db", e.DBName),
+		zap.String("table", e.TableInfo.Name.O),
+		zap.Int64("tableID", e.TableInfo.ID),
 		zap.Int("thread", e.ThreadCnt),
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
@@ -1643,7 +1649,10 @@ func (e *LoadDataController) detectAndUpdateFormat(path string) {
 		e.Format = parseFileType(path)
 		e.logger.Info("detect and update import plan format based on file extension",
 			zap.String("file", path), zap.String("detected format", e.Format))
-		e.Parameters.Format = e.Format
+		// Plan.Parameters doesn't exist if we run with async prepare.
+		if e.Parameters != nil {
+			e.Parameters.Format = e.Format
+		}
 	}
 }
 
@@ -1829,11 +1838,11 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// non CSV format should not specify CSV only options, we check it again if the
-// format is detected automatically.
-func (p *Plan) checkNonCSVFormatOptions() error {
+// CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
+// we check it again if the format is detected automatically.
+func (p *Plan) CheckNonCSVFormatOptions() error {
 	for k := range csvOnlyOptions {
-		if _, ok := p.specifiedOptions[k]; ok {
+		if _, ok := p.SpecifiedOptionNames[k]; ok {
 			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
 		}
 	}

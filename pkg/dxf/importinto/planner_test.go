@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -139,6 +140,39 @@ func TestToPhysicalPlan(t *testing.T) {
 	_, err = logicalPlan.ToPhysicalPlan(planCtx)
 	// error when build controller plan
 	require.ErrorContains(t, err, "provide a valid URI")
+
+	t.Run("prepared chunk map external path is preferred", func(t *testing.T) {
+		cloudStorageURI := "local://" + filepath.ToSlash(t.TempDir())
+		store, err := importer.GetSortStore(context.Background(), cloudStorageURI)
+		require.NoError(t, err)
+		defer store.Close()
+
+		preparedChunkMap := map[int32][]importer.Chunk{
+			1: {{Path: "gs://test-load/2.csv"}},
+		}
+		externalPath := globalsort.PreparedMetaPath(100)
+		preparedMeta := PreparedMeta{
+			BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+			ChunkMap:         preparedChunkMap,
+		}
+		require.NoError(t, preparedMeta.WriteJSONToExternalStorage(context.Background(), store, preparedMeta))
+
+		specs, err := generateImportSpecs(planner.PlanCtx{Ctx: context.Background()}, &LogicalPlan{
+			Plan: importer.Plan{
+				CloudStorageURI: cloudStorageURI,
+			},
+			ChunkMap: map[int32][]importer.Chunk{
+				2: {{Path: "gs://test-load/ignored.csv"}},
+			},
+			PreparedChunkMapExternalPath: externalPath,
+		})
+		require.NoError(t, err)
+		require.Len(t, specs, 1)
+		importSpec := specs[0].(*ImportSpec)
+		require.Equal(t, int32(1), importSpec.ID)
+		require.Len(t, importSpec.Chunks, 1)
+		require.Equal(t, "gs://test-load/2.csv", importSpec.Chunks[0].Path)
+	})
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
