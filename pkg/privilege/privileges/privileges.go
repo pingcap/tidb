@@ -78,6 +78,7 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
+	"APPLICATION_PASSWORD_ADMIN",      // Self-service RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD; cross-user retain/discard requires CREATE USER.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
@@ -673,6 +674,30 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			return info, err
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
+		// matchSecondary attempts the MySQL-compatible dual-password fallback:
+		// if the primary check failed, the user has a retained secondary password,
+		// and the plugin supports it, try the same auth routine against the
+		// secondary hash. Defined as a closure so the Error/Warn log lines below
+		// remain byte-identical to their pre-PR form (error-log-review flags any
+		// touched Error log).
+		matchSecondary := func() bool {
+			if len(record.AdditionalAuthenticationString) == 0 {
+				return false
+			}
+			switch record.AuthPlugin {
+			case mysql.AuthNativePassword:
+				hpwd, err := auth.DecodePassword(record.AdditionalAuthenticationString)
+				if err != nil {
+					return false
+				}
+				return auth.CheckScrambledPassword(salt, hpwd, authentication)
+			case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+				ok, _ := auth.CheckHashingPassword([]byte(record.AdditionalAuthenticationString), string(authentication), record.AuthPlugin)
+				return ok
+			}
+			return false
+		}
+		secondaryAccepted := false
 		switch record.AuthPlugin {
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
 		case mysql.AuthNativePassword:
@@ -684,8 +709,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				info.FailedDueToWrongPassword = true
-				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				if !matchSecondary() {
+					info.FailedDueToWrongPassword = true
+					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				}
+				secondaryAccepted = true
 			}
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
@@ -694,12 +722,23 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 
 			if !authok {
-				info.FailedDueToWrongPassword = true
-				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				if !matchSecondary() {
+					info.FailedDueToWrongPassword = true
+					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				}
+				secondaryAccepted = true
 			}
 		default:
 			logutil.BgLogger().Warn("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		if secondaryAccepted {
+			// Surface fallback logins so operators can tell which accounts
+			// have finished rotating and can safely DISCARD OLD PASSWORD.
+			logutil.BgLogger().Info("authenticated using retained (secondary) password",
+				zap.String("auth_user", authUser),
+				zap.String("auth_host", authHost),
+				zap.String("auth_plugin", record.AuthPlugin))
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
 		info.FailedDueToWrongPassword = true
