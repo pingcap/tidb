@@ -469,8 +469,6 @@ var planBuilderPool = sync.Pool{
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
-<<<<<<< HEAD
-=======
 func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
 	return sessVars.EnableAlternativeLogicalPlans &&
 		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
@@ -529,7 +527,6 @@ var alternativeRounds = [...]alternativeRound{
 	},
 }
 
->>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
@@ -589,14 +586,14 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-<<<<<<< HEAD
 	core.RecheckCTE(logic)
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sessVars.GetEnableCascadesPlanner() {
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
-=======
+	}
+
 	// Pre-compute which rounds are enabled based on the signals from the first
 	// (default) build. This prevents signal leakage: alternative rounds rebuild
 	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
@@ -653,7 +650,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		if nonLogical {
 			return p, names, 0, nil
 		}
->>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
 	}
 
 	beginOpt := time.Now()

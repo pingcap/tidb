@@ -65,6 +65,26 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+// LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
+// building a logical plan from AST.
+type LogicalPlanBuildState struct {
+	warnings             []SQLWarn
+	extraWarnings        []SQLWarn
+	tables               []TableEntry
+	tableStats           map[int64]any
+	lockTableIDs         map[int64]struct{}
+	tblInfo2UnionScan    map[*model.TableInfo]bool
+	useDynamicPruneMode  bool
+	viewDepth            int32
+	colRefFromUpdatePlan intset.FastIntSet
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
+}
+
 type jsonSQLWarn struct {
 	Level  string        `json:"level"`
 	SQLErr *terror.Error `json:"err,omitempty"`
@@ -274,6 +294,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu *stmtCtxMu
 
@@ -446,8 +467,6 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
-<<<<<<< HEAD
-=======
 	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
 	// optimization round decorrelated at least one Apply into Join.
 	AlternativeLogicalPlanDecorrelatedApply bool
@@ -462,7 +481,6 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
->>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -589,8 +607,6 @@ func (sc *StatementContext) Reset() bool {
 	return true
 }
 
-<<<<<<< HEAD
-=======
 // SaveLogicalPlanBuildState captures the statement-scoped planner state before building
 // another logical plan candidate from the same AST.
 func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
@@ -663,7 +679,6 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 	sc.AlternativeLogicalPlanPreferCorrelate = true
 }
 
->>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
 // CtxID returns the context id of the statement
 func (sc *StatementContext) CtxID() uint64 {
 	return sc.ctxID
