@@ -637,7 +637,7 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
 	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
 	scanBuildSideCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
-	if p.UseOuterToBuild || p.JoinType == logicalop.FullOuterJoin {
+	if p.JoinType == logicalop.FullOuterJoin {
 		// Probe tail still needs to scan build-side rows to emit unmatched rows.
 		scanBuildSideCost = costusage.NewCostVer2(option, cpuFactor,
 			buildRows*cpuFactor.Value,
