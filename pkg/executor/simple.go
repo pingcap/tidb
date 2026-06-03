@@ -1841,7 +1841,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// `ALTER USER USER() DISCARD OLD PASSWORD` form has no AuthOpt so
 		// alterPassword is false; we still want to skip the outer CREATE USER
 		// check on it for self-service.
-		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && spec.AuthOpt == nil
+		//
+		// Restrict the bypass to truly standalone statements: any extra
+		// per-statement option (REQUIRE/TLS, RESOURCE OPTIONS, PASSWORD
+		// EXPIRE / ACCOUNT LOCK, COMMENT/ATTRIBUTE, RESOURCE GROUP) carries
+		// authority beyond the secondary-password slot and must still go
+		// through the standard CREATE USER / UPDATE-mysql check.
+		hasOtherStmtOptions := len(s.AuthTokenOrTLSOptions) > 0 ||
+			len(s.ResourceOptions) > 0 ||
+			len(s.PasswordOrLockOptions) > 0 ||
+			s.CommentOrAttributeOption != nil ||
+			s.ResourceGroupNameOption != nil
+		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && spec.AuthOpt == nil && !hasOtherStmtOptions
 		needAdminPrivCheck := !(alterCurrentUser && alterPassword) && !selfServiceDualPwd
 		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
@@ -1897,8 +1908,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// APPLICATION_PASSWORD_ADMIN when dual-password is in play.
 		if specDualPwdRequested {
 			// Only password-based auth plugins can hold a secondary password.
-			if !isDualPasswordCapablePlugin(currentAuthPlugin) {
-				return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", currentAuthPlugin)
+			// Resolve the empty-plugin legacy case via default_authentication_plugin
+			// so an LDAP-default deployment is correctly rejected.
+			resolvedPlugin := effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin)
+			if !isDualPasswordCapablePlugin(resolvedPlugin) {
+				return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedPlugin)
 			}
 		}
 		if specRetainCurrentPassword {
@@ -2657,12 +2671,14 @@ func skipExactUsernameLookup(name string) bool {
 // eligible to hold a secondary ("additional") password. Dual passwords are only
 // meaningful for password-based plugins. LDAP / socket / token plugins are excluded,
 // matching MySQL 8.0 behavior.
+//
+// Callers MUST pass the resolved plugin (see effectiveAuthPlugin): an empty
+// `plugin` column on a legacy mysql.user row could resolve to anything via
+// `default_authentication_plugin`, and treating "" as natively capable would
+// wrongly allow RETAIN on an LDAP-default deployment.
 func isDualPasswordCapablePlugin(plugin string) bool {
 	switch plugin {
-	// Empty plugin is treated as mysql_native_password elsewhere in this file
-	// (see executeAlterUser's AuthPlugin defaulting), so legacy rows with an
-	// empty `plugin` column must also be eligible for RETAIN / DISCARD.
-	case "", mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+	case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		return true
 	}
 	return false
@@ -2842,8 +2858,15 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
 	}
 	if s.RetainCurrentPassword {
-		if !isDualPasswordCapablePlugin(authplugin) {
-			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", authplugin)
+		// Resolve the empty-plugin legacy case via default_authentication_plugin
+		// so an LDAP-default deployment is correctly rejected.
+		defaultAuthPlugin, derr := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+		if derr != nil {
+			defaultAuthPlugin = ""
+		}
+		resolvedPlugin := effectiveAuthPlugin(authplugin, defaultAuthPlugin)
+		if !isDualPasswordCapablePlugin(resolvedPlugin) {
+			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedPlugin)
 		}
 		if s.Password == "" {
 			return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(u, h)

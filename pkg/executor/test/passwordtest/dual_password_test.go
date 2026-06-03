@@ -425,3 +425,75 @@ func TestDualPasswordMultiUserAlter(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM mysql.user WHERE User IN ('dpm1', 'dpm3') AND JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL").Check(testkit.Rows("0"))
 	require.Error(t, authAs(t, tk, "dpm1", "%", "p2"))
 }
+
+// TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated guards the
+// self-service-bypass surface: a caller may discard their own secondary
+// password without extra privilege, but appending other ALTER USER options
+// (REQUIRE / RESOURCE / PASSWORD EXPIRE / ATTRIBUTE / RESOURCE GROUP) must
+// re-impose the standard CREATE USER check. Otherwise low-priv users could
+// piggy-back metadata/TLS/resource changes onto a DISCARD.
+func TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpguard")
+	tk.MustExec("CREATE USER dpguard IDENTIFIED BY 'p1'")
+	tk.MustExec("GRANT USAGE ON *.* TO dpguard")
+	// Plant a secondary password so DISCARD has something to remove.
+	tk.MustExec("ALTER USER dpguard IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+
+	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpguard", Hostname: "%"}, sha1Password("p2"), nil, nil))
+
+	// Standalone self-service DISCARD: allowed.
+	selfTK.MustExec("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD")
+
+	// Plant another secondary so the next DISCARD has something to remove.
+	tk.MustExec("ALTER USER dpguard IDENTIFIED BY 'p3' RETAIN CURRENT PASSWORD")
+	selfTK = testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpguard", Hostname: "%"}, sha1Password("p3"), nil, nil))
+
+	// DISCARD combined with ACCOUNT LOCK must still require CREATE USER.
+	err := selfTK.ExecToErr("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD ACCOUNT LOCK")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+
+	// DISCARD with REQUIRE NONE must still require CREATE USER.
+	err = selfTK.ExecToErr("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD REQUIRE NONE")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+
+	// DISCARD with PASSWORD EXPIRE must still require CREATE USER.
+	err = selfTK.ExecToErr("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD PASSWORD EXPIRE")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+}
+
+// TestDualPasswordLegacyEmptyPluginRejectsLDAPDefault guards the capability
+// check: a legacy mysql.user row whose `plugin` column is empty resolves to
+// `default_authentication_plugin`. When that default is an LDAP plugin (not
+// dual-password capable), an explicit ALTER USER ... RETAIN CURRENT PASSWORD
+// must be rejected before the plugin-change comparison sees both sides as
+// equal.
+func TestDualPasswordLegacyEmptyPluginRejectsLDAPDefault(t *testing.T) {
+	tk := rootTK(t)
+	prevDefault := tk.MustQuery("SELECT @@global.default_authentication_plugin").Rows()[0][0]
+	defer tk.MustExec(fmt.Sprintf("SET GLOBAL default_authentication_plugin = '%s'", prevDefault))
+
+	tk.MustExec("SET GLOBAL default_authentication_plugin = 'authentication_ldap_simple'")
+
+	tk.MustExec("DROP USER IF EXISTS dplegacy_ldap")
+	tk.MustExec("CREATE USER dplegacy_ldap IDENTIFIED BY 'p1'")
+	// Simulate a legacy row by clearing the plugin column; with the LDAP
+	// default in place the row now resolves to authentication_ldap_simple.
+	tk.MustExec("UPDATE mysql.user SET plugin = '' WHERE User = 'dplegacy_ldap'")
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	// RETAIN with the default-plugin form must be rejected since the row's
+	// effective plugin is LDAP (not dual-password capable). Before this
+	// fix, the raw empty-plugin string slipped through
+	// isDualPasswordCapablePlugin's `""` case and RETAIN was wrongly
+	// accepted.
+	err := tk.ExecToErr("ALTER USER dplegacy_ldap IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Dual password is not supported")
+}
