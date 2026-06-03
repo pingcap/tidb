@@ -15,13 +15,15 @@
 package copr
 
 import (
+	"math/rand"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 )
 
 // buildTiCIShardInfosByAddrFromLocations pre-counts single-candidate shards as
 // fixed load, then assigns shards in loc order. Multi-candidate shards choose the
-// candidate store with the lowest current load; ties keep TiCI's candidate order.
+// candidate store with the lowest current load from a random scan start.
 func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][]*coprocessor.ShardInfo, error) {
 	addrLoad := make(map[string]int)
 	for _, loc := range locs {
@@ -52,9 +54,18 @@ func selectTiCIShardAddr(addrs []string, addrLoad map[string]int) string {
 	if len(addrs) == 1 {
 		return addrs[0]
 	}
-	selected := addrs[0]
+
+	start_idx := rand.Intn(len(addrs))
+	selected := addrs[start_idx]
 	selectedLoad := addrLoad[selected]
-	for _, addr := range addrs[1:] {
+	for _, addr := range addrs[start_idx:] {
+		load := addrLoad[addr]
+		if load < selectedLoad {
+			selected = addr
+			selectedLoad = load
+		}
+	}
+	for _, addr := range addrs[:start_idx] {
 		load := addrLoad[addr]
 		if load < selectedLoad {
 			selected = addr

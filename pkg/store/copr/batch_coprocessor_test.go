@@ -367,7 +367,7 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 		require.ErrorIs(t, client.lastCtxErr, context.Canceled)
 	})
 
-	t.Run("prefer first local cache addr", func(t *testing.T) {
+	t.Run("select a local cache addr", func(t *testing.T) {
 		client := &mppTiCIMockShardClient{
 			result: []*ShardWithAddr{
 				{
@@ -394,7 +394,12 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, client.scanCalled)
 		require.Len(t, infoByAddr, 1)
-		infos := infoByAddr["addr-a"]
+		var selectedAddr string
+		for addr := range infoByAddr {
+			selectedAddr = addr
+		}
+		require.Contains(t, []string{"addr-a", "addr-b"}, selectedAddr)
+		infos := infoByAddr[selectedAddr]
 		require.Len(t, infos, 1)
 		require.Equal(t, "executor-1", infos[0].ExecutorId)
 		require.Len(t, infos[0].ShardInfos, 1)
@@ -426,10 +431,20 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 		infoByAddr, err := buildTiCIShardInfosByStoreAddr(context.Background(), cache, req, tiflashcompute.DispatchPolicyConsistentHash, tiflash.AllReplicas)
 		require.NoError(t, err)
 		require.Len(t, infoByAddr, 2)
-		require.Len(t, infoByAddr["addr-a"][0].ShardInfos, 1)
-		require.EqualValues(t, 1, infoByAddr["addr-a"][0].ShardInfos[0].ShardId)
-		require.Len(t, infoByAddr["addr-b"][0].ShardInfos, 1)
-		require.EqualValues(t, 2, infoByAddr["addr-b"][0].ShardInfos[0].ShardId)
+		var shard1Addr, shard2Addr string
+		for addr, infos := range infoByAddr {
+			require.Len(t, infos, 1)
+			require.Len(t, infos[0].ShardInfos, 1)
+			shardID := infos[0].ShardInfos[0].ShardId
+			require.True(t, shardID == 1 || shardID == 2)
+			if shardID == 1 {
+				shard1Addr = addr
+			} else {
+				shard2Addr = addr
+			}
+		}
+		require.Contains(t, []string{"addr-a", "addr-b", "addr-c"}, shard1Addr)
+		require.Contains(t, []string{"addr-a", "addr-b"}, shard2Addr)
 	})
 
 	t.Run("balance shards between candidate addrs", func(t *testing.T) {
@@ -607,7 +622,7 @@ func TestConstructMPPTasksTiCIUsesTiCIMPPTaskMeta(t *testing.T) {
 		require.True(t, isTiCIMeta)
 		_, isBatchCopMeta := metas[0].(*batchCopTask)
 		require.False(t, isBatchCopMeta)
-		require.Equal(t, "addr-a", metas[0].GetAddress())
+		require.Contains(t, []string{"addr-a", "addr-b"}, metas[0].GetAddress())
 	})
 
 	t.Run("retry-transient-build-error", func(t *testing.T) {
