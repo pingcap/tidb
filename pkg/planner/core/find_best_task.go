@@ -1374,11 +1374,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	// If we've forced an index merge - we want to keep these plans
-	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
-		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix52869,
-		false,
-	)
+	preferMerge := len(ds.IndexMergeHints) > 0
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
