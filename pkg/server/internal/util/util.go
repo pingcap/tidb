@@ -38,12 +38,10 @@ package util
 import (
 	"bytes"
 	"io"
-	"math"
 	"net/http"
-	"slices"
-	"strconv"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
@@ -160,54 +158,10 @@ func LengthEncodedIntSize(n uint64) int {
 	return 9
 }
 
-const (
-	expFormatBig     = 1e15
-	expFormatSmall   = 1e-15
-	defaultMySQLPrec = 5
-)
-
-// AppendFormatFloat appends a float64 to dst in MySQL format.
+// AppendFormatFloat appends a float64 to dst in MySQL format. The implementation
+// lives in pkg/format/textrow so it can be shared with the distributed exporter.
 func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
-	absVal := math.Abs(fVal)
-	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
-		return []byte{'0'}
-	}
-	isEFormat := false
-	if bitSize == 32 {
-		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
-	} else {
-		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
-	}
-	var out []byte
-	if isEFormat {
-		if bitSize == 32 {
-			prec = defaultMySQLPrec
-		}
-		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
-		valStr := out[len(in):]
-		// remove the '+' from the string for compatibility.
-		plusPos := bytes.IndexByte(valStr, '+')
-		if plusPos > 0 {
-			plusPosInOut := len(in) + plusPos
-			out = slices.Delete(out, plusPosInOut, plusPosInOut+1)
-		}
-		// remove extra '0'
-		ePos := bytes.IndexByte(valStr, 'e')
-		pointPos := bytes.IndexByte(valStr, '.')
-		ePosInOut := len(in) + ePos
-		pointPosInOut := len(in) + pointPos
-		validPos := ePosInOut
-		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
-			if !(out[i] == '0' || out[i] == '.') {
-				break
-			}
-			validPos = i
-		}
-		out = append(out[:validPos], out[ePosInOut:]...)
-	} else {
-		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
-	}
-	return out
+	return textrow.AppendFormatFloat(in, fVal, prec, bitSize)
 }
 
 // CorsHandler adds Cors Header if `cors` config is set.

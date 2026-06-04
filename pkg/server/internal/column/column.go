@@ -17,14 +17,12 @@ package column
 import (
 	"fmt"
 	"math"
-	"strconv"
 
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
-	"github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
@@ -75,7 +73,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dump.Uint16(buffer, d.ColumnTypeInfoCharsetID(column))
+	buffer = dump.Uint16(buffer, columnTypeInfoCharsetID(d, column))
 	buffer = dump.Uint32(buffer, column.dumpLength())
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))
@@ -147,7 +145,9 @@ func dumpType(tp byte) byte {
 	}
 }
 
-// DumpTextRow dumps a row to bytes.
+// DumpTextRow dumps a row to bytes. Each value is produced by the shared
+// textrow serializer and then length-encoded into the text protocol (NULL is
+// the 0xfb marker).
 func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder) ([]byte, error) {
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
@@ -158,68 +158,18 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		switch col.Type {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
-			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeYear:
-			year := row.GetInt64(i)
-			tmp = tmp[:0]
-			if year == 0 {
-				tmp = append(tmp, '0', '0', '0', '0')
-			} else {
-				tmp = strconv.AppendInt(tmp, year, 10)
-			}
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeLonglong:
-			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
-				tmp = strconv.AppendUint(tmp[:0], row.GetUint64(i), 10)
-			} else {
-				tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
-			}
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeFloat:
-			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-				prec = int(col.Decimal)
-			}
-			tmp = util.AppendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeDouble:
-			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-				prec = int(col.Decimal)
-			}
-			tmp = util.AppendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeNewDecimal:
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
-		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			d.UpdateDataEncoding(col.Charset)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(row.GetBytes(i)))
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
-		case mysql.TypeDuration:
-			dur := row.GetDuration(i, int(col.Decimal))
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(dur.String()))
-		case mysql.TypeEnum:
-			d.UpdateDataEncoding(col.Charset)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetEnum(i).String())))
-		case mysql.TypeSet:
-			d.UpdateDataEncoding(col.Charset)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetSet(i).String())))
-		case mysql.TypeJSON:
-			// The collation of JSON type is always binary.
-			// To compatible with MySQL, here we treat it as utf-8.
-			d.UpdateDataEncoding(mysql.DefaultCollationID)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetJSON(i).String())))
-		case mysql.TypeTiDBVectorFloat32:
-			d.UpdateDataEncoding(mysql.DefaultCollationID)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetVectorFloat32(i).String())))
-		default:
-			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
+		val, err1 := textrow.AppendValueText(tmp[:0], row, i, textrow.ColumnInfo{
+			Type:    col.Type,
+			Charset: col.Charset,
+			Flag:    col.Flag,
+			Decimal: col.Decimal,
+			Table:   col.Table,
+		}, d)
+		if err1 != nil {
+			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", col.Type)
 		}
+		tmp = val
+		buffer = dump.LengthEncodedString(buffer, val)
 	}
 	return buffer, nil
 }
