@@ -41,8 +41,7 @@ type writerChan struct {
 	freeBufCh chan []byte
 }
 
-// readerChunk is one read chunk tagged with its target writer; a nil chk
-// marks the sub-range EOF.
+// readerChunk is one read chunk tagged with its target writer
 type readerChunk struct {
 	writer *writerChan
 	chk    *chunk.Chunk
@@ -54,6 +53,16 @@ func sendCtx[T any](ctx context.Context, ch chan<- T, v T) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// recvCtx receives from ch unless ctx is done; ok is false when ch is closed.
+func recvCtx[T any](ctx context.Context, ch <-chan T) (v T, ok bool, err error) {
+	select {
+	case v, ok = <-ch:
+		return v, ok, nil
+	case <-ctx.Done():
+		return v, false, ctx.Err()
 	}
 }
 
@@ -129,11 +138,9 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 	enc := newCSVEncoder(e.taskMeta.TableInfo.Name.O, e.colInfos)
 	remaining := len(writers)
 	for remaining > 0 {
-		var rc readerChunk
-		select {
-		case rc = <-workCh:
-		case <-ctx.Done():
-			return ctx.Err()
+		rc, _, err := recvCtx(ctx, workCh)
+		if err != nil {
+			return err
 		}
 
 		if rc.chk == nil {
@@ -142,8 +149,6 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 			continue
 		}
 
-		// buf must NOT carry over to the next iteration: once sent to encCh
-		// it belongs to the writer until it comes back through freeBufCh.
 		var buf []byte
 		select {
 		case buf = <-rc.writer.freeBufCh:
@@ -151,7 +156,7 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 		default:
 		}
 
-		buf, err := enc.encodeChunk(rc.chk, buf)
+		buf, err = enc.encodeChunk(rc.chk, buf)
 		if err != nil {
 			return err
 		}
@@ -167,20 +172,14 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 // runWriter uploads the writer's encoded buffers to the object store, cutting
 // files at FileSize on chunk (row) boundaries.
 func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writerChan) error {
-	var (
-		buf []byte
-		ok  bool
-		fw  = newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, w.id)
-	)
-
+	fw := newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, w.id)
 	for {
-		select {
-		case buf, ok = <-w.encCh:
-			if !ok {
-				return fw.Close()
-			}
-		case <-ctx.Done():
-			return ctx.Err()
+		buf, ok, err := recvCtx(ctx, w.encCh)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fw.Close()
 		}
 
 		if err := fw.Write(buf); err != nil {
