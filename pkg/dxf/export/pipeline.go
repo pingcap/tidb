@@ -64,8 +64,8 @@ func sendCtx[T any](ctx context.Context, ch chan<- T, v T) error {
 func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, ordinal int, bounds []kv.Key) error {
 	writerCnt := len(bounds) - 1
 	eg, egCtx := errgroup.WithContext(ctx)
-	for wStart := 0; wStart < writerCnt; wStart += defaultWritersPerEncoder {
-		wEnd := min(wStart+defaultWritersPerEncoder, writerCnt)
+	for wStart := 0; wStart < writerCnt; wStart += writersPerEncoder {
+		wEnd := min(wStart+writersPerEncoder, writerCnt)
 		writers := make([]*writerChan, 0, wEnd-wStart)
 		for i := wStart; i < wEnd; i++ {
 			w := &writerChan{

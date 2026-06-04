@@ -112,8 +112,13 @@ func (*exportScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 }
 
 // OnNextSubtasksBatch implements scheduler.Extension.
-func (s *exportScheduler) OnNextSubtasksBatch(ctx context.Context, _ storage.TaskHandle,
-	task *proto.Task, execIDs []string, nextStep proto.Step) ([][]byte, error) {
+func (s *exportScheduler) OnNextSubtasksBatch(
+	ctx context.Context,
+	_ storage.TaskHandle,
+	task *proto.Task,
+	execIDs []string,
+	nextStep proto.Step,
+) ([][]byte, error) {
 	switch nextStep {
 	case proto.ExportStepDump:
 		return s.splitDumpSubtasks(ctx, execIDs)
@@ -143,7 +148,9 @@ func (s *exportScheduler) splitDumpSubtasks(ctx context.Context, execIDs []strin
 		regionCnt := len(boundaries) - 1
 		groupCnt := s.subtaskCntFor(regionCnt, len(execIDs))
 		groups := groupBoundaries(boundaries, groupCnt)
-		writerCnt := s.taskMeta.totalWriters(s.GetTask().RequiredSlots)
+		// RequiredSlots is validated >= 1 at submit and Export has no
+		// concurrency-modification entry point.
+		writerCnt := s.GetTask().RequiredSlots * writersPerEncoder
 		for _, g := range groups {
 			writerGroups := groupBoundaries(g, writerCnt)
 			bounds := make([][]byte, 0, len(writerGroups)+1)

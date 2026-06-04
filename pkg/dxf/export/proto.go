@@ -35,13 +35,7 @@ type TaskMeta struct {
 	SubtaskRegions int `json:"subtask_regions"`
 }
 
-const defaultWritersPerEncoder = 2
-
-// totalWriters is the number of per-writer sub-ranges of one subtask given
-// the task concurrency (= encoder count).
-func (m *TaskMeta) totalWriters(concurrency int) int {
-	return max(concurrency, 1) * defaultWritersPerEncoder
-}
+const writersPerEncoder = 2
 
 // SubtaskMeta is the subtask meta of the Dump step. Each subtask owns a
 // contiguous key range of one physical table.
