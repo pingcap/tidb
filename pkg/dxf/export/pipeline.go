@@ -26,6 +26,7 @@ import (
 
 const (
 	channelBufSize = 2
+	readChunkSize  = 128
 )
 
 // writerChan is one contiguous sub-range with reader/writer affinity: rows
@@ -113,7 +114,8 @@ func (e *dumpStepExecutor) runReader(ctx context.Context, physicalID int64, w *w
 	defer rs.Close()
 	rows := 0
 	for {
-		chk := chunk.NewChunkWithCapacity(e.fieldTps, 128)
+		// the chunk is returned to the pool by the encoder after encoding.
+		chk := e.getChunk()
 		if err := rs.Next(ctx, chk); err != nil {
 			return errors.Trace(err)
 		}
@@ -152,6 +154,7 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 			return err
 		}
 		e.summary.RowCnt.Add(int64(rc.chk.NumRows()))
+		e.chunkPool.Put(rc.chk)
 
 		if err := sendCtx(ctx, rc.writer.encCh, buf); err != nil {
 			return err

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -90,6 +91,16 @@ type dumpStepExecutor struct {
 	summary  execute.SubtaskSummary
 	// bufPool recycles encoded buffers between encoders and writers.
 	bufPool sync.Pool
+	// chunkPool recycles read chunks between encoders and readers.
+	chunkPool sync.Pool
+}
+
+func (e *dumpStepExecutor) getChunk() *chunk.Chunk {
+	if chk, ok := e.chunkPool.Get().(*chunk.Chunk); ok {
+		chk.Reset()
+		return chk
+	}
+	return chunk.NewChunkWithCapacity(e.fieldTps, readChunkSize)
 }
 
 var _ execute.StepExecutor = (*dumpStepExecutor)(nil)

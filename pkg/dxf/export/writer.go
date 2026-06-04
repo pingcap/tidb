@@ -15,6 +15,7 @@
 package export
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -80,15 +81,21 @@ func newCSVEncoder(tblName string, colInfos []*model.ColumnInfo) *csvEncoder {
 	}
 }
 
+// appendEscaped quotes val, copying escape-free segments in bulk.
 func appendEscaped(buf, val []byte) []byte {
 	buf = append(buf, '"')
-	for _, b := range val {
-		switch b {
-		case '\\', '"':
-			buf = append(buf, '\\', b)
-		default:
-			buf = append(buf, b)
+	for len(val) > 0 {
+		i := bytes.IndexByte(val, '\\')
+		if j := bytes.IndexByte(val, '"'); j >= 0 && (i < 0 || j < i) {
+			i = j
 		}
+		if i < 0 {
+			buf = append(buf, val...)
+			break
+		}
+		buf = append(buf, val[:i]...)
+		buf = append(buf, '\\', val[i])
+		val = val[i+1:]
 	}
 	return append(buf, '"')
 }
