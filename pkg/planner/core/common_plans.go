@@ -458,6 +458,17 @@ type ImportInto struct {
 	SelectPlan base.PhysicalPlan
 }
 
+// ExportTable represents an EXPORT TABLE plan.
+type ExportTable struct {
+	physicalop.SimpleSchemaProducer
+
+	Table   *resolve.TableNameW
+	Path    string
+	Format  *string
+	Options []*LoadDataOpt
+	Stmt    string
+}
+
 // LoadStats represents a load stats plan.
 type LoadStats struct {
 	physicalop.SimpleSchemaProducer

@@ -31,6 +31,7 @@ go_library(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/export",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",
         "//pkg/dxf/framework/storage",

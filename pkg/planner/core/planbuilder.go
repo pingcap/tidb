@@ -622,6 +622,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildInsert(ctx, x)
 	case *ast.ImportIntoStmt:
 		return b.buildImportInto(ctx, x)
+	case *ast.ExportTableStmt:
+		return b.buildExportTable(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
@@ -4873,6 +4875,53 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, ImportIntoSchemaFTypes, []uint{})
 		p.SetSchemaAndNames(outputSchema, outputFields)
 	}
+	return p, nil
+}
+
+var (
+	exportTableSchemaNames = []string{"Task_ID", "Task_Key", "Status"}
+	exportTableSchemaTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString}
+)
+
+func (b *PlanBuilder) buildExportTable(ctx context.Context, st *ast.ExportTableStmt) (base.Plan, error) {
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	options := make([]*LoadDataOpt, 0, len(st.Options))
+	for _, opt := range st.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			var err error
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &loadDataOpt)
+	}
+
+	tnW := b.resolveCtx.GetTableName(st.Table)
+	tblInfo := tnW.TableInfo
+	if tblInfo.IsView() || tblInfo.IsSequence() {
+		return nil, errors.Errorf("EXPORT TABLE only supports base table")
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return nil, errors.Errorf("EXPORT TABLE does not support temporary table")
+	}
+	p := ExportTable{
+		Table:   tnW,
+		Path:    st.Path,
+		Format:  st.Format,
+		Options: options,
+		Stmt:    st.Text(),
+	}.Init(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	var selectErr error
+	if user != nil {
+		selectErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.L, p.Table.Name.L, "", selectErr)
+
+	outputSchema, outputFields := convert2OutputSchemasAndNames(exportTableSchemaNames, exportTableSchemaTypes, []uint{})
+	p.SetSchemaAndNames(outputSchema, outputFields)
 	return p, nil
 }
 

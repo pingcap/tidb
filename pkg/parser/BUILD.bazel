@@ -42,6 +42,7 @@ go_test(
         "bench_test.go",
         "consistent_test.go",
         "digester_test.go",
+        "export_proto_test.go",
         "hintparser_test.go",
         "keywords_test.go",
         "lateral_test.go",
