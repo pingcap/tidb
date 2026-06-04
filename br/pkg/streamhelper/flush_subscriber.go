@@ -148,8 +148,6 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
 				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
 			if retry {
-<<<<<<< HEAD
-=======
 				if err := f.dialer.ClearCache(f.masterCtx, id); err != nil {
 					log.Warn("failed to clear cached store connection before retrying subscription",
 						zap.String("category", "log backup flush subscriber"),
@@ -158,7 +156,6 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 				log.Info("retry connecting to store to add subscription",
 					zap.String("category", "log backup flush subscriber"),
 					zap.Uint64("store", id))
->>>>>>> 5b87f83bfbe (br: add subscription idle timeout (#68412))
 				sub.connect(f.masterCtx, f.dialer)
 			}
 		}
