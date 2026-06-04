@@ -11,6 +11,8 @@ HA 测试。BR HA 测试作为后续 phase 3，根据本阶段发现和成本收
 
 Renewal operation hang / failure 相关测试的执行计划见
 `docs/agents/br/lease-lock-renewal-operation-tests-implementation-plan.md`。
+Terminal reason stability / normal unlock race 相关测试的执行计划见
+`docs/agents/br/lease-lock-terminal-tests-implementation-plan.md`。
 
 ## 背景
 
@@ -98,15 +100,16 @@ owner 只有 acquire 成功后才能记录 protected step。若 terminal reason 
 
 ### Renewal Proof Operation Bound
 
-当前代码基线：
+当前代码基线（2026-06-04，renewal operation tests 已落地后）：
 
-- renewal `WriteFile` 已有 `renewalWriteTimeout` 保护，timeout cap 是 5 分钟；触发
-  `errRenewWriteTimeout` 后属于 permanent renewal loss，`renewalLoop` 会直接调用
-  `onLeaseLost` 并退出。
+- renewal proof operation cap 已提高到 10 分钟。`renewalLoop` 使用 renewal-owned context 将 normal
+  unlock cancellation 传入 `tryRenew`；各阶段 timeout 由 `tryRenew` 内部按 operation 语义负责。
+- renewal `ReadFile` 和 pre-write lease clock `Now` 已有 bounded context。它们 timeout 后仍属于
+  mutation 前 observation failure，由 `renewalLoop` 在 proven lease window 内重试。
+- renewal `WriteFile` 已有 `renewalWriteTimeout` 保护；触发 `errRenewWriteTimeout` 后属于
+  permanent renewal loss，`renewalLoop` 会直接调用 `onLeaseLost` 并退出。
 - post-write lease proof clock read 失败或证明 `nowAfterWrite > newExpireAt` 时属于
   permanent renewal loss。
-- renewal `ReadFile` 和 pre-write lease clock `Now` 当前没有单独 timeout；它们返回的普通错误属于
-  transient error，由 `renewalLoop` 在 proven lease window 内重试。
 - renewal `WriteFile` 返回的非 timeout 普通错误也属于 transient error；只有 context deadline 已经超时
   时，当前代码才把它归类为 `errRenewWriteTimeout`。
 
@@ -136,7 +139,9 @@ mutating timeout：
 - lock metadata `WriteFile` timeout 保持当前 permanent renewal loss 语义，因为写入可能已经发生但
   holder 没有 proof；
 - post-write proof clock read error / timeout 保持 permanent proof failure 语义，因为写入已经返回，
-  但 holder 无法证明新 lease 窗口；这类失败必须停止 protected work。
+  但 holder 无法证明新 lease 窗口；这类失败必须停止 protected work。但 normal `Unlock`
+  已经关闭 renewal stop signal 后导致的 `context.Canceled` 属于 shutdown artifact，不应重新触发
+  业务 `onLeaseLost`。
 
 读失败与写 timeout 的风险级别不同：读失败不会制造迟到写、不会复活旧 physical lock path，也不会改变
 远端 `ExpireAt`；它只表示 holder 这一次没能观察到 lock metadata。因此读失败应该消耗 retry budget
@@ -145,9 +150,9 @@ mutating timeout：
 pre-write lease clock `Now` 失败或 timeout 也属于 mutation 前的 observation failure：它只表示 holder
 这一次没能获得可用于 renewal write 的 lease time，不应直接触发 `onLeaseLost`。
 
-这个 policy 是在当前实现基础上扩大保护面：把当前只保护 renewal write、且 cap 为 5 分钟的行为，扩展为
-read / pre-clock / write / post-clock 统一 lease-bounded protection，并把 cap 提高到 10 分钟；同时
-保持“一次普通读写失败不直接 lease lost”的 retry 语义。
+这个 policy 已在当前实现中落地：read / pre-clock / write / post-clock 采用统一
+lease-bounded protection，operation cap 为 10 分钟，同时保持“一次普通读写失败不直接 lease lost”的
+retry 语义。
 
 测试上只需要验证统一 lease-bounded protection 的外部行为：
 
@@ -222,29 +227,93 @@ error summary
 
 ## 第一批 Deterministic 用例
 
-### 1. Terminal Race: First Terminal Reason Wins
+### 1. Terminal Reason Stability
 
 建议测试名：
 
 ```text
-TestLeaseLockTerminalRaceFirstReasonWins
+TestLeaseLockTerminalReasonStableAfterLeaseLost
 ```
 
-覆盖两个子场景：
+目标：
 
-1. `Unlock` 已经开始停止 renewal，renewal write 被 release 后返回 cancellation / timeout；
-   预期 normal unlock 作为终止结果，业务不再被标记为 lease lost。
-2. renewal 已经确认 permanent loss 并调用 `onLeaseLost`，业务 worker 停止；随后调用 `Unlock`；
-   预期 lease lost 作为终止结果，后续 unlock 不允许 protected step 恢复。
+验证 `lease_lost` 已经成为业务终止结果后，后续 `Unlock` 只是 cleanup / diagnostic 行为，不会把
+终止结果覆盖为 normal unlock，也不会让受保护业务循环恢复。
+
+这组用例是顺序语义测试，不需要构造复杂乱序。建议用表驱动覆盖三种代表性 lease-lost trigger：
+
+1. `TxnID` mismatch：代表远端 lock ownership 已经不是当前 holder。
+2. renewal `WriteFile` timeout：代表 mutation outcome ambiguous，late write 可能随后落盘。
+3. post-write proof failed：代表 renewal write 已经返回成功，但 holder 无法证明新 lease window 安全。
+
+统一流程：
+
+```text
+holder acquire
+protected worker records one step
+renewal triggers lease_lost
+onLeaseLost stops protected worker
+business calls Unlock after lease_lost
+```
 
 断言：
 
-- first terminal reason 不被后续事件覆盖；
-- terminal 后 protected step 返回 false；
-- original physical path 的最终状态符合终止原因；
+- `lease_lost` first terminal reason 不被后续 `Unlock` 覆盖；
+- `Unlock` 返回值不等同于业务终止结果；
+- `lease_lost` 后 protected step 返回 false；
+- audit 中 `lost` 之后没有 `step`；
+- 不能删除其他 holder 的 physical lock instance；
 - 无 `.INTENT.` 残留。
 
-### 2. Cleanup Does Not Delete Reacquired Instance
+按 trigger 分别补充断言：
+
+- `TxnID` mismatch：后续 `Unlock` 可以返回 mismatch error；远端其他 `TxnID` 的 metadata 仍存在，
+  不能被旧 holder 删除。
+- renewal `WriteFile` timeout：late write 若落盘且仍是自己的 `TxnID`，后续 `Unlock` 可以成功清理
+  自己的 physical path；但 protected worker 的终止结果仍是 `lease_lost`。
+- post-write proof failed：后续 `Unlock` 可以成功清理自己的 physical path；但 cleanup success 不表示
+  holder 重新获得有效 lease。
+
+### 2. Normal Unlock Wins In-Flight Renewal
+
+建议测试名：
+
+```text
+TestLeaseLockNormalUnlockWinsInFlightRenewal
+```
+
+目标：
+
+验证 normal unlock 已经开始并成为业务终止结果时，in-flight renewal operation 后续返回 cancellation /
+timeout 不应再触发业务 `lease_lost` 语义。
+
+目标交错：
+
+```text
+holder acquire
+renewal WriteFile enters storage operation and blocks
+business starts normal Unlock
+test harness records normal_unlock terminal reason and stops protected worker
+renewal operation returns after Unlock has won
+Unlock waits for renewal goroutine before deleting physical path
+```
+
+断言：
+
+- first terminal reason 是 `normal_unlock`；
+- `onLeaseLost` 不应在 normal unlock 已经获胜后被调用；
+- protected step 在 `normal_unlock` 后返回 false；
+- `Unlock` 必须等待 in-flight renewal write 退出后才删除 physical path；
+- holder 自己的 physical path 最终被删除；
+- 后续 acquire 可以成功；
+- 无 `.INTENT.` 残留。
+
+注意：这个测试最初要暴露的风险是，`Unlock` 只关闭 renewal `stopCh` 但不能取消已进入
+`tryRenew` 的 operation，导致 normal unlock 已经赢了之后仍可能触发 `onLeaseLost`。当前实现通过
+renewal-owned cancellable context 把 normal unlock cancellation 传入 `tryRenew`。这个测试仍应保持严格
+验收标准：normal unlock 先赢时，后续 renewal shutdown signal 不应覆盖业务终止结果。
+
+### 3. Cleanup Does Not Delete Reacquired Instance
 
 建议测试名：
 
@@ -276,7 +345,7 @@ holder B records protected step and unlocks
 - holder B unlock 后 B 被删除；
 - 后续 acquire 成功。
 
-### 3. Contender Retry Cleanup Interleaving
+### 4. Contender Retry Cleanup Interleaving
 
 建议测试名：
 
@@ -301,7 +370,7 @@ TestLeaseLockContenderRetryCleanupInterleaving
 - cleanup 后没有 orphan `.INTENT.`；
 - 未成功 owner 不记录 protected step。
 
-### 4. Intent Lifecycle Interleavings
+### 5. Intent Lifecycle Interleavings
 
 建议测试名：
 
@@ -327,7 +396,7 @@ TestLeaseLockIntentLifecycleInterleavings
 - unknown / foreign intent 保守阻塞 acquire，但不被 stale cleanup 删除；
 - 后续手动删除 foreign intent 后 acquire 成功。
 
-### 5. Model Fixed Seeds
+### 6. Model Fixed Seeds
 
 建议测试名：
 
@@ -365,7 +434,7 @@ TIDB_LEASE_LOCK_MODEL_OWNERS
 
 随机测试只使用 production lock APIs 和 test-only controlled storage / clock。每一步后检查 invariants。
 
-### 6. Protected Work Death and Hang Semantics
+### 7. Protected Work Death and Hang Semantics
 
 建议测试名：
 
@@ -404,7 +473,7 @@ TestLeaseLockProtectedWorkDeathAndHangSemantics
 - event log 明确标出 `dead`、`hung`、`lease_lost`、`normal_unlock`，避免把 availability blocker
   误判成 lock safety failure。
 
-### 7. Renewal Observation Hang Is Retried Within Proven Window
+### 8. Renewal Observation Hang Is Retried Within Proven Window
 
 建议测试名：
 
@@ -468,7 +537,7 @@ TestLeaseLockRenewalObservationHangIsTransient
 - failure log 必须显示 renewal hang point、最后一次 proven `ExpireAt`、retry attempt 和 protected
   work attempted step。
 
-### 8. Renewal Write Timeout and Post-Write Proof Failure Stop Protected Work
+### 9. Renewal Write Timeout and Post-Write Proof Failure Stop Protected Work
 
 建议测试名：
 

@@ -69,6 +69,24 @@ func TESTStopRenewal(l *RemoteLock) {
 	l.stopRenewalIfStarted()
 }
 
+// TESTRenewalStopSignalClosed reports whether the renewal stop signal channel
+// has actually been closed. It is observation-only for tests that need to
+// order Unlock against an in-flight renewal operation.
+func TESTRenewalStopSignalClosed(l *RemoteLock) bool {
+	l.mu.Lock()
+	stopCh := l.stopCh
+	l.mu.Unlock()
+	if stopCh == nil {
+		return false
+	}
+	select {
+	case <-stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
 // TESTSetLeaseConstants overrides the lease-related timing knobs for a test.
 // The returned restore function must be called (typically via t.Cleanup) so
 // later tests see production values again.

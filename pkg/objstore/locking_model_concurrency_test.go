@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +30,91 @@ import (
 )
 
 const modelOperationGuardTimeout = 250 * time.Millisecond
+
+type terminalReason string
+
+const (
+	terminalNone         terminalReason = ""
+	terminalNormalUnlock terminalReason = "normal_unlock"
+	terminalLeaseLost    terminalReason = "lease_lost"
+)
+
+type terminalRecorder struct {
+	mu     sync.Mutex
+	reason terminalReason
+	ch     chan terminalReason
+}
+
+func newTerminalRecorder() *terminalRecorder {
+	return &terminalRecorder{ch: make(chan terminalReason, 1)}
+}
+
+func (r *terminalRecorder) record(reason terminalReason) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reason != terminalNone {
+		return false
+	}
+	r.reason = reason
+	r.ch <- reason
+	return true
+}
+
+func (r *terminalRecorder) reasonNow() terminalReason {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reason
+}
+
+func waitTerminalReason(t *testing.T, r *terminalRecorder, name string) terminalReason {
+	t.Helper()
+	select {
+	case reason := <-r.ch:
+		return reason
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for terminal reason %s", name)
+		return terminalNone
+	}
+}
+
+type deleteRecordingStorage struct {
+	storeapi.Storage
+	deleted chan string
+}
+
+func newDeleteRecordingStorage(base storeapi.Storage) *deleteRecordingStorage {
+	return &deleteRecordingStorage{
+		Storage: base,
+		deleted: make(chan string, 8),
+	}
+}
+
+func (s *deleteRecordingStorage) DeleteFile(ctx context.Context, name string) error {
+	err := s.Storage.DeleteFile(ctx, name)
+	if err == nil && !strings.Contains(name, ".INTENT.") {
+		s.deleted <- name
+	}
+	return err
+}
+
+func requireDeletedPath(t *testing.T, ch <-chan string, expected string) {
+	t.Helper()
+	select {
+	case got := <-ch:
+		require.Equal(t, expected, got)
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for DeleteFile %s", expected)
+	}
+}
+
+func requireNoDeleteSoon(t *testing.T, ch <-chan string, d time.Duration) {
+	t.Helper()
+	select {
+	case got := <-ch:
+		t.Fatalf("unexpected DeleteFile %s", got)
+	case <-time.After(d):
+	}
+}
 
 type interceptedOperation struct {
 	Path string
@@ -177,6 +264,93 @@ func (s *lateWriteStorage) WriteFile(ctx context.Context, name string, data []by
 		s.lateCommitted <- interceptedOperation{Path: name, Err: commitErr}
 	}(append([]byte(nil), data...), release)
 	return err
+}
+
+type contextDoneWriteStorage struct {
+	storeapi.Storage
+
+	mu                    sync.Mutex
+	path                  string
+	blockWrites           int
+	pauseAfterContextDone bool
+	writeExited           bool
+	deleteBeforeWriteExit bool
+	writeStarted          chan interceptedOperation
+	contextDone           chan interceptedOperation
+	writeReturned         chan interceptedOperation
+	releaseReturn         chan struct{}
+	releaseOnce           sync.Once
+}
+
+func newContextDoneWriteStorage(base storeapi.Storage) *contextDoneWriteStorage {
+	return &contextDoneWriteStorage{
+		Storage:       base,
+		writeStarted:  make(chan interceptedOperation, 8),
+		contextDone:   make(chan interceptedOperation, 8),
+		writeReturned: make(chan interceptedOperation, 8),
+		releaseReturn: make(chan struct{}),
+	}
+}
+
+func (s *contextDoneWriteStorage) blockNextWriteUntilContextDone(path string, pauseAfterContextDone bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.path = path
+	s.blockWrites = 1
+	s.pauseAfterContextDone = pauseAfterContextDone
+}
+
+func (s *contextDoneWriteStorage) releaseWriteReturn() {
+	s.releaseOnce.Do(func() {
+		close(s.releaseReturn)
+	})
+}
+
+func (s *contextDoneWriteStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	s.mu.Lock()
+	shouldBlock := name == s.path && s.blockWrites > 0
+	if shouldBlock {
+		s.blockWrites--
+	}
+	pauseAfterContextDone := s.pauseAfterContextDone
+	s.mu.Unlock()
+	if !shouldBlock {
+		return s.Storage.WriteFile(ctx, name, data)
+	}
+
+	s.writeStarted <- interceptedOperation{Path: name}
+	<-ctx.Done()
+	err := ctx.Err()
+	s.contextDone <- interceptedOperation{Path: name, Err: err}
+	if pauseAfterContextDone {
+		select {
+		case <-s.releaseReturn:
+		case <-time.After(time.Second):
+			err = errors.New("guard timeout waiting to release context-done WriteFile")
+		}
+	}
+	s.mu.Lock()
+	s.writeExited = true
+	s.mu.Unlock()
+	s.writeReturned <- interceptedOperation{Path: name, Err: err}
+	return err
+}
+
+func (s *contextDoneWriteStorage) DeleteFile(ctx context.Context, name string) error {
+	s.mu.Lock()
+	trackDelete := name == s.path && s.path != ""
+	if trackDelete && !s.writeExited {
+		s.deleteBeforeWriteExit = true
+	}
+	s.mu.Unlock()
+	return s.Storage.DeleteFile(ctx, name)
+}
+
+func (s *contextDoneWriteStorage) requireNoDeleteBeforeWriteExit(t *testing.T) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	require.False(t, s.deleteBeforeWriteExit, "DeleteFile for %s happened before blocked renewal WriteFile exited", s.path)
 }
 
 type recordingWriteStorage struct {
@@ -382,6 +556,366 @@ func stopModelRenewal(cancel context.CancelFunc, lock *objstore.RemoteLock, rele
 		cancel()
 	}
 	objstore.TESTStopRenewal(lock)
+}
+
+func startTerminalRenewal(ctx context.Context, lock *objstore.RemoteLock, recorder *terminalRecorder, worker *protectedWorker) {
+	objstore.TESTStartRenewal(ctx, lock, func() {
+		if recorder.record(terminalLeaseLost) {
+			worker.stop(workerStopLeaseLost)
+		}
+	})
+}
+
+func TestLeaseLockTerminalReasonStableAfterLeaseLost(t *testing.T) {
+	t.Run("txn id mismatch then unlock", func(t *testing.T) {
+		parentCtx, cancel := context.WithCancel(context.Background())
+		defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 15*time.Millisecond, 5, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(30*time.Millisecond, time.Millisecond)()
+
+		base, _ := createMockStorage(t)
+		storage := newDeleteRecordingStorage(base)
+		lock, err := objstore.TryLockRemoteWrite(parentCtx, storage, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+
+		audit := newCriticalSectionAudit(t.Name())
+		worker := startProtectedWorker(t, parentCtx, audit, "owner-a", "migration-write", lock.String())
+		step, ok := worker.requestStep(t)
+		require.True(t, ok)
+		require.Positive(t, step)
+		recorder := newTerminalRecorder()
+		startTerminalRenewal(parentCtx, lock, recorder, worker)
+		t.Cleanup(func() {
+			stopModelRenewal(cancel, lock, nil)
+		})
+
+		hijackerTxn := []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
+		hijacked := objstore.MakeLockMeta("hijacker")
+		hijacked.TxnID = hijackerTxn
+		hijackedData, err := json.Marshal(hijacked)
+		require.NoError(t, err)
+		require.NoError(t, base.WriteFile(parentCtx, physicalPath, hijackedData))
+
+		require.Equal(t, terminalLeaseLost, waitTerminalReason(t, recorder, "txn id mismatch"))
+		unlockErr := lock.Unlock(parentCtx)
+		require.ErrorContains(t, unlockErr, "Txn ID mismatch")
+		require.False(t, recorder.record(terminalNormalUnlock))
+		require.Equal(t, terminalLeaseLost, recorder.reasonNow())
+		require.Equal(t, workerStopLeaseLost, worker.stopReason())
+		_, ok = worker.requestStep(t)
+		require.False(t, ok)
+		requireNoStepAfterAction(t, audit.snapshot(), "owner-a", "lost")
+		require.Equal(t, hijackerTxn, readLockMeta(t, base, physicalPath).TxnID)
+		requireNoDeleteSoon(t, storage.deleted, 30*time.Millisecond)
+		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+	})
+
+	t.Run("write timeout late commit then unlock", func(t *testing.T) {
+		parentCtx, cancel := context.WithCancel(context.Background())
+		defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 15*time.Millisecond, 5, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(30*time.Millisecond, time.Millisecond)()
+
+		base, pth := createMockStorage(t)
+		deleteRecorder := newDeleteRecordingStorage(base)
+		storage := newLateWriteStorage(deleteRecorder)
+		lock, err := objstore.TryLockRemoteWrite(parentCtx, storage, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+		original := readLockMeta(t, base, physicalPath).ExpireAt
+		storage.blockNextWrites(physicalPath, 1)
+
+		audit := newCriticalSectionAudit(t.Name())
+		worker := startProtectedWorker(t, parentCtx, audit, "owner-a", "migration-write", lock.String())
+		step, ok := worker.requestStep(t)
+		require.True(t, ok)
+		require.Positive(t, step)
+		recorder := newTerminalRecorder()
+		startTerminalRenewal(parentCtx, lock, recorder, worker)
+		t.Cleanup(func() {
+			stopModelRenewal(cancel, lock, storage.releaseLateCommit)
+		})
+
+		_ = waitOperationFinished(t, storage.writeStarted, "renewal WriteFile start")
+		returned := waitOperationFinished(t, storage.writeReturned, "renewal WriteFile return")
+		require.ErrorIs(t, returned.Err, context.DeadlineExceeded)
+		require.Equal(t, terminalLeaseLost, waitTerminalReason(t, recorder, "ambiguous renewal write"))
+		worker.waitStopped(t)
+
+		captured := storage.capturedMeta(t)
+		require.True(t, captured.ExpireAt.After(original))
+		storage.releaseLateCommit()
+		committed := waitOperationFinished(t, storage.lateCommitted, "late renewal commit")
+		require.NoError(t, committed.Err)
+		require.Equal(t, captured.ExpireAt, readLockMeta(t, base, physicalPath).ExpireAt)
+
+		require.NoError(t, lock.Unlock(parentCtx))
+		requireDeletedPath(t, deleteRecorder.deleted, physicalPath)
+		requireNoDeleteSoon(t, deleteRecorder.deleted, 30*time.Millisecond)
+		requireFileNotExists(t, filepath.Join(pth, physicalPath))
+		require.False(t, recorder.record(terminalNormalUnlock))
+		require.Equal(t, terminalLeaseLost, recorder.reasonNow())
+		_, ok = worker.requestStep(t)
+		require.False(t, ok)
+		requireNoStepAfterAction(t, audit.snapshot(), "owner-a", "lost")
+
+		next, err := objstore.TryLockRemoteWrite(parentCtx, base, "v1/LOCK", "next-owner", localLeaseClock())
+		require.NoError(t, err)
+		require.NoError(t, next.Unlock(parentCtx))
+		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+	})
+
+	t.Run("post write proof failed then unlock", func(t *testing.T) {
+		parentCtx, cancel := context.WithCancel(context.Background())
+		defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 15*time.Millisecond, 5, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(30*time.Millisecond, time.Millisecond)()
+
+		base, pth := createMockStorage(t)
+		storage := newDeleteRecordingStorage(base)
+		leaseNow := time.Date(2030, 6, 4, 13, 0, 0, 0, time.UTC)
+		clock := newBlockingLeaseClock(
+			clockAt("acquire-pre-clock", leaseNow),
+			clockAt("acquire-post-clock", leaseNow.Add(time.Millisecond)),
+			clockAt("renewal-pre-clock", leaseNow.Add(20*time.Millisecond)),
+			clockAt("renewal-post-clock-expired", leaseNow.Add(objstore.LeaseTTL+time.Second)),
+		)
+		lock, err := objstore.TryLockRemoteWrite(parentCtx, storage, "v1/LOCK", "owner", clock)
+		require.NoError(t, err)
+		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+
+		audit := newCriticalSectionAudit(t.Name())
+		worker := startProtectedWorker(t, parentCtx, audit, "owner-a", "migration-write", lock.String())
+		step, ok := worker.requestStep(t)
+		require.True(t, ok)
+		require.Positive(t, step)
+		recorder := newTerminalRecorder()
+		startTerminalRenewal(parentCtx, lock, recorder, worker)
+		t.Cleanup(func() {
+			stopModelRenewal(cancel, lock, nil)
+		})
+
+		require.Equal(t, terminalLeaseLost, waitTerminalReason(t, recorder, "post-write proof failed"))
+		require.NoError(t, lock.Unlock(parentCtx))
+		requireDeletedPath(t, storage.deleted, physicalPath)
+		requireNoDeleteSoon(t, storage.deleted, 30*time.Millisecond)
+		requireFileNotExists(t, filepath.Join(pth, physicalPath))
+		require.False(t, recorder.record(terminalNormalUnlock))
+		require.Equal(t, terminalLeaseLost, recorder.reasonNow())
+		_, ok = worker.requestStep(t)
+		require.False(t, ok)
+		requireNoStepAfterAction(t, audit.snapshot(), "owner-a", "lost")
+
+		next, err := objstore.TryLockRemoteWrite(parentCtx, base, "v1/LOCK", "next-owner", localLeaseClock())
+		require.NoError(t, err)
+		require.NoError(t, next.Unlock(parentCtx))
+		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+	})
+
+	t.Run("write timeout remains lease lost when unlock closes stop signal", func(t *testing.T) {
+		parentCtx, cancel := context.WithCancel(context.Background())
+		defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 15*time.Millisecond, 5, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(30*time.Millisecond, time.Millisecond)()
+
+		base, pth := createMockStorage(t)
+		deleteRecorder := newDeleteRecordingStorage(base)
+		storage := newContextDoneWriteStorage(deleteRecorder)
+		lock, err := objstore.TryLockRemoteWrite(parentCtx, storage, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+		storage.blockNextWriteUntilContextDone(physicalPath, true)
+
+		audit := newCriticalSectionAudit(t.Name())
+		worker := startProtectedWorker(t, parentCtx, audit, "owner-a", "migration-write", lock.String())
+		step, ok := worker.requestStep(t)
+		require.True(t, ok)
+		require.Positive(t, step)
+		recorder := newTerminalRecorder()
+		startTerminalRenewal(parentCtx, lock, recorder, worker)
+		t.Cleanup(func() {
+			stopModelRenewal(cancel, lock, storage.releaseWriteReturn)
+		})
+
+		_ = waitOperationFinished(t, storage.writeStarted, "renewal WriteFile start")
+		deadline := waitOperationFinished(t, storage.contextDone, "renewal WriteFile deadline")
+		require.ErrorIs(t, deadline.Err, context.DeadlineExceeded)
+
+		unlockDone := make(chan error, 1)
+		go func() {
+			unlockDone <- lock.Unlock(parentCtx)
+		}()
+		require.Eventually(t, func() bool {
+			return objstore.TESTRenewalStopSignalClosed(lock)
+		}, time.Second, time.Millisecond, "Unlock should close renewal stop signal before releasing timed-out WriteFile")
+		storage.releaseWriteReturn()
+		returned := waitOperationFinished(t, storage.writeReturned, "renewal WriteFile return")
+		require.ErrorIs(t, returned.Err, context.DeadlineExceeded)
+		require.Equal(t, terminalLeaseLost, waitTerminalReason(t, recorder, "write timeout after unlock stop signal"))
+		select {
+		case err := <-unlockDone:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for Unlock after permanent renewal timeout")
+		}
+
+		requireDeletedPath(t, deleteRecorder.deleted, physicalPath)
+		requireNoDeleteSoon(t, deleteRecorder.deleted, 30*time.Millisecond)
+		requireFileNotExists(t, filepath.Join(pth, physicalPath))
+		require.False(t, recorder.record(terminalNormalUnlock))
+		require.Equal(t, terminalLeaseLost, recorder.reasonNow())
+		require.Equal(t, workerStopLeaseLost, worker.stopReason())
+		_, ok = worker.requestStep(t)
+		require.False(t, ok)
+		requireNoStepAfterAction(t, audit.snapshot(), "owner-a", "lost")
+		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+	})
+}
+
+func TestLeaseLockNormalUnlockWinsInFlightRenewal(t *testing.T) {
+	t.Run("write cancellation", func(t *testing.T) {
+		ctx := context.Background()
+		defer objstore.TESTSetLeaseConstants(2*time.Second, 10*time.Millisecond, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(1500*time.Millisecond, time.Millisecond)()
+
+		base, pth := createMockStorage(t)
+		wrapped := newContextDoneWriteStorage(base)
+		lock, err := objstore.TryLockRemoteWrite(ctx, wrapped, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+		wrapped.blockNextWriteUntilContextDone(physicalPath, false)
+
+		audit := newCriticalSectionAudit(t.Name())
+		worker := startProtectedWorker(t, ctx, audit, "owner-a", "migration-write", lock.String())
+		step, ok := worker.requestStep(t)
+		require.True(t, ok)
+		require.Positive(t, step)
+		recorder := newTerminalRecorder()
+		leaseLostCalled := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() {
+			select {
+			case leaseLostCalled <- struct{}{}:
+			default:
+			}
+			if recorder.record(terminalLeaseLost) {
+				worker.stop(workerStopLeaseLost)
+			}
+		})
+		t.Cleanup(func() {
+			objstore.TESTStopRenewal(lock)
+		})
+
+		_ = waitOperationFinished(t, wrapped.writeStarted, "renewal write started")
+		require.True(t, recorder.record(terminalNormalUnlock))
+		worker.stop(workerStopTestStop)
+		worker.waitStopped(t)
+
+		unlockDone := make(chan error, 1)
+		go func() {
+			unlockDone <- lock.Unlock(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			return objstore.TESTRenewalStopSignalClosed(lock)
+		}, time.Second, time.Millisecond, "Unlock should request renewal stop before renewal write exits")
+		wrapped.requireNoDeleteBeforeWriteExit(t)
+		returned := waitOperationFinished(t, wrapped.writeReturned, "blocked renewal WriteFile exited")
+		require.ErrorIs(t, returned.Err, context.Canceled)
+		wrapped.requireNoDeleteBeforeWriteExit(t)
+		select {
+		case err := <-unlockDone:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for Unlock after renewal write exit")
+		}
+
+		require.Equal(t, terminalNormalUnlock, recorder.reasonNow())
+		select {
+		case <-leaseLostCalled:
+			t.Fatal("onLeaseLost must not be called after normal unlock wins")
+		default:
+		}
+		require.False(t, recorder.record(terminalLeaseLost))
+		_, ok = worker.requestStep(t)
+		require.False(t, ok)
+		requireFileNotExists(t, filepath.Join(pth, physicalPath))
+
+		next, err := objstore.TryLockRemoteWrite(ctx, base, "v1/LOCK", "next-owner", localLeaseClock())
+		require.NoError(t, err)
+		require.NoError(t, next.Unlock(ctx))
+		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+	})
+
+	t.Run("post-write proof cancellation", func(t *testing.T) {
+		ctx := context.Background()
+		defer objstore.TESTSetLeaseConstants(2*time.Second, 10*time.Millisecond, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(1500*time.Millisecond, time.Millisecond)()
+
+		base, pth := createMockStorage(t)
+		leaseNow := time.Date(2030, 6, 4, 14, 0, 0, 0, time.UTC)
+		clock := newBlockingLeaseClock(
+			clockAt("acquire-pre-clock", leaseNow),
+			clockAt("acquire-post-clock", leaseNow.Add(time.Millisecond)),
+			clockAt("renewal-pre-clock", leaseNow.Add(20*time.Millisecond)),
+			clockBlock("renewal-post-clock-block", leaseNow.Add(21*time.Millisecond)),
+		)
+		lock, err := objstore.TryLockRemoteWrite(ctx, base, "v1/LOCK", "owner", clock)
+		require.NoError(t, err)
+		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+
+		audit := newCriticalSectionAudit(t.Name())
+		worker := startProtectedWorker(t, ctx, audit, "owner-a", "migration-write", lock.String())
+		step, ok := worker.requestStep(t)
+		require.True(t, ok)
+		require.Positive(t, step)
+		recorder := newTerminalRecorder()
+		leaseLostCalled := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() {
+			select {
+			case leaseLostCalled <- struct{}{}:
+			default:
+			}
+			if recorder.record(terminalLeaseLost) {
+				worker.stop(workerStopLeaseLost)
+			}
+		})
+		t.Cleanup(func() {
+			objstore.TESTStopRenewal(lock)
+		})
+
+		waitClockLabel(t, clock.started, "renewal-post-clock-block")
+		require.True(t, recorder.record(terminalNormalUnlock))
+		worker.stop(workerStopTestStop)
+		worker.waitStopped(t)
+
+		unlockDone := make(chan error, 1)
+		go func() {
+			unlockDone <- lock.Unlock(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			return objstore.TESTRenewalStopSignalClosed(lock)
+		}, time.Second, time.Millisecond, "Unlock should request renewal stop before post-write proof exits")
+		done := waitClockLabel(t, clock.done, "renewal-post-clock-block")
+		require.ErrorIs(t, done.Err, context.Canceled)
+		select {
+		case err := <-unlockDone:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for Unlock after post-write proof exit")
+		}
+
+		require.Equal(t, terminalNormalUnlock, recorder.reasonNow())
+		select {
+		case <-leaseLostCalled:
+			t.Fatal("onLeaseLost must not be called after normal unlock cancels post-write proof")
+		default:
+		}
+		require.False(t, recorder.record(terminalLeaseLost))
+		_, ok = worker.requestStep(t)
+		require.False(t, ok)
+		requireFileNotExists(t, filepath.Join(pth, physicalPath))
+
+		next, err := objstore.TryLockRemoteWrite(ctx, base, "v1/LOCK", "next-owner", localLeaseClock())
+		require.NoError(t, err)
+		require.NoError(t, next.Unlock(ctx))
+		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
+	})
 }
 
 func TestLeaseLockRenewalObservationHangIsTransient(t *testing.T) {

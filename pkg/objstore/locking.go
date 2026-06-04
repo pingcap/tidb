@@ -371,20 +371,21 @@ const (
 
 // RemoteLock is the remote lock.
 //
-// Renewal state (mu, renewalState, stopCh, done) is zero-initialized and
-// activated by startRenewal. Because RemoteLock embeds a sync.Mutex once
-// renewal activates, callers must not copy a RemoteLock after startRenewal
-// has been invoked on it; pass pointers instead.
+// Renewal state (mu, renewalState, stopCh, done, renewalCancel) is
+// zero-initialized and activated by startRenewal. Because RemoteLock embeds a
+// sync.Mutex once renewal activates, callers must not copy a RemoteLock after
+// startRenewal has been invoked on it; pass pointers instead.
 type RemoteLock struct {
 	txnID      uuid.UUID
 	storage    storeapi.Storage
 	path       string
 	leaseClock LeaseClock
 
-	mu           sync.Mutex
-	renewalState renewalState
-	stopCh       chan struct{}
-	done         chan struct{}
+	mu            sync.Mutex
+	renewalState  renewalState
+	stopCh        chan struct{}
+	done          chan struct{}
+	renewalCancel context.CancelFunc
 }
 
 // String implements fmt.Stringer interface.
@@ -424,9 +425,10 @@ func (l *RemoteLock) Unlock(ctx context.Context) error {
 
 func (l *RemoteLock) stopRenewalIfStarted() {
 	var (
-		stopCh      chan struct{}
-		done        chan struct{}
-		shouldClose bool
+		stopCh        chan struct{}
+		done          chan struct{}
+		renewalCancel context.CancelFunc
+		shouldClose   bool
 	)
 
 	l.mu.Lock()
@@ -440,12 +442,16 @@ func (l *RemoteLock) stopRenewalIfStarted() {
 		l.renewalState = renewalStopped
 		stopCh = l.stopCh
 		done = l.done
+		renewalCancel = l.renewalCancel
 		shouldClose = true
 	}
 	l.mu.Unlock()
 
 	if shouldClose {
 		close(stopCh)
+		if renewalCancel != nil {
+			renewalCancel()
+		}
 	}
 	<-done
 }
@@ -501,18 +507,6 @@ func renewalWriteTimeout(expireAt, leaseNow time.Time) (time.Duration, error) {
 	return timeout, nil
 }
 
-func renewalAttemptTimeout(leaseDeadline time.Time) time.Duration {
-	timeout := renewWriteTimeoutCap
-	remaining := time.Until(leaseDeadline)
-	if remaining <= 0 {
-		return 0
-	}
-	if halfRemaining := remaining / 2; halfRemaining < timeout {
-		timeout = halfRemaining
-	}
-	return timeout
-}
-
 func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 	if remaining < minRenewRemainingLease {
 		return 0, errRenewRemainingLeaseTooSmall
@@ -541,6 +535,8 @@ type renewalResult struct {
 //   - errRenewWriteTimeout if the renewal write cannot finish inside the old
 //     lease-bounded timeout.
 //   - errRenewPostWriteProofFailed if the post-write lease proof cannot be made.
+//     A context.Canceled post-write proof is returned as a transient error so
+//     normal renewal shutdown can suppress it after stopCh closes.
 //   - errRenewRemainingLeaseTooSmall if the proven remaining lease is too small.
 //   - any other error → transient (network/storage); caller should retry.
 //
@@ -600,10 +596,14 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 		}
 		return renewalResult{}, errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
 	}
+
 	postWriteClockCtx, cancelPostWriteClock := context.WithTimeout(ctx, writeTimeout)
 	nowAfterWrite, err := leaseClock.Now(postWriteClockCtx)
 	cancelPostWriteClock()
 	if err != nil {
+		if stderrors.Is(postWriteClockCtx.Err(), context.Canceled) || stderrors.Is(err, context.Canceled) {
+			return renewalResult{}, errors.Annotate(err, "tryRenew: post-write lease time")
+		}
 		return renewalResult{}, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
 	}
 	if nowAfterWrite.After(newExpireAt) {
@@ -729,9 +729,11 @@ func (l *RemoteLock) startRenewal(ctx context.Context, onLeaseLost func()) {
 	l.renewalState = renewalRunning
 	l.stopCh = make(chan struct{})
 	l.done = make(chan struct{})
+	renewalCtx, renewalCancel := context.WithCancel(ctx)
+	l.renewalCancel = renewalCancel
 	l.mu.Unlock()
 
-	go l.renewalLoop(ctx, onLeaseLost)
+	go l.renewalLoop(renewalCtx, onLeaseLost)
 }
 
 // renewalLoop runs until stopCh is closed, retries are exhausted, or the
@@ -760,10 +762,11 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		var lastErr error
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
-			attemptCtx, cancelAttempt := context.WithTimeout(ctx, renewalAttemptTimeout(leaseDeadline))
-			result, err := l.tryRenew(attemptCtx)
-			cancelAttempt()
+			result, err := l.tryRenew(ctx)
 			if err == nil {
+				if l.renewalStopSignalClosed() {
+					return
+				}
 				nextDelay = result.nextDelay
 				leaseDeadline = time.Now().Add(result.remainingLease)
 				renewSucceeded = true
@@ -775,6 +778,9 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 					zap.Int("attempt", attempt),
 					logutil.ShortError(err))
 				invokeLost()
+				return
+			}
+			if l.renewalStopSignalClosed() {
 				return
 			}
 

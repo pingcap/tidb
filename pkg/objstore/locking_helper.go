@@ -121,6 +121,15 @@ func SetLeaseConstantsForTest(ttl, interval time.Duration, maxRetries int, baseB
 	}
 }
 
+func (l *RemoteLock) renewalStopSignalClosed() bool {
+	select {
+	case <-l.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
 func getLockMeta(ctx context.Context, storage storeapi.Storage, path string) (LockMeta, error) {
 	file, err := storage.ReadFile(ctx, path)
 	if err != nil {
