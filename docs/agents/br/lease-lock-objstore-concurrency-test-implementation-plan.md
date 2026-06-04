@@ -12,6 +12,32 @@
 
 This plan implements `docs/agents/br/lease-lock-objstore-concurrency-test-design.md`.
 
+## Current Status
+
+As of 2026-06-04, the first-phase deterministic `pkg/objstore` concurrency
+test work described by this plan has been implemented in
+`pkg/objstore/locking_concurrency_test.go`.
+
+Implemented coverage includes:
+
+- audit / protected-worker self-checks;
+- concurrent acquire exclusion for truncate, migration write, append write,
+  migration read/read, and migration read/write combinations;
+- renewal-lost protected-action stop tests for migration write and truncate,
+  each under renewal write block and renewal write error;
+- `Unlock` waiting for an in-flight renewal write before deleting the physical
+  lock;
+- stale cleanup non-deletion of live holders across truncate, migration write,
+  migration read, and append write;
+- stale cleanup reclaim boundaries for expired eligible instances while keeping
+  live, intent, unknown, and zero-`ExpireAt` candidates.
+
+The detailed task checklist below is preserved as the original execution plan.
+Use the implemented tests and recent commits as the source of truth for current
+progress. Further work should start from
+`docs/agents/br/lease-lock-concurrency-and-ha-test-direction.md` rather than
+continuing to append first-phase checklist items here.
+
 ## Context and Constraints
 
 - Do not change production lock APIs.

@@ -7,11 +7,24 @@
 本文档只记录测试方向和优先级，不展开到具体 failpoint、脚本结构或实现步骤。后续如果进入
 实现，应再拆成具体 implementation plan。
 
+2026-06-04 状态更新：
+
+- 第一阶段 deterministic `pkg/objstore` concurrency tests 已落地在
+  `pkg/objstore/locking_concurrency_test.go`，覆盖 concurrent acquire exclusion、
+  renewal lost stop、unlock / renewal lifecycle ordering、stale cleanup live-holder
+  safety 和 expired-candidate reclaim boundaries。
+- `br/tests/br_lease_lock` 已有第一批真实 BR command 集成测试。用户反馈此前已在可用环境中跑通；
+  当前可把它视为独立的最终/回归验证项，而不是下一阶段测试设计的主线阻塞点。
+- 下一阶段重点应从“补齐已知 deterministic case”转向“mock / model-based 并发竞态测试”，再按收益
+  选择少量 BR HA 场景。
+- Phase 2 具体设计见 `docs/agents/br/lease-lock-model-concurrency-test-design.md`。
+
 ## 背景
 
-当前 BR lease lock 已经有两类测试基础：
+当前 BR lease lock 已经有三类测试基础：
 
 - `pkg/objstore` 单测覆盖 lock/renewal/stale cleanup 的细粒度语义；
+- `pkg/objstore/locking_concurrency_test.go` 覆盖第一阶段确定性交错下的并发 correctness proof；
 - `br/tests/br_lease_lock` 集成测试覆盖真实 BR 命令、真实 PD clock、真实业务
   `onLeaseLost` cancel 路径、正常 unlock 和 stale lock reclaim。
 
@@ -25,12 +38,13 @@
 
 ## 测试目标分层
 
-### 1. 已知薄弱点压力验证
+### 1. Mock / model-based 并发竞态测试
 
-这是下一阶段最重要的测试方向。
+这是当前下一阶段最重要的测试方向。
 
-目标是针对已知风险点做确定性或固定 seed 的压力验证，证明 lock 层在关键 interleaving 下
-仍满足 safety invariant。它回答的是 correctness proof 问题。
+目标是在可复现的 mock storage / model harness 中扩大 interleaving 覆盖，证明 lock 层在更多
+acquire、renew、unlock、lease lost、stale cleanup 组合下仍满足 safety invariant。它回答的是
+correctness proof 问题。
 
 建议主要放在 `pkg/objstore` 测试中，使用：
 
@@ -53,11 +67,18 @@
 
 优先覆盖的薄弱点：
 
-1. 多 owner 同时 acquire 同一类互斥 lock。
-2. renewal write block / error 后进入 lease lost，并停止临界区。
-3. unlock、renewal、lease lost 的交错。
-4. stale cleanup 与 live holder / expired holder 并发。
-5. read/write/truncate/append migration lock 的冲突矩阵。
+1. `Unlock`、renewal permanent loss、业务 `onLeaseLost` callback 同时发生时的终止结果。
+2. stale cleanup 与 owner re-acquire / contender retry 的竞态，特别是 cleanup 观察 stale 后另一个
+   owner 已经 acquire 新 physical instance 的情况。
+3. 多 owner 循环 acquire / protected step / unlock / cleanup 的 invariant 检查。
+4. renewal transient error、bounded write timeout、retry backoff 与 manual unlock 的组合。
+5. `.INTENT.` 创建、提交、失败清理和 contender listing 的乱序组合。
+6. holder 受保护业务循环死亡或长时间挂起：死亡且续约停止后依赖 stale reclaim 恢复；挂起但仍续约时不能被
+   contender 当作 stale lock 删除。
+7. holder 受保护业务循环正常但 renewal loop 长时间挂起：业务 protected step 不能越过最后一次 proven
+   lease window 继续推进；lock metadata read/write 和 lease clock proof 都应有统一 operation bound。
+   单次 read / pre-clock observation failure 不应直接 lease lost；write timeout 和 post-write proof
+   failure 才是必须停止 protected work 的高风险边界。
 
 ### 2. 固定 seed 随机乱序与错误注入
 
@@ -95,6 +116,9 @@
 - truncate vs truncate 真实命令并发；
 - restore vs restore / migration metadata append 并发；
 - 持锁命令被 kill 后 stale reclaim；
+- 持锁命令受保护业务循环长时间挂起但 renewal 仍存活时，后续命令应被阻塞并给出可诊断状态；
+- 持锁命令受保护业务循环仍推进但 renewal loop 的 storage / lease-clock proof operation 长时间挂起时，
+  应停止受保护业务或触发 lease lost；
 - 长时间循环 acquire / renew / unlock，观察残留 lock；
 - 真实进程 restart 或存储操作延迟注入。
 
@@ -103,9 +127,9 @@
 
 ## 推荐优先级
 
-1. 先做 `pkg/objstore` 层已知薄弱点压力验证。
-2. 再做固定 seed 随机乱序与错误注入。
-3. 最后按收益选择少量 BR HA / 真实压力场景。
+1. 先做 `pkg/objstore` 层 mock / model-based 并发竞态测试。
+2. 再做固定 seed 随机乱序与错误注入，把 mock harness 作为 coverage amplifier。
+3. 最后按收益选择少量 BR HA / 真实压力场景，并保留 `br_lease_lock` 作为独立最终验证项。
 
 换句话说：
 

@@ -82,6 +82,7 @@ go_test(
         "gcs_test.go",
         "local_test.go",
         "locking_concurrency_test.go",
+        "locking_model_concurrency_test.go",
         "locking_test.go",
         "memstore_test.go",
         "parse_test.go",

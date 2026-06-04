@@ -173,9 +173,9 @@ var (
 	// backoff before the lease would actually expire.
 	renewInterval = LeaseTTL / 3
 
-	// renewWriteTimeoutCap bounds a single renewal WriteFile call. The actual
+	// renewWriteTimeoutCap bounds a single renewal proof operation. The write
 	// timeout is also capped by the remaining old lease window.
-	renewWriteTimeoutCap = 5 * time.Minute
+	renewWriteTimeoutCap = 10 * time.Minute
 
 	// minRenewRemainingLease is the minimum proven lease window required after
 	// a renewal write returns successfully.
@@ -501,6 +501,18 @@ func renewalWriteTimeout(expireAt, leaseNow time.Time) (time.Duration, error) {
 	return timeout, nil
 }
 
+func renewalAttemptTimeout(leaseDeadline time.Time) time.Duration {
+	timeout := renewWriteTimeoutCap
+	remaining := time.Until(leaseDeadline)
+	if remaining <= 0 {
+		return 0
+	}
+	if halfRemaining := remaining / 2; halfRemaining < timeout {
+		timeout = halfRemaining
+	}
+	return timeout
+}
+
 func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 	if remaining < minRenewRemainingLease {
 		return 0, errRenewRemainingLeaseTooSmall
@@ -538,7 +550,9 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 	if err := applyLeaseLockTestConstantsFailpoint(); err != nil {
 		return renewalResult{}, err
 	}
-	data, err := l.storage.ReadFile(ctx, l.path)
+	readCtx, cancelRead := context.WithTimeout(ctx, renewWriteTimeoutCap)
+	data, err := l.storage.ReadFile(readCtx, l.path)
+	cancelRead()
 	if err != nil {
 		return renewalResult{}, errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
 	}
@@ -554,7 +568,9 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 	if leaseClock == nil {
 		return renewalResult{}, errors.New("lease clock is required")
 	}
-	leaseNow, err := leaseClock.Now(ctx)
+	preWriteClockCtx, cancelPreWriteClock := context.WithTimeout(ctx, renewWriteTimeoutCap)
+	leaseNow, err := leaseClock.Now(preWriteClockCtx)
+	cancelPreWriteClock()
 	if err != nil {
 		return renewalResult{}, errors.Annotate(err, "tryRenew: get lease time")
 	}
@@ -584,7 +600,9 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 		}
 		return renewalResult{}, errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
 	}
-	nowAfterWrite, err := leaseClock.Now(ctx)
+	postWriteClockCtx, cancelPostWriteClock := context.WithTimeout(ctx, writeTimeout)
+	nowAfterWrite, err := leaseClock.Now(postWriteClockCtx)
+	cancelPostWriteClock()
 	if err != nil {
 		return renewalResult{}, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
 	}
@@ -742,7 +760,9 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		var lastErr error
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
-			result, err := l.tryRenew(ctx)
+			attemptCtx, cancelAttempt := context.WithTimeout(ctx, renewalAttemptTimeout(leaseDeadline))
+			result, err := l.tryRenew(attemptCtx)
+			cancelAttempt()
 			if err == nil {
 				nextDelay = result.nextDelay
 				leaseDeadline = time.Now().Add(result.remainingLease)

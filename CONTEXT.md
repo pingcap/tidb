@@ -9,6 +9,10 @@ It captures domain terms only, not implementation decisions.
 一个 holder 只有在能证明自己的 lease window 仍然有效时，才可以继续执行受该 lock 保护的业务写入或删除。若无法证明有效 lease window，holder 必须停止受保护的业务临界区。
 _Avoid_: storage-protocol proof, zombie-free guarantee, availability guarantee
 
+**受保护业务循环**:
+holder 在业务临界区内执行、并需要 lock 保护的业务操作流。它和 renewal loop 是两个独立状态；一个可以挂起或停止而另一个仍然运行。
+_Avoid_: main loop, process main goroutine, renewal loop
+
 **物理 lock 实例**:
 一次 acquire 创建并由一个 holder 持有的具体 lock 身份。不同 acquire 不复用同一个物理 lock 实例。
 _Avoid_: logical lock family, stable lock path
@@ -30,6 +34,10 @@ _Avoid_: renewal goroutine state, stop signal
 Developer: "这次方案要不要保证对象存储里永远不会出现 delayed renewal zombie？"
 
 Domain expert: "不用。我们的目标是业务临界区安全：一旦 holder 不能证明有效 lease window，它就不能继续写受保护数据。zombie 可以作为后续 cleanup 和可用性问题处理。"
+
+Developer: "主循环挂住时是不是就等于续约也停了？"
+
+Domain expert: "不要说主循环。这里要区分受保护业务循环和 renewal loop：受保护业务循环可能挂住但仍在续约，也可能继续推进而续约卡住。安全判断看是否还能证明有效 lease window。"
 
 Developer: "丢锁后主动删自己的 lock 会不会误删别人？"
 
