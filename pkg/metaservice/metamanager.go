@@ -97,8 +97,8 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 	return group, nil
 }
 
-// GetMetaServiceInfo return meta service info.
-func GetMetaServiceInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pdAddrs []string) (*Info, error) {
+// GetInfo return meta service info.
+func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pdAddrs []string) (*Info, error) {
 	// If non-keyspace then return global meta service or not enable meta service group.
 	if keyspaceMeta == nil {
 		keyspaceMetaServiceGroup := &Group{

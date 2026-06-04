@@ -78,13 +78,13 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 	require.ElementsMatch(t, globalMetaAddrs, keyspaceMetaServiceGroup.Addrs)
 }
 
-// TestGetMetaServiceInfo tests the GetMetaServiceInfo function.
-func TestGetMetaServiceInfo(t *testing.T) {
+// TestGetInfo tests the GetInfo function.
+func TestGetInfo(t *testing.T) {
 	expectPDAddrs := []string{"127.0.0.1:2380"}
 	globalMetaAddrs := []string{"127.0.0.1:2379"}
 
 	// Test case where keyspaceMeta is nil
-	metaInfo, err := metaservice.GetMetaServiceInfo(nil, globalMetaAddrs, expectPDAddrs)
+	metaInfo, err := metaservice.GetInfo(nil, globalMetaAddrs, expectPDAddrs)
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
 	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalMetaServiceAddrs[0])
@@ -99,7 +99,7 @@ func TestGetMetaServiceInfo(t *testing.T) {
 		},
 	}
 
-	metaInfo, err = metaservice.GetMetaServiceInfo(keyspaceMeta, globalMetaAddrs, expectPDAddrs)
+	metaInfo, err = metaservice.GetInfo(keyspaceMeta, globalMetaAddrs, expectPDAddrs)
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
 	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalMetaServiceAddrs[0])
