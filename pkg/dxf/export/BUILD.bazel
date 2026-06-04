@@ -45,6 +45,7 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/ppcpuusage",
         "//pkg/util/sqlkiller",
