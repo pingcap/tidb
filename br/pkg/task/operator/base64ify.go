@@ -30,15 +30,6 @@ func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
 	store.Close()
 
 	if cfg.LoadCerd {
-<<<<<<< HEAD
-		_, err := storage.New(ctx, s, &storage.ExternalStorageOptions{
-			SendCredentials: true,
-		})
-		if err != nil {
-			return err
-		}
-=======
->>>>>>> beb12a7923d (br: encode S3 object lock status in base64ify output (#68552))
 		fmt.Fprintln(os.Stderr, color.HiRedString("Credientials are encoded to the base64 string. DON'T share this with untrusted people!"))
 	}
 
