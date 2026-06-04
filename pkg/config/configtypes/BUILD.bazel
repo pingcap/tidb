@@ -16,7 +16,7 @@ go_test(
     timeout = "short",
     srcs = ["types_test.go"],
     embed = [":configtypes"],
-    flaky = True,
+    flaky = False,
     shard_count = 2,
     deps = [
         "@com_github_burntsushi_toml//:toml",

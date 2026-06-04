@@ -336,7 +336,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err = controller.InitDataFiles(ctx); err != nil {
 		return err
 	}
-	if err = controller.CheckTotalFileSize(); err != nil {
+	if err = controller.CheckImportDataSize(); err != nil {
 		return err
 	}
 	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {

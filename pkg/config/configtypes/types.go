@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package configtypes contains helper types for encoding and decoding config values.
 package configtypes
 
 import (
@@ -92,7 +91,7 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return errors.WithStack(err)
 }
 
-// MarshalText returns the duration as a JSON string.
+// MarshalText returns the duration as a TOML string.
 func (d Duration) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
 }
