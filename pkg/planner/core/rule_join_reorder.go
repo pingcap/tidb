@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -49,7 +50,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 // The derived output columns are tracked in colExprMap and substituted back into
 // join predicates before the join graph is built.
 func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
-	joinMethodHintInfo := make(map[int]*joinMethodHint)
+	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
 		group              []base.LogicalPlan
 		joinOrderHintInfo  []*h.PlanHints
@@ -140,11 +141,11 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {
 		// If the current join node has the join method hint, we should store the hint information and restore it when we have finished the join reorder process.
 		if join.LeftPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.Children()[0].ID()] = &joinMethodHint{join.LeftPreferJoinType, join.HintInfo}
+			joinMethodHintInfo[join.Children()[0].ID()] = &joinorder.JoinMethodHint{PreferJoinMethod: join.LeftPreferJoinType, HintInfo: join.HintInfo}
 			leftHasHint = true
 		}
 		if join.RightPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.Children()[1].ID()] = &joinMethodHint{join.RightPreferJoinType, join.HintInfo}
+			joinMethodHintInfo[join.Children()[1].ID()] = &joinorder.JoinMethodHint{PreferJoinMethod: join.RightPreferJoinType, HintInfo: join.HintInfo}
 			rightHasHint = true
 		}
 	}
@@ -338,7 +339,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			joinGroupNum := len(curJoinGroup)
 			useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
 
-			leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
+			leadingHintInfo, hasDiffLeadingHint := joinorder.CheckAndGenerateLeadingHint(joinOrderHintInfo)
 			if hasDiffLeadingHint {
 				ctx.GetSessionVars().StmtCtx.SetHintWarning(
 					"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
@@ -472,11 +473,6 @@ func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
 	return leadingHintInfo, hasDiffLeadingHint
 }
 
-type joinMethodHint struct {
-	preferredJoinMethod uint
-	joinMethodHintInfo  *h.PlanHints
-}
-
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
 type basicJoinGroupInfo struct {
 	eqEdges    []*expression.ScalarFunction
@@ -488,7 +484,7 @@ type basicJoinGroupInfo struct {
 	// `joinMethodHintInfo` is used to map the sub-plan's ID to the join method hint.
 	// The sub-plan will join the join reorder process to build the new plan.
 	// So after we have finished the join reorder process, we can reset the join method hint based on the sub-plan's ID.
-	joinMethodHintInfo map[int]*joinMethodHint
+	joinMethodHintInfo map[int]*joinorder.JoinMethodHint
 }
 
 type joinGroupResult struct {
@@ -821,7 +817,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
-	s.setNewJoinWithHint(join)
+	joinorder.SetNewJoinWithHint(join, s.joinMethodHintInfo)
 	return join
 }
 
@@ -846,23 +842,6 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.Lo
 		}
 	}
 	return newJoin
-}
-
-// setNewJoinWithHint sets the join method hint for the join node.
-// Before the join reorder process, we split the join node and collect the join method hint.
-// And we record the join method hint and reset the hint after we have finished the join reorder process.
-func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *logicalop.LogicalJoin) {
-	lChild := newJoin.Children()[0]
-	rChild := newJoin.Children()[1]
-	if joinMethodHint, ok := s.joinMethodHintInfo[lChild.ID()]; ok {
-		newJoin.LeftPreferJoinType = joinMethodHint.preferredJoinMethod
-		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
-	}
-	if joinMethodHint, ok := s.joinMethodHintInfo[rChild.ID()]; ok {
-		newJoin.RightPreferJoinType = joinMethodHint.preferredJoinMethod
-		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
-	}
-	newJoin.SetPreferredJoinType()
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
