@@ -139,27 +139,28 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
 	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
-	if pi.StmtCtx != nil {
-		if pi.MemTracker != nil {
-			bytesConsumed = pi.MemTracker.BytesConsumed()
-		}
-		if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
-			memArbitration = dur.Seconds()
-		}
-		if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
-			memWaitArbitrateStartTime = ts.In(tz).Format("2006-01-02 15:04:05.999")
-			memWaitArbitrateBytes = sz
-		}
-		if pi.DiskTracker != nil {
-			diskConsumed = pi.DiskTracker.BytesConsumed()
+	var affectedRows any
+	if pi.RefCountOfStmtCtx != nil && pi.RefCountOfStmtCtx.TryIncrease() {
+		defer pi.RefCountOfStmtCtx.Decrease()
+		if pi.StmtCtx != nil {
+			if pi.MemTracker != nil {
+				bytesConsumed = pi.MemTracker.BytesConsumed()
+			}
+			if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
+				memArbitration = dur.Seconds()
+			}
+			if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
+				memWaitArbitrateStartTime = ts.In(tz).Format("2006-01-02 15:04:05.999")
+				memWaitArbitrateBytes = sz
+			}
+			if pi.DiskTracker != nil {
+				diskConsumed = pi.DiskTracker.BytesConsumed()
+			}
+			affectedRows = pi.StmtCtx.AffectedRows()
 		}
 	}
 
-	var affectedRows any
 	var cpuUsages ppcpuusage.CPUUsages
-	if pi.StmtCtx != nil {
-		affectedRows = pi.StmtCtx.AffectedRows()
-	}
 	if pi.SQLCPUUsage != nil {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}
