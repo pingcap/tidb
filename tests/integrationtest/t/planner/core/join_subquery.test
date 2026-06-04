@@ -1,0 +1,110 @@
+# TestExplainFormatHintRecoverableForMultipleLeadingQueryBlocks
+drop table if exists t1, t2, t3, t4, t5, t6, t7;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+create table t4(a int, b int, key(a));
+create table t5(a int, b int, key(a));
+create table t6(a int, b int, key(a));
+create table t7(a int, b int, key(a));
+explain format='hint'
+with channel as (
+    select t2.a
+    from t2
+    join t3 on t2.a = t3.a
+    join t6 on t3.a = t6.a
+    union
+    select t4.a
+    from t4
+    join t5 on t4.a = t5.a
+    join t7 on t5.a = t7.a
+)
+select *
+from t1
+join channel on t1.a = channel.a;
+explain format='hint'
+with channel as (
+    select t2.a
+    from t2
+    join t3 on t2.a = t3.a
+    join t6 on t3.a = t6.a
+    union
+    select t4.a
+    from t4
+    join t5 on t4.a = t5.a
+    join t7 on t5.a = t7.a
+)
+select /*+ hash_join_probe(`t1`), use_index(@`sel_1` `t1` ), hash_agg(@`sel_1`), merge_join(@`sel_2` `t6`@`sel_2`), leading(@`sel_2` `t2`@`sel_2`, `t3`@`sel_2`, `t6`@`sel_2`), merge_join(@`sel_2` `t2`@`sel_2`), use_index(@`sel_2` `t2` `a`), order_index(@`sel_2` `t2` `a`), use_index(@`sel_2` `t3` `a`), order_index(@`sel_2` `t3` `a`), use_index(@`sel_2` `t6` `a`), order_index(@`sel_2` `t6` `a`), merge_join(@`sel_3` `t7`@`sel_3`), leading(@`sel_3` `t4`@`sel_3`, `t5`@`sel_3`, `t7`@`sel_3`), merge_join(@`sel_3` `t4`@`sel_3`), use_index(@`sel_3` `t4` `a`), order_index(@`sel_3` `t4` `a`), use_index(@`sel_3` `t5` `a`), order_index(@`sel_3` `t5` `a`), use_index(@`sel_3` `t7` `a`), order_index(@`sel_3` `t7` `a`) */ *
+from t1
+join channel on t1.a = channel.a;
+show warnings;
+drop table if exists t1, t2, t3, t4, t5, t6, t7;
+
+# TestExplainFormatHintDoesNotLeakDerivedTableBaseTableIntoOuterLeading
+drop table if exists t1, t2, t3, t4;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+create table t4(a int, b int, key(a));
+explain format='hint'
+select *
+from t1
+join t3 on t1.a = t3.a
+join t4 on t3.a = t4.a
+left join (
+    select a, sum(b) as s
+    from t2
+    group by a
+) pm on t4.a = pm.a;
+explain format='hint'
+select /*+ leading(`t1`, `t3`, `t4`, `pm`), hash_join_build(`t4`), hash_join_build(`t3`), use_index(@`sel_1` `t1` ), use_index(@`sel_1` `t3` ), use_index(@`sel_1` `t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `t2` ), agg_to_cop(@`sel_2`) */ *
+from t1
+join t3 on t1.a = t3.a
+join t4 on t3.a = t4.a
+left join (
+    select a, sum(b) as s
+    from t2
+    group by a
+) pm on t4.a = pm.a;
+show warnings;
+drop table if exists t1, t2, t3, t4;
+
+# TestCreateBindingFromHistoryWithDerivedTableLeadingAlias
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t1, t2, t3;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a, b));
+select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+set @plan_digest = (select plan_digest from information_schema.statements_summary where query_sample_text = 'select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1');
+create session binding from history using plan digest @plan_digest;
+show warnings;
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where source='history';
+select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+select @@last_plan_from_binding;
+drop session binding for select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+set global tidb_enable_stmt_summary = default;
+
+# TestCreateBindingFromHistoryWithMultipleLeadingQueryBlocks
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t1, t2, t3, t4, t5, t6, t7;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+create table t4(a int, b int, key(a));
+create table t5(a int, b int, key(a));
+create table t6(a int, b int, key(a));
+create table t7(a int, b int, key(a));
+with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a;
+set @plan_digest = (select plan_digest from information_schema.statements_summary where query_sample_text = 'with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a');
+create session binding from history using plan digest @plan_digest;
+show warnings;
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where source='history';
+with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a;
+select @@last_plan_from_binding;
+drop session binding for with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a;
+set global tidb_enable_stmt_summary = default;
