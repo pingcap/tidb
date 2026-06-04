@@ -31,27 +31,16 @@ type TaskMeta struct {
 	Format string `json:"format"`
 	// FileSize is the target size in bytes to cut a new data file.
 	FileSize int64 `json:"file_size"`
-	// LanesPerEncoder is m: each encoder serves m lanes, a lane is one
-	// contiguous sub-range with its own reader and writer (r_i -> w_i).
-	// The number of encoders per subtask is the task concurrency.
-	LanesPerEncoder int `json:"lanes_per_encoder"`
 	// SubtaskRegions is the number of regions per subtask span, 0 means auto.
 	SubtaskRegions int `json:"subtask_regions"`
 }
 
 const defaultLanesPerEncoder = 2
 
-func (m *TaskMeta) effectiveLanesPerEncoder() int {
-	if m.LanesPerEncoder > 0 {
-		return m.LanesPerEncoder
-	}
-	return defaultLanesPerEncoder
-}
-
 // totalLanes is the number of per-writer sub-ranges of one subtask given the
 // task concurrency (= encoder count).
 func (m *TaskMeta) totalLanes(concurrency int) int {
-	return max(concurrency, 1) * m.effectiveLanesPerEncoder()
+	return max(concurrency, 1) * defaultLanesPerEncoder
 }
 
 // SubtaskMeta is the subtask meta of the Dump step. Each subtask owns a

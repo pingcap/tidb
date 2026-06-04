@@ -66,7 +66,6 @@ type exportOptions struct {
 	// thread is the task concurrency, which is also the per-subtask encoder
 	// count.
 	thread         int
-	lanes          int
 	subtaskRegions int
 	detached       bool
 }
@@ -108,12 +107,6 @@ func (e *ExportTableExec) parseOptions() (*exportOptions, error) {
 				return nil, errors.Errorf("invalid thread value")
 			}
 			opts.thread = int(v)
-		case "lanes":
-			v, err := optAsInt64()
-			if err != nil || v <= 0 || v > 16 {
-				return nil, errors.Errorf("invalid lanes value")
-			}
-			opts.lanes = int(v)
 		case "subtask_regions":
 			v, err := optAsInt64()
 			if err != nil || v <= 0 {
@@ -166,14 +159,13 @@ func (e *ExportTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	snapshotTS := ver.Ver
 	tblInfo := e.tbl.Meta()
 	taskMeta := &export.TaskMeta{
-		DBName:          e.plan.Table.Schema.O,
-		TableInfo:       tblInfo,
-		SnapshotTS:      snapshotTS,
-		Dest:            e.plan.Path,
-		Format:          "csv",
-		FileSize:        opts.fileSize,
-		LanesPerEncoder: opts.lanes,
-		SubtaskRegions:  opts.subtaskRegions,
+		DBName:         e.plan.Table.Schema.O,
+		TableInfo:      tblInfo,
+		SnapshotTS:     snapshotTS,
+		Dest:           e.plan.Path,
+		Format:         "csv",
+		FileSize:       opts.fileSize,
+		SubtaskRegions: opts.subtaskRegions,
 	}
 	taskKey := export.TaskKey(tblInfo.ID, snapshotTS)
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/gc"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -133,8 +135,7 @@ func (s *exportScheduler) splitDumpSubtasks(ctx context.Context, execIDs []strin
 
 	metas := make([][]byte, 0, len(physicalIDs))
 	for _, pid := range physicalIDs {
-		start := tablecodec.GenTableRecordPrefix(pid)
-		end := start.PrefixNext()
+		start, end := physicalTableRange(tblInfo, pid)
 		boundaries, err := loadRegionBoundaries(ctx, s.store, start, end)
 		if err != nil {
 			return nil, err
@@ -168,6 +169,18 @@ func (s *exportScheduler) splitDumpSubtasks(ctx context.Context, execIDs []strin
 			zap.Int("subtask-cnt", len(groups)))
 	}
 	return metas, nil
+}
+
+// physicalTableRange returns the record-key range of one physical table.
+// For int-handle tables the start must be a well-formed record key
+// (TiKV returns nothing for a bare "t<id>_r" prefix start), so it mirrors
+// the table reader's FullIntRange.
+func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key) {
+	prefix := tablecodec.GenTableRecordPrefix(pid)
+	if tblInfo.IsCommonHandle {
+		return prefix, prefix.PrefixNext()
+	}
+	return tablecodec.EncodeRowKeyWithHandle(pid, kv.IntHandle(math.MinInt64)), prefix.PrefixNext()
 }
 
 // subtaskCntFor decides how many spans to emit for one physical table. The
