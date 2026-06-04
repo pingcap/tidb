@@ -174,7 +174,7 @@ func TestCheckRequirements(t *testing.T) {
 			c.TotalRealSize = 2
 			err = c.CheckRequirements(ctx, tk.Session())
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-			require.ErrorContains(t, err, "total real import data size 2 exceeds maximum import size limit 1 (total file size 1)")
+			require.ErrorContains(t, err, "total real import data size 2B exceeds maximum import size limit 1B (total file size 1B)")
 		}()
 	}
 

@@ -122,6 +122,6 @@ func (s *mockGCSSuite) TestStarterMaxImportDataSize() {
 		gcsEndpoint,
 	)
 	err := s.tk.QueryToErr(overLimitSQL)
-	require.ErrorContains(s.T(), err, "total real import data size 70 exceeds maximum import size limit 64 (total file size 7)")
+	require.ErrorContains(s.T(), err, "total real import data size 70B exceeds maximum import size limit 64B (total file size 7B)")
 	s.tk.MustQuery("select * from over_limit").Check(testkit.Rows())
 }

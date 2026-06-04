@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -109,10 +110,10 @@ func (e *LoadDataController) checkStarterMaxImportDataSize() error {
 		return nil
 	}
 	return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf(
-		"total real import data size %d exceeds maximum import size limit %d (total file size %d)",
-		e.TotalRealSize,
-		maxImportDataSize,
-		e.TotalFileSize,
+		"total real import data size %s exceeds maximum import size limit %s (total file size %s)",
+		units.BytesSize(float64(e.TotalRealSize)),
+		units.BytesSize(float64(maxImportDataSize)),
+		units.BytesSize(float64(e.TotalFileSize)),
 	))
 }
 
