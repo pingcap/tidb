@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -46,6 +47,12 @@ func (s *storeWithKS) GetKeyspace() string {
 
 type testSQLServer struct {
 	stores map[string]kv.Storage
+}
+
+var _ sqlsvrapi.Server = (*testSQLServer)(nil)
+
+func (*testSQLServer) AcquireKSRuntime(string, string) (sqlsvrapi.KSRuntimeHandle, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (s *testSQLServer) GetKSSessPool(string) (tidbutil.DestroyableSessionPool, error) {
