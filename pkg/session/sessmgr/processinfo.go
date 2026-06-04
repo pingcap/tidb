@@ -140,7 +140,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	diskConsumed := int64(0)
 	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
 	var affectedRows any
-	if pi.RefCountOfStmtCtx.TryIncrease() {
+	if pi.RefCountOfStmtCtx != nil && pi.RefCountOfStmtCtx.TryIncrease() {
 		defer pi.RefCountOfStmtCtx.Decrease()
 		if pi.StmtCtx != nil {
 			if pi.MemTracker != nil {
