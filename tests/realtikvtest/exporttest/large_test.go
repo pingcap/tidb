@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -90,9 +91,16 @@ func TestExportTableLargeDataset(t *testing.T) {
 	require.NoError(t, os.RemoveAll(dir))
 	require.NoError(t, os.MkdirAll(dir, 0755))
 
+	// thread is the task concurrency; writer count is thread*2.
+	thread := 8
+	if v := os.Getenv("EXPORT_LARGE_THREAD"); v != "" {
+		var err error
+		thread, err = strconv.Atoi(v)
+		require.NoError(t, err)
+	}
 	exportStart := time.Now()
 	rows := tk.MustQuery(fmt.Sprintf(
-		"EXPORT TABLE export_large.t TO 'local://%s' WITH thread=8, file_size='256MiB'", dir)).Rows()
+		"EXPORT TABLE export_large.t TO 'local://%s' WITH thread=%d, file_size='256MiB'", dir, thread)).Rows()
 	exportDur := time.Since(exportStart)
 	require.Equal(t, "succeed", rows[0][2])
 
@@ -128,7 +136,7 @@ func TestExportTableLargeDataset(t *testing.T) {
 		require.NoError(t, f.Close())
 	}
 	require.Equal(t, rowCnt, gotRows)
-	t.Logf("exported %d rows, %.2f GiB in %d files, took %s (%.0f MiB/s)",
-		gotRows, float64(totalBytes)/(1<<30), len(names), exportDur,
+	t.Logf("thread=%d: exported %d rows, %.2f GiB in %d files, took %s (%.0f MiB/s)",
+		thread, gotRows, float64(totalBytes)/(1<<30), len(names), exportDur,
 		float64(totalBytes)/(1<<20)/exportDur.Seconds())
 }
