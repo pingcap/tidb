@@ -313,6 +313,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 }
 
 func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
