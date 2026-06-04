@@ -36,7 +36,7 @@ func TestExportTableStatement(t *testing.T) {
 	tk.MustExec(`insert into t values (1,'a"b',1.50,'2026-01-01 00:00:00'),(2,NULL,2.50,NULL),(3,'c\\d',3.00,'2026-02-02 12:00:00')`)
 
 	rows := tk.MustQuery(fmt.Sprintf(
-		"EXPORT TABLE test.t TO 'local://%s' WITH thread=2, lanes=2, file_size='64MiB'", dir)).Rows()
+		"EXPORT TABLE test.t TO 'local://%s' WITH thread=2, file_size='64MiB'", dir)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "succeed", rows[0][2])
 
@@ -57,4 +57,28 @@ func TestExportTableStatement(t *testing.T) {
 	require.Equal(t, "1,\"a\\\"b\",1.50,\"2026-01-01 00:00:00\"\n"+
 		"2,\\N,2.50,\\N\n"+
 		"3,\"c\\\\d\",3.00,\"2026-02-02 12:00:00\"\n", content.String())
+}
+
+func TestExportTableNonClusteredMock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dir := t.TempDir()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t2 (id int, v varchar(64), key(id))")
+	tk.MustExec("insert into t2 values (3,'c'),(1,'a'),(2,NULL)")
+
+	rows := tk.MustQuery(fmt.Sprintf("EXPORT TABLE test.t2 TO 'local://%s'", dir)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "succeed", rows[0][2])
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var content strings.Builder
+	for _, ent := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, ent.Name()))
+		require.NoError(t, err)
+		content.Write(data)
+	}
+	require.Equal(t, "3,\"c\"\n1,\"a\"\n2,\\N\n", content.String())
 }

@@ -20,17 +20,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	readChunkSize = 1024
-	// chunksPerLane bounds the chunks in flight between one reader and its
-	// encoder.
-	chunksPerLane = 2
-	// encodedBufsPerLane bounds the encoded buffers in flight between the
-	// encoder and one writer.
-	encodedBufsPerLane = 2
+	channelBufSize = 2
 )
 
 // lane is one contiguous sub-range with reader/writer affinity: rows read by
@@ -42,8 +37,6 @@ type lane struct {
 	end   kv.Key
 	// encCh carries encoded buffers from the encoder to the lane's writer.
 	encCh chan []byte
-	// freeChunkCh recycles chunks from the encoder back to the reader.
-	freeChunkCh chan *chunk.Chunk
 	// freeBufCh recycles encoded buffers from the writer back to the encoder.
 	freeBufCh chan []byte
 }
@@ -69,28 +62,22 @@ func sendCtx[T any](ctx context.Context, ch chan<- T, v T) error {
 // buffers to the m writer channels by lane.
 func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, ordinal int, bounds []kv.Key) error {
 	laneCnt := len(bounds) - 1
-	m := e.taskMeta.effectiveLanesPerEncoder()
 	eg, egCtx := errgroup.WithContext(ctx)
-	for laneStart := 0; laneStart < laneCnt; laneStart += m {
-		laneEnd := min(laneStart+m, laneCnt)
+	for laneStart := 0; laneStart < laneCnt; laneStart += defaultLanesPerEncoder {
+		laneEnd := min(laneStart+defaultLanesPerEncoder, laneCnt)
 		lanes := make([]*lane, 0, laneEnd-laneStart)
 		for i := laneStart; i < laneEnd; i++ {
 			l := &lane{
-				id:          i,
-				start:       bounds[i],
-				end:         bounds[i+1],
-				encCh:       make(chan []byte, encodedBufsPerLane),
-				freeChunkCh: make(chan *chunk.Chunk, chunksPerLane),
-				freeBufCh:   make(chan []byte, encodedBufsPerLane),
-			}
-			for range chunksPerLane {
-				l.freeChunkCh <- chunk.NewChunkWithCapacity(e.fieldTps, readChunkSize)
+				id:        i,
+				start:     bounds[i],
+				end:       bounds[i+1],
+				encCh:     make(chan []byte, channelBufSize),
+				freeBufCh: make(chan []byte, channelBufSize),
 			}
 			lanes = append(lanes, l)
 		}
-		// readers of this encoder share one channel; per-lane order is kept
-		// because each lane has a single sender.
-		workCh := make(chan laneChunk, len(lanes)*chunksPerLane)
+
+		workCh := make(chan laneChunk, len(lanes)*channelBufSize)
 		for _, l := range lanes {
 			eg.Go(func() error {
 				return e.runReader(egCtx, physicalID, l, workCh)
@@ -117,20 +104,18 @@ func (e *dumpStepExecutor) runReader(ctx context.Context, physicalID int64, l *l
 		return err
 	}
 	defer rs.Close()
+	rows := 0
 	for {
-		var chk *chunk.Chunk
-		select {
-		case chk = <-l.freeChunkCh:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		chk := chunk.NewChunkWithCapacity(e.fieldTps, 128)
 		if err := rs.Next(ctx, chk); err != nil {
 			return errors.Trace(err)
 		}
+
 		if chk.NumRows() == 0 {
-			// EOF sentinel, the encoder closes the lane's writer channel.
+			e.logger.Info("export lane read done", zap.Int("lane", l.id), zap.Int("rows", rows))
 			return sendCtx(ctx, workCh, laneChunk{lane: l})
 		}
+		rows += chk.NumRows()
 		if err := sendCtx(ctx, workCh, laneChunk{lane: l, chk: chk}); err != nil {
 			return err
 		}
@@ -149,27 +134,28 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, lanes []*lane, workCh
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+
 		if lc.chk == nil {
 			close(lc.lane.encCh)
 			remaining--
 			continue
 		}
+
+		// buf must NOT carry over to the next iteration: once sent to encCh
+		// it belongs to the writer until it comes back through freeBufCh.
 		var buf []byte
 		select {
 		case buf = <-lc.lane.freeBufCh:
 			buf = buf[:0]
 		default:
 		}
+
 		buf, err := enc.encodeChunk(lc.chk, buf)
 		if err != nil {
 			return err
 		}
 		e.summary.RowCnt.Add(int64(lc.chk.NumRows()))
-		lc.chk.Reset()
-		select {
-		case lc.lane.freeChunkCh <- lc.chk:
-		default:
-		}
+
 		if err := sendCtx(ctx, lc.lane.encCh, buf); err != nil {
 			return err
 		}
@@ -180,21 +166,26 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, lanes []*lane, workCh
 // runWriter uploads the lane's encoded buffers to the object store, cutting
 // files at FileSize on chunk (row) boundaries.
 func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, l *lane) error {
-	fw := newFileWriter(e.objStore, e.taskMeta, ordinal, l.id)
+	var (
+		buf []byte
+		ok  bool
+		fw  = newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, l.id)
+	)
+
 	for {
-		var buf []byte
-		var ok bool
 		select {
 		case buf, ok = <-l.encCh:
+			if !ok {
+				return fw.Close()
+			}
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		if !ok {
-			return fw.Close(ctx)
-		}
-		if err := fw.Write(ctx, buf); err != nil {
+
+		if err := fw.Write(buf); err != nil {
 			return err
 		}
+
 		e.summary.Bytes.Add(int64(len(buf)))
 		select {
 		case l.freeBufCh <- buf:

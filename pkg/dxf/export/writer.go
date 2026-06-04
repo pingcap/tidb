@@ -125,6 +125,8 @@ func (e *csvEncoder) encodeChunk(chk *chunk.Chunk, buf []byte) ([]byte, error) {
 // a new file when the current one reaches fileSize. Buffers arrive at chunk
 // granularity, so files are always cut at a row boundary.
 type fileWriter struct {
+	ctx context.Context
+
 	store    storeapi.Storage
 	db       string
 	table    string
@@ -137,8 +139,14 @@ type fileWriter struct {
 	curSize int64
 }
 
-func newFileWriter(store storeapi.Storage, taskMeta *TaskMeta, ordinal, writerID int) *fileWriter {
+func newFileWriter(
+	ctx context.Context,
+	store storeapi.Storage,
+	taskMeta *TaskMeta,
+	ordinal, writerID int,
+) *fileWriter {
 	return &fileWriter{
+		ctx:      ctx,
 		store:    store,
 		db:       taskMeta.DBName,
 		table:    taskMeta.TableInfo.Name.O,
@@ -149,40 +157,52 @@ func newFileWriter(store storeapi.Storage, taskMeta *TaskMeta, ordinal, writerID
 }
 
 // Write writes one encoded buffer, cutting files as needed.
-func (w *fileWriter) Write(ctx context.Context, buf []byte) error {
+func (w *fileWriter) Write(buf []byte) error {
 	if len(buf) == 0 {
 		return nil
 	}
-	if w.cur == nil {
-		name := fileName(w.db, w.table, w.ordinal, w.writerID, w.fileIdx)
-		writer, err := w.store.Create(ctx, name, &storeapi.WriterOption{
-			Concurrency: writerPartConc,
-			PartSize:    writerPartSize,
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		w.cur = writer
+	if err := w.switchWriter(); err != nil {
+		return errors.Trace(err)
 	}
-	if _, err := w.cur.Write(ctx, buf); err != nil {
+	if _, err := w.cur.Write(w.ctx, buf); err != nil {
 		return errors.Trace(err)
 	}
 	w.curSize += int64(len(buf))
-	if w.curSize >= w.fileSize {
-		if err := w.cur.Close(ctx); err != nil {
+	return nil
+}
+
+// switchWriter switches to a new file if the current one has reached the size limit.
+func (w *fileWriter) switchWriter() error {
+	if w.curSize <= w.fileSize && w.cur != nil {
+		return nil
+	}
+
+	if w.cur != nil {
+		if err := w.Close(); err != nil {
 			return errors.Trace(err)
 		}
-		w.cur = nil
-		w.curSize = 0
-		w.fileIdx++
 	}
+
+	name := fileName(w.db, w.table, w.ordinal, w.writerID, w.fileIdx)
+	writer, err := w.store.Create(w.ctx, name, &storeapi.WriterOption{
+		Concurrency: writerPartConc,
+		PartSize:    writerPartSize,
+	})
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	w.cur = writer
+	w.curSize = 0
+	w.fileIdx++
 	return nil
 }
 
 // Close closes the current file.
-func (w *fileWriter) Close(ctx context.Context) error {
+func (w *fileWriter) Close() error {
 	if w.cur != nil {
-		if err := w.cur.Close(ctx); err != nil {
+		if err := w.cur.Close(w.ctx); err != nil {
 			return errors.Trace(err)
 		}
 		w.cur = nil
