@@ -24,14 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGetKeyspaceMetaServiceGroup tests the GetKeyspaceMetaServiceGroup function.
-func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
+// TestGetGroup tests the GetGroup function.
+func TestGetGroup(t *testing.T) {
 	globalMetaAddrs := []string{"127.0.0.1:2379"}
 	expectedAddrsStr := "127.0.0.1:2388,127.0.0.1:2389"
 	expectedAddrs := strings.Split(expectedAddrsStr, ",")
 
 	// Test case where keyspaceMeta is nil
-	keyspaceMetaServiceGroup, err := metaservice.GetKeyspaceMetaServiceGroup(nil, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err := metaservice.GetGroup(nil, globalMetaAddrs)
 	require.Nil(t, keyspaceMetaServiceGroup)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, metaservice.ErrNilKeyspaceMeta))
@@ -44,7 +44,7 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 		},
 	}
 
-	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
 
@@ -52,27 +52,27 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 
 	// Test case with blank entries in addresses
 	keyspaceMeta.Config[metaservice.GroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
-	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
 	// Test case where all addresses are blank
 	keyspaceMeta.Config[metaservice.GroupAddrsKey] = " , \t,  "
-	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.Nil(t, keyspaceMetaServiceGroup)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, metaservice.ErrGroupNotMatch))
 
 	// Test case where the group ID exists but addresses do not
 	delete(keyspaceMeta.Config, metaservice.GroupAddrsKey)
-	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, metaservice.ErrGroupNotMatch))
 
 	// Test case where the group ID does not exist
 	delete(keyspaceMeta.Config, metaservice.GroupIDKey)
-	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, metaservice.GlobalGroupID, keyspaceMetaServiceGroup.GroupID)
 	require.ElementsMatch(t, globalMetaAddrs, keyspaceMetaServiceGroup.Addrs)

@@ -39,8 +39,8 @@ const (
 // ErrGroupNotMatch exported for test.
 var ErrGroupNotMatch = errors.New("it is unexpected for the keyspace to have a group ID but no group addresses")
 
-// ErrNilKeyspaceMeta indicates the caller passed a nil keyspace meta to GetKeyspaceMetaServiceGroup.
-var ErrNilKeyspaceMeta = errors.New("GetKeyspaceMetaServiceGroup: keyspace meta is nil")
+// ErrNilKeyspaceMeta indicates the caller passed a nil keyspace meta to GetGroup.
+var ErrNilKeyspaceMeta = errors.New("GetGroup: keyspace meta is nil")
 
 // Info includes the global meta service address and the TiDB meta service group info.
 type Info struct {
@@ -55,8 +55,8 @@ type Group struct {
 	Addrs   []string
 }
 
-// GetKeyspaceMetaServiceGroup return keyspace meta service group.
-func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (*Group, error) {
+// GetGroup returns the keyspace meta service group.
+func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (*Group, error) {
 	if keyspaceMeta == nil {
 		return nil, ErrNilKeyspaceMeta
 	}
@@ -114,7 +114,7 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pd
 		return metaInfo, nil
 	}
 
-	keyspaceServiceGroup, err := GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceServiceGroup, err := GetGroup(keyspaceMeta, globalMetaAddrs)
 	if err != nil {
 		return nil, err
 	}
