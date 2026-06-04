@@ -879,6 +879,12 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 }
 
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
+	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
+	// different properties.
+	path.GroupedRanges = nil
+	path.GroupByColIdxs = nil
+
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched
@@ -1110,8 +1116,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		matchIdxes := make([]int, 0, 1)
 		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
-			// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-			if !noSortItem && matchProperty(ds, oneAlternative, prop) != property.PropMatched {
+			if !noSortItem && !matchProperty(ds, oneAlternative, prop).Matched() {
 				continue
 			}
 			// two possibility here:
@@ -1238,8 +1243,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return property.PropNotMatched
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-		if matchProperty(ds, partialPath, prop) != property.PropMatched {
+		if !matchProperty(ds, partialPath, prop).Matched() {
 			return property.PropNotMatched
 		}
 	}
@@ -1960,8 +1964,6 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 }
 
 func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
-	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
-		"partial paths of index merge path should not match property using merge sort")
 	is := getOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -1969,8 +1971,13 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 			is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.schema)
 		}
-		// Add sort items for index scan for merge-sort operation between partitions.
+		// Add sort items for index scan for merge-sort operation between partitions or range groups.
 		is.ByItems = byItems
+		// Copy GroupedRanges for merge sort within this partial path (for IN conditions).
+		if len(path.GroupedRanges) > 0 {
+			is.GroupedRanges = path.GroupedRanges
+			is.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 
 	// Add a `Selection` for `IndexScan` with global index.
@@ -2009,8 +2016,6 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 }
 
 func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
-	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
-		"partial paths of index merge path should not match property using merge sort")
 	ts, rowCount := getOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
@@ -2027,6 +2032,10 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
 		}
 		ts.ByItems = byItems
+		if len(path.GroupedRanges) > 0 {
+			ts.GroupedRanges = path.GroupedRanges
+			ts.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.filterCondition, nil)
