@@ -131,6 +131,16 @@ func TestValidatePattern(t *testing.T) {
 	// If pattern doesn't match our table's file, it's also invalid
 	require.False(t, isValidPattern("*.csv", tableFiles, smallAll))
 
+	subdirTableFiles := map[string]struct{}{
+		"dir/subdir1/a.csv": {},
+		"dir/subdir2/b.csv": {},
+	}
+	subdirAll := map[string]mydump.FileInfo{
+		"dir/subdir1/a.csv": {},
+		"dir/subdir2/b.csv": {},
+	}
+	require.True(t, isValidPattern("dir/subdir*/*.csv", subdirTableFiles, subdirAll))
+
 	// empty pattern => invalid
 	require.False(t, isValidPattern("", tableFiles, smallAll))
 }
@@ -205,4 +215,48 @@ func TestGenerateWildcardPath(t *testing.T) {
 	_, err = generateWildcardPath(files4, allFiles4)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot generate a unique wildcard pattern")
+
+	files5 := []mydump.FileInfo{
+		{
+			TableName: filter.Table{Schema: "db", Name: "tb"},
+			FileMeta: mydump.SourceFileMeta{
+				Path:        "dir/subdir1/a.csv",
+				Type:        mydump.SourceTypeCSV,
+				Compression: mydump.CompressionNone,
+			},
+		},
+		{
+			TableName: filter.Table{Schema: "db", Name: "tb"},
+			FileMeta: mydump.SourceFileMeta{
+				Path:        "dir/subdir1/b.csv",
+				Type:        mydump.SourceTypeCSV,
+				Compression: mydump.CompressionNone,
+			},
+		},
+		{
+			TableName: filter.Table{Schema: "db", Name: "tb"},
+			FileMeta: mydump.SourceFileMeta{
+				Path:        "dir/subdir2/c.csv",
+				Type:        mydump.SourceTypeCSV,
+				Compression: mydump.CompressionNone,
+			},
+		},
+		{
+			TableName: filter.Table{Schema: "db", Name: "tb"},
+			FileMeta: mydump.SourceFileMeta{
+				Path:        "dir/subdir2/d.csv",
+				Type:        mydump.SourceTypeCSV,
+				Compression: mydump.CompressionNone,
+			},
+		},
+	}
+	allFiles5 := map[string]mydump.FileInfo{
+		files5[0].FileMeta.Path: files5[0],
+		files5[1].FileMeta.Path: files5[1],
+		files5[2].FileMeta.Path: files5[2],
+		files5[3].FileMeta.Path: files5[3],
+	}
+	path5, err := generateWildcardPath(files5, allFiles5)
+	require.NoError(t, err)
+	require.Equal(t, "dir/subdir*/*.csv", path5)
 }

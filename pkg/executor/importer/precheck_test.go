@@ -136,9 +136,16 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "there is active job on the target table already")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
 	// cancel the job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
 
+	// async-prepare submit path skips file-size check before InitDataFiles.
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.DisablePrecheck = false
 	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)
 
@@ -226,7 +233,11 @@ func TestCheckRequirements(t *testing.T) {
 	c.Plan.CloudStorageURI = "local:///tmp"
 	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "unsupported cloud storage uri scheme: local")
 	c.Plan.CloudStorageURI = "azblob://test-bucket/path?account-name=test-account&sas-token=xxxxxx&endpoint=http://127.0.0.1:1/devstoreaccount1"
-	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "check cloud storage uri access")
+	// Azure SDK retries unreachable endpoints aggressively; bound this negative check
+	// so the test still verifies the same failure path without dominating runtime.
+	azblobCtx, cancel := context.WithTimeout(ctx, time.Second)
+	require.ErrorContains(t, c.CheckRequirements(azblobCtx, tk.Session()), "check cloud storage uri access")
+	cancel()
 	// this mock cannot mock credential check, so we just skip it.
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)

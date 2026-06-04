@@ -451,7 +451,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:10",
-          "      └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#12"
+          "      └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column"
         ],
         "Warn": null
       },
@@ -487,7 +487,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:10",
-          "      └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#14"
+          "      └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column"
         ],
         "Warn": null
       },
@@ -499,7 +499,7 @@
           "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TopN mpp[tiflash]  Column, offset:0, count:10",
-          "        └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#14"
+          "        └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column"
         ],
         "Warn": null
       },
@@ -706,7 +706,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:10",
-          "      └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#12"
+          "      └─TableFullScan mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column"
         ],
         "Warn": null
       },

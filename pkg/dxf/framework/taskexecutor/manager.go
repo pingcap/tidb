@@ -70,6 +70,7 @@ type Manager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logger       *zap.Logger
+	sampleLogger *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
 	trace        *traceevent.Trace
@@ -78,8 +79,10 @@ type Manager struct {
 // NewManager creates a new task executor Manager.
 func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
+	sampleLogger := handle.NewSampleErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
+		sampleLogger = sampleLogger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
@@ -87,6 +90,7 @@ func NewManager(ctx context.Context, store kv.Storage, id string, taskTable Task
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
+		sampleLogger: sampleLogger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
 		trace:        traceevent.NewTrace(),
@@ -182,7 +186,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.logger.Error("failed to get executable task", zap.Error(err))
+		m.sampleLogger.Error("failed to get executable task", zap.Error(err))
 		return
 	}
 
@@ -390,7 +394,7 @@ func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		m.logger.Error("met retryable err", zap.Error(err))
+		m.logger.Warn("met retryable err", zap.Error(err))
 		return
 	}
 	err1 := m.runWithRetry(func() error {

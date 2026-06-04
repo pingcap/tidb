@@ -443,6 +443,20 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	}, 10*time.Second, 300*time.Millisecond)
 }
 
+// setupAddIndexClassicVars enables fast-reorg and toggles the dist-task mode
+// in classic kernel. It is a no-op in next-gen.
+func setupAddIndexClassicVars(tk *testkit.TestKit, distTaskOn bool) {
+	if !kerneltype.IsClassic() {
+		return
+	}
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+	if distTaskOn {
+		tk.MustExec("set global tidb_enable_dist_task = 1")
+	} else {
+		tk.MustExec("set global tidb_enable_dist_task = 0")
+	}
+}
+
 func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 	runCase := func(t *testing.T, distTaskOn bool) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -450,14 +464,7 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 
-		if kerneltype.IsClassic() {
-			tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
-			if distTaskOn {
-				tk.MustExec("set global tidb_enable_dist_task = 1")
-			} else {
-				tk.MustExec("set global tidb_enable_dist_task = 0")
-			}
-		}
+		setupAddIndexClassicVars(tk, distTaskOn)
 		ingest.ForceSyncFlagForTest.Store(true)
 
 		tk.MustExec("drop table if exists t")
@@ -472,6 +479,49 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 			"1*return")
 		defer testfailpoint.Disable(t,
 			"github.com/pingcap/tidb/pkg/ddl/ingest/ddlIngestFailOnceBeforeCheckpointUpdated")
+
+		tk.MustExec("alter table t add unique index idx_b(b)")
+
+		tblCntStr := tk.MustQuery("select count(*) from t").Rows()[0][0].(string)
+		idxCntStr := tk.MustQuery("select count(*) from t use index(idx_b)").Rows()[0][0].(string)
+		tblCnt, err := strconv.Atoi(tblCntStr)
+		require.NoError(t, err)
+		idxCnt, err := strconv.Atoi(idxCntStr)
+		require.NoError(t, err)
+		require.Equal(t, tblCnt, idxCnt)
+
+		tk.MustExec("admin check table t")
+	}
+
+	t.Run("dist_task_off", func(t *testing.T) { runCase(t, false) })
+	t.Run("dist_task_on", func(t *testing.T) { runCase(t, true) })
+}
+
+func TestAddIndexResumesFromCheckpointAfterPartialScan(t *testing.T) {
+	runCase := func(t *testing.T, distTaskOn bool) {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		setupAddIndexClassicVars(tk, distTaskOn)
+		ingest.ForceSyncFlagForTest.Store(true)
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint primary key, b bigint)")
+		for i := range 2000 {
+			tk.MustExec("insert into t values (?, ?)", i, i)
+		}
+
+		// Let the first chunk fetch in scanRecords succeed, then inject an
+		// error on the second fetch. The local-ingest path buffers scan
+		// results until the scan finishes, so this exercises the partial-scan
+		// checkpoint path where the retry must restart without a flushed chunk
+		// advancing the checkpoint. Subsequent fetches (in the retry) see the
+		// failpoint as already consumed and proceed normally.
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ddl/mockScanRecordPartialError",
+			"1*return(false)->1*return(true)")
 
 		tk.MustExec("alter table t add unique index idx_b(b)")
 

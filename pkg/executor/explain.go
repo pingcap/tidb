@@ -143,7 +143,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			if ruDetailsRaw != nil {
 				ruDetails = ruDetailsRaw.(*clientutil.RUDetails).Clone()
 			}
-			ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+			ruv2Metrics := execdetails.SyncRUV2MetricsFromContext(ctx)
 			if ruDetails != nil || ruv2Metrics != nil {
 				ruVersion := rmclient.DefaultRUVersion
 				if do := domain.GetDomain(e.Ctx()); do != nil {

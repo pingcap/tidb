@@ -12,6 +12,14 @@ port = 4000
 # Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
+# Deployment mode, [premium, premium_reserved, starter]. It is initialized during
+# startup and cannot be changed after it is set.
+deploy-mode = "premium"
+
+# Limits the local TiDB resources available to DXF tasks, [10, 100].
+# This can only be configured when deploy-mode is "premium_reserved".
+# dxf-resource-limit = 100
+
 # TiDB storage path.
 path = "/tmp/tidb"
 
@@ -437,6 +445,15 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# Map selected keyspace metadata entries to observability outputs.
+# Only valid when deploy-mode is starter.
+# [[keyspace-observability.fields]]
+# source = "meta_key"
+# metric-label = "keyspace_meta_metric_label"
+# slow-log-field = "Keyspace_meta_slow_log_field"
+# stmt-log-field = "stmt_log_field"
+# required = false
 
 # instance scope variables
 # These options are also available as a system variable for online configuration

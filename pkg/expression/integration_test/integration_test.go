@@ -207,7 +207,10 @@ func TestFTSSyntax(t *testing.T) {
 	// tk.MustContainErrMsg("select * from t where (fts_match_word('hello', title)) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
 	// tk.MustContainErrMsg("select (fts_match_word('hello', title)) AS score from t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
 	tk.MustContainErrMsg("select * from t where match() against ('hello')", `You have an error in your SQL syntax`)
-	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `UnknownType: *ast.MatchAgainst`)
+	// Test MATCH...AGAINST with alternative plans - LIKE fallback competes on cost
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=ON")
+	tk.MustQuery("select * from t where match(title) against ('hello' in boolean mode)")
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=OFF")
 	tk.MustContainErrMsg("select * from t where fts_match_word(title, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(45.67, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `Incorrect parameter count in the call to native function`)
@@ -2122,6 +2125,20 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
 	require.Equal(t, "gt(hour(cast(test.t.b, time)), 10)", fmt.Sprintf("%v", rows[0][4]))
 
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double, primary key (c0))")
+	tk.MustExec("insert into t0 values (1)")
+	expectedRows := testkit.Rows("1")
+	withPKRows := tk.MustQuery("select c0 from t0 where /* issue:67236 */ atan2((t0.c0 is null), -('a'))").Rows()
+	require.Equal(t, expectedRows, withPKRows)
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double)")
+	tk.MustExec("insert into t0 values (1)")
+	withoutPKRows := tk.MustQuery("select c0 from t0 where /* issue:67236 */ atan2((t0.c0 is null), -('a'))").Rows()
+	require.Equal(t, expectedRows, withoutPKRows)
+	require.Equal(t, withPKRows, withoutPKRows)
+
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'Cast.CastTimeAsDuration' and store_type = 'tikv' and reason = 'for test'")
@@ -2917,6 +2934,9 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("7 7 8 7 8 8"))
 	result = tk.MustQuery(`select week("2008-02-20", 5), week("2008-02-20", 6), week("2009-02-20", 7), week("2008-02-20", 8), week("2008-02-20", 9);`)
 	result.Check(testkit.Rows("7 8 7 7 8"))
+	result = tk.MustQuery(`select week("2023-01-01", null);`)
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select week("aa", 1), week(null, 2), week(11, 2), week(12.99, 2);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select week("aa"), week(null), week(11), week(12.99);`)
@@ -4297,6 +4317,23 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// other plans
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
+}
+
+func TestIssue66661(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table table1 (active bit)")
+	tk.MustExec("insert into table1 values (1)")
+
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select hex(cast(any_value(active) as char)) from table1").Check(testkit.Rows("01"))
+		tk.MustQuery("select str_to_date(any_value(active), '%h:%i:%s') from table1").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00")
+		tk.MustQuery("select max(active) as c0 from table1 where str_to_date(any_value(active), '%h:%i:%s')").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00")
+	}
 }
 
 func TestIssue43527(t *testing.T) {

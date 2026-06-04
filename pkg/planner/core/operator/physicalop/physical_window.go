@@ -221,7 +221,7 @@ func FormatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, des
 		if i != 0 {
 			buffer.WriteString(", ")
 		}
-		fmt.Fprintf(buffer, "%v->%v", desc.StringWithCtx(ctx, perrors.RedactLogDisable), schema.Columns[winFuncStartIdx+i])
+		fmt.Fprintf(buffer, "%v->%v", desc.StringWithCtx(ctx, perrors.RedactLogDisable), schema.Columns[winFuncStartIdx+i].ExplainInfo(ctx))
 	}
 	return buffer
 }

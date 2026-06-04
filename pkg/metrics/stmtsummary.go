@@ -27,6 +27,11 @@ const (
 	StmtSummaryTypeV1 = "v1"
 	// StmtSummaryTypeV2 marks metrics reported by the persistent statement summary implementation.
 	StmtSummaryTypeV2 = "v2"
+
+	// StmtSummaryEvictedLogResultPersisted marks evicted records submitted to the stmt log.
+	StmtSummaryEvictedLogResultPersisted = "persisted"
+	// StmtSummaryEvictedLogResultDropped marks evicted records dropped before reaching the stmt log.
+	StmtSummaryEvictedLogResultDropped = "dropped"
 )
 
 var (
@@ -38,6 +43,9 @@ var (
 	// evictions that have occurred in the current statement summary window.
 	// This value resets to 0 when the window rotates.
 	StmtSummaryWindowEvictedCount *prometheus.GaugeVec
+
+	// StmtSummaryEvictedLogCounter counts v2 evicted-log persistence outcomes.
+	StmtSummaryEvictedLogCounter *prometheus.CounterVec
 
 	stmtSummaryWindowRecordCountV1  prometheus.Gauge
 	stmtSummaryWindowRecordCountV2  prometheus.Gauge
@@ -64,6 +72,14 @@ func InitStmtSummaryMetrics() {
 			Name:      "window_evicted_count",
 			Help:      "The number of LRU evictions in the current statement summary window.",
 		}, []string{LblType})
+
+	StmtSummaryEvictedLogCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "stmt_summary",
+			Name:      "evicted_log_total",
+			Help:      "The number of v2 statement summary evicted-log records by result.",
+		}, []string{LblType, LblResult})
 
 	stmtSummaryWindowMetricsMu.Lock()
 	stmtSummaryWindowRecordCountV1 = nil

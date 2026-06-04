@@ -406,6 +406,17 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
+// Plan replayer loads recorded statistics for troubleshooting/reproduction.
+// Auto-analyze can run right after restore and overwrite those stats, which
+// makes the restored environment drift from the captured one.
+func disableAutoAnalyzeForPlanReplayerLoad(ctx sessionctx.Context) error {
+	return errors.AddStack(ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(
+		context.Background(),
+		vardef.TiDBEnableAutoAnalyze,
+		vardef.Off,
+	))
+}
+
 // createSchemaAndItems creates schema and tables or views
 func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
@@ -495,7 +506,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		return err
 	}
-
+	// Explicitly disable auto-analyze after restore so imported stats stay stable.
+	// Users can re-enable it manually when they no longer need a frozen replay env.
+	err = disableAutoAnalyzeForPlanReplayerLoad(e.Ctx)
+	if err != nil {
+		return err
+	}
 	// build schema and table first
 	var databaseSets map[string]struct{}
 	databaseSets, err = e.createTable(z)
@@ -535,6 +551,13 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
+
+	// Notify users that PLAN REPLAYER LOAD disables auto-analyze to keep restored stats stable.
+	e.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"`PLAN REPLAYER LOAD` sets @@global.%s=OFF to keep restored statistics stable; re-enable it manually if needed",
+		vardef.TiDBEnableAutoAnalyze,
+	))
+
 	return nil
 }
 

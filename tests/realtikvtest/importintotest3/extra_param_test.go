@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -27,10 +28,19 @@ import (
 func (s *mockGCSSuite) TestExtraParamMaxRuntimeSlots() {
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
 		func(requiredSlots *int, params *proto.ExtraParams) {
-			*requiredSlots = 16
+			if kerneltype.IsClassic() {
+				*requiredSlots = 16
+			}
 			params.MaxRuntimeSlots = 12
 		},
 	)
+	if kerneltype.IsNextGen() {
+		testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/afterPrepare",
+			func(task *proto.Task) {
+				task.RequiredSlots = 16
+			},
+		)
+	}
 	var callCnt int
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool/NewWorkerPool", func(numWorkers int) {
 		s.EqualValues(12, numWorkers)

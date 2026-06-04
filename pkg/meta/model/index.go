@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -477,6 +478,58 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr
 	return true
 }
 
+// FindIndexByColumnsForForeignKey finds an index that can be safely used by a foreign key.
+func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
+	for _, index := range indices {
+		if IsIndexPrefixCoveredForForeignKey(tbInfo, index, cols...) {
+			return index
+		}
+	}
+	return nil
+}
+
+// IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
+// and whether the partial index predicate, if any, is safe for foreign key checks.
+func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr) bool {
+	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
+		return false
+	}
+	return isIndexConditionCoveredByForeignKeyCols(index, cols...)
+}
+
+// isIndexConditionCoveredByForeignKeyCols returns whether the partial index predicate
+// is implied by the rows that need foreign key checks.
+//
+// Foreign keys currently use MATCH SIMPLE semantics: for a composite foreign key,
+// a row participates in checks and cascades only when all foreign key columns are
+// non-NULL. Therefore, a predicate of "<fk-col> IS NOT NULL" on any one foreign
+// key column is safe, because every row that needs a foreign key lookup satisfies
+// it. Predicates on non-foreign-key columns, or stricter predicates such as
+// comparisons, may filter out rows that still need checks and are not safe here.
+func isIndexConditionCoveredByForeignKeyCols(index *IndexInfo, cols ...ast.CIStr) bool {
+	if !index.HasCondition() {
+		return true
+	}
+	expr, err := index.ConditionExpr()
+	if err != nil {
+		return false
+	}
+	isNullExpr, ok := expr.(*ast.IsNullExpr)
+	if !ok || !isNullExpr.Not {
+		return false
+	}
+	colExpr, ok := isNullExpr.Expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return false
+	}
+	for _, col := range cols {
+		if colExpr.Name.Name.L == col.L {
+			return true
+		}
+	}
+	return false
+}
+
 // FindIndexInfoByID finds IndexInfo in indices by id.
 func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	for _, idx := range indices {
@@ -513,4 +566,14 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
+}
+
+func init() {
+	if kerneltype.IsNextGen() {
+		// For now, we don't need to detect job version and global index v1 support for NextGen
+		// as they are always V2 and support global index v1.
+		// To keep align with the logic of `JobVersion`, we set it in the init function of model
+		// package. The `JobVersion` is set in the init function of `job.go`.
+		SetGlobalIndexV1Supported(true)
+	}
 }

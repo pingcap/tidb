@@ -1099,8 +1099,9 @@ local RunawaySyncerCheckpointPanel = graphPanel.new(
   legend_values=true,
   format="none",
   logBase1Y=1,
+  labelY1="Unix ms",
   decimals=0,
-  description="The current checkpoint (last synced record ID) of runaway syncer for watch and watch_done tables.",
+  description="The current lower-bound checkpoint of runaway syncer, expressed as Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done). A value of 0 means no checkpoint has been established yet.",
 ).addTarget(
   prometheus.target(
     'tidb_server_runaway_syncer_checkpoint{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}',

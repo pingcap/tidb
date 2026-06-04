@@ -15,32 +15,59 @@
 package sessiontest
 
 import (
-	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNextGenTiKVRegionStatus(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int);")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key idx(a));")
+	tk.MustExec("split table t between (0) and (10000) regions 4")
+	tk.MustExec("split table t index idx between (0) and (10000) regions 4")
 
-	showRegions := tk.MustQuery("show table t regions").Rows()
-	t.Log(showRegions)
-	require.Equal(t, 1, len(showRegions), showRegions)
+	tableID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'`).Rows()[0][0]
+	showRegions := uniqueSortedRegionIDs(tk.MustQuery("show table t regions").Rows())
+	showIndexRegions := uniqueSortedRegionIDs(tk.MustQuery("show table t index idx regions").Rows())
 	tikvRegions := tk.MustQuery(fmt.Sprintf(
-		"select region_id from information_schema.tikv_region_status where table_id = %d", tbl.Meta().ID)).Rows()
-	require.Equal(t, 1, len(tikvRegions), tikvRegions)
-	t.Log(tikvRegions)
-	require.Equal(t, showRegions[0][0], tikvRegions[0][0])
+		"select region_id from information_schema.tikv_region_status where table_id = %v", tableID)).Rows()
+	tikvIndexRegions := tk.MustQuery(fmt.Sprintf(
+		"select region_id from information_schema.tikv_region_status where table_id = %v and is_index = 1", tableID)).Rows()
+	require.Equal(t, showRegions, uniqueSortedRegionIDs(tikvRegions))
+	require.Equal(t, showIndexRegions, uniqueSortedRegionIDs(tikvIndexRegions))
+}
+
+func TestNextGenTiKVRegionStatusDoesNotMixOtherKeyspaces(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only runs in nextgen kernel")
+	}
+
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
+	sysTK := testkit.NewTestKit(t, runtimes[keyspace.System].Store)
+	sysTK.MustExec("create database if not exists sys_region_status")
+	sysTK.MustExec("use sys_region_status")
+	sysTK.MustExec("drop table if exists t")
+	sysTK.MustExec("create table t (a int, key idx(a))")
+	sysTK.MustExec("split table t between (0) and (10000) regions 4")
+	sysTK.MustExec("split table t index idx between (0) and (10000) regions 4")
+
+	systemRegionIDs := uniqueSortedRegionIDs(sysTK.MustQuery("show table t regions").Rows())
+	require.NotEmpty(t, systemRegionIDs)
+
+	userTK := testkit.NewTestKit(t, runtimes["keyspace1"].Store)
+	userTK.MustQuery(fmt.Sprintf(
+		"select count(*) from information_schema.tikv_region_status where region_id in (%s)",
+		strings.Join(systemRegionIDs, ","))).Check(testkit.Rows("0"))
 }
 
 func TestTableReaderWithSnapshot(t *testing.T) {
@@ -58,4 +85,19 @@ func TestTableReaderWithSnapshot(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("set @@tidb_snapshot=@ts;")
 	tk.MustQuery("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='test' AND (TABLE_TYPE='BASE TABLE')").Check(testkit.Rows("t BASE TABLE 0"))
+}
+
+func uniqueSortedRegionIDs(rows [][]any) []string {
+	seen := make(map[string]struct{}, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id := row[0].(string)
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }

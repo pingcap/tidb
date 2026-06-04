@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
@@ -76,13 +75,6 @@ type baseTxnContextProvider struct {
 	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
 	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
 	constStartTS uint64
-}
-
-func currentStatementRUV2RPCInterceptor(sessVars *variable.SessionVars) interceptor.RPCInterceptor {
-	if sessVars == nil {
-		return nil
-	}
-	return drivertxn.NewStatementRUV2RPCInterceptor(sessVars.RUV2Metrics)
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -463,14 +455,10 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	ruv2Interceptor := currentStatementRUV2RPCInterceptor(sessVars)
 	txnCtx := sessVars.TxnCtx
 
 	var snapshot kv.Snapshot
 	if kvTxn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		if ruv2Interceptor != nil {
-			kvTxn.SetOption(kv.RPCInterceptor, ruv2Interceptor)
-		}
 		snapshot = kvTxn.GetSnapshot()
 	} else {
 		snapshot = internal.GetSnapshotWithTS(
@@ -478,9 +466,6 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 			snapshotTS,
 			temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
 		)
-		if ruv2Interceptor != nil {
-			snapshot.SetOption(kv.RPCInterceptor, ruv2Interceptor)
-		}
 	}
 	snapshot.SetOption(kv.ReplicaRead, p.sctx.GetSessionVars().GetReplicaRead())
 
@@ -532,9 +517,6 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
-	}
-	if interceptor := currentStatementRUV2RPCInterceptor(sessVars); interceptor != nil {
-		txn.SetOption(kv.RPCInterceptor, interceptor)
 	}
 	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
 	txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
@@ -634,9 +616,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
-	}
-	if interceptor := currentStatementRUV2RPCInterceptor(sessVars); interceptor != nil {
-		txn.SetOption(kv.RPCInterceptor, interceptor)
 	}
 
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {

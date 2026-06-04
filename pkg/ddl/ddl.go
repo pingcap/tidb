@@ -880,8 +880,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	if kerneltype.IsClassic() {
 		d.detectAndUpdateJobVersion()
-	} else {
-		d.detectAndUpdateGlobalIndexV1Support()
 	}
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
@@ -966,6 +964,9 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
+// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
+// version is always started with V2, no need to detect kernel version.
+//
 // detect versions of all TiDB instances and choose a job version to use, rules:
 //   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
 //     is not set, else use V1, we use this rule to run unit-tests using V1.
@@ -1090,41 +1091,6 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
 	}
 	return nil
-}
-
-// detectAndUpdateGlobalIndexV1Support is used in NextGen mode where
-// detectAndUpdateJobVersion is not called. It only handles the global
-// index V1 support flag.
-func (d *ddl) detectAndUpdateGlobalIndexV1Support() {
-	if d.etcdCli == nil {
-		model.SetGlobalIndexV1Supported(true)
-		return
-	}
-	// In production NextGen with etcd, run the same detection logic.
-	if err := d.detectAndUpdateJobVersionOnce(); err != nil {
-		logutil.DDLLogger().Warn("detect global index V1 support failed", zap.String("err", err.Error()))
-	}
-	if model.GetGlobalIndexV1Supported() {
-		return
-	}
-	d.wg.RunWithLog(func() {
-		ticker := time.NewTicker(detectJobVerInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-			case <-d.ctx.Done():
-				return
-			}
-			if err := d.detectAndUpdateJobVersionOnce(); err != nil {
-				logutil.SampleLogger().Warn("detect global index V1 support failed", zap.String("err", err.Error()))
-			}
-			if model.GetGlobalIndexV1Supported() {
-				logutil.DDLLogger().Info("global index V1 supported now, stop detecting")
-				return
-			}
-		}
-	})
 }
 
 func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
@@ -1365,19 +1331,30 @@ var (
 	RunInGoTest bool
 )
 
+// GetRecoverSnapshotTS returns the snapshot timestamp for reconstructing
+// metadata from a finished drop/truncate table or drop schema job.
+func GetRecoverSnapshotTS(job *model.Job) uint64 {
+	if job.RealStartTS != 0 {
+		return job.RealStartTS
+	}
+	return job.StartTS
+}
+
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-		if err != nil {
-			return false, err
-		}
 		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 			continue
 		}
 
-		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
+		snapshotTS := GetRecoverSnapshotTS(job)
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(snapshotTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+
+		tbl, err := getTable(snapshotTS, job.SchemaID, job.TableID)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
 				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,

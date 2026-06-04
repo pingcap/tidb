@@ -2205,6 +2205,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		}
 
 		if err == nil {
+			if sctx.GetSessionVars().StmtCtx.RelatedTableIDs == nil {
+				sctx.GetSessionVars().StmtCtx.RelatedTableIDs = make(map[int64]struct{})
+			}
 			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[retTbl.Meta().ID] = struct{}{}
 		}
 

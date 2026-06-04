@@ -45,7 +45,7 @@ func (m *mockGCStatesClient) DeleteGCBarrier(_ context.Context, _ string) (*pdgc
 	return nil, nil
 }
 
-func (m *mockGCStatesClient) GetGCState(_ context.Context) (pdgc.GCState, error) {
+func (m *mockGCStatesClient) GetGCState(_ context.Context, _ ...pdgc.GCStatesAPIOption) (pdgc.GCState, error) {
 	return pdgc.GCState{}, nil
 }
 
@@ -57,7 +57,7 @@ func (m *mockGCStatesClient) DeleteGlobalGCBarrier(_ context.Context, _ string) 
 	return nil, nil
 }
 
-func (m *mockGCStatesClient) GetAllKeyspacesGCStates(_ context.Context) (pdgc.ClusterGCStates, error) {
+func (m *mockGCStatesClient) GetAllKeyspacesGCStates(_ context.Context, _ ...pdgc.GCStatesAPIOption) (pdgc.ClusterGCStates, error) {
 	return pdgc.ClusterGCStates{}, nil
 }
 
@@ -160,6 +160,7 @@ type mockTableIR struct {
 	hasImplicitRowID bool
 	rowErr           error
 	rows             *sql.Rows
+	columnInfos      []*ColumnInfo
 	SQLRowIter
 }
 
@@ -256,6 +257,10 @@ func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
 
+func (m *mockTableIR) ColumnInfos() []*ColumnInfo {
+	return m.columnInfos
+}
+
 func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) *mockTableIR {
 	return &mockTableIR{
 		dbName:        databaseName,
@@ -266,5 +271,23 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		selectedLen:   len(colTypes),
 		colTypes:      colTypes,
 		SQLRowIter:    nil,
+	}
+}
+
+func newMockTableIRWithColumnInfo(databaseName, tableName string, data [][]driver.Value, specialComments []string, infos []*ColumnInfo) *mockTableIR {
+	colTypes := make([]string, len(infos))
+	for i, info := range infos {
+		colTypes[i] = info.DatabaseTypeName
+	}
+	return &mockTableIR{
+		dbName:        databaseName,
+		tblName:       tableName,
+		data:          data,
+		specCmt:       specialComments,
+		selectedField: "*",
+		selectedLen:   len(infos),
+		colTypes:      colTypes,
+		SQLRowIter:    nil,
+		columnInfos:   infos,
 	}
 }

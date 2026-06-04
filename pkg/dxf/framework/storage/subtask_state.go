@@ -99,8 +99,7 @@ func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID
 		end_time = CURRENT_TIMESTAMP()
 		where exec_id = %? and
 		task_key = %? and
-		state in (%?, %?)
-		limit 1;`,
+		state in (%?, %?);`,
 		proto.SubtaskStateCanceled,
 		execID,
 		taskID,

@@ -110,7 +110,7 @@ func getPartitionInfoFromPlan(plan []string) string {
 		if i > 0 {
 			buf.WriteString("; ")
 		}
-		buf.WriteString(fmt.Sprintf("%v: %v", info.Table, info.Partitions))
+		fmt.Fprintf(buf, "%v: %v", info.Table, info.Partitions)
 	}
 	return buf.String()
 }
@@ -674,9 +674,9 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 'D'`).Check(testkit.Rows("D"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partD})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partY})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + tc.partNull})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partD})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partY})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + tc.partNull})
 			tk.MustExec(`drop table t`)
 			tk.MustExec(`CREATE TABLE t (a varchar(9) PRIMARY KEY)` + tc.partitionBy)
 			tk.MustExec(`insert into t values ('Y'),('D')`)
@@ -684,9 +684,9 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 'D'`).Check(testkit.Rows("D"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> NULL`).Check(testkit.Rows())
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partD})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partY})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + tc.partNull})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partD})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.partY})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + tc.partNull})
 			tk.MustExec(`drop table t`)
 		}
 
@@ -725,9 +725,9 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 1`).Check(testkit.Rows("1"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 5`).Check(testkit.Rows("5"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part1})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part5})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + tc.partNull})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part1})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part5})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + tc.partNull})
 			tk.MustExec(`drop table t`)
 			tk.MustExec(`CREATE TABLE t (a int PRIMARY KEY)` + tc.partitionBy)
 			tk.MustExec(`insert into t values (1),(5)`)
@@ -735,10 +735,10 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 1`).Check(testkit.Rows("1"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 5`).Check(testkit.Rows("5"))
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> NULL`).Check(testkit.Rows())
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part1})
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part5})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part1})
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + tc.part5})
 			// TODO: Also do this for RANGE COLUMNS? Why is this different?!?
-			tk.MustQuery(`explain format=brief select /* issue:61176 */ a from t where a <=> NULL`).CheckContain("TableDual")
+			tk.MustQuery(`explain format='plan_tree' select /* issue:61176 */ a from t where a <=> NULL`).CheckContain("TableDual")
 			tk.MustExec(`drop table t`)
 		}
 	})

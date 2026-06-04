@@ -26,8 +26,11 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
@@ -68,6 +71,16 @@ func TestProcessDataFiles(t *testing.T) {
 func TestFileScanner(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
+	assertSecretsRedacted := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		require.ErrorContains(t, err, "access-key=xxxxxx")
+		require.ErrorContains(t, err, "secret-access-key=xxxxxx")
+		require.ErrorContains(t, err, "session-token=xxxxxx")
+		require.NotContains(t, err.Error(), "access-key=ak")
+		require.NotContains(t, err.Error(), "secret-access-key=sk")
+		require.NotContains(t, err.Error(), "session-token=token")
+	}
 
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1.t1-schema.sql"), []byte("CREATE TABLE t1 (id INT);"), 0644))
@@ -117,6 +130,59 @@ func TestFileScanner(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("NewFileScannerRedactsSensitiveSourcePathInParseErrors", func(t *testing.T) {
+		_, err := NewFileScanner(
+			ctx,
+			"s3://?access-key=ak&secret-access-key=sk&session-token=token",
+			db,
+			cfg,
+		)
+		assertSecretsRedacted(t, err)
+	})
+
+	t.Run("NewFileScannerHidesMalformedSensitiveSourcePathInParseErrors", func(t *testing.T) {
+		_, err := NewFileScanner(
+			ctx,
+			"1invalid:?secret-access-key=sk",
+			db,
+			cfg,
+		)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "source="+redactedInvalidSourcePath)
+		require.NotContains(t, err.Error(), "secret-access-key=sk")
+	})
+
+	t.Run("CreateSchemasAndTablesRedactsSensitiveSourcePathOnError", func(t *testing.T) {
+		invalidDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(invalidDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(invalidDir, "db1.t1-schema.sql"),
+			[]byte("CREATE TABLE t1 (id INT,);"),
+			0o644,
+		))
+
+		invalidDB, invalidMock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer invalidDB.Close()
+
+		invalidScanner, err := NewFileScanner(ctx, "file://"+invalidDir, invalidDB, defaultSDKConfig())
+		require.NoError(t, err)
+		defer invalidScanner.Close()
+
+		fs := invalidScanner.(*fileScanner)
+		sourcePath := "s3://bucket/path?access-key=ak&secret-access-key=sk&session-token=token"
+		fs.redactedSourcePath = ast.RedactURL(sourcePath)
+
+		invalidMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+		invalidMock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		invalidMock.ExpectQuery("SHOW CREATE TABLE `db1`.`t1`").WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
+
+		err = invalidScanner.CreateSchemasAndTables(ctx)
+		assertSecretsRedacted(t, err)
+		require.ErrorContains(t, err, "invalid schema statement")
+		require.NoError(t, invalidMock.ExpectationsWereMet())
+	})
+
 	t.Run("CreateSchemaAndTableByName", func(t *testing.T) {
 		mock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
 		mock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -128,6 +194,32 @@ func TestFileScanner(t *testing.T) {
 
 		err = scanner.CreateSchemaAndTableByName(ctx, "db1", "nonexistent")
 		require.Error(t, err)
+	})
+
+	t.Run("CreateSchemasAndTablesIgnoresDropTableInSchemaFile", func(t *testing.T) {
+		dropDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dropDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropDir, "db1.t_drop-schema.sql"),
+			[]byte("DROP TABLE t_drop; CREATE TABLE t_drop (id INT);"),
+			0o644,
+		))
+
+		dropDB, dropMock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer dropDB.Close()
+
+		dropScanner, err := NewFileScanner(ctx, "file://"+dropDir, dropDB, defaultSDKConfig())
+		require.NoError(t, err)
+		defer dropScanner.Close()
+
+		dropMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+		dropMock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		dropMock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db1`.`t_drop`")).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = dropScanner.CreateSchemasAndTables(ctx)
+		require.NoError(t, err)
+		require.NoError(t, dropMock.ExpectationsWereMet())
 	})
 
 	t.Run("EstimateImportDataSize", func(t *testing.T) {
@@ -263,6 +355,41 @@ func TestFileScanner(t *testing.T) {
 		require.Len(t, estimate.Tables, 1)
 		require.Equal(t, "good", estimate.Tables[0].Table)
 		require.Positive(t, estimate.Tables[0].SourceSize)
+		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
+		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
+	})
+
+	t.Run("EstimateImportDataSizeMultiStatementSchema", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "test_db-schema-create.sql"), []byte("CREATE DATABASE test_db;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "test_db.users-schema.sql"),
+			[]byte(strings.Join([]string{
+				"CREATE DATABASE IF NOT EXISTS test_db;",
+				"USE test_db;",
+				"DROP TABLE IF EXISTS users;",
+				"CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), KEY idx_name (name));",
+			}, "\n")),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "test_db.users.001.csv"),
+			[]byte("1,alice\n2,bob\n"),
+			0o644,
+		))
+
+		cfg := defaultSDKConfig()
+		cfg.skipInvalidFiles = true
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, cfg)
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 1)
+		require.Equal(t, "users", estimate.Tables[0].Table)
+		require.Positive(t, estimate.Tables[0].SourceSize)
+		require.Positive(t, estimate.Tables[0].TiKVSize)
 		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
 		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
 	})

@@ -23,6 +23,13 @@ show variables like 'collation_server';
 disconnect conn1;
 set @@global.collation_server=default;
 
+# TestAutoAnalyzeConcurrencyDefault
+select @@global.tidb_auto_analyze_concurrency;
+set global tidb_auto_analyze_concurrency=8;
+select @@global.tidb_auto_analyze_concurrency;
+set global tidb_auto_analyze_concurrency=default;
+select @@global.tidb_auto_analyze_concurrency;
+
 # TestMemoryUsageAlarmVariable
 set @@global.tidb_memory_usage_alarm_ratio=1;
 select @@global.tidb_memory_usage_alarm_ratio;

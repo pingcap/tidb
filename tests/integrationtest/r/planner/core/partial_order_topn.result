@@ -214,6 +214,18 @@ TopN	5.00	root		planner__core__partial_order_topn.t_multi_col.a, planner__core__
   ├─Limit(Build)	5.00	cop[tikv]		offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_multi_col.b, prefix_len:15
   │ └─IndexFullScan	10000.00	cop[tikv]	table:t_multi_col, index:idx_a_b_prefix(a, b)	keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_multi_col	keep order:false, stats:pseudo
+select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, b limit 3 offset 2;
+id	a	b	c
+3	1	gamma	third
+4	2	alpha	fourth
+5	2	beta	fifth
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, b limit 3 offset 2;
+id	estRows	task	access object	operator info
+TopN	3.00	root		planner__core__partial_order_topn.t_multi_col.a, planner__core__partial_order_topn.t_multi_col.b, offset:2, count:3, prefix_col:planner__core__partial_order_topn.t_multi_col.b, prefix_len:15
+└─IndexLookUp	5.00	root		
+  ├─Limit(Build)	5.00	cop[tikv]		offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_multi_col.b, prefix_len:15
+  │ └─IndexFullScan	10000.00	cop[tikv]	table:t_multi_col, index:idx_a_b_prefix(a, b)	keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_multi_col	keep order:false, stats:pseudo
 explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_c_prefix) */  * from t_multi_col order by a, b, c limit 5;
 id	estRows	task	access object	operator info
 TopN	5.00	root		planner__core__partial_order_topn.t_multi_col.a, planner__core__partial_order_topn.t_multi_col.b, planner__core__partial_order_topn.t_multi_col.c, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_multi_col.c, prefix_len:10
