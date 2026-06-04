@@ -16,10 +16,12 @@ package exporttest
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
-	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -87,9 +91,27 @@ func TestExportTableLargeDataset(t *testing.T) {
 	wg.Wait()
 	t.Logf("loaded %d rows in %s", rowCnt, time.Since(loadStart))
 
-	dir := "/mnt/data/joechenrh/export_large_out"
-	require.NoError(t, os.RemoveAll(dir))
-	require.NoError(t, os.MkdirAll(dir, 0755))
+	ctx := context.Background()
+	// EXPORT_LARGE_DEST can point to S3, e.g.
+	// s3://bucket/prefix?access-key=...&secret-access-key=...&endpoint=http://127.0.0.1:19100&force-path-style=true
+	dest := os.Getenv("EXPORT_LARGE_DEST")
+	if dest == "" {
+		dir := "/mnt/data/joechenrh/export_large_out"
+		require.NoError(t, os.RemoveAll(dir))
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		dest = "local://" + dir
+	}
+	estore, err := objstore.NewFromURL(ctx, dest)
+	require.NoError(t, err)
+	// remove leftovers from previous runs.
+	var stale []string
+	require.NoError(t, estore.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, _ int64) error {
+		stale = append(stale, path)
+		return nil
+	}))
+	if len(stale) > 0 {
+		require.NoError(t, estore.DeleteFiles(ctx, stale))
+	}
 
 	// thread is the task concurrency; writer count is thread*2.
 	thread := 8
@@ -98,29 +120,44 @@ func TestExportTableLargeDataset(t *testing.T) {
 		thread, err = strconv.Atoi(v)
 		require.NoError(t, err)
 	}
+	// optionally profile only the export window.
+	var cpuProfFile *os.File
+	if profPath := os.Getenv("EXPORT_LARGE_CPUPROF"); profPath != "" {
+		var err error
+		cpuProfFile, err = os.Create(profPath)
+		require.NoError(t, err)
+		require.NoError(t, pprof.StartCPUProfile(cpuProfFile))
+		runtime.SetBlockProfileRate(1_000_000) // 1ms
+	}
 	exportStart := time.Now()
 	rows := tk.MustQuery(fmt.Sprintf(
-		"EXPORT TABLE export_large.t TO 'local://%s' WITH thread=%d, file_size='256MiB'", dir, thread)).Rows()
+		"EXPORT TABLE export_large.t TO '%s' WITH thread=%d, file_size='256MiB'", dest, thread)).Rows()
 	exportDur := time.Since(exportStart)
+	if cpuProfFile != nil {
+		pprof.StopCPUProfile()
+		require.NoError(t, cpuProfFile.Close())
+		blockFile, err := os.Create(cpuProfFile.Name() + ".block")
+		require.NoError(t, err)
+		require.NoError(t, pprof.Lookup("block").WriteTo(blockFile, 0))
+		require.NoError(t, blockFile.Close())
+		runtime.SetBlockProfileRate(0)
+	}
 	require.Equal(t, "succeed", rows[0][2])
 
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	names := make([]string, 0, len(entries))
+	var names []string
 	var totalBytes int64
-	for _, ent := range entries {
-		info, err := ent.Info()
-		require.NoError(t, err)
-		totalBytes += info.Size()
-		names = append(names, ent.Name())
-	}
+	require.NoError(t, estore.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		names = append(names, path)
+		totalBytes += size
+		return nil
+	}))
 	sort.Strings(names)
 
 	gotRows, lastID := 0, -1
 	for _, name := range names {
-		f, err := os.Open(filepath.Join(dir, name))
+		r, err := estore.Open(ctx, name, nil)
 		require.NoError(t, err)
-		sc := bufio.NewScanner(f)
+		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for sc.Scan() {
 			line := sc.Text()
@@ -133,7 +170,7 @@ func TestExportTableLargeDataset(t *testing.T) {
 			gotRows++
 		}
 		require.NoError(t, sc.Err())
-		require.NoError(t, f.Close())
+		require.NoError(t, r.Close())
 	}
 	require.Equal(t, rowCnt, gotRows)
 	t.Logf("thread=%d: exported %d rows, %.2f GiB in %d files, took %s (%.0f MiB/s)",
