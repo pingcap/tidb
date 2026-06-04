@@ -32,6 +32,12 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
+// Init initializes ExportTable.
+func (p ExportTable) Init(ctx base.PlanContext) *ExportTable {
+	p.Plan = baseimpl.NewBasePlan(ctx, "ExportTable", 0)
+	return &p
+}
+
 // Init initializes ScalarSubqueryEvalCtx
 func (p ScalarSubqueryEvalCtx) Init(ctx base.PlanContext, offset int) *ScalarSubqueryEvalCtx {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
