@@ -324,11 +324,14 @@ func extractPlanReplayerTargetSQL(data []byte) (string, error) {
 		if err != nil {
 			return "", errors.AddStack(err)
 		}
-		//nolint:errcheck
-		defer r.Close()
 		buf := new(bytes.Buffer)
-		if _, err = buf.ReadFrom(r); err != nil {
-			return "", errors.AddStack(err)
+		_, readErr := buf.ReadFrom(r)
+		closeErr := r.Close()
+		if readErr != nil {
+			return "", errors.AddStack(readErr)
+		}
+		if closeErr != nil {
+			return "", errors.AddStack(closeErr)
 		}
 		targetSQL := strings.TrimSpace(buf.String())
 		if targetSQL == "" {
