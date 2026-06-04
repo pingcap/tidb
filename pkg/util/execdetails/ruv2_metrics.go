@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -246,63 +247,67 @@ func (m *RUV2Metrics) AddExecutorMetric(level int, label string, delta int64) {
 	}
 }
 
-// ExecutorMetricRecorder is a pre-resolved counter for one executor metric.
-// The zero value records nothing; callers must check Available before Record.
+// execL1Kind identifies which RUV2Metrics.executorL1 scalar field a recorder
+// writes. The zero value (execL1None) means "not a hot L1 label", so callers
+// fall back to AddExecutorMetric. Keep this in sync with ruv2ExecutorL1Counter.add.
+type execL1Kind uint8
+
+const (
+	execL1None execL1Kind = iota
+	execL1BatchPointGet
+	execL1PointGet
+	execL1Limit
+)
+
+// ExecutorMetricRecorder is a pre-resolved counter for one hot L1 executor
+// metric. It pairs the process-global Prometheus counter (resolved once) with
+// the per-RUV2Metrics scalar field selected at Record time. The zero value
+// records nothing; callers must check Available before Record.
 type ExecutorMetricRecorder struct {
-	add func(m *RUV2Metrics, delta int64)
+	counter prometheus.Counter
+	kind    execL1Kind
 }
 
 // Available reports whether this recorder was resolved.
-func (r ExecutorMetricRecorder) Available() bool { return r.add != nil }
+func (r ExecutorMetricRecorder) Available() bool { return r.kind != execL1None }
 
 // Record applies delta. Caller must ensure m is non-nil and not bypassed.
-func (r ExecutorMetricRecorder) Record(m *RUV2Metrics, delta int64) { r.add(m, delta) }
-
-// ResolveExecutorMetric returns a pre-resolved recorder for hot L1 executor
-// labels, or the zero recorder for everything else.
-func ResolveExecutorMetric(level int, label string) ExecutorMetricRecorder {
-	ensureExecutorL1Recorders()
-	if level == 1 {
-		switch label {
-		case ruv2LabelBatchPointGetExec:
-			return execL1RecorderBatchPointGet
-		case ruv2LabelPointGetExecutor:
-			return execL1RecorderPointGet
-		case ruv2LabelLimitExec:
-			return execL1RecorderLimit
-		}
+func (r ExecutorMetricRecorder) Record(m *RUV2Metrics, delta int64) {
+	r.counter.Add(float64(delta))
+	switch r.kind {
+	case execL1BatchPointGet:
+		atomic.AddInt64(&m.executorL1.batchPointGetExec, delta)
+	case execL1PointGet:
+		atomic.AddInt64(&m.executorL1.pointGetExecutor, delta)
+	case execL1Limit:
+		atomic.AddInt64(&m.executorL1.limitExec, delta)
 	}
-	return ExecutorMetricRecorder{}
 }
 
-var (
-	execL1RecorderBatchPointGet ExecutorMetricRecorder
-	execL1RecorderPointGet      ExecutorMetricRecorder
-	execL1RecorderLimit         ExecutorMetricRecorder
-	executorL1RecordersOnce     sync.Once
-)
-
-func ensureExecutorL1Recorders() {
-	executorL1RecordersOnce.Do(func() {
-		if c := metrics.RUV2ExecutorCounter(1, ruv2LabelBatchPointGetExec); c != nil {
-			execL1RecorderBatchPointGet = ExecutorMetricRecorder{add: func(m *RUV2Metrics, d int64) {
-				c.Add(float64(d))
-				atomic.AddInt64(&m.executorL1.batchPointGetExec, d)
-			}}
-		}
-		if c := metrics.RUV2ExecutorCounter(1, ruv2LabelPointGetExecutor); c != nil {
-			execL1RecorderPointGet = ExecutorMetricRecorder{add: func(m *RUV2Metrics, d int64) {
-				c.Add(float64(d))
-				atomic.AddInt64(&m.executorL1.pointGetExecutor, d)
-			}}
-		}
-		if c := metrics.RUV2ExecutorCounter(1, ruv2LabelLimitExec); c != nil {
-			execL1RecorderLimit = ExecutorMetricRecorder{add: func(m *RUV2Metrics, d int64) {
-				c.Add(float64(d))
-				atomic.AddInt64(&m.executorL1.limitExec, d)
-			}}
-		}
-	})
+// ResolveExecutorMetric returns a pre-resolved recorder for hot L1 executor
+// labels, or the zero recorder for everything else. The Prometheus counter is
+// already cached by metrics.RUV2ExecutorCounter, so this is cheap to call from
+// Open() and needs no further memoization.
+func ResolveExecutorMetric(level int, label string) ExecutorMetricRecorder {
+	if level != 1 {
+		return ExecutorMetricRecorder{}
+	}
+	var kind execL1Kind
+	switch label {
+	case ruv2LabelBatchPointGetExec:
+		kind = execL1BatchPointGet
+	case ruv2LabelPointGetExecutor:
+		kind = execL1PointGet
+	case ruv2LabelLimitExec:
+		kind = execL1Limit
+	default:
+		return ExecutorMetricRecorder{}
+	}
+	c := metrics.RUV2ExecutorCounter(level, label)
+	if c == nil {
+		return ExecutorMetricRecorder{}
+	}
+	return ExecutorMetricRecorder{counter: c, kind: kind}
 }
 
 // AddExecutorL5InsertRows records affected insert rows for RUv2 accounting.
