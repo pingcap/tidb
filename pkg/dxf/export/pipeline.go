@@ -37,8 +37,6 @@ type writerChan struct {
 	end   kv.Key
 	// encCh carries encoded buffers from the encoder to the writer.
 	encCh chan []byte
-	// freeBufCh recycles encoded buffers from the writer back to the encoder.
-	freeBufCh chan []byte
 }
 
 // readerChunk is one read chunk tagged with its target writer
@@ -78,11 +76,10 @@ func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, or
 		writers := make([]*writerChan, 0, wEnd-wStart)
 		for i := wStart; i < wEnd; i++ {
 			w := &writerChan{
-				id:        i,
-				start:     bounds[i],
-				end:       bounds[i+1],
-				encCh:     make(chan []byte, channelBufSize),
-				freeBufCh: make(chan []byte, channelBufSize),
+				id:    i,
+				start: bounds[i],
+				end:   bounds[i+1],
+				encCh: make(chan []byte, channelBufSize),
 			}
 			writers = append(writers, w)
 		}
@@ -149,14 +146,8 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 			continue
 		}
 
-		var buf []byte
-		select {
-		case buf = <-rc.writer.freeBufCh:
-			buf = buf[:0]
-		default:
-		}
-
-		buf, err = enc.encodeChunk(rc.chk, buf)
+		buf, _ := e.bufPool.Get().([]byte)
+		buf, err = enc.encodeChunk(rc.chk, buf[:0])
 		if err != nil {
 			return err
 		}
@@ -187,9 +178,6 @@ func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writer
 		}
 
 		e.summary.Bytes.Add(int64(len(buf)))
-		select {
-		case w.freeBufCh <- buf:
-		default:
-		}
+		e.bufPool.Put(buf) //nolint:staticcheck
 	}
 }

@@ -17,6 +17,7 @@ package export
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -87,6 +88,8 @@ type dumpStepExecutor struct {
 	colInfos []*model.ColumnInfo
 	fieldTps []*types.FieldType
 	summary  execute.SubtaskSummary
+	// bufPool recycles encoded buffers between encoders and writers.
+	bufPool sync.Pool
 }
 
 var _ execute.StepExecutor = (*dumpStepExecutor)(nil)
