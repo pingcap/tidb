@@ -39,8 +39,8 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 	// Test case with a valid group ID and addresses
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
-			metaservice.MetaServiceGroupIDKey: "1", // Valid numeric string
-			metaservice.MetaGroupAddrsKey:     expectedAddrsStr,
+			metaservice.GroupIDKey:    "1", // Valid numeric string
+			metaservice.GroupAddrsKey: expectedAddrsStr,
 		},
 	}
 
@@ -51,27 +51,27 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
 	// Test case with blank entries in addresses
-	keyspaceMeta.Config[metaservice.MetaGroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
+	keyspaceMeta.Config[metaservice.GroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
 	// Test case where all addresses are blank
-	keyspaceMeta.Config[metaservice.MetaGroupAddrsKey] = " , \t,  "
+	keyspaceMeta.Config[metaservice.GroupAddrsKey] = " , \t,  "
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.Nil(t, keyspaceMetaServiceGroup)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, metaservice.ErrGroupNotMatch))
 
 	// Test case where the group ID exists but addresses do not
-	delete(keyspaceMeta.Config, metaservice.MetaGroupAddrsKey)
+	delete(keyspaceMeta.Config, metaservice.GroupAddrsKey)
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, metaservice.ErrGroupNotMatch))
 
 	// Test case where the group ID does not exist
-	delete(keyspaceMeta.Config, metaservice.MetaServiceGroupIDKey)
+	delete(keyspaceMeta.Config, metaservice.GroupIDKey)
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, metaservice.GlobalGroupID, keyspaceMetaServiceGroup.GroupID)
@@ -94,8 +94,8 @@ func TestGetMetaServiceInfo(t *testing.T) {
 	// Test case with a valid keyspaceMeta
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
-			metaservice.MetaServiceGroupIDKey: "2", // Valid numeric string
-			metaservice.MetaGroupAddrsKey:     "127.0.0.1:2388,127.0.0.1:2389",
+			metaservice.GroupIDKey:    "2", // Valid numeric string
+			metaservice.GroupAddrsKey: "127.0.0.1:2388,127.0.0.1:2389",
 		},
 	}
 
