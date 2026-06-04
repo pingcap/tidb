@@ -249,7 +249,11 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	if err != nil {
 		return err
 	}
-	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone {
+	if baseTable.IsView() ||
+		baseTable.IsSequence() ||
+		baseTable.TempTableType != model.TempTableNone ||
+		baseTable.MaterializedView != nil ||
+		baseTable.MaterializedViewLog != nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 

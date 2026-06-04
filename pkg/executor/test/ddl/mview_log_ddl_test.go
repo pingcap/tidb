@@ -373,12 +373,26 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create view v as select a from t")
 	tk.MustExec("create sequence s")
+	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("create table t_mv_base (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_base (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, cnt) refresh fast as select a, count(1) from t_mv_base group by a")
 
 	err := tk.ExecToErr("create materialized view log on v (a)")
+	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "v", "BASE TABLE").Error(), err.Error())
 
 	err = tk.ExecToErr("create materialized view log on s (a)")
+	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "s", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on mv (a, cnt)")
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on `$mlog$t` (a)")
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
 }
 
 func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
