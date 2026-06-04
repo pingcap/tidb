@@ -5539,11 +5539,11 @@ def go_deps():
         name = "com_github_pingcap_log",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/log",
-        sha256 = "50df543d8d2d5f5f24f6ec5926855f074714a958f1f58e7fe50920c7e4d5fe5d",
-        strip_prefix = "github.com/pingcap/log@v1.1.1-0.20250917021125-19901e015dc9",
+        sha256 = "1a358a72b0e696b2e74bb74c08a51f36035fbe5721a9a1b5a3cc1e7c11493710",
+        strip_prefix = "github.com/pingcap/log@v1.1.1-0.20260604211921-80a4a2dc3943",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20250917021125-19901e015dc9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20250917021125-19901e015dc9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20260604211921-80a4a2dc3943.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20260604211921-80a4a2dc3943.zip",
         ],
     )
     go_repository(
