@@ -367,13 +367,8 @@ func genJoinMethodHintForSinglePhysicalJoin(
 
 	if hintQBName != nil {
 		newHint.QBName = *hintQBName
-	} else if effectiveHintTbls[0].QBName.L != "" {
-		// TODO: This fallback only preserves the existing replay behavior for join-method hints that finally export a
-		// single effective inner query-block table. Mixed-QB replay correctness still needs a dedicated fix here,
-		// instead of opportunistically suppressing the hint or generalizing table-level QB inference, because analogous
-		// single-table inner-QB hints (for example LEADING(@sel_2 t3@sel_2)) can still produce warnings on replay.
-		newHint.QBName = effectiveHintTbls[0].QBName
 	}
+	// TODO: QBName missed out in CTE, see https://github.com/pingcap/tidb/issues/68925, should fix it in the future.
 
 	return newHint
 }
