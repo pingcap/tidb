@@ -579,8 +579,8 @@ func TestDBIsVisible(t *testing.T) {
 	tk.MustExec("TRUNCATE TABLE mysql.user")
 
 	tk.MustExec(`INSERT INTO mysql.procs_priv (Host, User, Db, Routine_name, Routine_type, Grantor, Proc_priv) VALUES ("%", "testvisdb10", "visdb", "f1", "FUNCTION", "root@%", "Execute")`)
-	p = privileges.MySQLPrivilege{}
-	require.NoError(t, p.LoadAll(se.GetRestrictedSQLExecutor()))
+	p = privileges.NewMySQLPrivilege()
+	require.NoError(t, p.LoadAll(se.GetSQLExecutor()))
 	isVisible = p.DBIsVisible("testvisdb10", "%", "visdb")
 	require.True(t, isVisible)
 	tk.MustExec("delete from mysql.procs_priv")

@@ -224,7 +224,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
 ) (expression.Expression, base.LogicalPlan, error) {
-	return b.rewriteWithPreprocessAndBuildCtx(ctx, exprNode, p, aggMapper, windowMapper, asScalar, preprocess, priv, b.ctx.GetExprCtx())
+	return b.rewriteWithPreprocessAndBuildCtx(ctx, exprNode, p, aggMapper, windowMapper, asScalar, preprocess, b.ctx.GetExprCtx())
 }
 
 func (b *PlanBuilder) rewriteWithPreprocessAndBuildCtx(
@@ -234,7 +234,6 @@ func (b *PlanBuilder) rewriteWithPreprocessAndBuildCtx(
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
-	priv *checkedPrivilege,
 	buildCtx expression.BuildContext,
 ) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
@@ -2975,37 +2974,11 @@ func (b *PlanBuilder) appendLBACReadVisitInfo(columnVisited []*ast.ColumnName) {
 	}
 }
 
-<<<<<<< HEAD
 func (er *expressionRewriter) precollectColNames(fieldName *types.FieldName) {
-	colName := &ast.ColumnName{
-		Name:   fieldName.OrigColName,
-		Table:  fieldName.OrigTblName,
-		Schema: fieldName.DBName,
-	}
-||||||| bea0668079
-func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
-	colName := &ast.ColumnName{
-		Name:   columnVisited.OrigColName,
-		Table:  columnVisited.OrigTblName,
-		Schema: columnVisited.DBName,
-	}
-=======
-func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	b := er.planCtx.builder
-<<<<<<< HEAD
-	if b != nil && b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-		colName.Name = fieldName.ColName
-		colName.Table = fieldName.TblName
-||||||| bea0668079
-	if b != nil && b.is != nil && infoschema.TableIsView(b.is, columnVisited.DBName, columnVisited.TblName) {
-		colName.Name = columnVisited.ColName
-		colName.Table = columnVisited.TblName
-=======
-	colName := b.fieldNameToColumnName(columnVisited)
+	colName := b.fieldNameToColumnName(fieldName)
 	if colName == nil {
 		return
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	}
 
 	// When checking a derived table, its colName.Schema.L would be empty, we can just skip it.

@@ -4967,11 +4967,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
-<<<<<<< HEAD
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true)
-||||||| bea0668079
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true, requireColumnPriv)
-=======
 				expr, _, err = b.rewriteWithPreprocessAndBuildCtx(
 					ctx,
 					columns[i].GeneratedExpr.Clone(),
@@ -4980,10 +4975,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					nil,
 					true,
 					nil,
-					requireColumnPriv,
 					expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), columns[i].GeneratedExpr.Internal(), columns[i].ToInfo()),
 				)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
@@ -6299,11 +6292,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-<<<<<<< HEAD
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
-||||||| bea0668079
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign), requireColumnPriv)
-=======
 			newExpr, np, err = b.rewriteWithPreprocessAndBuildCtx(
 				ctx,
 				assign.Expr,
@@ -6312,14 +6300,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				nil,
 				true,
 				rewritePreprocess(assign),
-				requireColumnPriv,
 				expression.WithTiDBShardInternalVersionForGeneratedColumn(
 					b.ctx.GetExprCtx(),
 					assign.Expr,
 					virtualAssignmentCols[i-len(list)],
 				),
 			)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err

@@ -12,17 +12,7 @@ go_library(
         "//pkg/ddl/logutil",
         "//pkg/ddl/util",
         "//pkg/domain/infosync",
-<<<<<<< HEAD
-||||||| bea0668079
-||||||| parent of aba8cebcd5 (Implement log replication (!579))
-        "//pkg/domain/serverinfo",
-=======
         "//pkg/domain/pkdb_repl",
-        "//pkg/domain/serverinfo",
->>>>>>> aba8cebcd5 (Implement log replication (!579))
-=======
-        "//pkg/domain/pkdb_repl",
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util",

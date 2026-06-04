@@ -343,13 +343,11 @@ type PlanBuilder struct {
 
 	storedFuncRetType *types.FieldType
 
-<<<<<<< HEAD
 	// SavedViews is a stack that saves all views when traversing the AST. We depend on it to:
 	// 1. know whether the AST node is under a view
 	// 2. report precise error in appendColNamesToVisitInfo.
 	SavedViews []*ast.TableName
-||||||| bea0668079
-=======
+
 	// explainRoutineBlockPath stores the current routine block path while building
 	// procedure command lists, so EXPLAIN ROUTINE can surface stable statement
 	// placement metadata without reverse-engineering control flow later.
@@ -367,7 +365,6 @@ type PlanBuilder struct {
 	// explainSetPlan is set while building a SET statement that needs its
 	// folded subquery plans for EXPLAIN output.
 	explainSetPlan *Set
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 }
 
 type handleColHelper struct {
@@ -4451,11 +4448,6 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-<<<<<<< HEAD
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
-||||||| bea0668079
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true, requireColumnPriv)
-=======
 		expr, _, err := b.rewriteWithPreprocessAndBuildCtx(
 			ctx,
 			column.GeneratedExpr.Clone(),
@@ -4464,10 +4456,8 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 			nil,
 			true,
 			nil,
-			requireColumnPriv,
 			expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), column.GeneratedExpr.Internal(), column.ToInfo()),
 		)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err

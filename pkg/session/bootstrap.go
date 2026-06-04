@@ -1477,23 +1477,12 @@ const (
 	// [version228, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
-<<<<<<< HEAD
-
-||||||| bea0668079
-=======
 	version239 = 239
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-<<<<<<< HEAD
-var currentBootstrapVersion int64 = version227
-||||||| bea0668079
-var currentBootstrapVersion int64 = version223
-=======
 var currentBootstrapVersion int64 = version239
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
@@ -1676,15 +1665,11 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
-<<<<<<< HEAD
 		upgradeToVer224,
 		upgradeToVer225,
 		upgradeToVer226,
 		upgradeToVer227,
-||||||| bea0668079
-=======
 		upgradeToVer239,
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	}
 )
 
@@ -3741,7 +3726,6 @@ func upgradeToEEVer15(s sessiontypes.Session, ver int64) {
 	writeLowerCaseTableNamesParameter(s, 2)
 }
 
-<<<<<<< HEAD
 func upgradeToVer224(s sessiontypes.Session, ver int64) {
 	if ver >= version224 {
 		return
@@ -3826,8 +3810,8 @@ func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) 
 		cols = append(cols, row.GetString(0))
 	}
 	return cols
-||||||| bea0668079
-=======
+}
+
 func upgradeToEEVer16(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion16 {
 		return
@@ -3857,7 +3841,6 @@ func upgradeToEEVer16(s sessiontypes.Session, ver int64) {
 		)`,
 		mysql.SystemDB, mysql.Routines,
 	)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

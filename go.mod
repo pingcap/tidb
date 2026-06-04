@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.5
+go 1.25.8
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -143,7 +143,7 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.49.0
+	golang.org/x/net v0.51.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.41.0
@@ -303,7 +303,7 @@ require (
 	github.com/scritchley/orc v0.0.0-20210513144143-06dddf1ad665
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
-	github.com/shoenig/go-m1cpu v0.1.7 // indirect
+	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
@@ -350,23 +350,11 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-<<<<<<< HEAD
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260420075637-38aef268e3c4
-||||||| bea0668079
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260319090131-1b48a0dae99e
-=======
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260520111337-efee48c2f1ae
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260604105012-c97914f303ac
 
-replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260420110641-0f4e1628df14
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260605103052-ef767379573f
 
-<<<<<<< HEAD
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260421030337-cdb12e958471
-||||||| bea0668079
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260320025932-85bedded2396
-=======
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260527113327-84c6a13f4626
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260605103122-40fb236c9bc4
 
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.

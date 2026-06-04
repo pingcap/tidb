@@ -822,28 +822,12 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
-<<<<<<< HEAD
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260420110641-0f4e1628df14 h1:N9i2JyXaKfL5qDyHt1kugRWJwo/Zbb6te5yaLlUjM2o=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260420110641-0f4e1628df14/go.mod h1:bsx1x3t7y2PU5kWjycdiZmINL7/y3rhkXE3jLSjjBUU=
-git.pingcap.net/pingkai/kvproto v0.0.0-20260420075637-38aef268e3c4 h1:cG+04i+dHuof0KJ+cS0FsxSs4vXkGVmA2UWhb1UUPGU=
-git.pingcap.net/pingkai/kvproto v0.0.0-20260420075637-38aef268e3c4/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
-git.pingcap.net/pingkai/pd/client v0.0.0-20260421030337-cdb12e958471 h1:zP2gJmpMkdeXsUXjiCKeVo9WdDhpIC6RiiVxpZGWYj4=
-git.pingcap.net/pingkai/pd/client v0.0.0-20260421030337-cdb12e958471/go.mod h1:rcEC1s8MmFSo9Gz7bcIYAAvnKA7h5Hu4nZZ+8lA9WH0=
-||||||| bea0668079
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204 h1:Jgp74lclE2+0Y23iMAcgEQOn1fCNT1m2jEoQDfdWIQ4=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204/go.mod h1:13sVH+D63tNwpdqZ/dQBFEeFfdx4YRhdw2dw/mp9PgI=
-git.pingcap.net/pingkai/kvproto v0.0.0-20260319090131-1b48a0dae99e h1:5kWASpkB3+SdiorO+wUZJhMqJSdl82eCHuACdtAxBBg=
-git.pingcap.net/pingkai/kvproto v0.0.0-20260319090131-1b48a0dae99e/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
-git.pingcap.net/pingkai/pd/client v0.0.0-20260320025932-85bedded2396 h1:9aMF+xMPx8IjH8p47qvc0kzpswqSnI7lv5sXTMEusTI=
-git.pingcap.net/pingkai/pd/client v0.0.0-20260320025932-85bedded2396/go.mod h1:rcEC1s8MmFSo9Gz7bcIYAAvnKA7h5Hu4nZZ+8lA9WH0=
-=======
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204 h1:Jgp74lclE2+0Y23iMAcgEQOn1fCNT1m2jEoQDfdWIQ4=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204/go.mod h1:13sVH+D63tNwpdqZ/dQBFEeFfdx4YRhdw2dw/mp9PgI=
-git.pingcap.net/pingkai/kvproto v0.0.0-20260520111337-efee48c2f1ae h1:TOwfkKN05tsQjXBcok+vtkNalmPpriwgroRyaLg3PKI=
-git.pingcap.net/pingkai/kvproto v0.0.0-20260520111337-efee48c2f1ae/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
-git.pingcap.net/pingkai/pd/client v0.0.0-20260527113327-84c6a13f4626 h1:V343qi4hZQd79BSpZ3+3eSAJXGHC0nwfFCqfNzmzbhc=
-git.pingcap.net/pingkai/pd/client v0.0.0-20260527113327-84c6a13f4626/go.mod h1:i1JPLUoMdxMOxqv0JvXvvmk3Gn23Q4uWcRTgCqLZfqo=
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260605103052-ef767379573f h1:HJHNRSEW290E+pKeujYGySOOvLb0cseL7E4UKEcv7EQ=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260605103052-ef767379573f/go.mod h1:bsx1x3t7y2PU5kWjycdiZmINL7/y3rhkXE3jLSjjBUU=
+git.pingcap.net/pingkai/kvproto v0.0.0-20260604105012-c97914f303ac h1:3/FGQKq7PU36y4u/scQTpjg+W8L9YdW7RwP+e9t4evU=
+git.pingcap.net/pingkai/kvproto v0.0.0-20260604105012-c97914f303ac/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
+git.pingcap.net/pingkai/pd/client v0.0.0-20260605103122-40fb236c9bc4 h1:nrfejfFoyuytMrdkDCRWs4kYmx3RkAd2AROB9B4DAw8=
+git.pingcap.net/pingkai/pd/client v0.0.0-20260605103122-40fb236c9bc4/go.mod h1:v/VhLhAWFOMvTdL9Yi6v8sAVAoD+EyzRF8REakI611A=
 git.pingcap.net/pingkai/semver v0.0.0-20260320082102-7fbb8a3de855 h1:MQRzfLahKSSjfcGIEQ1IV1mmfT5/O2ftttqBP2oJ2i8=
 git.pingcap.net/pingkai/semver v0.0.0-20260320082102-7fbb8a3de855/go.mod h1:ovzDCvyE6yzeKg1jepY3GCZ5YnjbW0QccFQUZJdXKcQ=
 git.pingcap.net/pingkai/tigateway v0.0.0-20260122130635-3c63f1ad0439 h1:iYslUh2fH/TMtk+svm4Vl9jqRwMoP2lLQxxUQRFNNm0=
@@ -1684,8 +1668,8 @@ github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500/go.mod h1:+n
 github.com/shirou/gopsutil/v3 v3.21.12/go.mod h1:BToYZVTlSVlfazpDDYFnsVZLaoRG+g8ufT6fPQLdJzA=
 github.com/shirou/gopsutil/v3 v3.24.5 h1:i0t8kL+kQTvpAYToeuiVk3TgDeKOFioZO3Ztz/iZ9pI=
 github.com/shirou/gopsutil/v3 v3.24.5/go.mod h1:bsoOS1aStSs9ErQ1WWfxllSeS1K5D+U30r2NfcubMVk=
-github.com/shoenig/go-m1cpu v0.1.7 h1:C76Yd0ObKR82W4vhfjZiCp0HxcSZ8Nqd84v+HZ0qyI0=
-github.com/shoenig/go-m1cpu v0.1.7/go.mod h1:KkDOw6m3ZJQAPHbrzkZki4hnx+pDRR1Lo+ldA56wD5w=
+github.com/shoenig/go-m1cpu v0.2.1 h1:yqRB4fvOge2+FyRXFkXqsyMoqPazv14Yyy+iyccT2E4=
+github.com/shoenig/go-m1cpu v0.2.1/go.mod h1:KkDOw6m3ZJQAPHbrzkZki4hnx+pDRR1Lo+ldA56wD5w=
 github.com/shoenig/test v1.7.0 h1:eWcHtTXa6QLnBvm0jgEabMRN/uJ4DMV3M8xUGgRkZmk=
 github.com/shoenig/test v1.7.0/go.mod h1:UxJ6u/x2v/TNs/LoLxBNJRV9DiwBBKYxXSyczsBHFoI=
 github.com/shopspring/decimal v1.2.0 h1:abSATXmQEYyShuxI4/vyW3tV1MrKAJzCZ/0zLUXYbsQ=
@@ -2058,8 +2042,8 @@ golang.org/x/net v0.17.0/go.mod h1:NxSsAGuq816PNPmqtQdLE42eU2Fs7NoRIZrHJAlaCOE=
 golang.org/x/net v0.21.0/go.mod h1:bIjVDfnllIU7BJ2DNgfnXvpSvtn8VRwhlsaeUTyUS44=
 golang.org/x/net v0.25.0/go.mod h1:JkAGAh7GEvH74S6FOH42FLoXpXbE/aqXSrIQjXgsiwM=
 golang.org/x/net v0.33.0/go.mod h1:HXLR5J+9DxmrqMwG9qjGCxZ+zKXxBru04zlTvWlWuN4=
-golang.org/x/net v0.49.0 h1:eeHFmOGUTtaaPSGNmjBKpbng9MulQsJURQUAfUwY++o=
-golang.org/x/net v0.49.0/go.mod h1:/ysNB2EvaqvesRkuLAyjI1ycPZlQHM3q01F02UY/MV8=
+golang.org/x/net v0.51.0 h1:94R/GTO7mt3/4wIKpcR5gkGmRLOuE/2hNGeWq/GBIFo=
+golang.org/x/net v0.51.0/go.mod h1:aamm+2QF5ogm02fjy5Bb7CQ0WMt1/WVM7FtyaTLlA9Y=
 golang.org/x/oauth2 v0.0.0-20180821212333-d2e6202438be/go.mod h1:N/0e6XlmueqKjAGxoOufVs8QHGRruUQn6yWY3a++T0U=
 golang.org/x/oauth2 v0.0.0-20190226205417-e64efc72b421/go.mod h1:gOpvHmFTYa4IltrdGE7lF6nIHvwfUNPOp7c8zoXwtLw=
 golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45/go.mod h1:gOpvHmFTYa4IltrdGE7lF6nIHvwfUNPOp7c8zoXwtLw=

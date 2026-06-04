@@ -2665,7 +2665,6 @@ func TestUserGroupMisc(t *testing.T) {
 	require.Equal(t, len(res.Rows()), 2)
 }
 
-<<<<<<< HEAD
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2857,8 +2856,8 @@ func TestColumnPrivilege4TraceAndExplain(t *testing.T) {
 
 	userTk.MustQuery(traceSQL).CheckNotContain("session.RollbackTxn")
 	userTk.MustQuery(explainSQL)
-||||||| bea0668079
-=======
+}
+
 func TestInvokerViewCrossDatabaseWithAlias(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
@@ -2914,9 +2913,8 @@ func TestInvokerViewCrossDatabaseWithAlias(t *testing.T) {
 	require.NoError(t, noprivTk.Session().Auth(&auth.UserIdentity{
 		Username: "nopriv", Hostname: "localhost"}, nil, nil, nil))
 	// INVOKER view requires the invoker to have privileges on underlying tables
-	// Column-level privilege check returns ErrColumnaccessDenied (1143)
-	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple", errno.ErrColumnaccessDenied)
-	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", errno.ErrColumnaccessDenied)
+	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple", mysql.ErrViewInvalid)
+	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", mysql.ErrViewInvalid)
 
 	// Column-level privilege on underlying tables should also work with view alias
 	rootTk.MustExec("CREATE USER 'coluser'@'localhost'")
@@ -2926,8 +2924,8 @@ func TestInvokerViewCrossDatabaseWithAlias(t *testing.T) {
 	require.NoError(t, colTk.Session().Auth(&auth.UserIdentity{
 		Username: "coluser", Hostname: "localhost"}, nil, nil, nil))
 	// Has column privilege on t1.id but not t1.name — SELECT * should fail
-	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple", errno.ErrColumnaccessDenied)
-	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", errno.ErrColumnaccessDenied)
+	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple", mysql.ErrViewInvalid)
+	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", mysql.ErrViewInvalid)
 
 	// Cleanup
 	rootTk.MustExec("DROP DATABASE db_data")
@@ -2935,5 +2933,4 @@ func TestInvokerViewCrossDatabaseWithAlias(t *testing.T) {
 	rootTk.MustExec("DROP USER 'viewuser'@'localhost'")
 	rootTk.MustExec("DROP USER 'nopriv'@'localhost'")
 	rootTk.MustExec("DROP USER 'coluser'@'localhost'")
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 }
