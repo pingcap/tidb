@@ -44,9 +44,9 @@ var ErrNilKeyspaceMeta = errors.New("GetGroup: keyspace meta is nil")
 
 // Info includes the global meta service address and the TiDB meta service group info.
 type Info struct {
-	PDAddrs                []string
-	GlobalMetaServiceAddrs []string
-	Group                  *Group
+	PDAddrs     []string
+	GlobalAddrs []string
+	Group       *Group
 }
 
 // Group includes keyspace meta service group info.
@@ -106,9 +106,9 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pd
 			Addrs:   globalMetaAddrs,
 		}
 		metaInfo := &Info{
-			PDAddrs:                pdAddrs,
-			GlobalMetaServiceAddrs: globalMetaAddrs,
-			Group:                  keyspaceMetaServiceGroup,
+			PDAddrs:     pdAddrs,
+			GlobalAddrs: globalMetaAddrs,
+			Group:       keyspaceMetaServiceGroup,
 		}
 		log.Info("return meta service group info", zap.Any("meta-service-info", metaInfo))
 		return metaInfo, nil
@@ -119,9 +119,9 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pd
 		return nil, err
 	}
 	metaInfo := &Info{
-		PDAddrs:                pdAddrs,
-		GlobalMetaServiceAddrs: globalMetaAddrs,
-		Group:                  keyspaceServiceGroup,
+		PDAddrs:     pdAddrs,
+		GlobalAddrs: globalMetaAddrs,
+		Group:       keyspaceServiceGroup,
 	}
 	log.Info("return keyspace meta service group info", zap.Any("meta-service-info", metaInfo))
 	return metaInfo, nil

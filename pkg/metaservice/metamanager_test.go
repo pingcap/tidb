@@ -87,7 +87,7 @@ func TestGetInfo(t *testing.T) {
 	metaInfo, err := metaservice.GetInfo(nil, globalMetaAddrs, expectPDAddrs)
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
-	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalMetaServiceAddrs[0])
+	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalAddrs[0])
 	require.Equal(t, "0", metaInfo.Group.GroupID)
 	require.Equal(t, expectPDAddrs, metaInfo.PDAddrs)
 
@@ -102,7 +102,7 @@ func TestGetInfo(t *testing.T) {
 	metaInfo, err = metaservice.GetInfo(keyspaceMeta, globalMetaAddrs, expectPDAddrs)
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
-	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalMetaServiceAddrs[0])
+	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalAddrs[0])
 	require.Equal(t, "2", metaInfo.Group.GroupID)
 	require.Equal(t, expectPDAddrs, metaInfo.PDAddrs)
 	expectedAddrs := []string{"127.0.0.1:2388", "127.0.0.1:2389"}
