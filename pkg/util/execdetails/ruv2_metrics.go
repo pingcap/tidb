@@ -247,9 +247,7 @@ func (m *RUV2Metrics) AddExecutorMetric(level int, label string, delta int64) {
 	}
 }
 
-// execL1Kind identifies which RUV2Metrics.executorL1 scalar field a recorder
-// writes. The zero value (execL1None) means "not a hot L1 label", so callers
-// fall back to AddExecutorMetric. Keep this in sync with ruv2ExecutorL1Counter.add.
+// execL1Kind selects one of the hot L1 executor counter fields; execL1None means none.
 type execL1Kind uint8
 
 const (
@@ -259,10 +257,8 @@ const (
 	execL1Limit
 )
 
-// ExecutorMetricRecorder is a pre-resolved counter for one hot L1 executor
-// metric. It pairs the process-global Prometheus counter (resolved once) with
-// the per-RUV2Metrics scalar field selected at Record time. The zero value
-// records nothing; callers must check Available before Record.
+// ExecutorMetricRecorder is a pre-resolved counter for one hot L1 executor metric.
+// The zero value records nothing; callers must check Available before Record.
 type ExecutorMetricRecorder struct {
 	counter prometheus.Counter
 	kind    execL1Kind
@@ -274,33 +270,17 @@ func (r ExecutorMetricRecorder) Available() bool { return r.kind != execL1None }
 // Record applies delta. Caller must ensure m is non-nil and not bypassed.
 func (r ExecutorMetricRecorder) Record(m *RUV2Metrics, delta int64) {
 	r.counter.Add(float64(delta))
-	switch r.kind {
-	case execL1BatchPointGet:
-		atomic.AddInt64(&m.executorL1.batchPointGetExec, delta)
-	case execL1PointGet:
-		atomic.AddInt64(&m.executorL1.pointGetExecutor, delta)
-	case execL1Limit:
-		atomic.AddInt64(&m.executorL1.limitExec, delta)
-	}
+	atomic.AddInt64(m.executorL1.fieldByKind(r.kind), delta)
 }
 
 // ResolveExecutorMetric returns a pre-resolved recorder for hot L1 executor
-// labels, or the zero recorder for everything else. The Prometheus counter is
-// already cached by metrics.RUV2ExecutorCounter, so this is cheap to call from
-// Open() and needs no further memoization.
+// labels, or the zero recorder for everything else.
 func ResolveExecutorMetric(level int, label string) ExecutorMetricRecorder {
 	if level != 1 {
 		return ExecutorMetricRecorder{}
 	}
-	var kind execL1Kind
-	switch label {
-	case ruv2LabelBatchPointGetExec:
-		kind = execL1BatchPointGet
-	case ruv2LabelPointGetExecutor:
-		kind = execL1PointGet
-	case ruv2LabelLimitExec:
-		kind = execL1Limit
-	default:
+	kind := execL1KindForLabel(label)
+	if kind == execL1None {
 		return ExecutorMetricRecorder{}
 	}
 	c := metrics.RUV2ExecutorCounter(level, label)
@@ -308,6 +288,19 @@ func ResolveExecutorMetric(level int, label string) ExecutorMetricRecorder {
 		return ExecutorMetricRecorder{}
 	}
 	return ExecutorMetricRecorder{counter: c, kind: kind}
+}
+
+func execL1KindForLabel(label string) execL1Kind {
+	switch label {
+	case ruv2LabelBatchPointGetExec:
+		return execL1BatchPointGet
+	case ruv2LabelPointGetExecutor:
+		return execL1PointGet
+	case ruv2LabelLimitExec:
+		return execL1Limit
+	default:
+		return execL1None
+	}
 }
 
 // AddExecutorL5InsertRows records affected insert rows for RUv2 accounting.
@@ -476,16 +469,23 @@ type ruv2ExtraLabelCounter struct {
 }
 
 func (c *ruv2ExecutorL1Counter) add(label string, delta int64) {
-	switch label {
-	case ruv2LabelBatchPointGetExec:
-		atomic.AddInt64(&c.batchPointGetExec, delta)
-	case ruv2LabelPointGetExecutor:
-		atomic.AddInt64(&c.pointGetExecutor, delta)
-	case ruv2LabelLimitExec:
-		atomic.AddInt64(&c.limitExec, delta)
-	default:
-		addRUV2ExtraLabelCounter(&c.extra, label, delta)
+	if p := c.fieldByKind(execL1KindForLabel(label)); p != nil {
+		atomic.AddInt64(p, delta)
+		return
 	}
+	addRUV2ExtraLabelCounter(&c.extra, label, delta)
+}
+
+func (c *ruv2ExecutorL1Counter) fieldByKind(kind execL1Kind) *int64 {
+	switch kind {
+	case execL1BatchPointGet:
+		return &c.batchPointGetExec
+	case execL1PointGet:
+		return &c.pointGetExecutor
+	case execL1Limit:
+		return &c.limitExec
+	}
+	return nil
 }
 
 func (c *ruv2ExecutorL1Counter) snapshot() map[string]int64 {
