@@ -627,8 +627,11 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 
-	// Make tidb panic if write log operation hang in `Timeout` seconds
+	// Timeout is the maximum seconds allowed for a log write/sync operation.
 	Timeout int `toml:"timeout" json:"timeout"`
+	// TimeoutAction controls the action when log write/sync timeout occurs.
+	// Valid values: panic, discard.
+	TimeoutAction string `toml:"timeout-action" json:"timeout-action"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1133,6 +1136,7 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		TimeoutAction:       zaplog.LogTimeoutActionPanic,
 	},
 	Instance: Instance{
 		TiDBGeneralLog:              false,
@@ -1647,6 +1651,14 @@ func (c *Config) Valid() error {
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
+	switch strings.ToLower(c.Log.TimeoutAction) {
+	case "", zaplog.LogTimeoutActionPanic:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionPanic
+	case zaplog.LogTimeoutActionDiscard:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	default:
+		return fmt.Errorf("log.timeout-action should be one of [%s, %s]", zaplog.LogTimeoutActionPanic, zaplog.LogTimeoutActionDiscard)
+	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
@@ -1762,6 +1774,7 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.GeneralLogFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+		func(config *zaplog.Config) { config.TimeoutAction = l.TimeoutAction },
 	)
 }
 
