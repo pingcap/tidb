@@ -145,18 +145,15 @@ func (s *exportScheduler) splitDumpSubtasks(ctx context.Context, execIDs []strin
 		groups := groupBoundaries(boundaries, groupCnt)
 		writerCnt := s.taskMeta.totalWriters(s.GetTask().RequiredSlots)
 		for _, g := range groups {
-			// fix the per-writer split points now so a subtask retry rewrites
-			// exactly the same files.
 			writerGroups := groupBoundaries(g, writerCnt)
-			splitKeys := make([][]byte, 0, len(writerGroups)-1)
-			for _, wg := range writerGroups[1:] {
-				splitKeys = append(splitKeys, wg[0])
+			bounds := make([][]byte, 0, len(writerGroups)+1)
+			bounds = append(bounds, writerGroups[0][0])
+			for _, wg := range writerGroups {
+				bounds = append(bounds, wg[len(wg)-1])
 			}
 			meta, err := json.Marshal(&SubtaskMeta{
-				PhysicalID:      pid,
-				Start:           g[0],
-				End:             g[len(g)-1],
-				WriterSplitKeys: splitKeys,
+				PhysicalID:   pid,
+				WriterBounds: bounds,
 			})
 			if err != nil {
 				return nil, errors.Trace(err)

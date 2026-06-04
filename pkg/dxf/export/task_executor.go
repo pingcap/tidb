@@ -109,14 +109,12 @@ func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtas
 	if err := json.Unmarshal(subtask.Meta, stMeta); err != nil {
 		return errors.Annotate(err, "unmarshal export subtask meta failed")
 	}
-	// sub-range split points were fixed at schedule time, so a retry rewrites
+	// sub-range bounds were fixed at schedule time, so a retry rewrites
 	// exactly the same files.
-	bounds := make([]kv.Key, 0, len(stMeta.WriterSplitKeys)+2)
-	bounds = append(bounds, stMeta.Start)
-	for _, k := range stMeta.WriterSplitKeys {
+	bounds := make([]kv.Key, 0, len(stMeta.WriterBounds))
+	for _, k := range stMeta.WriterBounds {
 		bounds = append(bounds, k)
 	}
-	bounds = append(bounds, stMeta.End)
 	e.logger.Info("run export dump subtask",
 		zap.Int64("subtask-id", subtask.ID),
 		zap.Int("ordinal", subtask.Ordinal),

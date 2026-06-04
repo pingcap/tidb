@@ -46,11 +46,11 @@ func (m *TaskMeta) totalWriters(concurrency int) int {
 // SubtaskMeta is the subtask meta of the Dump step. Each subtask owns a
 // contiguous key range of one physical table.
 type SubtaskMeta struct {
-	PhysicalID int64  `json:"physical_id"`
-	Start      []byte `json:"start"`
-	End        []byte `json:"end"`
-	// WriterSplitKeys are the fixed split points dividing [Start, End) into
-	// per-writer sub-ranges, decided at schedule time from region boundaries
-	// so a subtask retry rewrites exactly the same files.
-	WriterSplitKeys [][]byte `json:"writer_split_keys"`
+	PhysicalID int64 `json:"physical_id"`
+	// WriterBounds are the boundaries of the per-writer sub-ranges: writer i
+	// owns [WriterBounds[i], WriterBounds[i+1]). They are fixed at schedule
+	// time from region boundaries so a subtask retry rewrites exactly the
+	// same files. WriterBounds[0] and WriterBounds[len-1] are the subtask's
+	// span.
+	WriterBounds [][]byte `json:"writer_bounds"`
 }
