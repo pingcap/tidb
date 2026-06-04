@@ -35,12 +35,12 @@ type TaskMeta struct {
 	SubtaskRegions int `json:"subtask_regions"`
 }
 
-const defaultLanesPerEncoder = 2
+const defaultWritersPerEncoder = 2
 
-// totalLanes is the number of per-writer sub-ranges of one subtask given the
-// task concurrency (= encoder count).
-func (m *TaskMeta) totalLanes(concurrency int) int {
-	return max(concurrency, 1) * defaultLanesPerEncoder
+// totalWriters is the number of per-writer sub-ranges of one subtask given
+// the task concurrency (= encoder count).
+func (m *TaskMeta) totalWriters(concurrency int) int {
+	return max(concurrency, 1) * defaultWritersPerEncoder
 }
 
 // SubtaskMeta is the subtask meta of the Dump step. Each subtask owns a

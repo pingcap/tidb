@@ -121,7 +121,7 @@ func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtas
 		zap.Int64("subtask-id", subtask.ID),
 		zap.Int("ordinal", subtask.Ordinal),
 		zap.Int("concurrency", subtask.Concurrency),
-		zap.Int("lane-cnt", len(bounds)-1))
+		zap.Int("writer-cnt", len(bounds)-1))
 	return e.runPipeline(ctx, stMeta.PhysicalID, subtask.Ordinal, bounds)
 }
 

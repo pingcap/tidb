@@ -52,7 +52,7 @@ func quotedByType(tp byte) bool {
 }
 
 // csvEncoder encodes chunks into CSV bytes. It is owned by one encoder
-// goroutine and serves multiple lanes.
+// goroutine and serves multiple writers.
 type csvEncoder struct {
 	cols   []textrow.ColumnInfo
 	quoted []bool
@@ -121,9 +121,9 @@ func (e *csvEncoder) encodeChunk(chk *chunk.Chunk, buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-// fileWriter streams encoded buffers of one lane to the object store, cutting
-// a new file when the current one reaches fileSize. Buffers arrive at chunk
-// granularity, so files are always cut at a row boundary.
+// fileWriter streams encoded buffers of one writer to the object store,
+// cutting a new file when the current one reaches fileSize. Buffers arrive at
+// chunk granularity, so files are always cut at a row boundary.
 type fileWriter struct {
 	ctx context.Context
 
