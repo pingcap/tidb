@@ -687,7 +687,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	if !tr.optionalFinished {
 		data, err = tr.optionalResult.NextRaw(ctx)
 		if err != nil {
-			return nil, err
+			return nil, normalizeCtxErrWithCause(ctx, err)
 		}
 		if data != nil {
 			return data, nil
@@ -696,7 +696,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	}
 	data, err = tr.result.NextRaw(ctx)
 	if err != nil {
-		return nil, err
+		return nil, normalizeCtxErrWithCause(ctx, err)
 	}
 	return data, nil
 }

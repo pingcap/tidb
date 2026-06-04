@@ -1277,8 +1277,14 @@ const (
 	// Use the current sysvar default when the row is missing.
 	version228 = 228
 
+	// version 229
+	// Backfill tidb_analyze_distsql_scan_concurrency for upgraded clusters where the
+	// row in mysql.global_variables was never materialized when the variable was
+	// introduced. Use tidb_distsql_scan_concurrency to preserve old analyze behavior.
+	version229 = 229
+
 	// ...
-	// [version229, version238] is the version range reserved for patches of 8.5.x
+	// [version230, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
 
@@ -1286,7 +1292,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version228
+var currentBootstrapVersion int64 = version229
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1470,6 +1476,7 @@ var (
 		upgradeToVer226,
 		upgradeToVer227,
 		upgradeToVer228,
+		upgradeToVer229,
 	}
 )
 
@@ -3418,6 +3425,19 @@ func upgradeToVer228(s sessiontypes.Session, ver int64) {
 		return
 	}
 	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.Off)
+}
+
+func upgradeToVer229(s sessiontypes.Session, ver int64) {
+	if ver >= version229 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
 }
 
 func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
