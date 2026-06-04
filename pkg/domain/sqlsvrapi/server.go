@@ -31,7 +31,7 @@ type KSRuntimeHandle interface {
 	KSRuntime
 	// Release releases the holding of the runtime handle. After calling Release,
 	// the handle should not be used anymore.
-	// the underlying runtime have different lifecycle, the handle is just a view
+	// the underlying runtime has different lifecycle, the handle is just a view
 	// and does not manage the lifecycle of the runtime.
 	Release()
 }

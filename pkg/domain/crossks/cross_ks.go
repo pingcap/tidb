@@ -172,7 +172,7 @@ func (m *Manager) validateTargetKS(ks string) error {
 func (m *Manager) getOrCreateEntryWithoutLock(
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
-) (_ *runtimeEntry, err error) {
+) (*runtimeEntry, error) {
 	if entry, ok := m.runtimes[ks]; ok {
 		return entry, nil
 	}
