@@ -269,8 +269,13 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		colMap[col.Name.L] = col
 	}
 
+	seenCols := make(map[string]struct{}, len(s.Cols))
 	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
 	for _, c := range s.Cols {
+		if _, exists := seenCols[c.L]; exists {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		seenCols[c.L] = struct{}{}
 		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
 			c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
