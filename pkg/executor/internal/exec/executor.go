@@ -149,9 +149,9 @@ func ruv2ExecutorMetricByType(execType string) (ruv2ExecutorMetric, bool) {
 // single check.
 type ruv2NextCacheState struct {
 	metrics    *execdetails.RUV2Metrics
+	recorder   execdetails.ExecutorMetricRecorder
 	regionName string
 	info       ruv2ExecutorMetric
-	recorder   execdetails.ExecutorMetricRecorder
 	hasInfo    bool
 }
 
