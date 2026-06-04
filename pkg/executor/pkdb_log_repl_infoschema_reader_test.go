@@ -75,7 +75,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 				SourcePdAddrs:        []string{"127.0.0.1:2379", "127.0.0.2:2379"},
 				State:                "SYNC_REPLICATING",
 				ReplicationMode:      "SYNC",
-				ProtectionMode:       pdpb.ProtectionMode_MaximumAvailability,
+				ProtectionMode:       pdpb.ProtectionMode_MAXIMUM_AVAILABILITY,
 				DegradeTimeoutSec:    30,
 				CheckpointTs:         checkpointTS,
 				CheckpointLagSec:     3,
@@ -113,7 +113,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			Status: &pdpb.LogReplicationStatus{
 				ReplicaClusterId: 1002,
 				SourceClusterId:  1001,
-				ProtectionMode:   pdpb.ProtectionMode_MaximumPerformance,
+				ProtectionMode:   pdpb.ProtectionMode_MAXIMUM_PERFORMANCE,
 			},
 		})
 		require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 				ReplicaClusterId: 1002,
 				SourceClusterId:  1001,
 				CheckpointLagSec: 3,
-				ProtectionMode:   pdpb.ProtectionMode_MaximumProtection,
+				ProtectionMode:   pdpb.ProtectionMode_MAXIMUM_PROTECTION,
 			},
 		})
 		require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 				SourceClusterId:  1001,
 				CheckpointTs:     449123456789000000,
 				CheckpointLagSec: -1,
-				ProtectionMode:   pdpb.ProtectionMode_MaximumProtection,
+				ProtectionMode:   pdpb.ProtectionMode_MAXIMUM_PROTECTION,
 			},
 		})
 		require.NoError(t, err)

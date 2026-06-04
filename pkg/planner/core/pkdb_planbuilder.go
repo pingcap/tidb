@@ -37,6 +37,7 @@ type AlterLogReplication struct {
 	NewSourceClusterID uint64
 	ProtectionMode     ast.ProtectionMode
 	DegradeTimeoutSec  uint64
+	NewName            model.CIStr
 }
 
 // PauseLogReplication represents a PAUSE LOG REPLICATION plan.
@@ -166,6 +167,15 @@ func buildCreateLogReplicationDetachedFields() (*expression.Schema, types.NameSl
 }
 
 func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.AlterLogReplication) (base.Plan, error) {
+	if as.NewName.L != "" {
+		if as.NewSourceClusterID != nil || len(as.Opts) != 0 {
+			return nil, errors.New("ALTER LOG REPLICATION RENAME cannot be combined with other alter options")
+		}
+		return &AlterLogReplication{
+			Name:    as.Name,
+			NewName: as.NewName,
+		}, nil
+	}
 	if as.NewSourceClusterID != nil {
 		if len(as.Opts) != 0 {
 			return nil, errors.New("ALTER LOG REPLICATION CHANGE SOURCE cannot be combined with option list")

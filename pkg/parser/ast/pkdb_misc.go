@@ -35,11 +35,17 @@ type AlterLogReplication struct {
 	Name               model.CIStr
 	Opts               []*LogReplicationOpt
 	NewSourceClusterID *uint64
+	NewName            model.CIStr
 }
 
 func (a *AlterLogReplication) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER LOG REPLICATION ")
 	ctx.WriteName(a.Name.String())
+	if a.NewName.L != "" {
+		ctx.WriteKeyWord(" RENAME TO ")
+		ctx.WriteName(a.NewName.String())
+		return nil
+	}
 	if a.NewSourceClusterID != nil {
 		ctx.WriteKeyWord(" CHANGE SOURCE TO ")
 		ctx.WritePlainf("%d", *a.NewSourceClusterID)

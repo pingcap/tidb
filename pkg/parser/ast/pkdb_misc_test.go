@@ -47,6 +47,10 @@ func TestAdminLogReplicationRestore(t *testing.T) {
 			"ADMIN ALTER LOG REPLICATION `test` CHANGE SOURCE TO 123",
 		},
 		{
+			"ADMIN alter LOG REPLICATION test RENAME TO test_renamed",
+			"ADMIN ALTER LOG REPLICATION `test` RENAME TO `test_renamed`",
+		},
+		{
 			"ADMIN PAUSE LOG REPLICATION test",
 			"ADMIN PAUSE LOG REPLICATION `test`",
 		},

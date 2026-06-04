@@ -27,6 +27,7 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			NewSourceClusterID: v.NewSourceClusterID,
 			ProtectionMode:     v.ProtectionMode,
 			DegradeTimeoutSec:  v.DegradeTimeoutSec,
+			NewName:            v.NewName,
 		}
 
 	case *plannercore.PauseLogReplication:

@@ -18,9 +18,9 @@ import "github.com/pingcap/tidb/pkg/parser/ast"
 
 func isAdminLogReplStmt(tp ast.AdminStmtType) bool {
 	switch tp {
-	case ast.AdminCreateLogReplication, ast.AdminAlterLogReplication, ast.AdminPauseLogReplication,
-		ast.AdminResumeLogReplication, ast.AdminDropLogReplication, ast.AdminSwitchOverPrimary,
-		ast.AdminSwitchOverAsPrimary, ast.AdminActivateStandby:
+	case ast.AdminCreateLogReplication, ast.AdminAlterLogReplication,
+		ast.AdminPauseLogReplication, ast.AdminResumeLogReplication, ast.AdminDropLogReplication,
+		ast.AdminSwitchOverPrimary, ast.AdminSwitchOverAsPrimary, ast.AdminActivateStandby:
 		return true
 	default:
 		return false

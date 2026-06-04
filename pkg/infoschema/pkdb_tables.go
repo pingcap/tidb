@@ -1,6 +1,7 @@
 package infoschema
 
 import (
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,23 +50,23 @@ var (
 // modes for log replication.
 var (
 	ProtectionModeStrs = []string{
-		"MAXIMUM_PERFORMANCE",
-		"MAXIMUM_PROTECTION",
-		"MAXIMUM_AVAILABILITY",
-		"UNKNOWN",
+		pdpb.ProtectionMode_MAXIMUM_PERFORMANCE.String(),
+		pdpb.ProtectionMode_MAXIMUM_PROTECTION.String(),
+		pdpb.ProtectionMode_MAXIMUM_AVAILABILITY.String(),
+		pkdb.LogReplicationUnknown,
 	}
-	ProtectionModeMaximumPerformanceEnum, _  = types.ParseEnumName(ProtectionModeStrs, "MAXIMUM_PERFORMANCE", mysql.DefaultCollationName)
-	ProtectionModeMaximumProtectionEnum, _   = types.ParseEnumName(ProtectionModeStrs, "MAXIMUM_PROTECTION", mysql.DefaultCollationName)
-	ProtectionModeMaximumAvailabilityEnum, _ = types.ParseEnumName(ProtectionModeStrs, "MAXIMUM_AVAILABILITY", mysql.DefaultCollationName)
-	ProtectionModeMaximumUnknownEnum, _      = types.ParseEnumName(ProtectionModeStrs, "UNKNOWN", mysql.DefaultCollationName)
+	ProtectionModeMaximumPerformanceEnum, _  = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_PERFORMANCE.String(), mysql.DefaultCollationName)
+	ProtectionModeMaximumProtectionEnum, _   = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_PROTECTION.String(), mysql.DefaultCollationName)
+	ProtectionModeMaximumAvailabilityEnum, _ = types.ParseEnumName(ProtectionModeStrs, pdpb.ProtectionMode_MAXIMUM_AVAILABILITY.String(), mysql.DefaultCollationName)
+	ProtectionModeMaximumUnknownEnum, _      = types.ParseEnumName(ProtectionModeStrs, pkdb.LogReplicationUnknown, mysql.DefaultCollationName)
 )
 
 // ReplicationModeStrs and the enum variables contains the possible replication
 // modes for log replication.
 var (
 	ReplicationModeStrs = []string{
-		pkdb.LogReplicationModeSync,
-		pkdb.LogReplicationModeAsync,
+		pdpb.LogReplication_SYNC.String(),
+		pdpb.LogReplication_ASYNC.String(),
 		pkdb.LogReplicationUnknown,
 	}
 	ReplicationModeUnknownEnum, _ = types.ParseEnumName(ReplicationModeStrs, pkdb.LogReplicationUnknown, mysql.DefaultCollationName)

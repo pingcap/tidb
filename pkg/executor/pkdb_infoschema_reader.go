@@ -34,18 +34,18 @@ func (e *memtableRetriever) setDataForLogReplStatusGlobal(ctx context.Context, s
 
 		var protectionModeEnum types.Enum
 		switch status.GetProtectionMode() {
-		case pdpb.ProtectionMode_MaximumPerformance:
+		case pdpb.ProtectionMode_MAXIMUM_PERFORMANCE:
 			protectionModeEnum = infoschema.ProtectionModeMaximumPerformanceEnum
-		case pdpb.ProtectionMode_MaximumProtection:
+		case pdpb.ProtectionMode_MAXIMUM_PROTECTION:
 			protectionModeEnum = infoschema.ProtectionModeMaximumProtectionEnum
-		case pdpb.ProtectionMode_MaximumAvailability:
+		case pdpb.ProtectionMode_MAXIMUM_AVAILABILITY:
 			protectionModeEnum = infoschema.ProtectionModeMaximumAvailabilityEnum
 		default:
 			protectionModeEnum = infoschema.ProtectionModeMaximumUnknownEnum
 		}
 		row[3].SetMysqlEnum(protectionModeEnum, mysql.DefaultCollationName) // PROTECTION_MODE
 
-		if status.GetProtectionMode() == pdpb.ProtectionMode_MaximumAvailability {
+		if status.GetProtectionMode() == pdpb.ProtectionMode_MAXIMUM_AVAILABILITY {
 			row[4].SetUint64(status.GetDegradeTimeoutSec()) // DEGRADE_TIMEOUT
 		}
 
@@ -246,11 +246,11 @@ func buildLogReplStatusLocalRow(localStatus *pdpb.LogReplicationLocalStatus) ([]
 
 	var protectionModeEnum types.Enum
 	switch status.GetProtectionMode() {
-	case pdpb.ProtectionMode_MaximumPerformance:
+	case pdpb.ProtectionMode_MAXIMUM_PERFORMANCE:
 		protectionModeEnum = infoschema.ProtectionModeMaximumPerformanceEnum
-	case pdpb.ProtectionMode_MaximumProtection:
+	case pdpb.ProtectionMode_MAXIMUM_PROTECTION:
 		protectionModeEnum = infoschema.ProtectionModeMaximumProtectionEnum
-	case pdpb.ProtectionMode_MaximumAvailability:
+	case pdpb.ProtectionMode_MAXIMUM_AVAILABILITY:
 		protectionModeEnum = infoschema.ProtectionModeMaximumAvailabilityEnum
 		row[8].SetUint64(status.GetDegradeTimeoutSec()) // DEGRADE_TIMEOUT
 	default:
