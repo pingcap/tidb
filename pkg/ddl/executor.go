@@ -3715,14 +3715,17 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
 		return nil
 	}
-
 	if replicaInfo.Hypo {
 		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
-	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
-	if err != nil {
-		return errors.Trace(err)
+	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+
+	if checkTiFlash {
+		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
@@ -3897,6 +3900,10 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return nil
+	}
 	// Check the tiflash replica count should be less than the total tiflash stores.
 	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx.GetStore())
 	if err != nil {

@@ -182,7 +182,9 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
-	// store of the task, this store corresponds to the task keyspace in nextgen.
+	// TaskStore is the store for task.Keyspace. It equals the instance store in
+	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
+	// it from the task keyspace.
 	TaskStore kv.Storage
 }
 

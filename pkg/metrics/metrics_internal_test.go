@@ -37,6 +37,13 @@ func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
 	return m.GetGauge().GetValue()
 }
 
+func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, counter.Write(m))
+	return m.GetCounter().GetValue()
+}
+
 func countCollectedMetrics(collector prometheus.Collector) int {
 	ch := make(chan prometheus.Metric, 16)
 	collector.Collect(ch)
@@ -53,6 +60,7 @@ func TestStmtSummaryMetricLabels(t *testing.T) {
 	InitStmtSummaryMetrics()
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowEvictedCount))
+	require.Equal(t, 0, countCollectedMetrics(StmtSummaryEvictedLogCounter))
 
 	SetStmtSummaryWindowMetrics(StmtSummaryTypeV1, 3, 1)
 	require.Equal(t, 1, countCollectedMetrics(StmtSummaryWindowRecordCount))
@@ -65,6 +73,12 @@ func TestStmtSummaryMetricLabels(t *testing.T) {
 	require.Equal(t, 2, countCollectedMetrics(StmtSummaryWindowEvictedCount))
 	require.Equal(t, 5.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)))
 	require.Equal(t, 2.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)))
+
+	StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultPersisted).Add(3)
+	StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultDropped).Inc()
+	require.Equal(t, 2, countCollectedMetrics(StmtSummaryEvictedLogCounter))
+	require.Equal(t, 3.0, readCounterValue(t, StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultPersisted)))
+	require.Equal(t, 1.0, readCounterValue(t, StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultDropped)))
 }
 
 func TestGrpcChannelzCollectorSingleton(t *testing.T) {
