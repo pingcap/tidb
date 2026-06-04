@@ -503,7 +503,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -672,4 +672,15 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 		}
 	}
 	return true
+}
+
+// InjectExpr injects the expr into a projection above p, and returns the new projection and the new column.
+func InjectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.AppendExpr(expr)
 }
