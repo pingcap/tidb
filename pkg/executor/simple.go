@@ -1711,8 +1711,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if user == nil {
 			return errors.New("Session user is empty")
 		}
-		// Use AuthHostname to search the user record, set Hostname as AuthHostname.
+		// USER() resolves to the AUTHENTICATED account, so key the synthetic
+		// spec on AuthUsername/AuthHostname rather than the claimed
+		// Username/Hostname. For a proxy/mapped login where the two diverge,
+		// using the claimed Username would target the wrong mysql.user row (see
+		// pingcap/tidb#68937). In the common case the two are identical, so this
+		// is a no-op there.
 		userCopy := *user
+		userCopy.Username = userCopy.AuthUsername
 		userCopy.Hostname = userCopy.AuthHostname
 		// Propagate the per-statement USER() dual-password clause onto the
 		// synthetic UserSpec so the per-spec loop below only needs to inspect
@@ -1824,7 +1830,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		specDualPwdRequested := specRetainCurrentPassword || specDiscardOldPassword
 
 		user := e.Ctx().GetSessionVars().User
-		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		// Self-classification keys on the AUTHENTICATED identity
+		// (AuthUsername/AuthHostname), so an explicit `ALTER USER 'auth'@'host'`
+		// that names the caller's authenticated account is treated as
+		// self-service even for a proxy/mapped login where the claimed Username
+		// differs (pingcap/tidb#68937). In the common case Username ==
+		// AuthUsername, so behavior is unchanged.
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.AuthUsername == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
 		alterPassword := false
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
 			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
@@ -1832,7 +1844,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if alterCurrentUser && (alterPassword || specDualPwdRequested) {
-			spec.User.Username = user.Username
+			spec.User.Username = user.AuthUsername
 			spec.User.Hostname = user.AuthHostname
 		}
 		// MySQL dual-password privilege model

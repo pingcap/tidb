@@ -596,3 +596,29 @@ func TestDualPasswordSelfSetPasswordRetainAcceptsMysqlUpdate(t *testing.T) {
 	require.NoError(t, authAs(t, tk, "dpupd", "%", "u1"))
 	require.NoError(t, authAs(t, tk, "dpupd", "%", "u2"))
 }
+
+// TestDualPasswordAlterUserUserResolvesAuthUsername guards pingcap/tidb#68937:
+// ALTER USER USER() must operate on the AUTHENTICATED account
+// (AuthUsername/AuthHostname), not the claimed Username, so a proxy/mapped
+// login cannot target the wrong mysql.user row.
+func TestDualPasswordAlterUserUserResolvesAuthUsername(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dplogin, dpauth")
+	tk.MustExec("CREATE USER dplogin IDENTIFIED BY 'loginpw'")
+	tk.MustExec("CREATE USER dpauth IDENTIFIED BY 'authpw'")
+
+	// Authenticate as dpauth (sets AuthUsername=dpauth), then simulate a
+	// proxy/mapped login by overriding only the claimed Username to dplogin.
+	sub := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, sub.Session().Auth(&auth.UserIdentity{Username: "dpauth", Hostname: "%"}, sha1Password("authpw"), nil, nil))
+	sub.Session().GetSessionVars().User.Username = "dplogin"
+
+	// USER() must resolve to the authenticated account (dpauth), not dplogin.
+	sub.MustExec("ALTER USER USER() IDENTIFIED BY 'newauthpw'")
+
+	// dpauth's password changed; dplogin is untouched.
+	require.NoError(t, authAs(t, tk, "dpauth", "%", "newauthpw"))
+	require.Error(t, authAs(t, tk, "dpauth", "%", "authpw"))
+	require.NoError(t, authAs(t, tk, "dplogin", "%", "loginpw"))
+}
