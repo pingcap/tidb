@@ -158,6 +158,17 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	originalState := colInfo.State
 	switch colInfo.State {
+	case model.StateWriteReorganization:
+		// Rolling back an ADD COLUMN job may enter here (the new column is in WriteReorg).
+		// DropColumn's state machine doesn't normally start from WriteReorg, so treat it as the
+		// "public -> write only" transition to begin dropping.
+		colInfo.State = model.StateWriteOnly
+		setIndicesState(idxInfos, model.StateWriteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StatePublic:
 		// public -> write only
 		colInfo.State = model.StateWriteOnly

@@ -100,10 +100,10 @@ func strConcat(str []string, defaultStrng string) string {
 
 func (am *accessMeta) getUserGrants(db *sql.Conn) error {
 	defaultRoles, err := getSimpleQueryResult("SELECT CURRENT_ROLE();", db)
-	if err != nil {
-		return err
+	defaultRoleStr := ""
+	if err == nil {
+		defaultRoleStr = strConcat(defaultRoles, "NONE")
 	}
-	defaultRoleStr := strConcat(defaultRoles, "NONE")
 
 	username, err := getSimpleQueryResult("SELECT USER();", db)
 	if err != nil {
@@ -157,7 +157,9 @@ func (am *accessMeta) formatPrint() string {
 
 	output += "\nuser info: " + am.user.userName + "@" + am.user.host + "\n"
 
-	output += "role info: " + am.grants.defaultRoleName + "\n"
+	if am.grants.defaultRoleName != "" {
+		output += "role info: " + am.grants.defaultRoleName + "\n"
+	}
 
 	output += "privileges info: \n" + am.grants.privilegesLists + "\n"
 

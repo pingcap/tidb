@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
 func TestSemiJoinOrder(t *testing.T) {
@@ -141,4 +142,36 @@ func TestJoinWithNullEQ(t *testing.T) {
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows())
+}
+
+func TestIndexJoinWithOrderedWindowInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, probe_rows, inner_rows")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key idx_abc(a, b, c))")
+	tk.MustExec("create table probe_rows(probe_key varchar(20) not null, probe_time datetime not null, filter_code varchar(20), flag1 int, flag2 int, flag3 int, key idx_filter_time(filter_code, probe_time, flag1, flag2, flag3), key idx_probe_key(probe_key))")
+	tk.MustExec("create table inner_rows(partition_key varchar(20) not null, order_time datetime not null, type_code int, state_code int, payload varchar(20), key idx_partition_order(partition_key, order_time))")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustExec("insert into t2 values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23), (3, 4, 34)")
+	tk.MustExec("insert into probe_rows values ('K001', '2026-02-04 10:00:00', 'filter_001', 0, 0, 0), ('K002', '2026-02-04 11:00:00', 'filter_001', 0, 0, 0), ('K003', '2026-02-04 12:00:00', 'filter_001', 0, 0, 0), ('K004', '2026-02-04 13:00:00', 'filter_002', 0, 0, 0)")
+	tk.MustExec("insert into inner_rows values ('K001', '2026-02-04 09:00:00', 4, 2, 'old_payload_1'), ('K001', '2026-02-04 15:00:00', 4, 2, 'new_payload_1'), ('K002', '2026-02-04 08:00:00', 3, 2, 'old_payload_2'), ('K002', '2026-02-04 16:00:00', 4, 1, 'new_payload_2'), ('K004', '2026-02-04 17:00:00', 4, 2, 'new_payload_4')")
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1")
+
+	var input []string
+	var output []struct {
+		Plan   []string
+		Result []string
+	}
+	suiteData := getJoinSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='brief' " + sql).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Sort().Rows())
+		})
+		tk.MustQuery("EXPLAIN FORMAT='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(output[i].Result...))
+	}
 }

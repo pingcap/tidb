@@ -299,6 +299,13 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			}
 			runner = newBackfillWorker(b.ctx, updateWorker)
 			worker = updateWorker
+		case typeAddAutoIncrementColumnWorker:
+			autoIncWorker, err := newAddAutoIncrementColumnWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			if err != nil {
+				return err
+			}
+			runner = newBackfillWorker(b.ctx, autoIncWorker)
+			worker = autoIncWorker
 		case typeCleanUpIndexWorker:
 			idxWorker, err := newCleanUpIndexWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {

@@ -1260,6 +1260,7 @@ func TestInfoBuiltin(t *testing.T) {
 	lines := strings.Split(tidbVersionResult, "\n")
 	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
 	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
+	assert.Contains(t, tidbVersionResult, "Core Version: "+versioninfo.TiDBCoreVersion, "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")

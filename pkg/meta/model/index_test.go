@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,4 +69,19 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4")))
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4"), model.NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_2")))
+}
+
+func TestIsVersionedTiDBShardExprNode(t *testing.T) {
+	expr, err := parseGeneratedExpr("tidb_shard(`a`, 1)")
+	require.NoError(t, err)
+
+	baseColName, ok := IsVersionedTiDBShardExprNode(expr)
+	require.True(t, ok)
+	require.Equal(t, model.NewCIStr("a"), baseColName)
+
+	expr, err = parseGeneratedExpr("tidb_shard(`a`)")
+	require.NoError(t, err)
+	baseColName, ok = IsVersionedTiDBShardExprNode(expr)
+	require.False(t, ok)
+	require.Equal(t, model.CIStr{}, baseColName)
 }

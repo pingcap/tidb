@@ -590,15 +590,15 @@ func (pCon *ProcedureContext) TryFindHandle(code int, errStatus string, hasWarni
 		switch x := handler.(type) {
 		case *ProcedureHandleState:
 			switch x.State {
-			case ast.PROCEDUR_SQLWARNING:
+			case ast.ProcedureSQLWarning:
 				if errStatus[:2] == "01" || hasWarning {
 					return &x.ProcedureHandleBase
 				}
-			case ast.PROCEDUR_NOT_FOUND:
+			case ast.ProcedureNotFound:
 				if errStatus[:2] == "02" {
 					return &x.ProcedureHandleBase
 				}
-			case ast.PROCEDUR_SQLEXCEPTION:
+			case ast.ProcedureSQLException:
 				if (errStatus[0] != '0' || errStatus[1] > '2') && !hasWarning {
 					return &x.ProcedureHandleBase
 				}

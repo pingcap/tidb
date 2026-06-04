@@ -3,7 +3,9 @@ package ast_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAdminLogReplicationRestore(t *testing.T) {
@@ -13,12 +15,32 @@ func TestAdminLogReplicationRestore(t *testing.T) {
 			"ADMIN CREATE LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1'",
 		},
 		{
+			"ADMIN CREATE LOG REPLICATION test SOURCE_HOST '127.0.0.1' DETACHED",
+			"ADMIN CREATE LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1' DETACHED",
+		},
+		{
 			`ADMIN CREATE LOG REPLICATION test SOURCE_HOST='127.0.0.1' SOURCE_PORT 3306 SOURCE_USER='root' SOURCE_PASSWORD='It\'s a good day' PROTECTION_MODE=MAXIMUM_AVAILABILITY DEGRADE_TIMEOUT '30s'`,
 			"ADMIN CREATE LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1' SOURCE_PORT = 3306 SOURCE_USER = 'root' SOURCE_PASSWORD = 'It''s a good day' PROTECTION_MODE = MAXIMUM_AVAILABILITY DEGRADE_TIMEOUT = '30s'",
 		},
 		{
+			"ADMIN CREATE LOG REPLICATION test SOURCE_HOST='127.0.0.1' DETACHED",
+			"ADMIN CREATE LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1' DETACHED",
+		},
+		{
 			"ADMIN ALTER LOG REPLICATION test source_HOST='127.0.0.2' SOURCE_PORT=3307 PROTECTION_MODE maximum_protection",
 			"ADMIN ALTER LOG REPLICATION `test` SOURCE_HOST = '127.0.0.2' SOURCE_PORT = 3307 PROTECTION_MODE = MAXIMUM_PROTECTION",
+		},
+		{
+			"ADMIN ALTER LOG REPLICATION test PROTECTION_MODE 0",
+			"ADMIN ALTER LOG REPLICATION `test` PROTECTION_MODE = MAXIMUM_PERFORMANCE",
+		},
+		{
+			"ADMIN ALTER LOG REPLICATION test PROTECTION_MODE 1",
+			"ADMIN ALTER LOG REPLICATION `test` PROTECTION_MODE = MAXIMUM_PROTECTION",
+		},
+		{
+			"ADMIN ALTER LOG REPLICATION test PROTECTION_MODE 2 DEGRADE_TIMEOUT '30s'",
+			"ADMIN ALTER LOG REPLICATION `test` PROTECTION_MODE = MAXIMUM_AVAILABILITY DEGRADE_TIMEOUT = '30s'",
 		},
 		{
 			"ADMIN alter LOG REPLICATION test CHANGE SOURCE TO 123",
@@ -41,6 +63,10 @@ func TestAdminLogReplicationRestore(t *testing.T) {
 			"ADMIN SWITCHOVER PRIMARY TO 456",
 		},
 		{
+			"ADMIN SWITCHOVER AS PRIMARY",
+			"ADMIN SWITCHOVER AS PRIMARY",
+		},
+		{
 			"ADMIN ACTIVATE STANDBY MODE=FLASHBACK",
 			"ADMIN ACTIVATE STANDBY MODE = FLASHBACK",
 		},
@@ -53,4 +79,29 @@ func TestAdminLogReplicationRestore(t *testing.T) {
 		return node
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestAdminLogReplicationSecureText(t *testing.T) {
+	testCases := []struct {
+		input  string
+		secure string
+	}{
+		{
+			"ADMIN CREATE LOG REPLICATION test SOURCE_HOST='127.0.0.1' SOURCE_PASSWORD='secret'",
+			"ADMIN CREATE LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1' SOURCE_PASSWORD = '***'",
+		},
+		{
+			"ADMIN ALTER LOG REPLICATION test SOURCE_HOST='127.0.0.1' SOURCE_PASSWORD='secret'",
+			"ADMIN ALTER LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1' SOURCE_PASSWORD = '***'",
+		},
+	}
+	p := parser.New()
+	for _, tc := range testCases {
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, tc.input)
+		stmt, ok := node.(ast.SensitiveStmtNode)
+		require.True(t, ok, tc.input)
+		require.Equal(t, tc.secure, stmt.SecureText(), tc.input)
+		require.NotContains(t, stmt.SecureText(), "secret", tc.input)
+	}
 }

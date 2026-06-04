@@ -18,6 +18,7 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			Password:          v.Password,
 			ProtectionMode:    v.ProtectionMode,
 			DegradeTimeoutSec: v.DegradeTimeoutSec,
+			Detached:          v.Detached,
 		}
 	case *plannercore.AlterLogReplication:
 		return &AlterLogReplicationExec{
@@ -47,6 +48,10 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 		return &SwitchOverPrimaryExec{
 			BaseExecutor:        exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			NewPrimaryClusterID: v.NewPrimaryClusterID,
+		}
+	case *plannercore.SwitchOverAsPrimary:
+		return &SwitchOverAsPrimaryExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		}
 	case *plannercore.ActivateStandby:
 		return &ActivateStandbyExec{

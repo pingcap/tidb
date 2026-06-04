@@ -96,6 +96,7 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	// not used
+<<<<<<< HEAD
 	ActionAlterTableStatsOptions                ActionType = 58
 	ActionAlterNoCacheTable                     ActionType = 59
 	ActionCreateTables                          ActionType = 60
@@ -122,6 +123,56 @@ const (
 	ActionCreateProcedure                       ActionType = 83
 	ActionDropProcedure                         ActionType = 84
 	ActionAlterProcedure                        ActionType = 85
+||||||| bea0668079
+	ActionAlterTableStatsOptions ActionType = 58
+	ActionAlterNoCacheTable      ActionType = 59
+	ActionCreateTables           ActionType = 60
+	ActionMultiSchemaChange      ActionType = 61
+	ActionFlashbackCluster       ActionType = 62
+	ActionRecoverSchema          ActionType = 63
+	ActionReorganizePartition    ActionType = 64
+	ActionAlterTTLInfo           ActionType = 65
+	ActionAlterTTLRemove         ActionType = 67
+	ActionCreateResourceGroup    ActionType = 68
+	ActionAlterResourceGroup     ActionType = 69
+	ActionDropResourceGroup      ActionType = 70
+	ActionAlterTablePartitioning ActionType = 71
+	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
+	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
+	_                            ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity     ActionType = 78
+	ActionCreateTrigger          ActionType = 79
+	ActionDropTrigger            ActionType = 80
+	ActionCreateProcedure        ActionType = 81
+	ActionDropProcedure          ActionType = 82
+	ActionAlterProcedure         ActionType = 83
+=======
+	ActionAlterTableStatsOptions ActionType = 58
+	ActionAlterNoCacheTable      ActionType = 59
+	ActionCreateTables           ActionType = 60
+	ActionMultiSchemaChange      ActionType = 61
+	ActionFlashbackCluster       ActionType = 62
+	ActionRecoverSchema          ActionType = 63
+	ActionReorganizePartition    ActionType = 64
+	ActionAlterTTLInfo           ActionType = 65
+	ActionAlterTTLRemove         ActionType = 67
+	ActionCreateResourceGroup    ActionType = 68
+	ActionAlterResourceGroup     ActionType = 69
+	ActionDropResourceGroup      ActionType = 70
+	ActionAlterTablePartitioning ActionType = 71
+	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
+	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
+	_                            ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity     ActionType = 78
+
+	// 200 ~ 255 are reserved for pkdb usage.
+	// 200 ~ 204 are reserved for udf.
+	// 205 ~ 207 are reserved for tablegroup.
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 )
 
 // ActionMap is the map of DDL ActionType to string.

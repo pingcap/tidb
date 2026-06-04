@@ -104,6 +104,18 @@ func TestFormatPrint(t *testing.T) {
 	require.True(t, strings.Contains(strings.ReplaceAll(fmtStr, " ", ""), strings.ReplaceAll(expStr, " ", "")))
 }
 
+func TestFormatPrintWithoutRoleInfo(t *testing.T) {
+	conf := newConf()
+	am := newAccessMeta(conf, nil)
+	am.grants = &userGrants{
+		privilegesLists: "grant all privileges on *.* to root@'127.0.0.1' with grant option",
+	}
+	fmtStr := am.formatPrint()
+
+	require.NotContains(t, fmtStr, "role info:")
+	require.Contains(t, fmtStr, "privileges info:")
+}
+
 func TestWriteAccessMeta(t *testing.T) {
 	conf := newConf()
 	tempDir := t.TempDir()

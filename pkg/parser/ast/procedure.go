@@ -64,30 +64,45 @@ var (
 
 	_ ProcedureCharacteristic = &ProcedureComment{}
 	_ ProcedureCharacteristic = &ProcedureSecurity{}
+	_ ProcedureCharacteristic = &ProcedureDeterministic{}
+	_ ProcedureCharacteristic = &ProcedureSQLDataAccess{}
+	_ ErrNode                 = &ProcedureErrorState{}
 )
 
 // param info.
 const (
-	MODE_IN = iota
-	MODE_OUT
-	MODE_INOUT
+	ModeIn = iota
+	ModeOut
+	ModeInOut
 )
 
 const (
-	PROCEDUR_CONTINUE = iota
-	PROCEDUR_EXIT
+	ProcedureContinue = iota
+	ProcedureExit
 )
 
 const (
-	PROCEDUR_SQLWARNING = iota
-	PROCEDUR_NOT_FOUND
-	PROCEDUR_SQLEXCEPTION
-	PROCEDUR_END
+	ProcedureSQLWarning = iota
+	ProcedureNotFound
+	ProcedureSQLException
+	ProcedureEnd
 )
 
 const (
-	PROCEDURCOMMENT = iota
-	PROCEDURSECURITY
+	ProcedureCommentType = iota
+	ProcedureSecurityType
+	ProcedureDeterministicType
+	ProcedureSQLDataAccessType
+)
+
+// RoutineSQLDataAccess represents the SQL data access characteristic of a stored routine.
+type RoutineSQLDataAccess string
+
+const (
+	RoutineContainsSQL     RoutineSQLDataAccess = "CONTAINS SQL"
+	RoutineNoSQL           RoutineSQLDataAccess = "NO SQL"
+	RoutineReadsSQLData    RoutineSQLDataAccess = "READS SQL DATA"
+	RoutineModifiesSQLData RoutineSQLDataAccess = "MODIFIES SQL DATA"
 )
 
 type DeclNode interface {
@@ -152,6 +167,56 @@ func (procedure *ProcedureSecurity) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	procedure = newNode.(*ProcedureSecurity)
+	return v.Leave(procedure)
+}
+
+// ProcedureDeterministic represents the DETERMINISTIC / NOT DETERMINISTIC characteristic.
+type ProcedureDeterministic struct {
+	node
+	Type          int
+	Deterministic bool
+}
+
+// Restore implements Node interface.
+func (procedure *ProcedureDeterministic) Restore(ctx *format.RestoreCtx) error {
+	if procedure.Deterministic {
+		ctx.WriteKeyWord("DETERMINISTIC")
+		return nil
+	}
+	ctx.WriteKeyWord("NOT DETERMINISTIC")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (procedure *ProcedureDeterministic) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(procedure)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	procedure = newNode.(*ProcedureDeterministic)
+	return v.Leave(procedure)
+}
+
+// ProcedureSQLDataAccess represents the SQL data access characteristic.
+type ProcedureSQLDataAccess struct {
+	node
+	Type          int
+	SQLDataAccess RoutineSQLDataAccess
+}
+
+// Restore implements Node interface.
+func (procedure *ProcedureSQLDataAccess) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(string(procedure.SQLDataAccess))
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (procedure *ProcedureSQLDataAccess) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(procedure)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	procedure = newNode.(*ProcedureSQLDataAccess)
 	return v.Leave(procedure)
 }
 
@@ -230,11 +295,11 @@ func RestoreRoutineFieldType(ctx *format.RestoreCtx, origin *types.FieldType) er
 func (n *StoreParameter) Restore(ctx *format.RestoreCtx) error {
 	if !n.OmitParamStatus {
 		switch n.Paramstatus {
-		case MODE_IN:
+		case ModeIn:
 			ctx.WriteKeyWord("IN ")
-		case MODE_OUT:
+		case ModeOut:
 			ctx.WriteKeyWord("OUT ")
-		case MODE_INOUT:
+		case ModeInOut:
 			ctx.WriteKeyWord("INOUT ")
 		}
 	}
@@ -1291,9 +1356,9 @@ type ProcedureErrorControl struct {
 func (n *ProcedureErrorControl) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DECLARE ")
 	switch n.ControlHandle {
-	case PROCEDUR_CONTINUE:
+	case ProcedureContinue:
 		ctx.WriteKeyWord("CONTINUE ")
-	case PROCEDUR_EXIT:
+	case ProcedureExit:
 		ctx.WriteKeyWord("EXIT ")
 	}
 	ctx.WriteKeyWord("HANDLER FOR ")
@@ -1473,11 +1538,11 @@ type ProcedureErrorCon struct {
 // Restore implements Node interface.
 func (n *ProcedureErrorCon) Restore(ctx *format.RestoreCtx) error {
 	switch n.ErrorCon {
-	case PROCEDUR_SQLWARNING:
+	case ProcedureSQLWarning:
 		ctx.WriteKeyWord("SQLWARNING")
-	case PROCEDUR_NOT_FOUND:
+	case ProcedureNotFound:
 		ctx.WriteKeyWord("NOT FOUND")
-	case PROCEDUR_SQLEXCEPTION:
+	case ProcedureSQLException:
 		ctx.WriteKeyWord("SQLEXCEPTION")
 	}
 	return nil

@@ -783,6 +783,11 @@ childLoop:
 				return nil
 			}
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
+		case *logicalop.LogicalWindow:
+			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern || !CanUseOrderedWindow(child) {
+				return nil
+			}
+			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
 		case *logicalop.LogicalUnionScan:
 			wrapper.hasDitryWrite = true
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
@@ -794,6 +799,104 @@ childLoop:
 		return nil
 	}
 	return wrapper
+}
+
+func (wrapper *indexJoinInnerChildWrapper) containsLogicalWindow() bool {
+	for _, child := range wrapper.zippedChildren {
+		if _, ok := child.(*logicalop.LogicalWindow); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func checkIndexJoinInnerTaskWithWindow(lw *logicalop.LogicalWindow, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+	if len(lw.PartitionBy) == 0 {
+		return false
+	}
+	partitionByCols := make(map[int64]struct{}, len(lw.PartitionBy))
+	for _, item := range lw.PartitionBy {
+		partitionByCols[item.Col.UniqueID] = struct{}{}
+	}
+
+	usedDataSourceKey := false
+	for _, key := range innerJoinKeys {
+		if !expression.ExprFromSchema(key, dataSourceSchema) {
+			continue
+		}
+		usedDataSourceKey = true
+		if _, ok := partitionByCols[key.UniqueID]; !ok {
+			return false
+		}
+	}
+	return usedDataSourceKey
+}
+
+func (wrapper *indexJoinInnerChildWrapper) orderedWindowSortCandidatesForDataSource(innerJoinKeys []*expression.Column) ([]*property.PhysicalProperty, bool) {
+	windowIdx := -1
+	var lw *logicalop.LogicalWindow
+	for i, child := range wrapper.zippedChildren {
+		if x, ok := child.(*logicalop.LogicalWindow); ok {
+			if lw != nil {
+				return nil, false
+			}
+			windowIdx = i
+			lw = x
+		}
+	}
+	if lw == nil {
+		return nil, true
+	}
+	if !CanUseOrderedWindow(lw) || !checkIndexJoinInnerTaskWithWindow(lw, innerJoinKeys, wrapper.ds.Schema()) {
+		return nil, false
+	}
+	byItems := buildWindowChildSortItems(lw.PartitionBy, lw.OrderBy)
+	if len(byItems) == 0 {
+		return nil, false
+	}
+
+	props := make([]*property.PhysicalProperty, 0, 2)
+	for _, orderedByItems := range buildOrderedWindowChildSortItems(byItems, lw.PartitionBy, lw.OrderBy) {
+		childProp := &property.PhysicalProperty{
+			ExpectedCnt:    math.MaxFloat64,
+			SortItems:      orderedByItems,
+			CanAddEnforcer: false,
+		}
+		ok := true
+		for _, child := range wrapper.zippedChildren[windowIdx+1:] {
+			switch x := child.(type) {
+			case *logicalop.LogicalProjection:
+				childProp, ok = x.TryToGetChildProp(childProp)
+			case *logicalop.LogicalSelection:
+				// Selection preserves input order.
+			default:
+				ok = false
+			}
+			if !ok {
+				break
+			}
+		}
+		if ok && !childProp.IsSortItemEmpty() {
+			props = append(props, childProp)
+		}
+	}
+	return props, len(props) > 0
+}
+
+func (wrapper *indexJoinInnerChildWrapper) chooseOrderedWindowPropForIndexJoin(innerJoinKeys []*expression.Column, path *util.AccessPath) (*property.PhysicalProperty, bool) {
+	props, ok := wrapper.orderedWindowSortCandidatesForDataSource(innerJoinKeys)
+	if !ok {
+		return nil, false
+	}
+	if len(props) == 0 {
+		return nil, true
+	}
+	for _, prop := range props {
+		if isMatchProp(wrapper.ds, path, prop) {
+			return prop, true
+		}
+	}
+	return nil, false
 }
 
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
@@ -817,6 +920,19 @@ func buildIndexJoinInner2TableScan(
 	if tblPath == nil {
 		return nil
 	}
+	var orderedWindowProp *property.PhysicalProperty
+	if wrapper.containsLogicalWindow() {
+		var ok bool
+		orderedWindowProp, ok = wrapper.chooseOrderedWindowPropForIndexJoin(innerJoinKeys, tblPath)
+		if !ok {
+			return nil
+		}
+	}
+	orderedWindowKeepOrder := orderedWindowProp != nil
+	orderedWindowDesc := false
+	if orderedWindowKeepOrder {
+		_, orderedWindowDesc = orderedWindowProp.AllSameOrder()
+	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	var ranges ranger.MutableRanges = ranger.Ranges{}
@@ -828,13 +944,13 @@ func buildIndexJoinInner2TableScan(
 			return nil
 		}
 		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, orderedWindowKeepOrder, orderedWindowDesc, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, orderedWindowDesc || (!orderedWindowKeepOrder && !prop.IsSortItemEmpty() && prop.SortItems[0].Desc), avgInnerRowCnt)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -868,13 +984,13 @@ func buildIndexJoinInner2TableScan(
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, orderedWindowKeepOrder, orderedWindowDesc, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, orderedWindowDesc || (!orderedWindowKeepOrder && !prop.IsSortItemEmpty() && prop.SortItems[0].Desc), avgInnerRowCnt)
 		}
 	}
 	var (
@@ -924,6 +1040,19 @@ func buildIndexJoinInner2IndexScan(
 	if indexJoinResult == nil {
 		return nil
 	}
+	var orderedWindowProp *property.PhysicalProperty
+	if wrapper.containsLogicalWindow() {
+		var ok bool
+		orderedWindowProp, ok = wrapper.chooseOrderedWindowPropForIndexJoin(innerJoinKeys, indexJoinResult.chosenPath)
+		if !ok {
+			return nil
+		}
+	}
+	orderedWindowKeepOrder := orderedWindowProp != nil
+	orderedWindowDesc := false
+	if orderedWindowKeepOrder {
+		_, orderedWindowDesc = orderedWindowProp.AllSameOrder()
+	}
 	joins = make([]base.PhysicalPlan, 0, 3)
 	rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
 	maxOneRow := false
@@ -936,7 +1065,7 @@ func buildIndexJoinInner2IndexScan(
 			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
 		}
 	}
-	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, orderedWindowKeepOrder, orderedWindowDesc, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
 			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
@@ -953,7 +1082,7 @@ func buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if !wrapper.hasDitryWrite {
-		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, orderedWindowDesc || (!orderedWindowKeepOrder && !prop.IsSortItemEmpty() && prop.SortItems[0].Desc), avgInnerRowCnt, maxOneRow)
 		if innerTask2 != nil {
 			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 		}
@@ -1050,6 +1179,8 @@ func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalP
 			curTask = constructInnerProj(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalSelection:
 			curTask = constructInnerSel(prop, x, curTask.Plan()).Attach2Task(curTask)
+		case *logicalop.LogicalWindow:
+			curTask = constructInnerOrderedWindow(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalAggregation:
 			if skipAgg {
 				continue
@@ -1061,6 +1192,29 @@ func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalP
 		}
 	}
 	return curTask
+}
+
+func constructInnerOrderedWindow(prop *property.PhysicalProperty, window *logicalop.LogicalWindow, child base.PhysicalPlan) base.PhysicalPlan {
+	if window == nil {
+		return child
+	}
+	byItems := buildWindowChildSortItems(window.PartitionBy, window.OrderBy)
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt:       math.MaxFloat64,
+		SortItems:         byItems,
+		CanAddEnforcer:    false,
+		CTEProducerStatus: prop.CTEProducerStatus,
+	}
+	orderedWindow := PhysicalOrderedWindow{
+		PhysicalWindow: PhysicalWindow{
+			WindowFuncDescs: window.WindowFuncDescs,
+			PartitionBy:     window.PartitionBy,
+			OrderBy:         window.OrderBy,
+			Frame:           window.Frame,
+		},
+	}.Init(window.SCtx(), window.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), window.QueryBlockOffset(), childProp)
+	orderedWindow.SetSchema(window.Schema())
+	return orderedWindow
 }
 
 func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
@@ -2518,12 +2672,37 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	if prop.TaskTp == property.MppTaskType {
 		return windows, true, nil
 	}
-	var byItems []property.SortItem
-	byItems = append(byItems, lw.PartitionBy...)
-	byItems = append(byItems, lw.OrderBy...)
+	// Prefer OrderedWindow only when the child naturally satisfies the full
+	// partition/order requirement. Once a Sort enforcer is needed, the plan must
+	// fall back to the regular window path. If there is no partition/order
+	// requirement, use the regular window path to avoid implying ordered input.
+	byItems := buildWindowChildSortItems(lw.PartitionBy, lw.OrderBy)
+	if len(byItems) > 0 && CanUseOrderedWindow(lw) {
+		for _, orderedByItems := range buildOrderedWindowChildSortItems(byItems, lw.PartitionBy, lw.OrderBy) {
+			orderedChildProperty := &property.PhysicalProperty{
+				ExpectedCnt:       math.MaxFloat64,
+				SortItems:         orderedByItems,
+				CanAddEnforcer:    false,
+				CTEProducerStatus: prop.CTEProducerStatus,
+			}
+			if !prop.IsPrefix(orderedChildProperty) {
+				continue
+			}
+			orderedWindow := PhysicalOrderedWindow{
+				PhysicalWindow: PhysicalWindow{
+					WindowFuncDescs: lw.WindowFuncDescs,
+					PartitionBy:     lw.PartitionBy,
+					OrderBy:         lw.OrderBy,
+					Frame:           lw.Frame,
+				},
+			}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), lw.QueryBlockOffset(), orderedChildProperty)
+			orderedWindow.SetSchema(lw.Schema())
+			windows = append(windows, orderedWindow)
+		}
+	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if !prop.IsPrefix(childProperty) {
-		return nil, true, nil
+		return windows, true, nil
 	}
 	window := PhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,
@@ -2535,6 +2714,60 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
+}
+
+func buildWindowChildSortItems(partitionBy, orderBy []property.SortItem) []property.SortItem {
+	byItems := make([]property.SortItem, 0, len(partitionBy)+len(orderBy))
+	byItems = append(byItems, partitionBy...)
+	byItems = append(byItems, orderBy...)
+	return byItems
+}
+
+// Partition key direction does not affect window partition boundaries. When all
+// order keys are DESC, also try DESC partition keys so a backward index scan can
+// satisfy the whole ordered-window property.
+func buildOrderedWindowChildSortItems(byItems, partitionBy, orderBy []property.SortItem) [][]property.SortItem {
+	candidates := [][]property.SortItem{byItems}
+	if len(partitionBy) == 0 || len(orderBy) == 0 {
+		return candidates
+	}
+	orderDesc := orderBy[0].Desc
+	if !orderDesc {
+		return candidates
+	}
+	for _, item := range orderBy[1:] {
+		if item.Desc != orderDesc {
+			return candidates
+		}
+	}
+	alignedByItems := make([]property.SortItem, 0, len(byItems))
+	for _, item := range partitionBy {
+		alignedByItems = append(alignedByItems, property.SortItem{Col: item.Col, Desc: orderDesc})
+	}
+	alignedByItems = append(alignedByItems, orderBy...)
+	candidates = append(candidates, alignedByItems)
+	return candidates
+}
+
+// CanUseOrderedWindow reports whether the logical window belongs to the subset
+// currently supported by PhysicalOrderedWindow. The property requirement is
+// checked separately during physical plan enumeration.
+func CanUseOrderedWindow(lw *logicalop.LogicalWindow) bool {
+	if len(lw.WindowFuncDescs) != 1 {
+		return false
+	}
+	if lw.WindowFuncDescs[0].Name != ast.WindowFuncRowNumber {
+		return false
+	}
+	if lw.Frame == nil {
+		return false
+	}
+	// Keep the admission rule aligned with the current execution contract: the
+	// ordered-input path only handles the default row_number frame and should
+	// fall back to the generic window executor for explicit frame variants.
+	return lw.Frame.Type == ast.Rows &&
+		lw.Frame.Start != nil && lw.Frame.Start.Type == ast.CurrentRow && !lw.Frame.Start.UnBounded &&
+		lw.Frame.End != nil && lw.Frame.End.Type == ast.CurrentRow && !lw.Frame.End.UnBounded
 }
 
 func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {

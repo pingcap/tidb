@@ -237,6 +237,9 @@ type PlanBuilder struct {
 	lbacVisitInfo []ColumnVisitInfo
 	checkColPriv  checkSelectColumnPrivOption
 	tableHintInfo []*hint.PlanHints
+	// partitionRowIDWarningTables deduplicates `_tidb_rowid` warnings for partitioned
+	// tables within a single statement build.
+	partitionRowIDWarningTables set.StringSet
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -340,10 +343,31 @@ type PlanBuilder struct {
 
 	storedFuncRetType *types.FieldType
 
+<<<<<<< HEAD
 	// SavedViews is a stack that saves all views when traversing the AST. We depend on it to:
 	// 1. know whether the AST node is under a view
 	// 2. report precise error in appendColNamesToVisitInfo.
 	SavedViews []*ast.TableName
+||||||| bea0668079
+=======
+	// explainRoutineBlockPath stores the current routine block path while building
+	// procedure command lists, so EXPLAIN ROUTINE can surface stable statement
+	// placement metadata without reverse-engineering control flow later.
+	explainRoutineBlockPath []string
+	// explainRoutineBlockCount assigns stable ordinals per block kind.
+	explainRoutineBlockCount map[string]int
+	// explainRoutineElseIfCount tracks ELSEIF ordinals for the currently active IF stack.
+	explainRoutineElseIfCount []int
+	// explainRoutineRootBodyEntered marks that the top-level routine body has been
+	// entered, so we keep top-level statements at `root` instead of `root/block#1/body`.
+	explainRoutineRootBodyEntered bool
+	// explainRoutineStmtOrdinal assigns stable statement ordinals to observable
+	// routine statement sites while building the procedure command list.
+	explainRoutineStmtOrdinal int
+	// explainSetPlan is set while building a SET statement that needs its
+	// folded subquery plans for EXPLAIN output.
+	explainSetPlan *Set
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 }
 
 type handleColHelper struct {
@@ -556,10 +580,11 @@ func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		outerCTEs:                   make([]*cteInfo, 0),
+		colMapper:                   make(map[*ast.ColumnNameExpr]int),
+		handleHelper:                &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
+		correlatedAggMapper:         make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		partitionRowIDWarningTables: set.NewStringSet(),
 	}
 	for _, opt := range opts {
 		opt.Apply(builder)
@@ -608,6 +633,8 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	for k := range saveCorrelateAggMapper {
 		delete(saveCorrelateAggMapper, k)
 	}
+	savePartitionRowIDWarningTables := b.partitionRowIDWarningTables
+	savePartitionRowIDWarningTables.Clear()
 
 	// Reset ALL the fields.
 	*b = PlanBuilder{}
@@ -618,6 +645,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.partitionRowIDWarningTables = savePartitionRowIDWarningTables
 	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
@@ -642,6 +670,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildExecute(ctx, x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(ctx, x)
+	case *ast.ExplainRoutineStmt:
+		return b.buildExplainRoutine(ctx, x)
 	case *ast.ExplainForStmt:
 		return b.buildExplainFor(x)
 	case *ast.TraceStmt:
@@ -826,6 +856,16 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, error) {
 	p := &Set{}
+	if ExplainRoutineSetStmtHasPlanBearingPath(v) {
+		p.SetSCtx(b.ctx)
+		if b.shouldRecordExplainSetScalarSubquery(ctx) {
+			previousSetPlan := b.explainSetPlan
+			b.explainSetPlan = p
+			defer func() {
+				b.explainSetPlan = previousSetPlan
+			}()
+		}
+	}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
@@ -898,6 +938,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				if err != nil {
 					return nil, err
 				}
+				b.recordExplainSetScalarSubquery(ctx, physicalPlan, possiblePlan.QueryBlockOffset(), possiblePlan.Schema().Len())
 				row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 				if err != nil {
 					return nil, err
@@ -920,6 +961,59 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
 	return p, nil
+}
+
+func (b *PlanBuilder) shouldRecordExplainSetScalarSubquery(ctx context.Context) bool {
+	if _, ok := ExplainRoutineRuntimeSiteFromContext(ctx); ok {
+		return true
+	}
+	vars := b.ctx.GetSessionVars()
+	return vars != nil && vars.StmtCtx.InExplainStmt
+}
+
+func (b *PlanBuilder) recordRoutineScalarSubquery(ctx context.Context, physicalPlan base.PhysicalPlan, offset int, outputColCount int) {
+	if b == nil || b.explainSetPlan != nil || physicalPlan == nil || outputColCount <= 0 {
+		return
+	}
+	if _, ok := ExplainRoutineRuntimeSiteFromContext(ctx); !ok {
+		return
+	}
+	vars := b.ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	outputColIDs := make([]int64, 0, outputColCount)
+	for i := 0; i < outputColCount; i++ {
+		outputColIDs = append(outputColIDs, vars.AllocPlanColumnID())
+	}
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             b.is,
+		outputColIDs:   outputColIDs,
+	}.Init(b.ctx, offset)
+	vars.RegisterScalarSubQ(subqueryCtx)
+}
+
+func (b *PlanBuilder) recordExplainSetScalarSubquery(ctx context.Context, physicalPlan base.PhysicalPlan, offset int, outputColCount int) {
+	if b == nil || b.explainSetPlan == nil || physicalPlan == nil || outputColCount <= 0 {
+		return
+	}
+	vars := b.ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	outputColIDs := make([]int64, 0, outputColCount)
+	for i := 0; i < outputColCount; i++ {
+		outputColIDs = append(outputColIDs, vars.AllocPlanColumnID())
+	}
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             b.is,
+		outputColIDs:   outputColIDs,
+	}.Init(b.ctx, offset)
+	b.explainSetPlan.explainScalarSubQueries = append(b.explainSetPlan.explainScalarSubQueries, subqueryCtx)
 }
 
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, error) {
@@ -4357,7 +4451,23 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
+<<<<<<< HEAD
 		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
+||||||| bea0668079
+		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true, requireColumnPriv)
+=======
+		expr, _, err := b.rewriteWithPreprocessAndBuildCtx(
+			ctx,
+			column.GeneratedExpr.Clone(),
+			mockPlan,
+			nil,
+			nil,
+			true,
+			nil,
+			requireColumnPriv,
+			expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), column.GeneratedExpr.Internal(), column.ToInfo()),
+		)
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
@@ -6215,6 +6325,41 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	}
 
 	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
+}
+
+func (b *PlanBuilder) buildExplainRoutine(ctx context.Context, stmt *ast.ExplainRoutineStmt) (base.Plan, error) {
+	format := normalizeExplainRoutineFormat(stmt.Format)
+	if err := validateExplainRoutineFormat(format, stmt.Analyze, stmt.HasTargetStmtOrdinal); err != nil {
+		return nil, err
+	}
+
+	callStmt := newExplainRoutineStmtFromAST(stmt)
+	if !stmt.Analyze && len(callStmt.Procedure.Args) == 0 {
+		if err := b.fillExplainRoutineShapeOnlyArgs(ctx, callStmt); err != nil {
+			return nil, err
+		}
+	}
+
+	callPlan, err := b.buildCallProcedure(ctx, callStmt, false)
+	if err != nil {
+		return nil, err
+	}
+
+	call, ok := callPlan.(*CallStmt)
+	if !ok {
+		return nil, errors.Errorf("unexpected explain routine call plan %T", callPlan)
+	}
+
+	p := &ExplainRoutine{
+		Format:               format,
+		Analyze:              stmt.Analyze,
+		HasTargetStmtOrdinal: stmt.HasTargetStmtOrdinal,
+		TargetStmtOrdinal:    stmt.TargetStmtOrdinal,
+		Call:                 call,
+		Catalog:              BuildExplainRoutineCatalog(call.Plan),
+	}
+	p.SetSCtx(b.ctx)
+	return p, p.prepareSchema()
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {

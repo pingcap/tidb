@@ -39,6 +39,31 @@ go_library(
         "//pkg/domain/globalconfigsync",
         "//pkg/domain/infosync",
         "//pkg/domain/metrics",
+<<<<<<< HEAD
+||||||| bea0668079
+<<<<<<< HEAD
+||||||| parent of aba8cebcd5 (Implement log replication (!579))
+        "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/metering",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+=======
+        "//pkg/domain/pkdb_repl",
+        "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/metering",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+>>>>>>> aba8cebcd5 (Implement log replication (!579))
+=======
+        "//pkg/domain/pkdb_repl",
+        "//pkg/domain/sqlsvrapi",
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
         "//pkg/errno",
         "//pkg/extension",
         "//pkg/infoschema",

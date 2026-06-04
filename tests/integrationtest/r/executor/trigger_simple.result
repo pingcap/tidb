@@ -833,14 +833,14 @@ i	n
 1	150.00
 drop tables t1, t2;
 CREATE TABLE t1 (
-conn_id INT,
-trigger_conn_id INT
+conn_id BIGINT UNSIGNED,
+trigger_conn_id BIGINT UNSIGNED
 );
 CREATE TRIGGER t1_bi BEFORE INSERT ON t1 FOR EACH ROW
 SET NEW.trigger_conn_id = CONNECTION_ID();
-INSERT INTO t1 (conn_id, trigger_conn_id) VALUES (CONNECTION_ID(), -1);
+INSERT INTO t1 (conn_id, trigger_conn_id) VALUES (CONNECTION_ID(), 0);
 use executor__trigger_simple;
-INSERT INTO t1 (conn_id, trigger_conn_id) VALUES (CONNECTION_ID(), -1);
+INSERT INTO t1 (conn_id, trigger_conn_id) VALUES (CONNECTION_ID(), 0);
 SELECT * FROM t1 WHERE conn_id != trigger_conn_id;
 conn_id	trigger_conn_id
 DROP TRIGGER t1_bi;

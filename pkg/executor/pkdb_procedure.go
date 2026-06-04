@@ -4,9 +4,12 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -14,8 +17,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -27,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -84,9 +91,14 @@ type ProcedureExec struct {
 	securityType        string
 	cache               []plannercore.NeedCloseCur
 	parentContext       *variable.ProcedureContext
+	routineAnalyzer     *routineExplainAnalyzer
 
 	buildPlan  func(base.Plan) exec.Executor
 	isFunction bool
+}
+
+type routineTxnPreparer interface {
+	PrepareTxnCtx(context.Context) error
 }
 
 // Close ProcedureExec.
@@ -143,7 +155,7 @@ func (e *ProcedureExec) triggerCallProcedure(ctx context.Context) (err error) {
 // procedureExistsInternal Query whether the stored procedure exists.
 func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, db, tp string) (string, bool, error) {
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, `SELECT Definer FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? FOR UPDATE;`, mysql.SystemDB, mysql.Routines, db, name, tp)
+	sqlescape.MustFormatSQL(sql, `SELECT Definer FROM %n.%n WHERE lower(route_schema)=%? AND name=%? AND type=%? FOR UPDATE;`, mysql.SystemDB, mysql.Routines, strings.ToLower(db), name, tp)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return "", false, err
@@ -160,6 +172,157 @@ func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	return "", false, err
 }
 
+func restoreRoutineCharacteristics(characteristics []ast.ProcedureCharacteristic) (string, error) {
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	wrote := false
+	for _, characteristic := range characteristics {
+		if characteristic == nil {
+			continue
+		}
+		if wrote {
+			restoreCtx.WritePlain(" ")
+		}
+		if err := characteristic.Restore(restoreCtx); err != nil {
+			return "", err
+		}
+		wrote = true
+	}
+	return buf.String(), nil
+}
+
+func parseRoutineCharacteristics(options string) ([]ast.ProcedureCharacteristic, error) {
+	if strings.TrimSpace(options) == "" {
+		return nil, nil
+	}
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("create function p() returns int "+options+" return 1", "", "")
+	if err != nil {
+		return nil, err
+	}
+	createFn, ok := stmt.(*ast.CreateProcedureInfo)
+	if !ok {
+		return nil, errors.Errorf("unexpected statement type %T", stmt)
+	}
+	characteristics := make([]ast.ProcedureCharacteristic, 0, len(createFn.Characteristics))
+	for _, characteristic := range createFn.Characteristics {
+		if characteristic != nil {
+			characteristics = append(characteristics, characteristic)
+		}
+	}
+	return characteristics, nil
+}
+
+func withRoutineComment(characteristics []ast.ProcedureCharacteristic, comment string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		if _, ok := characteristic.(*ast.ProcedureComment); ok {
+			found = true
+			if comment != "" {
+				out = append(out, &ast.ProcedureComment{Type: ast.ProcedureCommentType, Comment: comment})
+			}
+			continue
+		}
+		out = append(out, characteristic)
+	}
+	if comment != "" && !found {
+		out = append(out, &ast.ProcedureComment{Type: ast.ProcedureCommentType, Comment: comment})
+	}
+	return out
+}
+
+func withRoutineSecurity(characteristics []ast.ProcedureCharacteristic, securityType string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		security, ok := characteristic.(*ast.ProcedureSecurity)
+		if !ok {
+			out = append(out, characteristic)
+			continue
+		}
+		found = true
+		if strings.EqualFold(securityType, "INVOKER") {
+			out = append(out, &ast.ProcedureSecurity{Type: ast.ProcedureSecurityType, Security: pmodel.SecurityInvoker})
+		}
+		_ = security
+	}
+	if !found && strings.EqualFold(securityType, "INVOKER") {
+		out = append(out, &ast.ProcedureSecurity{Type: ast.ProcedureSecurityType, Security: pmodel.SecurityInvoker})
+	}
+	return out
+}
+
+func buildShowCreateFunctionOptions(routine *model.ProcedureInfo) (string, error) {
+	if routine == nil {
+		return "", nil
+	}
+	var characteristics []ast.ProcedureCharacteristic
+	if routine.Options != nil {
+		parsed, err := parseRoutineCharacteristics(*routine.Options)
+		if err != nil {
+			return "", err
+		}
+		characteristics = parsed
+	}
+	if routine.Options == nil {
+		if strings.EqualFold(routine.SecurityType, "INVOKER") {
+			characteristics = append(characteristics, &ast.ProcedureSecurity{
+				Type:     ast.ProcedureSecurityType,
+				Security: pmodel.SecurityInvoker,
+			})
+		}
+		if routine.Comment != "" {
+			characteristics = append(characteristics, &ast.ProcedureComment{
+				Type:    ast.ProcedureCommentType,
+				Comment: routine.Comment,
+			})
+		}
+	} else {
+		characteristics = withRoutineSecurity(characteristics, routine.SecurityType)
+		characteristics = withRoutineComment(characteristics, routine.Comment)
+	}
+	return restoreRoutineCharacteristics(characteristics)
+}
+
+func buildShowCreateFunction(routine *model.ProcedureInfo) (string, error) {
+	_, retTypeText, bodyText, err := infoschema.ParseStoredFunctionDefinition(routine.DefinitionUTF8, routine.SQLMode)
+	if err != nil {
+		return "", err
+	}
+	options, err := buildShowCreateFunctionOptions(routine)
+	if err != nil {
+		return "", err
+	}
+
+	var builder strings.Builder
+	builder.WriteString(" CREATE ")
+	if routine.Definer != "" {
+		strs := strings.Split(routine.Definer, "@")
+		if len(strs) != 2 {
+			return "", errors.Errorf("get definer `%s` failed, the definer must be the form of `user`@`host`", routine.Definer)
+		}
+		builder.WriteString("DEFINER=`")
+		builder.WriteString(strs[0])
+		builder.WriteString("`@`")
+		builder.WriteString(strs[1])
+		builder.WriteString("` ")
+	}
+	builder.WriteString("FUNCTION `")
+	builder.WriteString(routine.Name.O)
+	builder.WriteString("`(")
+	builder.WriteString(routine.ParameterStr)
+	builder.WriteString(")\nRETURNS ")
+	builder.WriteString(retTypeText)
+	if options != "" {
+		builder.WriteString(" ")
+		builder.WriteString(options)
+	}
+	builder.WriteString("\n")
+	builder.WriteString(bodyText)
+	return builder.String(), nil
+}
+
 // getProcedureInfo read stored procedure content.
 func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string, tp ast.ShowStmtType) (*plannercore.ProcedurebodyInfo, error) {
 	tpStr := "PROCEDURE"
@@ -167,9 +330,8 @@ func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 		tpStr = "FUNCTION"
 	}
 	sql := new(strings.Builder)
-	//heads []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
-	sqlescape.MustFormatSQL(sql, "select name, sql_mode, definition_utf8, parameter_str, character_set_client, connection_collation,")
-	sqlescape.MustFormatSQL(sql, "schema_collation, comment, security_type, definer from %n.%n where route_schema = %? and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, db, name, tpStr)
+	sqlescape.MustFormatSQL(sql, "select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,")
+	sqlescape.MustFormatSQL(sql, "character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from %n.%n where lower(route_schema) = %? and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, strings.ToLower(db), name, tpStr)
 
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
@@ -189,28 +351,39 @@ func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	if len(rows) != 1 {
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
 	}
+	routine, err := infoschema.DecodeRoutineMetadataRow(rows[0])
+	if err != nil {
+		return nil, err
+	}
 	procedureBodyInfo := &plannercore.ProcedurebodyInfo{}
-	procedureBodyInfo.Name = rows[0].GetString(0)
-	procedureBodyInfo.Procedurebody = " CREATE "
-	if len(rows[0].GetString(9)) != 0 {
-		strs := strings.Split(rows[0].GetString(9), "@")
-		if len(strs) != 2 {
-			return nil, errors.Errorf("get definer `%s` failed, the definer must be the form of `user`@`host`", rows[0].GetString(9))
+	procedureBodyInfo.Name = routine.Name.O
+	if tp == ast.ShowCreateFunction {
+		procedureBodyInfo.Procedurebody, err = buildShowCreateFunction(routine.ProcedureInfo)
+		if err != nil {
+			return nil, err
 		}
-		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "DEFINER=" + "`" + strs[0] + "`@`" + strs[1] + "` "
+	} else {
+		procedureBodyInfo.Procedurebody = " CREATE "
+		if len(routine.Definer) != 0 {
+			strs := strings.Split(routine.Definer, "@")
+			if len(strs) != 2 {
+				return nil, errors.Errorf("get definer `%s` failed, the definer must be the form of `user`@`host`", routine.Definer)
+			}
+			procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "DEFINER=" + "`" + strs[0] + "`@`" + strs[1] + "` "
+		}
+		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + tpStr + " `" + routine.Name.O + "`(" + routine.ParameterStr + ")\n"
+		if len(routine.Comment) != 0 {
+			procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "COMMENT '" + routine.Comment + "' \n"
+		}
+		if routine.SecurityType == "INVOKER" {
+			procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "SQL SECURITY INVOKER \n"
+		}
+		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + routine.DefinitionUTF8
 	}
-	procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + tpStr + " `" + rows[0].GetString(0) + "`(" + rows[0].GetString(3) + ")\n"
-	if len(rows[0].GetString(7)) != 0 {
-		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "COMMENT '" + rows[0].GetString(7) + "' \n"
-	}
-	if rows[0].GetEnum(8).String() == "INVOKER" {
-		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "SQL SECURITY INVOKER \n"
-	}
-	procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + rows[0].GetString(2)
-	procedureBodyInfo.SQLMode = rows[0].GetSet(1).String()
-	procedureBodyInfo.CharacterSetClient = rows[0].GetString(4)
-	procedureBodyInfo.CollationConnection = rows[0].GetString(5)
-	procedureBodyInfo.ShemaCollation = rows[0].GetString(6)
+	procedureBodyInfo.SQLMode = routine.SQLMode
+	procedureBodyInfo.CharacterSetClient = routine.CharacterSetClient
+	procedureBodyInfo.CollationConnection = routine.CollationConnection
+	procedureBodyInfo.ShemaCollation = routine.SchemaCollation
 	return procedureBodyInfo, nil
 }
 
@@ -383,7 +556,11 @@ func init() {
 			securityType:        securityType,
 			isFunction:          true,
 		}
-		return e.callProcedure(context.Background(), s)
+		traceCtx := sctx.GetTraceCtx()
+		if traceCtx == nil {
+			traceCtx = context.Background()
+		}
+		return e.callProcedure(traceCtx, s)
 	}
 }
 
@@ -428,16 +605,16 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 		// input variable is @name
 		case *ast.VariableExpr:
 			name := s.Procedure.Args[i].(*ast.VariableExpr).Name
-			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
+			if (param.ParamType == ast.ModeIn) || (param.ParamType == ast.ModeInOut) {
 				err := e.inParam(ctx, param, name)
 				if err != nil {
 					return err
 				}
 			}
-			if param.ParamType == ast.MODE_INOUT {
+			if param.ParamType == ast.ModeInOut {
 				e.outVarParam[param.DeclName] = name
 			}
-			if param.ParamType == ast.MODE_OUT {
+			if param.ParamType == ast.ModeOut {
 				e.outVarParam[param.DeclName] = name
 			}
 		case *ast.ColumnNameExpr:
@@ -447,7 +624,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 				if err != nil {
 					return err
 				}
-				if param.ParamType == ast.MODE_OUT || param.ParamType == ast.MODE_INOUT {
+				if param.ParamType == ast.ModeOut || param.ParamType == ast.ModeInOut {
 					routineName := s.Procedure.Schema.String() + "." + s.Procedure.FnName.String()
 					if v.Name.Table.L != "new" {
 						return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, routineName)
@@ -458,14 +635,14 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 						return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, routineName)
 					}
 				}
-				if param.ParamType == ast.MODE_OUT {
+				if param.ParamType == ast.ModeOut {
 					datum.SetNull()
 				}
 				err = plannercore.UpdateVariableVar(param.DeclName, datum, e.Ctx().GetSessionVars())
 				if err != nil {
 					return err
 				}
-				if param.ParamType == ast.MODE_OUT || param.ParamType == ast.MODE_INOUT {
+				if param.ParamType == ast.ModeOut || param.ParamType == ast.ModeInOut {
 					e.outTriggerParam[param.DeclName] = idx
 				}
 				break
@@ -483,12 +660,12 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 			if err != nil {
 				return err
 			}
-			if param.ParamType == ast.MODE_INOUT || param.ParamType == ast.MODE_OUT {
+			if param.ParamType == ast.ModeInOut || param.ParamType == ast.ModeOut {
 				e.outLocalParam[param.DeclName] = s.Procedure.Args[i].(*ast.ColumnNameExpr).Name.Name.O
 			}
 		case *driver.ValueExpr:
 			// out variable must @name
-			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+			if (param.ParamType == ast.ModeOut) || (param.ParamType == ast.ModeInOut) {
 				return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 			err := plannercore.UpdateVariableVar(param.DeclName, v.Datum, e.Ctx().GetSessionVars())
@@ -497,7 +674,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 			}
 		default:
 			// out variable must @name
-			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+			if (param.ParamType == ast.ModeOut) || (param.ParamType == ast.ModeInOut) {
 				return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 			exec := plannercore.ProcedureCompileAndExec(e.executeWithSameContext)
@@ -651,8 +828,20 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 	if !variable.TiDBEnableProcedureValue.Load() {
 		return nil, exeerrors.ErrProcedureDisabled
 	}
+	span, ctx := startRoutineTraceSpan(ctx, s)
+	defer span.Finish()
+	origTraceCtx := e.Ctx().GetTraceCtx()
+	e.Ctx().SetTraceCtx(ctx)
+	defer e.Ctx().SetTraceCtx(origTraceCtx)
+
 	e.Ctx().GetSessionVars().SetInCallProcedure()
 	defer func() {
+		if e.isFunction && e.parentContext != nil {
+			restoreErr := e.Ctx().GetSessionVars().SetProcedureContext(e.parentContext)
+			if err == nil && restoreErr != nil {
+				err = restoreErr
+			}
+		}
 		e.Ctx().GetSessionVars().OutCallProcedure(err != nil)
 	}()
 	//The last FinishExecuteStmt is expected to be a call statement.
@@ -843,7 +1032,7 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 		}
 		oldIP = ip
 		cmd := e.procedurePlan.ProcedureCommandList[ip]
-		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction {
+		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction || e.routineAnalyzer != nil {
 			cmd.RegisterCompileAndExecFunc(e.executeWithSameContext)
 		}
 
@@ -877,9 +1066,88 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 }
 
 func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast.StmtNode) ([]chunk.Row, []*types.FieldType, error) {
-	defer resetStmtCtx(e.Ctx(), stmtNode)()
-	nodeW := resolve.NewNodeW(stmtNode)
-	err := plannercore.Preprocess(ctx, e.Ctx(), nodeW)
+	var (
+		site             plannercore.ExplainRoutineRuntimeSite
+		hasRoutineSite   bool
+		runtimeStmt      ast.StmtNode
+		runtimeSQLText   string
+		traceStmt        ast.StmtNode
+		stmtForExecution = stmtNode
+		stmtForStmtCtx   = stmtNode
+		captureDrilldown bool
+	)
+	traceStmt = stmtForExecution
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok && plannercore.IsProcedurePlanCacheExecuteStmt(execStmt) {
+		prepared, err := plannercore.GetPreparedStmt(execStmt, e.Ctx().GetSessionVars())
+		if err != nil {
+			return nil, nil, err
+		}
+		if prepared.PreparedAst != nil && prepared.PreparedAst.Stmt != nil {
+			traceStmt = prepared.PreparedAst.Stmt
+			stmtForStmtCtx = traceStmt
+		}
+	}
+	if e.routineAnalyzer != nil {
+		site, hasRoutineSite = plannercore.ExplainRoutineRuntimeSiteFromContext(ctx)
+		if hasRoutineSite {
+			var err error
+			runtimeStmt, runtimeSQLText, err = resolveRoutineExplainRuntimeStmt(stmtNode, e.Ctx().GetSessionVars())
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, ok := stmtNode.(*ast.ExecuteStmt); ok && runtimeStmt != nil {
+				stmtForStmtCtx = runtimeStmt
+			}
+			captureDrilldown = e.routineAnalyzer.targetMatches(site.StmtOrdinal)
+			if captureDrilldown {
+				targetStatsColl := e.routineAnalyzer.drilldownRuntimeStatsCollForTarget()
+				originalStatsColl := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl
+				e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl = targetStatsColl
+				defer func() {
+					e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl = originalStatsColl
+				}()
+			}
+		}
+	}
+
+	vars := e.Ctx().GetSessionVars()
+	// Routine statements may recursively optimize stored function calls with the
+	// same session context. Keep the current statement's QB-name bookkeeping from
+	// being replaced by the nested optimization.
+	originPlannerSelectBlockAsName := vars.PlannerSelectBlockAsName.Load()
+	defer vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+	originalStmtCtx := vars.StmtCtx
+	restoreStmtCtx := resetStmtCtx(e.Ctx(), stmtForStmtCtx)
+	defer restoreStmtCtx()
+	restoreReplacedStmtCtx := func() {
+		currentStmtCtx := vars.StmtCtx
+		if currentStmtCtx == originalStmtCtx {
+			return
+		}
+		currentStmtCtx.CopyMuForCallProcedure(originalStmtCtx)
+		vars.StmtCtx = originalStmtCtx
+	}
+	defer restoreReplacedStmtCtx()
+	callStmt, _ := e.Statement.(*ast.CallStmt)
+	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, traceStmt)
+	defer span.Finish()
+	origTraceCtx := e.Ctx().GetTraceCtx()
+	e.Ctx().SetTraceCtx(ctx)
+	defer e.Ctx().SetTraceCtx(origTraceCtx)
+
+	if preparer, ok := e.Ctx().(routineTxnPreparer); ok {
+		if err := preparer.PrepareTxnCtx(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
+	txnManager := sessiontxn.GetTxnManager(e.Ctx())
+	if err := txnManager.OnStmtStart(ctx, stmtForExecution); err != nil {
+		return nil, nil, err
+	}
+	defer txnManager.OnStmtEnd()
+
+	nodeW := resolve.NewNodeW(stmtForExecution)
+	err := plannercore.Preprocess(ctx, e.Ctx(), nodeW, plannercore.InitTxnContextProvider)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -906,6 +1174,15 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	if newExec == nil {
 		return nil, nil, errors.New("failed to build executor for stored function")
 	}
+	if executorExec, ok := newExec.(*ExecuteExec); ok {
+		if err := executorExec.Build(builder); err != nil {
+			return nil, nil, err
+		}
+		if executorExec.lowerPriority {
+			e.Ctx().GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+		}
+		newExec = executorExec.stmtExec
+	}
 
 	if err := exec.Open(ctx, newExec); err != nil {
 		terror.Log(exec.Close(newExec))
@@ -917,7 +1194,10 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		fieldTypes = append(fieldTypes, field.RetType)
 	}
 
+	start := time.Now()
 	var rows []chunk.Row
+	var rowsProduced int64
+	drainRows := plannercore.ExplainRoutineDrainRowsFromContext(ctx)
 	for {
 		chk := exec.NewFirstChunk(newExec)
 		err = exec.Next(ctx, newExec, chk)
@@ -927,6 +1207,10 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		if chk.NumRows() == 0 {
 			break
 		}
+		rowsProduced += int64(chk.NumRows())
+		if drainRows {
+			continue
+		}
 		if rows == nil {
 			rows = make([]chunk.Row, 0, chk.NumRows())
 		}
@@ -934,7 +1218,6 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 			rows = append(rows, chk.GetRow(i))
 		}
 	}
-
 	closeErr := exec.Close(newExec)
 	if err == nil {
 		err = closeErr
@@ -942,13 +1225,137 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	if err != nil {
 		return nil, nil, err
 	}
-	e.Ctx().StmtCommit(ctx)
+	restoreReplacedStmtCtx()
+	if txnManager.GetContextProvider() != nil {
+		e.Ctx().StmtCommit(ctx)
+	}
+
+	if e.routineAnalyzer != nil && hasRoutineSite {
+		var (
+			drilldownRows [][]string
+			planKey       string
+			explainable   bool
+		)
+		planForExplain := p
+		if executePlan, ok := p.(*plannercore.Execute); ok && executePlan.Plan != nil {
+			planForExplain = executePlan.Plan
+		}
+		if runtimeStmt != nil {
+			explainable = !routineExplainIsScaffoldingStmt(stmtNode)
+			preferScalarSubQuery := e.routineAnalyzer.prefersScalarSubQueryDrilldown(site.StmtOrdinal)
+			planKey = routineExplainPlanKey(planForExplain, preferScalarSubQuery)
+			if captureDrilldown && explainable {
+				drilldownRows, err = renderRoutineExplainAnalyzeRows(
+					planForExplain,
+					runtimeStmt,
+					e.routineAnalyzer.drilldownFormat,
+					preferScalarSubQuery,
+				)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		e.routineAnalyzer.observe(site.StmtOrdinal, runtimeSQLText, rowsProduced, time.Since(start), planKey, explainable, drilldownRows)
+	}
 	return rows, fieldTypes, nil
+}
+
+type routineTraceSQLRestorer interface {
+	Restore(ctx *format.RestoreCtx) error
+}
+
+func startRoutineStatementTraceSpan(ctx context.Context, stmt *ast.CallStmt, stmtNode routineTraceSQLRestorer) (opentracing.Span, context.Context) {
+	if parent := opentracing.SpanFromContext(ctx); parent != nil && parent.Tracer() != nil {
+		stmtSQL := restoreRoutineTraceSQL(stmtNode)
+		spanName := "routine.statement"
+		if stmtSQL != "" {
+			spanName = fmt.Sprintf("%s %s", spanName, truncateRoutineTraceSQL(stmtSQL))
+		}
+		child := parent.Tracer().StartSpan(spanName, opentracing.ChildOf(parent.Context()))
+		annotateRoutineTraceSpan(child, stmt, stmtSQL)
+		return child, opentracing.ContextWithSpan(ctx, child)
+	}
+	return (opentracing.NoopTracer{}).StartSpan("routine.statement"), ctx
+}
+
+func restoreRoutineTraceSQL(stmtNode routineTraceSQLRestorer) string {
+	const restoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation |
+		format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes | format.RestoreWithoutSchemaName
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(restoreFlag, &sb)
+	if err := stmtNode.Restore(ctx); err != nil {
+		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+		return ""
+	}
+	return sb.String()
+}
+
+func startRoutineTraceSpan(ctx context.Context, stmt *ast.CallStmt) (span opentracing.Span, newCtx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	spanName := buildRoutineTraceName(stmt)
+	span, newCtx = startRoutineTraceChildSpan(ctx, spanName)
+	annotateRoutineTraceSpan(span, stmt, "")
+	return span, newCtx
+}
+
+func startRoutineTraceChildSpan(ctx context.Context, name string) (opentracing.Span, context.Context) {
+	if parent := opentracing.SpanFromContext(ctx); parent != nil && parent.Tracer() != nil {
+		child := parent.Tracer().StartSpan(name, opentracing.ChildOf(parent.Context()))
+		return child, opentracing.ContextWithSpan(ctx, child)
+	}
+	span := (opentracing.NoopTracer{}).StartSpan(name)
+	return span, ctx
+}
+
+func annotateRoutineTraceSpan(span opentracing.Span, stmt *ast.CallStmt, sqlText string) {
+	if stmt != nil && stmt.Procedure != nil {
+		if stmt.Procedure.Schema.O != "" {
+			span.SetTag("routine.schema", stmt.Procedure.Schema.O)
+		}
+		if stmt.Procedure.FnName.O != "" {
+			span.SetTag("routine.name", stmt.Procedure.FnName.O)
+		}
+		if stmt.IsFunction {
+			span.SetTag("routine.type", "FUNCTION")
+		} else {
+			span.SetTag("routine.type", "PROCEDURE")
+		}
+	}
+	if sqlText != "" {
+		span.SetTag("sql", sqlText)
+	}
+}
+
+func buildRoutineTraceName(stmt *ast.CallStmt) string {
+	routineType := "procedure"
+	if stmt != nil && stmt.IsFunction {
+		routineType = "function"
+	}
+	if stmt == nil || stmt.Procedure == nil || stmt.Procedure.FnName.O == "" {
+		return "routine." + routineType
+	}
+	if stmt.Procedure.Schema.O == "" {
+		return fmt.Sprintf("routine.%s %s", routineType, stmt.Procedure.FnName.O)
+	}
+	return fmt.Sprintf("routine.%s %s.%s", routineType, stmt.Procedure.Schema.O, stmt.Procedure.FnName.O)
+}
+
+func truncateRoutineTraceSQL(sqlText string) string {
+	const maxLen = 256
+	if len(sqlText) <= maxLen {
+		return sqlText
+	}
+	return sqlText[:maxLen-3] + "..."
 }
 
 func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	vars := sctx.GetSessionVars()
+	s = stmtNodeForRoutineStmtCtx(s, vars)
 	sc := vars.StmtCtx
+	restoreExecutionCaches := sc.ResetExecutionCaches()
 	strictSQLMode := vars.SQLMode.HasStrictMode()
 	errLevels := sc.ErrLevels()
 	originalFlags := sc.TypeFlags()
@@ -962,6 +1369,11 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	originalInSetSessionStatesStmt := sc.InSetSessionStatesStmt
 	originalInShowWarning := sc.InShowWarning
 	originalInDiagnostics := sc.InDiagnostics
+	originalInExplainStmt := sc.InExplainStmt
+	originalInExplainAnalyzeStmt := sc.InExplainAnalyzeStmt
+	originalExplainFormat := sc.ExplainFormat
+	originalIgnoreExplainIDSuffix := sc.IgnoreExplainIDSuffix
+	originalInVerboseExplain := sc.InVerboseExplain
 	originalLastWarningNum := sc.LastWarningNum
 	originalPriority := sc.Priority
 	originalNotFillCache := sc.NotFillCache
@@ -978,10 +1390,16 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 		sc.InSetSessionStatesStmt = originalInSetSessionStatesStmt
 		sc.InShowWarning = originalInShowWarning
 		sc.InDiagnostics = originalInDiagnostics
+		sc.InExplainStmt = originalInExplainStmt
+		sc.InExplainAnalyzeStmt = originalInExplainAnalyzeStmt
+		sc.ExplainFormat = originalExplainFormat
+		sc.IgnoreExplainIDSuffix = originalIgnoreExplainIDSuffix
+		sc.InVerboseExplain = originalInVerboseExplain
 		sc.LastWarningNum = originalLastWarningNum
 		sc.Priority = originalPriority
 		sc.NotFillCache = originalNotFillCache
 		sc.WeakConsistency = originalWeakConsistency
+		restoreExecutionCaches()
 		sc.SetTypeFlags(originalFlags)
 		sc.SetErrLevels(originalErrLevels)
 	}
@@ -995,6 +1413,11 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	sc.InSetSessionStatesStmt = false
 	sc.InShowWarning = false
 	sc.InDiagnostics = false
+	sc.InExplainStmt = false
+	sc.InExplainAnalyzeStmt = false
+	sc.ExplainFormat = ""
+	sc.IgnoreExplainIDSuffix = false
+	sc.InVerboseExplain = false
 	sc.LastWarningNum = 0
 	sc.Priority = mysql.NoPriority
 	sc.NotFillCache = false
@@ -1030,6 +1453,26 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 		)
 		sc.Priority = stmt.Priority
 		sc.SetTypeFlags(util.GetTypeFlagsForInsert(sc.TypeFlags(), vars.SQLMode, stmt.IgnoreErr))
+	case *ast.ExplainStmt:
+		sc.InExplainStmt = true
+		sc.ExplainFormat = strings.ToLower(stmt.Format)
+		sc.InExplainAnalyzeStmt = stmt.Analyze
+		sc.IgnoreExplainIDSuffix = sc.ExplainFormat == types.ExplainFormatBrief
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
+	case *ast.ExplainRoutineStmt:
+		sc.InExplainStmt = true
+		sc.ExplainFormat = strings.ToLower(stmt.Format)
+		if sc.ExplainFormat == "" || sc.ExplainFormat == types.ExplainFormatTraditional {
+			sc.ExplainFormat = types.ExplainFormatROW
+		}
+		sc.InExplainAnalyzeStmt = stmt.Analyze
+		sc.IgnoreExplainIDSuffix = sc.ExplainFormat == types.ExplainFormatBrief
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
+	case *ast.ExplainForStmt:
+		sc.InExplainStmt = true
+		sc.InExplainAnalyzeStmt = true
+		sc.ExplainFormat = strings.ToLower(stmt.Format)
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
@@ -1132,4 +1575,16 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	}
 
 	return restore
+}
+
+func stmtNodeForRoutineStmtCtx(s ast.StmtNode, vars *variable.SessionVars) ast.StmtNode {
+	execStmt, ok := s.(*ast.ExecuteStmt)
+	if !ok {
+		return s
+	}
+	prepared, err := plannercore.GetPreparedStmt(execStmt, vars)
+	if err != nil || prepared == nil || prepared.PreparedAst == nil || prepared.PreparedAst.Stmt == nil {
+		return s
+	}
+	return prepared.PreparedAst.Stmt
 }

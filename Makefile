@@ -163,6 +163,12 @@ integrationtest: server_check
 	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
 	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
+.PHONY: loadablefunctest
+loadablefunctest: server_check
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@cd tests/loadablefunc && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage-loadablefunc.dat
+
 .PHONY: ddltest
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
@@ -218,6 +224,11 @@ ifeq ($(TARGET), "")
 else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
+
+.PHONY: server_failpoint
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
+	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
 .PHONY: init-submodule
 init-submodule:

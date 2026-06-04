@@ -1820,6 +1820,10 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	stores.Stores = slices.DeleteFunc(stores.Stores, func(store http.StoreInfo) bool {
+		return engine.IsReplicatorHTTPResp(&store.Store)
+	})
+	stores.Count = len(stores.Stores)
 	return stores, nil
 }
 

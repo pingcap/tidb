@@ -224,6 +224,19 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
 ) (expression.Expression, base.LogicalPlan, error) {
+	return b.rewriteWithPreprocessAndBuildCtx(ctx, exprNode, p, aggMapper, windowMapper, asScalar, preprocess, priv, b.ctx.GetExprCtx())
+}
+
+func (b *PlanBuilder) rewriteWithPreprocessAndBuildCtx(
+	ctx context.Context,
+	exprNode ast.ExprNode,
+	p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
+	windowMapper map[*ast.WindowFuncExpr]int,
+	asScalar bool,
+	preprocess func(ast.Node) ast.Node,
+	priv *checkedPrivilege,
+	buildCtx expression.BuildContext,
+) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -241,6 +254,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.asScalar = asScalar
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
+	rewriter.sctx = buildCtx
 
 	return rewriteExprNode(rewriter, exprNode, asScalar)
 }
@@ -1122,6 +1136,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.ctxStackAppend(scalarSubQ, types.EmptyName)
 			return v, true
 		}
+		b.recordRoutineScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
+		b.recordExplainSetScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), 1)
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
 			er.err = err
@@ -1393,6 +1409,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		}
 		return v, true
 	}
+	planCtx.builder.recordRoutineScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
+	planCtx.builder.recordExplainSetScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
@@ -2151,6 +2169,20 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		return
 	}
 
+	escape := v.Escape
+	evalCtx := er.sctx.GetEvalCtx()
+	if !v.EscapeExplicit && evalCtx.SQLMode().HasNoBackslashEscapesMode() &&
+		evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if sessionVars.EnableNoBackslashEscapesInLike {
+			escape = 0
+		}
+	}
+
 	char, col := er.sctx.GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
@@ -2163,7 +2195,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 			return
 		}
 		if !isNull {
-			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
+			patValue, patTypes := stringutil.CompilePattern(patString, escape)
 			if stringutil.IsExactMatch(patTypes) && er.ctxStack[l-2].GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETString {
 				op := ast.EQ
 				if v.Not {
@@ -2182,9 +2214,9 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		if !v.IsLike {
 			funcName = ast.Ilike
 		}
-		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
+		types.DefaultTypeForValue(int(escape), fieldType, char, col)
 		function = er.notToExpression(v.Not, funcName, &v.Type,
-			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
+			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(escape)), RetType: fieldType})
 	}
 
 	er.ctxStackPop(2)
@@ -2631,6 +2663,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.appendPartitionRowIDWarningByFieldName(er.names[idx])
+		}
 		er.ctxStackAppend(column, er.names[idx])
 		fieldName4PrivilegeCheck = er.names[idx]
 		return
@@ -2658,6 +2693,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.err = err
 		return
 	} else if col != nil {
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.appendPartitionRowIDWarningByFieldName(name)
+		}
 		er.ctxStackAppend(col, name)
 		fieldName4PrivilegeCheck = name
 		return
@@ -2667,6 +2705,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		idx, err = expression.FindFieldName(outerName, v)
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
+			if er.planCtx != nil && er.planCtx.builder != nil {
+				er.planCtx.builder.appendPartitionRowIDWarningByFieldName(outerName[idx])
+			}
 			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
 			fieldName4PrivilegeCheck = outerName[idx]
 			return
@@ -2853,7 +2894,7 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 	var err error
 	retType := varType.Clone()
 	// check if the variable is substitute-able
-	if sessionVar.EnableSPParamSubstitute && er.clauseSubstituteAbleForUDV() {
+	if sessionVar.EnableSPParamSubstitute && er.clauseSubstituteAbleForSPParam() {
 		expr = er.assembleConstant(d, retType)
 	} else {
 		expr, err = er.newFunction(ast.GetProcedureVar, retType, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
@@ -2934,21 +2975,45 @@ func (b *PlanBuilder) appendLBACReadVisitInfo(columnVisited []*ast.ColumnName) {
 	}
 }
 
+<<<<<<< HEAD
 func (er *expressionRewriter) precollectColNames(fieldName *types.FieldName) {
 	colName := &ast.ColumnName{
 		Name:   fieldName.OrigColName,
 		Table:  fieldName.OrigTblName,
 		Schema: fieldName.DBName,
 	}
+||||||| bea0668079
+func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
+	colName := &ast.ColumnName{
+		Name:   columnVisited.OrigColName,
+		Table:  columnVisited.OrigTblName,
+		Schema: columnVisited.DBName,
+	}
+=======
+func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	b := er.planCtx.builder
+<<<<<<< HEAD
 	if b != nil && b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
 		colName.Name = fieldName.ColName
 		colName.Table = fieldName.TblName
+||||||| bea0668079
+	if b != nil && b.is != nil && infoschema.TableIsView(b.is, columnVisited.DBName, columnVisited.TblName) {
+		colName.Name = columnVisited.ColName
+		colName.Table = columnVisited.TblName
+=======
+	colName := b.fieldNameToColumnName(columnVisited)
+	if colName == nil {
+		return
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	}
 
 	// When checking a derived table, its colName.Schema.L would be empty, we can just skip it.
 	// Because the column privilege is checked in the definition of derived table.
 	if len(colName.Name.L) > 0 && len(colName.Table.L) > 0 && len(colName.Schema.L) > 0 {
+		if b != nil {
+			b.appendPartitionRowIDWarning(colName)
+		}
 		// The column privilege is checked in the definition of CTE.
 		if _, ok := b.nameMapCTE[colName.Table.L]; ok {
 			return
@@ -2970,6 +3035,13 @@ func (er *expressionRewriter) clauseSubstituteAbleForUDV() bool {
 	})
 	// Currently, we only substitute user defined variable in where clause
 	return er.planCtx.builder.curClause == whereClause
+}
+
+func (er *expressionRewriter) clauseSubstituteAbleForSPParam() bool {
+	if er.clauseSubstituteAbleForUDV() {
+		return true
+	}
+	return er.planCtx.builder.curClause == onClause || er.planCtx.builder.curClause == havingClause
 }
 
 func (er *expressionRewriter) substituteUserDefVar(v *ast.VariableExpr, retType *types.FieldType) bool {
@@ -2997,4 +3069,64 @@ func (er *expressionRewriter) assembleConstant(d types.Datum, retType *types.Fie
 	value := &expression.Constant{Value: *datum, RetType: retType}
 	initConstantRepertoire(er.sctx.GetEvalCtx(), value)
 	return value
+}
+
+func (b *PlanBuilder) fieldNameToColumnName(fieldName *types.FieldName) *ast.ColumnName {
+	if b == nil {
+		return nil
+	}
+	colNameCI := fieldName.OrigColName
+	if colNameCI.L == "" {
+		colNameCI = fieldName.ColName
+	}
+	tblNameCI := fieldName.OrigTblName
+	if tblNameCI.L == "" {
+		tblNameCI = fieldName.TblName
+	}
+	colName := &ast.ColumnName{
+		Name:   colNameCI,
+		Table:  tblNameCI,
+		Schema: fieldName.DBName,
+	}
+	if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
+		colName.Name = fieldName.ColName
+		colName.Table = fieldName.TblName
+	} else if b.is != nil {
+		// When a view is accessed (possibly with an alias like SELECT * FROM view t1),
+		// buildProjUponView sets DBName to the view's database and OrigTblName to the
+		// underlying table's name. If the view and underlying table are in different
+		// databases, this creates an invalid (DBName, OrigTblName) combination.
+		// Verify the table actually exists in DBName; if not, skip the privilege check
+		// since it was already handled during the inner view plan building.
+		if _, err := b.is.TableByName(context.Background(), fieldName.DBName, tblNameCI); err != nil {
+			return nil
+		}
+	}
+	return colName
+}
+
+func (b *PlanBuilder) appendPartitionRowIDWarningByFieldName(fieldName *types.FieldName) {
+	colName := b.fieldNameToColumnName(fieldName)
+	if colName == nil {
+		return
+	}
+	b.appendPartitionRowIDWarning(colName)
+}
+
+func (b *PlanBuilder) appendPartitionRowIDWarning(colName *ast.ColumnName) {
+	if b == nil || b.is == nil || colName.Name.L != model.ExtraHandleName.L {
+		return
+	}
+	tbl, err := b.is.TableByName(context.Background(), colName.Schema, colName.Table)
+	if err != nil || tbl.Meta().GetPartitionInfo() == nil {
+		return
+	}
+	key := colName.Schema.L + "." + colName.Table.L
+	if b.partitionRowIDWarningTables.Exist(key) {
+		return
+	}
+	b.partitionRowIDWarningTables.Insert(key)
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+		"`_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
 }

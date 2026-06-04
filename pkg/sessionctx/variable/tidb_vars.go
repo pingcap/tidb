@@ -631,6 +631,9 @@ const (
 	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
 
+	// TiDBEnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	TiDBEnableNoBackslashEscapesInLike = "tidb_enable_no_backslash_escapes_in_like"
+
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 
@@ -1509,6 +1512,7 @@ const (
 	DefTiDBCapturePlanBaseline                        = Off
 	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true
+	DefTiDBEnableNoBackslashEscapesInLike             = true
 	DefEnableLegacyInstanceScope                      = true
 	DefTiDBTableCacheLease                            = 3 // 3s
 	DefTiDBPersistAnalyzeOptions                      = true

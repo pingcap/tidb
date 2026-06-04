@@ -418,14 +418,34 @@ func estimateRowCountWithUniformDistribution(
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
+<<<<<<< HEAD
 			topNMinCount := uint64(0)
 			if topN != nil && len(topN.TopN) > 0 {
 				topNMinCount = topN.TopN[0].Count
 				for _, item := range topN.TopN {
 					topNMinCount = min(topNMinCount, item.Count)
 				}
+||||||| bea0668079
+			topNMinCount := uint64(0)
+			if len(topN.TopN) > 0 {
+				topNMinCount = topN.TopN[0].Count
+				for _, item := range topN.TopN {
+					topNMinCount = min(topNMinCount, item.Count)
+				}
+=======
+			if topN == nil || len(topN.TopN) == 0 {
+				return 1
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 			}
-			return max(float64(topNMinCount-1), 1)
+			topNMinCount := topN.TopN[0].Count
+			for _, item := range topN.TopN {
+				topNMinCount = min(topNMinCount, item.Count)
+			}
+			// topNMinCount is uint64, so guard before subtracting 1.
+			if topNMinCount <= 1 {
+				return 1
+			}
+			return float64(topNMinCount - 1)
 		}
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.

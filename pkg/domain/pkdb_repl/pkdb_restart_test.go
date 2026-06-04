@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -127,4 +128,133 @@ func TestWatchRestartCompactedMissedPut(t *testing.T) {
 			return false
 		}
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+type testBlockingRestartDomain struct {
+	startOnce   sync.Once
+	releaseOnce sync.Once
+	startedCh   chan struct{}
+	unblockCh   chan struct{}
+	closedCh    chan struct{}
+}
+
+func (d *testBlockingRestartDomain) Close() {
+	d.startOnce.Do(func() { close(d.startedCh) })
+	<-d.unblockCh
+	close(d.closedCh)
+}
+
+func (*testBlockingRestartDomain) CloseKSSessMgr(string) {}
+
+func (*testBlockingRestartDomain) InitDistTaskLoop() error { return nil }
+
+func (d *testBlockingRestartDomain) release() {
+	d.releaseOnce.Do(func() { close(d.unblockCh) })
+}
+
+func TestRestartProcessWaitsDomainCloseWithTimeout(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("requires --tags=intest")
+	}
+
+	oldTimeout := restartDomainCloseTimeout
+	restartDomainCloseTimeout = 10 * time.Millisecond
+	defer func() { restartDomainCloseTimeout = oldTimeout }()
+
+	oldCloseDDLOwnerMgr := CloseDDLOwnerMgr
+	CloseDDLOwnerMgr = nil
+	defer func() { CloseDDLOwnerMgr = oldCloseDDLOwnerMgr }()
+
+	domain := &testBlockingRestartDomain{
+		startedCh: make(chan struct{}),
+		unblockCh: make(chan struct{}),
+		closedCh:  make(chan struct{}),
+	}
+	defer domain.release()
+
+	doneCh := make(chan struct{})
+	start := time.Now()
+	go func() {
+		restartProcess(domain)
+		close(doneCh)
+	}()
+
+	<-domain.startedCh
+	require.Eventually(t, func() bool {
+		select {
+		case <-doneCh:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+	require.Less(t, time.Since(start), 500*time.Millisecond)
+
+	select {
+	case <-domain.closedCh:
+		t.Fatal("domain close should still be blocked until explicitly released")
+	default:
+	}
+
+	domain.release()
+	require.Eventually(t, func() bool {
+		select {
+		case <-domain.closedCh:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRestartHoldWaitsForAllHolders(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		HoldRestart()
+		HoldRestart()
+		t.Cleanup(func() {
+			ReleaseRestart()
+			ReleaseRestart()
+		})
+
+		waitDone := make(chan struct{})
+		go func() {
+			waitRestartHold(nil)
+			close(waitDone)
+		}()
+
+		synctest.Wait()
+		select {
+		case <-waitDone:
+			t.Fatal("restart hold released before all holders finished")
+		default:
+		}
+
+		ReleaseRestart()
+
+		synctest.Wait()
+		select {
+		case <-waitDone:
+			t.Fatal("restart hold released after only one holder finished")
+		default:
+		}
+
+		ReleaseRestart()
+		synctest.Wait()
+		<-waitDone
+	})
+}
+
+func TestWaitRestartHoldCanBeCanceled(t *testing.T) {
+	HoldRestart()
+	defer ReleaseRestart()
+
+	stopCh := make(chan struct{})
+	waitDone := make(chan bool, 1)
+	go func() {
+		waitDone <- waitRestartHold(stopCh)
+	}()
+
+	close(stopCh)
+
+	require.False(t, <-waitDone)
 }

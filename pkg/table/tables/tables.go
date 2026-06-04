@@ -827,7 +827,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			} else {
 				// If `AddRecord` is called by an insert and the col is in write only or write reorganization state, we must
 				// add it with its default value.
-				value, err = table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
+				value, err = pkdbGetWriteOnlyColumnInsertValue(ctx, sctx, t, col)
 				if err != nil {
 					return nil, err
 				}
@@ -1369,7 +1369,9 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
+	// For AUTO_INCREMENT columns, TiDB treats missing default as zero.
+	// Keep consistent with table.GetColOriginDefaultValue/getColDefaultValueFromNil().
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasAutoIncrementFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
 	}
 	if defaultVals[col.Offset].IsNull() {

@@ -1,0 +1,13 @@
+/*!40101 SET NAMES binary*/;
+DROP TABLE IF EXISTS `v3`;
+DROP VIEW IF EXISTS `v3`;
+SET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;
+SET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;
+SET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;
+SET character_set_client = utf8;
+SET character_set_results = utf8;
+SET collation_connection = utf8_general_ci;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v3` (`id`, `name`) AS SELECT `id`,`name` FROM `db1`.`v1`;
+SET character_set_client = @PREV_CHARACTER_SET_CLIENT;
+SET character_set_results = @PREV_CHARACTER_SET_RESULTS;
+SET collation_connection = @PREV_COLLATION_CONNECTION;

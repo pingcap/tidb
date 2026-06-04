@@ -524,6 +524,13 @@ func finishModifyColumnWithoutReorg(
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	// If we're enabling AUTO_INCREMENT on an existing column, make sure the allocator is rebased
+	// to be >= max(col)+1 (and >= next global).
+	if err := maybeRebaseAutoIncrementIDForModifyColumn(jobCtx, job, tblInfo, newCol, oldCol); err != nil {
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(err)
+	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true, childTableInfos...)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
@@ -1689,7 +1696,9 @@ func GetModifiableColumnJob(
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(newCol.GetFlag()) {
-		return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
+		if err := pkdbCheckModifyColumnEnableAutoIncrement(sctx, t, originalColName, newCol); err != nil {
+			return nil, err
+		}
 	}
 	// Not support auto id with default value.
 	if mysql.HasAutoIncrementFlag(newCol.GetFlag()) && newCol.GetDefaultValue() != nil {
@@ -2059,7 +2068,8 @@ func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			hasNullFlag = true
 			col.DelFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionAutoIncrement:
-			col.AddFlag(mysql.AutoIncrementFlag)
+			// MySQL treats AUTO_INCREMENT columns as NOT NULL.
+			col.AddFlag(mysql.AutoIncrementFlag | mysql.NotNullFlag)
 		case ast.ColumnOptionPrimaryKey:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (PRIMARY KEY)"))
 		case ast.ColumnOptionUniqKey:

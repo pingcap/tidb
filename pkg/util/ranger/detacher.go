@@ -1560,15 +1560,8 @@ func IsValidShardIndex(cols []*expression.Column) bool {
 		return false
 	}
 
-	shardFunc, _ := cols[0].VirtualExpr.(*expression.ScalarFunction)
-
-	argCount := len(shardFunc.GetArgs())
-	if argCount != 1 {
-		return false
-	}
-
 	// parameter of tidb_shard must be the second column of the input index columns
-	col, ok := shardFunc.GetArgs()[0].(*expression.Column)
+	col, _, ok := expression.ExtractTiDBShardColumnAndVersion(cols[0].VirtualExpr)
 	if !ok || !col.EqualColumn(cols[1]) {
 		return false
 	}

@@ -1,0 +1,225 @@
+drop table if exists t;
+create table t (v int);
+insert into t values (10), (20), (30);
+alter table t add column id bigint not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+3	3	0	0
+insert into t(v) values (40);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+EXTRA
+auto_increment
+drop table if exists t;
+create table t (v int);
+insert into t values (10), (20), (30);
+alter table t add column id bigint not null auto_increment, add primary key (id);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+3	3	0	0
+insert into t(v) values (40);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+4	4	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+EXTRA
+auto_increment
+drop table if exists t;
+create table t (v int);
+alter table t add column id bigint not null auto_increment, add primary key (id) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+drop table if exists t;
+create table t (v int);
+alter table t add column id bigint not null auto_increment, add column v2 int;
+Error 8200 (HY000): unsupported add column 'id' constraint AUTO_INCREMENT without ADD PRIMARY KEY(id) NONCLUSTERED in the same statement
+drop table if exists t;
+create table t (v int);
+alter table t add column id varchar(10) not null auto_increment, add primary key (id) nonclustered;
+Error 8200 (HY000): unsupported add column 'id' constraint AUTO_INCREMENT
+drop table if exists t;
+create table t (v int);
+alter table t add column id bigint not null auto_increment default 1, add primary key (id) nonclustered;
+Error 8200 (HY000): unsupported add column 'id' constraint AUTO_INCREMENT
+drop table if exists t;
+create table t (id bigint not null, v int);
+alter table t modify column id bigint not null auto_increment, add column v2 int;
+Error 8200 (HY000): Unsupported modify column: can't set auto_increment
+drop table if exists t;
+create table t (id bigint not null, v int);
+alter table t modify column id bigint not null auto_increment, add primary key (id) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+drop table if exists t;
+create table t (id bigint not null, v int);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+3	3	0	0
+insert into t(v) values (40);
+select id > 30 from t where v=40;
+id > 30
+1
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+EXTRA
+auto_increment
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment;
+insert into t(v) values (40);
+select id > 30 from t where v=40;
+id > 30
+1
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+EXTRA
+auto_increment
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add column c int;
+insert into t(v) values (40);
+select id > 30 from t where v=40;
+id > 30
+1
+drop table if exists t;
+create table t (id bigint unsigned not null, v int);
+insert into t values (9223372036854775808, 1);
+alter table t modify column id bigint unsigned not null auto_increment, add primary key (id) nonclustered;
+insert into t(v) values (2);
+select id > 9223372036854775808 from t where v=2;
+id > 9223372036854775808
+1
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+EXTRA
+auto_increment
+drop table if exists t;
+create table t (v int);
+insert into t values (10), (20);
+alter table t force auto_increment = 9223372036854775807;
+alter table t add column id bigint unsigned not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), min(id), max(id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	min(id)	max(id)	sum(id is null)	sum(id=0)
+2	2	9223372036854775807	9223372036854775808	0	0
+insert into t(v) values (30);
+select id > 9223372036854775808 from t where v=30;
+id > 9223372036854775808
+1
+drop table if exists t;
+create table t (a bigint not null auto_increment, b bigint not null, unique key(a), v int);
+alter table t modify column b bigint not null auto_increment, add primary key (b) nonclustered;
+Error 8200 (HY000): Unsupported modify column: can't set auto_increment
+drop table if exists t;
+create table t (id bigint not null, v int);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add primary key (id);
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+set tidb_enable_global_index=true;
+drop table if exists t;
+create table t (v int) partition by hash(v) partitions 4;
+insert into t values (10), (20), (30), (40), (50), (60);
+alter table t add column id bigint not null auto_increment, add primary key (id) nonclustered global;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+6	6	0	0
+insert into t(v) values (70), (80), (90);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+9	9	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+drop table if exists t;
+create table t (v int) partition by hash(v) partitions 4;
+insert into t values (10), (20), (30), (40), (50), (60);
+alter table t add column id bigint not null auto_increment, add primary key (id) global;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+6	6	0	0
+insert into t(v) values (70), (80), (90);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+9	9	0	0
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+TIDB_PK_TYPE
+NONCLUSTERED
+set tidb_enable_global_index=default;
+drop table if exists t;
+create table t (v int) AUTO_ID_CACHE=1;
+insert into t values (10), (20), (30);
+alter table t add column id bigint not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+3	3	0	0
+show table t next_row_id;
+DB_NAME	TABLE_NAME	COLUMN_NAME	NEXT_GLOBAL_ROW_ID	ID_TYPE
+ddl__pkdb_alter_autoinc_nonclustered_pk	t	_tidb_rowid	30001	_TIDB_ROWID
+ddl__pkdb_alter_autoinc_nonclustered_pk	t	_tidb_rowid	4	AUTO_INCREMENT
+insert into t(v) values (40);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+count(*)	count(distinct id)	sum(id is null)	sum(id=0)
+4	4	0	0
+drop table if exists t;
+create table t (id bigint not null, v int) AUTO_ID_CACHE=1;
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add primary key (id) nonclustered;
+show table t next_row_id;
+DB_NAME	TABLE_NAME	COLUMN_NAME	NEXT_GLOBAL_ROW_ID	ID_TYPE
+ddl__pkdb_alter_autoinc_nonclustered_pk	t	_tidb_rowid	30001	_TIDB_ROWID
+ddl__pkdb_alter_autoinc_nonclustered_pk	t	_tidb_rowid	31	AUTO_INCREMENT
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment;
+set @@sql_mode = 'NO_AUTO_VALUE_ON_ZERO';
+insert into t values (0, 40);
+insert into t(v) values (50);
+select id, v from t where v in (40, 50) order by v;
+id	v
+0	40
+30002	50
+set @@sql_mode = default;
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (-10, 10), (-5, 20), (-1, 30);
+alter table t modify column id bigint not null auto_increment;
+insert into t(v) values (40), (50);
+select id, v from t where v in (40, 50) order by v;
+id	v
+30001	40
+30002	50
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (9223372036854775807, 10);
+alter table t modify column id bigint not null auto_increment;
+Error 1467 (HY000): Failed to read auto-increment value from storage engine
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+alter table t change column id new_id bigint not null auto_increment;
+Error 8200 (HY000): Unsupported modify column: can't set auto_increment
+drop table if exists t;
+create table t (id bigint not null, k bigint not null, v int, primary key (id, k) nonclustered);
+alter table t modify column id bigint not null auto_increment;
+Error 8200 (HY000): Unsupported modify column: can't set auto_increment
+drop table if exists t;
+create table t (id bigint not null, k bigint not null, v int, primary key (id, k) clustered);
+alter table t modify column id bigint not null auto_increment;
+Error 8200 (HY000): Unsupported modify column: can't set auto_increment

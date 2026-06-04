@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/vitess"
 	"github.com/stretchr/testify/require"
 )
 
@@ -654,8 +655,15 @@ func TestBinToUUID(t *testing.T) {
 
 func TestTidbShard(t *testing.T) {
 	ctx := createContext(t)
+	internalCtx := WithTiDBShardInternalVersion(ctx)
 
 	fc := funcs[ast.TiDBShard]
+	versionType := types.NewFieldType(mysql.TypeLonglong)
+	versionOne := &Constant{Value: types.NewIntDatum(1), RetType: versionType}
+
+	_, err := ParseSimpleExpr(ctx, "tidb_shard('ShardKey', 1)")
+	require.Error(t, err)
+	require.True(t, ErrNotSupportedYet.Equal(err))
 
 	// tidb_shard(-1) == 81, ......
 	args := makeDatums([]int{-1, 0, 1, 9999999999999999})
@@ -679,9 +687,60 @@ func TestTidbShard(t *testing.T) {
 		testutil.DatumEqual(t, res2[0], d)
 	}
 
+	t.Run("legacy one-argument string semantics stay cast-based", func(t *testing.T) {
+		legacyShard := func(val int64) types.Datum {
+			hashed, err := vitess.HashUint64(uint64(val))
+			require.NoError(t, err)
+			return types.NewDatum(uint64(hashed % tidbShardBucketCount))
+		}
+
+		cases := []struct {
+			input     string
+			legacyInt int64
+		}{
+			{input: "abc", legacyInt: 0},
+			{input: "65.0", legacyInt: 65},
+			{input: "11xx", legacyInt: 11},
+		}
+		for _, tc := range cases {
+			f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum(tc.input)}))
+			require.NoError(t, err)
+			d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			require.NoError(t, err)
+			testutil.DatumEqual(t, legacyShard(tc.legacyInt), d)
+		}
+	})
+
 	args3 := makeDatums([]int{-1, 0, 1, 9999999999999999})
 	{
 		_, err := fc.getFunction(ctx, datumsToConstants(args3))
 		require.Error(t, err)
 	}
+
+	ciType := types.NewFieldType(mysql.TypeVarString)
+	ciType.SetCharset("utf8mb4")
+	ciType.SetCollate("utf8mb4_general_ci")
+	ciUpper := &Constant{Value: types.NewStringDatum("AbC"), RetType: ciType}
+	ciLower := &Constant{Value: types.NewStringDatum("abc"), RetType: ciType}
+	ciUpperFn, err := fc.getFunction(internalCtx, []Expression{ciUpper, versionOne})
+	require.NoError(t, err)
+	ciLowerFn, err := fc.getFunction(internalCtx, []Expression{ciLower, versionOne})
+	require.NoError(t, err)
+	ciUpperRes, err := evalBuiltinFunc(ciUpperFn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	ciLowerRes, err := evalBuiltinFunc(ciLowerFn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, ciUpperRes.GetValue(), ciLowerRes.GetValue())
+
+	binType := types.NewFieldType(mysql.TypeVarString)
+	binType.SetCharset("utf8mb4")
+	binType.SetCollate("utf8mb4_bin")
+	binVal := &Constant{Value: types.NewStringDatum("ShardKey"), RetType: binType}
+	binFn, err := fc.getFunction(internalCtx, []Expression{binVal, versionOne})
+	require.NoError(t, err)
+	binRes1, err := evalBuiltinFunc(binFn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	binRes2, err := evalBuiltinFunc(binFn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, binRes1.GetValue(), binRes2.GetValue())
 }

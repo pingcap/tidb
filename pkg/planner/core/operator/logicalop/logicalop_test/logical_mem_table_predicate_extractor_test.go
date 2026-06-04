@@ -1717,6 +1717,40 @@ PARTITION BY RANGE COLUMNS ( id ) (
 	}
 }
 
+func TestInfoSchemaParametersExtractor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	parser := parser.New()
+	cases := []struct {
+		sql            string
+		specificSchema set.StringSet
+		specificName   set.StringSet
+	}{
+		{
+			sql:            "select * from information_schema.parameters where specific_schema='test' and specific_name='proc_target'",
+			specificSchema: set.NewStringSet("test"),
+			specificName:   set.NewStringSet("proc_target"),
+		},
+		{
+			sql:            "select * from information_schema.parameters where specific_schema in ('TEST', 'mysql') and specific_name in ('PROC_A', 'proc_b')",
+			specificSchema: set.NewStringSet("test", "mysql"),
+			specificName:   set.NewStringSet("proc_a", "proc_b"),
+		},
+	}
+
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
+
+		extractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaParametersExtractor)
+		require.EqualValues(t, ca.specificSchema, extractor.ColPredicates["specific_schema"], "SQL: %v", ca.sql)
+		require.EqualValues(t, ca.specificName, extractor.ColPredicates["specific_name"], "SQL: %v", ca.sql)
+	}
+}
+
 func TestExtractorInPreparedStmt(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

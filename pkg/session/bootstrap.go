@@ -1029,6 +1029,8 @@ const (
 	eeversion14 = 14
 	// eeversion15 adds the support for lower_case_table_names in EE.
 	eeversion15 = 15
+	// eeversion16 cleans up stale mysql.routines rows left behind by mixed-case schema drops.
+	eeversion16 = 16
 )
 
 const (
@@ -1475,16 +1477,27 @@ const (
 	// [version228, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
+<<<<<<< HEAD
 
+||||||| bea0668079
+=======
+	version239 = 239
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version227
+||||||| bea0668079
+var currentBootstrapVersion int64 = version223
+=======
+var currentBootstrapVersion int64 = version239
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentEEBootstrapVersion int64 = eeversion15
+var currentEEBootstrapVersion int64 = eeversion16
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1663,10 +1676,15 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+<<<<<<< HEAD
 		upgradeToVer224,
 		upgradeToVer225,
 		upgradeToVer226,
 		upgradeToVer227,
+||||||| bea0668079
+=======
+		upgradeToVer239,
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	}
 )
 
@@ -1686,6 +1704,7 @@ var (
 		upgradeToEEVer13,
 		upgradeToEEVer14,
 		upgradeToEEVer15,
+		upgradeToEEVer16,
 	}
 )
 
@@ -3596,6 +3615,11 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer239(s sessiontypes.Session, ver int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableNoBackslashEscapesInLike, variable.Off)
+}
+
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion2 {
 		return
@@ -3717,6 +3741,7 @@ func upgradeToEEVer15(s sessiontypes.Session, ver int64) {
 	writeLowerCaseTableNamesParameter(s, 2)
 }
 
+<<<<<<< HEAD
 func upgradeToVer224(s sessiontypes.Session, ver int64) {
 	if ver >= version224 {
 		return
@@ -3801,6 +3826,38 @@ func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) 
 		cols = append(cols, row.GetString(0))
 	}
 	return cols
+||||||| bea0668079
+=======
+func upgradeToEEVer16(s sessiontypes.Session, ver int64) {
+	if ver >= eeversion16 {
+		return
+	}
+	// Older versions could leave mysql.routines rows behind after dropping a
+	// mixed-case schema. When the schema is recreated with a different letter
+	// case, these rows can later collide with the newly created live routine
+	// metadata and trigger duplicate routine lookups. Clean only the stale
+	// duplicate rows that are shadowed by an exact-case live schema/routine row.
+	mustExecute(s, `DELETE FROM %n.%n
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM information_schema.schemata
+			WHERE schema_name = mysql.routines.route_schema
+		)
+		  AND EXISTS (
+			SELECT 1
+			FROM information_schema.schemata
+			WHERE lower(schema_name) = lower(mysql.routines.route_schema)
+			  AND EXISTS (
+				SELECT 1
+				FROM mysql.routines AS live
+				WHERE live.route_schema = information_schema.schemata.schema_name
+				  AND live.name = mysql.routines.name
+				  AND live.type = mysql.routines.type
+			  )
+		)`,
+		mysql.SystemDB, mysql.Routines,
+	)
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
