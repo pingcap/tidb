@@ -616,6 +616,29 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	require.NotContains(t, attrPartialShowCreate, "mview_alert_warning=0")
 }
 
+func TestMaterializedViewCommentLength(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_comment_len (id bigint not null primary key, g1 int not null, v1 bigint not null, key idx_g1(g1))")
+	tk.MustExec("create materialized view log on t_mv_comment_len (id, g1, v1)")
+
+	comment128 := strings.Repeat("y", 128)
+	comment129 := strings.Repeat("y", 129)
+	createMVSQL := func(name string, comment string) string {
+		return fmt.Sprintf("create materialized view %s (g1, cnt) comment = '%s' refresh fast as select g1, count(1) from t_mv_comment_len group by g1", name, comment)
+	}
+
+	tk.MustExec(createMVSQL("mv_c128", comment128))
+	err := tk.ExecToErr(createMVSQL("mv_c129", comment129))
+	require.ErrorContains(t, err, "Comment for table 'mv_c129' is too long (max = 128)")
+
+	tk.MustExec("create materialized view mv_alter_comment (g1, cnt) refresh fast as select g1, count(1) from t_mv_comment_len group by g1")
+	tk.MustExec(fmt.Sprintf("alter materialized view mv_alter_comment comment = '%s'", comment128))
+	err = tk.ExecToErr(fmt.Sprintf("alter materialized view mv_alter_comment comment = '%s'", comment129))
+	require.ErrorContains(t, err, "Comment for table 'mv_alter_comment' is too long (max = 128)")
+}
+
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
