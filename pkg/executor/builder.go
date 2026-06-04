@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/cteutil"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -615,6 +616,10 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 	t, err := b.is.TableByName(context.Background(), v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = err
+		return nil
+	}
+	if t.Meta().MaterializedView != nil {
+		b.err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADMIN RECOVER INDEX on materialized view table")
 		return nil
 	}
 	idxName := strings.ToLower(v.IndexName)

@@ -249,6 +249,19 @@ func TestAdminRecoverMVIndex(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
+func TestAdminRecoverIndexOnMaterializedViewRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_recover_mv (id bigint not null primary key, g1 int not null, v1 bigint not null, key idx_g1 (g1))")
+	tk.MustExec("create materialized view log on t_recover_mv (id, g1, v1)")
+	tk.MustExec("create materialized view mv_recover_idx (g1, cnt) refresh fast as select g1, count(*) as cnt from t_recover_mv group by g1")
+	tk.MustExec("create index i_g1 on mv_recover_idx (g1)")
+
+	err := tk.ExecToErr("admin recover index mv_recover_idx i_g1")
+	require.ErrorContains(t, err, "ADMIN RECOVER INDEX on materialized view table")
+}
+
 func TestAdminCleanupMVIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
