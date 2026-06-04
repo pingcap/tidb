@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -79,21 +80,15 @@ func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.K
 }
 
 // groupBoundaries splits the boundary list into at most groupCnt contiguous
-// groups of roughly equal region count, in key order. Each returned group is
-// a boundary slice: group[0] is its start key and group[len-1] its end key.
+// groups of roughly equal region count, in key order.
 func groupBoundaries(boundaries []kv.Key, groupCnt int) [][]kv.Key {
 	rangeCnt := len(boundaries) - 1
-	if groupCnt > rangeCnt {
-		groupCnt = rangeCnt
-	}
-	if groupCnt <= 0 {
-		groupCnt = 1
-	}
-	groups := make([][]kv.Key, 0, groupCnt)
-	for i := range groupCnt {
-		lo := rangeCnt * i / groupCnt
-		hi := rangeCnt * (i + 1) / groupCnt
-		groups = append(groups, boundaries[lo:hi+1])
+	sizes := mathutil.Divide2Batches(rangeCnt, max(groupCnt, 1))
+	groups := make([][]kv.Key, 0, len(sizes))
+	lo := 0
+	for _, size := range sizes {
+		groups = append(groups, boundaries[lo:lo+size+1])
+		lo += size
 	}
 	return groups
 }

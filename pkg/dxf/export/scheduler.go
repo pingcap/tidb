@@ -143,7 +143,7 @@ func (s *exportScheduler) splitDumpSubtasks(ctx context.Context, execIDs []strin
 		regionCnt := len(boundaries) - 1
 		groupCnt := s.subtaskCntFor(regionCnt, len(execIDs))
 		groups := groupBoundaries(boundaries, groupCnt)
-		writerCnt := s.taskMeta.totalLanes(s.GetTask().RequiredSlots)
+		writerCnt := s.taskMeta.totalWriters(s.GetTask().RequiredSlots)
 		for _, g := range groups {
 			// fix the per-writer split points now so a subtask retry rewrites
 			// exactly the same files.
