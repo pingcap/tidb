@@ -561,7 +561,7 @@ func TestHandshakeResponseCompatibilityAndFailurePaths(t *testing.T) {
 
 	t.Run("truncated auth length header", func(t *testing.T) {
 		var buf bytes.Buffer
-		binary.Write(&buf, binary.LittleEndian, uint32(mysql.ClientProtocol41|mysql.ClientPluginAuthLenencClientData))
+		binary.Write(&buf, binary.LittleEndian, mysql.ClientProtocol41|mysql.ClientPluginAuthLenencClientData)
 		binary.Write(&buf, binary.LittleEndian, uint32(0)) // max packet size
 		buf.WriteByte(0)                                   // collation
 		buf.Write(make([]byte, 23))                        // reserved
