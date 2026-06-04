@@ -300,6 +300,15 @@ func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
 }
 
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
 func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d
@@ -879,12 +888,6 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 		return nil, errors.Trace(err)
 	}
 	return mgr.SessPool(), nil
-}
-
-// CloseKSSessMgr closes the session manager for the given keyspace.
-// it's exported for test only.
-func (do *Domain) CloseKSSessMgr(targetKS string) {
-	do.crossKSSessMgr.CloseKS(targetKS)
 }
 
 // GetCrossKSMgr returns the cross keyspace session manager.
