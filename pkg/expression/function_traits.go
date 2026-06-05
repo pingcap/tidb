@@ -36,7 +36,6 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
 	ast.JSONObject:       {},
 	ast.JSONArray:        {},
-	ast.Coalesce:         {},
 	ast.Convert:          {},
 	ast.TimeLiteral:      {},
 	ast.DateLiteral:      {},
