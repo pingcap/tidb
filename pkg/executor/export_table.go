@@ -64,16 +64,16 @@ func newExportTableExec(b exec.BaseExecutor, userSctx sessionctx.Context,
 type exportOptions struct {
 	fileSize int64
 	// thread is the task concurrency, which is also the per-subtask encoder
-	// count.
-	thread         int
-	subtaskRegions int
-	detached       bool
+	// count. 0 means auto: min(8, executor node CPU).
+	thread            int
+	writersPerEncoder int
+	subtaskRegions    int
+	detached          bool
 }
 
 func (e *ExportTableExec) parseOptions() (*exportOptions, error) {
 	opts := &exportOptions{
 		fileSize: defaultExportFileSize,
-		thread:   8,
 	}
 	evalCtx := e.userSctx.GetExprCtx().GetEvalCtx()
 	for _, opt := range e.plan.Options {
@@ -107,6 +107,12 @@ func (e *ExportTableExec) parseOptions() (*exportOptions, error) {
 				return nil, errors.Errorf("invalid thread value")
 			}
 			opts.thread = int(v)
+		case "writers_per_encoder":
+			v, err := optAsInt64()
+			if err != nil || v <= 0 || v > 16 {
+				return nil, errors.Errorf("invalid writers_per_encoder value")
+			}
+			opts.writersPerEncoder = int(v)
 		case "subtask_regions":
 			v, err := optAsInt64()
 			if err != nil || v <= 0 {
@@ -151,6 +157,15 @@ func (e *ExportTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
+	if opts.thread == 0 {
+		// task creation rejects requiredSlots larger than the executor node
+		// CPU, so clamp the default by it.
+		opts.thread = 8
+		if cpu, err := handle.GetCPUCountOfNode(ctx); err == nil && cpu > 0 {
+			opts.thread = min(opts.thread, cpu)
+		}
+	}
+
 	store := e.userSctx.GetStore()
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
@@ -159,13 +174,14 @@ func (e *ExportTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	snapshotTS := ver.Ver
 	tblInfo := e.tbl.Meta()
 	taskMeta := &export.TaskMeta{
-		DBName:         e.plan.Table.Schema.O,
-		TableInfo:      tblInfo,
-		SnapshotTS:     snapshotTS,
-		Dest:           e.plan.Path,
-		Format:         "csv",
-		FileSize:       opts.fileSize,
-		SubtaskRegions: opts.subtaskRegions,
+		DBName:            e.plan.Table.Schema.O,
+		TableInfo:         tblInfo,
+		SnapshotTS:        snapshotTS,
+		Dest:              e.plan.Path,
+		Format:            "csv",
+		FileSize:          opts.fileSize,
+		SubtaskRegions:    opts.subtaskRegions,
+		WritersPerEncoder: opts.writersPerEncoder,
 	}
 	taskKey := export.TaskKey(tblInfo.ID, snapshotTS)
 

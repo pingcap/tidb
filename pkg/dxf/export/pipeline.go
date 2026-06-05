@@ -71,8 +71,9 @@ func recvCtx[T any](ctx context.Context, ch <-chan T) (v T, ok bool, err error) 
 func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, ordinal int, bounds []kv.Key) error {
 	writerCnt := len(bounds) - 1
 	eg, egCtx := errgroup.WithContext(ctx)
-	for wStart := 0; wStart < writerCnt; wStart += writersPerEncoder {
-		wEnd := min(wStart+writersPerEncoder, writerCnt)
+	m := e.taskMeta.effectiveWritersPerEncoder()
+	for wStart := 0; wStart < writerCnt; wStart += m {
+		wEnd := min(wStart+m, writerCnt)
 		writers := make([]*writerChan, 0, wEnd-wStart)
 		for i := wStart; i < wEnd; i++ {
 			w := &writerChan{
@@ -153,6 +154,7 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 			return err
 		}
 		e.summary.RowCnt.Add(int64(rc.chk.NumRows()))
+		e.rowsCounter.Add(float64(rc.chk.NumRows()))
 		e.chunkPool.Put(rc.chk)
 
 		if err := sendCtx(ctx, rc.writer.encCh, buf); err != nil {
@@ -165,7 +167,7 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 // runWriter uploads the writer's encoded buffers to the object store, cutting
 // files at FileSize on chunk (row) boundaries.
 func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writerChan) error {
-	fw := newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, w.id)
+	fw := newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, w.id, e.filesCounter)
 	for {
 		buf, ok, err := recvCtx(ctx, w.encCh)
 		if err != nil {
@@ -180,6 +182,7 @@ func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writer
 		}
 
 		e.summary.Processed.Add(int64(len(buf)))
+		e.bytesCounter.Add(float64(len(buf)))
 		e.bufPool.Put(buf) //nolint:staticcheck
 	}
 }

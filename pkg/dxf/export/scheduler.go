@@ -150,7 +150,7 @@ func (s *exportScheduler) splitDumpSubtasks(ctx context.Context, execIDs []strin
 		groups := groupBoundaries(boundaries, groupCnt)
 		// RequiredSlots is validated >= 1 at submit and Export has no
 		// concurrency-modification entry point.
-		writerCnt := s.GetTask().RequiredSlots * writersPerEncoder
+		writerCnt := s.GetTask().RequiredSlots * s.taskMeta.effectiveWritersPerEncoder()
 		for _, g := range groups {
 			writerGroups := groupBoundaries(g, writerCnt)
 			bounds := make([][]byte, 0, len(writerGroups)+1)

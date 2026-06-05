@@ -33,9 +33,19 @@ type TaskMeta struct {
 	FileSize int64 `json:"file_size"`
 	// SubtaskRegions is the number of regions per subtask span, 0 means auto.
 	SubtaskRegions int `json:"subtask_regions"`
+	// WritersPerEncoder is m: each encoder serves m reader/writer pairs,
+	// 0 means the default.
+	WritersPerEncoder int `json:"writers_per_encoder"`
 }
 
-const writersPerEncoder = 2
+const defaultWritersPerEncoder = 2
+
+func (m *TaskMeta) effectiveWritersPerEncoder() int {
+	if m.WritersPerEncoder > 0 {
+		return m.WritersPerEncoder
+	}
+	return defaultWritersPerEncoder
+}
 
 // SubtaskMeta is the subtask meta of the Dump step. Each subtask owns a
 // contiguous key range of one physical table.
