@@ -482,6 +482,7 @@ const (
 
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
+
 	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
 	version256 = 256
 
@@ -502,6 +503,11 @@ const (
 
 	// Add mysql.tidb_masking_policy table.
 	version260 = 260
+
+	// version261
+	// increases resource group name related columns from varchar(32) to varchar(64)
+	// for MySQL compatibility.
+	version261 = 261
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -515,7 +521,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version260
+var currentBootstrapVersion int64 = version261
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -700,6 +706,7 @@ var (
 		{version: version258, fn: upgradeToVer258},
 		{version: version259, fn: upgradeToVer259},
 		{version: version260, fn: upgradeToVer260},
+		{version: version261, fn: upgradeToVer261},
 	}
 )
 
@@ -2127,4 +2134,15 @@ func upgradeToVer259(s sessionapi.Session, _ int64) {
 
 func upgradeToVer260(s sessionapi.Session, _ int64) {
 	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
+}
+
+// upgradeToVer261 widens resource group name related columns from varchar(32) to
+// varchar(64) for MySQL compatibility.
+func upgradeToVer261(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `switch_group_name` VARCHAR(64) DEFAULT ''")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done MODIFY COLUMN `switch_group_name` VARCHAR(64) DEFAULT ''")
+	doReentrantDDL(s, "ALTER TABLE mysql.request_unit_by_group MODIFY COLUMN `resource_group` VARCHAR(64) NOT NULL")
 }
