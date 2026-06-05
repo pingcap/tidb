@@ -1398,15 +1398,16 @@ func (b *executorBuilder) buildMVCompleteDeltaApply(v *plannercore.MVCompleteDel
 		b.err = errors.New("MVCompleteDeltaApply source plan is nil")
 		return nil
 	}
-	if b.err = b.updateForUpdateTS(); b.err != nil {
-		return nil
-	}
 
 	originInMVCompleteDeltaApply := b.inMVCompleteDeltaApplyStmt
 	b.inMVCompleteDeltaApplyStmt = true
 	defer func() {
 		b.inMVCompleteDeltaApplyStmt = originInMVCompleteDeltaApply
 	}()
+
+	if b.err = b.updateForUpdateTS(); b.err != nil {
+		return nil
+	}
 
 	sourceExec := b.build(v.Source)
 	if b.err != nil {
