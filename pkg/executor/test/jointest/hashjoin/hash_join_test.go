@@ -274,6 +274,22 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 		"2 10",
 	))
 
+	onFalseSQL := "select t13.a, t14.a from t13 full outer join t14 on false order by isnull(t13.a), t13.a, isnull(t14.a), t14.a"
+	tk.MustHavePlan(onFalseSQL, "HashJoin")
+	tk.MustQuery(onFalseSQL).Check(testkit.Rows(
+		"1 <nil>",
+		"2 <nil>",
+		"<nil> 10",
+	))
+
+	onNullSQL := "select t13.a, t14.a from t13 full outer join t14 on null order by isnull(t13.a), t13.a, isnull(t14.a), t14.a"
+	tk.MustHavePlan(onNullSQL, "HashJoin")
+	tk.MustQuery(onNullSQL).Check(testkit.Rows(
+		"1 <nil>",
+		"2 <nil>",
+		"<nil> 10",
+	))
+
 	nonEquiOnlySQL := "select t13.a, t14.a from t13 full outer join t14 on t13.a > t14.a order by isnull(t13.a), t13.a, isnull(t14.a), t14.a"
 	tk.MustHavePlan(nonEquiOnlySQL, "HashJoin")
 	nonEquiOnlyExplain := tk.MustQuery("explain format = 'brief' " + nonEquiOnlySQL).Rows()
