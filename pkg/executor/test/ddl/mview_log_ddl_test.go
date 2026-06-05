@@ -373,12 +373,24 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create view v as select a from t")
 	tk.MustExec("create sequence s")
+	tk.MustExec("create global temporary table gt (a int) on commit delete rows")
 
 	err := tk.ExecToErr("create materialized view log on v (a)")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "v", "BASE TABLE").Error(), err.Error())
 
 	err = tk.ExecToErr("create materialized view log on s (a)")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "s", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on gt (a)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "gt", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on mysql.user (User)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("mysql", "user", "BASE TABLE").Error(), err.Error())
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create temporary table t (a int)")
+	err = tk.ExecToErr("create materialized view log on t (a)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "t", "BASE TABLE").Error(), err.Error())
 }
 
 func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
