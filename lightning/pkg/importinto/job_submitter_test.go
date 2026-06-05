@@ -107,6 +107,57 @@ func TestJobSubmitterGetGroupKey(t *testing.T) {
 	require.Equal(t, groupKey, submitter.GetGroupKey())
 }
 
+func TestJobSubmitterStripsS3ExternalIDFromResourceParameters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+	cfg := config.NewConfig()
+	cfg.Mydumper.SourceDir = "s3://bucket/path?role-arn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fimport&external-id=cluster-1&force_path_style=0"
+	submitter := importinto.NewJobSubmitter(mockSDK, cfg, "g1", log.L())
+
+	tableMeta := &importsdk.TableMeta{
+		Database: "db",
+		Table:    "t1",
+	}
+	mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
+			require.Equal(t, "force_path_style=0&role-arn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fimport", options.ResourceParameters)
+			require.NotContains(t, options.ResourceParameters, "external-id")
+			return "IMPORT INTO ...", nil
+		})
+	mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+
+	job, err := submitter.SubmitTable(context.Background(), tableMeta)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+}
+
+func TestJobSubmitterKeepsNonS3ExternalIDFromResourceParameters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+	cfg := config.NewConfig()
+	cfg.Mydumper.SourceDir = "gcs://bucket/path?role-arn=role&external-id=cluster-1"
+	submitter := importinto.NewJobSubmitter(mockSDK, cfg, "g1", log.L())
+
+	tableMeta := &importsdk.TableMeta{
+		Database: "db",
+		Table:    "t1",
+	}
+	mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
+			require.Equal(t, "role-arn=role&external-id=cluster-1", options.ResourceParameters)
+			return "IMPORT INTO ...", nil
+		})
+	mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+
+	job, err := submitter.SubmitTable(context.Background(), tableMeta)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+}
+
 func TestJobSubmitterSubmitTableLogRedaction(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

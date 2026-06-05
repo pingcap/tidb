@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"net/url"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/importsdk"
@@ -128,11 +129,32 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 	if cfg.Mydumper.SourceDir != "" {
 		u, err := url.Parse(cfg.Mydumper.SourceDir)
 		if err == nil {
-			opts.ResourceParameters = u.RawQuery
+			opts.ResourceParameters = stripS3ExternalIDFromResourceParameters(u.Scheme, u.RawQuery)
 		}
 	}
 
 	return opts
+}
+
+func stripS3ExternalIDFromResourceParameters(scheme, rawQuery string) string {
+	if !strings.EqualFold(scheme, "s3") || rawQuery == "" {
+		return rawQuery
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return rawQuery
+	}
+	changed := false
+	for key := range values {
+		if strings.EqualFold(key, "external-id") || strings.EqualFold(key, "external_id") {
+			values.Del(key)
+			changed = true
+		}
+	}
+	if !changed {
+		return rawQuery
+	}
+	return values.Encode()
 }
 
 func generateImportSQLForLog(tableMeta *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
