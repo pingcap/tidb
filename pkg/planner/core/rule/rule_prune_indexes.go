@@ -58,7 +58,7 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 	)
 }
 
-func shouldKeepIndexMergeCandidates(ds *logicalop.DataSource) bool {
+func shouldKeepIndexMergeCandidates(ds *logicalop.DataSource, paths []*util.AccessPath) bool {
 	sessionVars := ds.SCtx().GetSessionVars()
 	if (!sessionVars.GetEnableIndexMerge() && len(ds.IndexMergeHints) == 0) || sessionVars.StmtCtx.NoIndexMergeHint {
 		return false
@@ -69,12 +69,45 @@ func shouldKeepIndexMergeCandidates(ds *logicalop.DataSource) bool {
 	if len(ds.IndexMergeHints) > 0 {
 		return true
 	}
+	if fixcontrol.GetBoolWithDefault(
+		sessionVars.GetOptimizerFixControlMap(),
+		fixcontrol.Fix52869,
+		false,
+	) {
+		return false
+	}
+	hasDNFCond := false
+	dnfColIDs := make(map[int64]struct{})
 	for _, cond := range ds.AllConds {
-		if len(expression.SplitDNFItems(expression.PushDownNot(ds.SCtx().GetExprCtx(), cond))) > 1 {
-			return true
+		cond = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
+		if len(expression.SplitDNFItems(cond)) > 1 {
+			hasDNFCond = true
+			for _, col := range expression.ExtractColumnsFromExpressions(nil, []expression.Expression{cond}, nil) {
+				dnfColIDs[col.ID] = struct{}{}
+			}
+			continue
+		}
+		return false
+	}
+	if !hasDNFCond {
+		return false
+	}
+	for _, col := range ds.InterestingColumns {
+		if _, ok := dnfColIDs[col.ID]; !ok {
+			return false
 		}
 	}
-	return false
+	for _, path := range paths {
+		if path.IsTablePath() || path.IsDNFCond || len(path.AccessConds) == 0 {
+			continue
+		}
+		for _, col := range expression.ExtractColumnsFromExpressions(nil, path.AccessConds, nil) {
+			if _, ok := dnfColIDs[col.ID]; !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // PruneIndexesByWhereAndOrder prunes indexes based on their coverage of interesting columns.
@@ -87,7 +120,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	if len(paths) <= 1 {
 		return paths
 	}
-	if shouldKeepIndexMergeCandidates(ds) {
+	if shouldKeepIndexMergeCandidates(ds, paths) {
 		return paths
 	}
 
@@ -364,9 +397,12 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 		if a.totalConsecutive == 1 && a.columns != b.columns {
 			return a.columns - b.columns
 		}
-		// Tie-breaker: use index ID for deterministic ordering when all other criteria are equal
+		// Tie-breaker: use index name, then ID, for deterministic ordering when all other criteria are equal
 		// This ensures stable sorting for functionally identical indexes (e.g., k1 and k2 with same expressions)
 		if a.info.path.Index != nil && b.info.path.Index != nil {
+			if nameCmp := strings.Compare(a.info.path.Index.Name.L, b.info.path.Index.Name.L); nameCmp != 0 {
+				return nameCmp
+			}
 			// Use proper three-way comparison to avoid integer overflow
 			// (a.info.path.Index.ID is int64, casting the difference to int can overflow)
 			if a.info.path.Index.ID < b.info.path.Index.ID {

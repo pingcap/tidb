@@ -716,12 +716,15 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	needConsiderIndexMerge := true
 	// if current index merge hint is nil, once there is a no-access-cond in one of possible access path.
 	if len(ds.IndexMergeHints) == 0 {
+		fixControlMap := ds.SCtx().GetSessionVars().GetOptimizerFixControlMap()
 		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
-			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+			fixControlMap,
 			fixcontrol.Fix52869,
 			true,
 		)
-		if !skipRangeScanCheck {
+		if fix52869, exists := fixcontrol.GetBool(fixControlMap, fixcontrol.Fix52869); exists && fix52869 && hasPointAccessPath(ds) {
+			needConsiderIndexMerge = false
+		} else if !skipRangeScanCheck {
 			for i := 1; i < len(ds.PossibleAccessPaths); i++ {
 				if len(ds.PossibleAccessPaths[i].AccessConds) != 0 {
 					needConsiderIndexMerge = false
@@ -757,6 +760,19 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergeAndPath)
 	}
 	return "", nil
+}
+
+func hasPointAccessPath(ds *logicalop.DataSource) bool {
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTablePath() || path.Index == nil || len(path.AccessConds) == 0 {
+			continue
+		}
+		if path.OnlyPointRange(tc) {
+			return true
+		}
+	}
+	return false
 }
 
 // generateIndexMergeOnDNF4MVIndex generates IndexMerge paths for MVIndex upon DNF filters.
