@@ -238,11 +238,29 @@ func TestBasic(t *testing.T) {
 	col := tb.Meta().FindPublicColumnByName("base_table_id")
 	require.NotNil(t, col)
 	require.Equal(t, mysql.TypeLonglong, col.GetType())
+	for _, colName := range []string{
+		"table_catalog", "table_schema", "mlog_id", "mlog_name", "mlog_columns",
+		"base_table_catalog", "base_table_schema", "base_table_id", "base_table_name",
+		"purge_method", "purge_start", "purge_next",
+	} {
+		col = tb.Meta().FindPublicColumnByName(colName)
+		require.NotNil(t, col)
+		require.False(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+	}
 	tb, err = is.TableByName(context.Background(), pmodel.NewCIStr("information_schema"), pmodel.NewCIStr(infoschema.TableTiDBTableMViewDependencies))
 	require.NoError(t, err)
 	col = tb.Meta().FindPublicColumnByName("mview_id")
 	require.NotNil(t, col)
 	require.Equal(t, mysql.TypeLonglong, col.GetType())
+	for _, colName := range []string{
+		"table_catalog", "table_schema", "table_id", "table_name",
+		"mlog_id", "mlog_name",
+		"mview_catalog", "mview_schema", "mview_id", "mview_name",
+	} {
+		col = tb.Meta().FindPublicColumnByName(colName)
+		require.NotNil(t, col)
+		require.False(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+	}
 
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()

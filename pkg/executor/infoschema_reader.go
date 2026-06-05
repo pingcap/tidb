@@ -1734,9 +1734,7 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		if mlogInfo == nil {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-			continue
-		}
+		hasMLogPriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask)
 
 		var baseInfo mlogBaseTableInfo
 		if i < len(baseInfos) {
@@ -1744,29 +1742,50 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		} else {
 			baseInfo = e.getMLogBaseTableInfo(ctx, schema, tbl)
 		}
-		if checker != nil && baseInfo.name != "" &&
-			!checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.AllPrivMask) {
-			continue
+		hasBasePriv := true
+		if checker != nil && baseInfo.name != "" {
+			hasBasePriv = checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.AllPrivMask)
 		}
 
 		columnNames := make([]string, 0, len(mlogInfo.Columns))
 		for _, col := range mlogInfo.Columns {
 			columnNames = append(columnNames, col.O)
 		}
+		var mlogCatalog, mlogSchema, mlogID, mlogName, mlogColumns any
+		if hasMLogPriv {
+			mlogCatalog = infoschema.CatalogVal
+			mlogSchema = schema.O
+			mlogID = tbl.ID
+			mlogName = tbl.Name.O
+			mlogColumns = strings.Join(columnNames, ",")
+		}
+		var baseCatalog, baseSchema, baseID, baseName any
+		if hasBasePriv {
+			baseCatalog = baseInfo.catalog
+			baseSchema = baseInfo.schema
+			baseID = baseInfo.id
+			baseName = baseInfo.name
+		}
+		var purgeMethod, purgeStartWith, purgeNext any
+		if hasMLogPriv && (mlogInfo.PurgeMethod != "" || mlogInfo.PurgeStartWith != "" || mlogInfo.PurgeNext != "") {
+			purgeMethod = mlogInfo.PurgeMethod
+			purgeStartWith = mlogInfo.PurgeStartWith
+			purgeNext = mlogInfo.PurgeNext
+		}
 
 		record := types.MakeDatums(
-			infoschema.CatalogVal,          // TABLE_CATALOG
-			schema.O,                       // TABLE_SCHEMA
-			tbl.ID,                         // MLOG_ID
-			tbl.Name.O,                     // MLOG_NAME
-			strings.Join(columnNames, ","), // MLOG_COLUMNS
-			baseInfo.catalog,               // BASE_TABLE_CATALOG
-			baseInfo.schema,                // BASE_TABLE_SCHEMA
-			baseInfo.id,                    // BASE_TABLE_ID
-			baseInfo.name,                  // BASE_TABLE_NAME
-			mlogInfo.PurgeMethod,           // PURGE_METHOD
-			mlogInfo.PurgeStartWith,        // PURGE_START
-			mlogInfo.PurgeNext,             // PURGE_NEXT
+			mlogCatalog,    // TABLE_CATALOG
+			mlogSchema,     // TABLE_SCHEMA
+			mlogID,         // MLOG_ID
+			mlogName,       // MLOG_NAME
+			mlogColumns,    // MLOG_COLUMNS
+			baseCatalog,    // BASE_TABLE_CATALOG
+			baseSchema,     // BASE_TABLE_SCHEMA
+			baseID,         // BASE_TABLE_ID
+			baseName,       // BASE_TABLE_NAME
+			purgeMethod,    // PURGE_METHOD
+			purgeStartWith, // PURGE_START
+			purgeNext,      // PURGE_NEXT
 		)
 		rows = append(rows, record)
 	}
@@ -1925,40 +1944,53 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 		if tbl.MaterializedViewBase == nil {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-			continue
-		}
+		hasBasePriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask)
 
 		mlogInfo := e.getBaseTableMLogInfo(ctx, tbl)
 		if mlogInfo.id == 0 || mlogInfo.name == "" {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(activeRoles, schema.L, strings.ToLower(mlogInfo.name), "", mysql.AllPrivMask) {
-			continue
-		}
+		hasMLogPriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, strings.ToLower(mlogInfo.name), "", mysql.AllPrivMask)
 		if hasMLogPredicates && filterMViewDependencyByMLogPredicates(ex, mlogInfo) {
 			continue
 		}
 
 		deps := e.getBaseTableMViewDependencies(ctx, tbl)
 		for _, dep := range deps {
-			if checker != nil && !checker.RequestVerification(activeRoles, dep.schema.L, strings.ToLower(dep.name), "", mysql.AllPrivMask) {
-				continue
-			}
+			hasMViewPriv := checker == nil || checker.RequestVerification(activeRoles, dep.schema.L, strings.ToLower(dep.name), "", mysql.AllPrivMask)
 			if hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep) {
 				continue
 			}
+			var baseCatalog, baseSchema, baseID, baseName any
+			if hasBasePriv {
+				baseCatalog = infoschema.CatalogVal
+				baseSchema = schema.O
+				baseID = tbl.ID
+				baseName = tbl.Name.O
+			}
+			var mlogID, mlogName any
+			if hasMLogPriv {
+				mlogID = mlogInfo.id
+				mlogName = mlogInfo.name
+			}
+			var mviewCatalog, mviewSchema, mviewID, mviewName any
+			if hasMViewPriv {
+				mviewCatalog = dep.catalog
+				mviewSchema = dep.schema.O
+				mviewID = dep.id
+				mviewName = dep.name
+			}
 			record := types.MakeDatums(
-				infoschema.CatalogVal, // TABLE_CATALOG
-				schema.O,              // TABLE_SCHEMA
-				tbl.ID,                // TABLE_ID
-				tbl.Name.O,            // TABLE_NAME
-				mlogInfo.id,           // MLOG_ID
-				mlogInfo.name,         // MLOG_NAME
-				dep.catalog,           // MVIEW_CATALOG
-				dep.schema.O,          // MVIEW_SCHEMA
-				dep.id,                // MVIEW_ID
-				dep.name,              // MVIEW_NAME
+				baseCatalog,  // TABLE_CATALOG
+				baseSchema,   // TABLE_SCHEMA
+				baseID,       // TABLE_ID
+				baseName,     // TABLE_NAME
+				mlogID,       // MLOG_ID
+				mlogName,     // MLOG_NAME
+				mviewCatalog, // MVIEW_CATALOG
+				mviewSchema,  // MVIEW_SCHEMA
+				mviewID,      // MVIEW_ID
+				mviewName,    // MVIEW_NAME
 			)
 			rows = append(rows, record)
 		}

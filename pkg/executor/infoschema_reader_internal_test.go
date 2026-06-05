@@ -497,10 +497,33 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 
 		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.$mlog$keep", "test.base"}, pm.calls)
-		require.Len(t, mt.rows, 1)
+		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.base", "test.$mlog$keep", "test.base"}, pm.calls)
+		require.Len(t, mt.rows, 2)
 
-		row := mt.rows[0]
+		var denyRow, keepRow []types.Datum
+		for _, row := range mt.rows {
+			if row[3].IsNull() {
+				denyRow = row
+				continue
+			}
+			if row[3].GetString() == "$mlog$keep" {
+				keepRow = row
+			}
+		}
+		require.NotNil(t, denyRow)
+		for i := 0; i < 5; i++ {
+			require.True(t, denyRow[i].IsNull())
+		}
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), denyRow[5])
+		require.Equal(t, types.NewStringDatum("test"), denyRow[6])
+		require.Equal(t, types.NewIntDatum(1), denyRow[7])
+		require.Equal(t, types.NewStringDatum("base"), denyRow[8])
+		for i := 9; i <= 11; i++ {
+			require.True(t, denyRow[i].IsNull())
+		}
+
+		row := keepRow
+		require.NotNil(t, row)
 		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[0])
 		require.Equal(t, types.NewStringDatum("test"), row[1])
 		require.Equal(t, types.NewIntDatum(3), row[2])
@@ -513,6 +536,34 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		require.Equal(t, types.NewStringDatum("DEFERRED"), row[9])
 		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP"), row[10])
 		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP + INTERVAL 1 HOUR"), row[11])
+	})
+
+	t.Run("purge columns are null when purge does not exist", func(t *testing.T) {
+		mlog := newMLogTableInfo(2, "$mlog$keep", 1)
+		mlog.MaterializedViewLog.PurgeMethod = ""
+		mlog.MaterializedViewLog.PurgeStartWith = ""
+		mlog.MaterializedViewLog.PurgeNext = ""
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base"), State: model.StatePublic},
+				mlog,
+			}),
+			extractor: plannercore.NewInfoSchemaTiDBMLogsExtractor(),
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+				newColumnInfo("purge_method"),
+				newColumnInfo("purge_start"),
+				newColumnInfo("purge_next"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
+		require.True(t, mt.rows[0][9].IsNull())
+		require.True(t, mt.rows[0][10].IsNull())
+		require.True(t, mt.rows[0][11].IsNull())
 	})
 
 	t.Run("filters invisible base table", func(t *testing.T) {
@@ -541,9 +592,24 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{"test.$mlog$hidden_base", "test.base_hidden", "test.$mlog$visible_base", "test.base_visible"}, pm.calls)
-		require.Len(t, mt.rows, 1)
-		require.Equal(t, types.NewStringDatum("$mlog$visible_base"), mt.rows[0][3])
-		require.Equal(t, types.NewStringDatum("base_visible"), mt.rows[0][8])
+		require.Len(t, mt.rows, 2)
+		var hiddenBaseRow, visibleBaseRow []types.Datum
+		for _, row := range mt.rows {
+			switch row[3].GetString() {
+			case "$mlog$hidden_base":
+				hiddenBaseRow = row
+			case "$mlog$visible_base":
+				visibleBaseRow = row
+			}
+		}
+		require.NotNil(t, hiddenBaseRow)
+		require.Equal(t, types.NewStringDatum("$mlog$hidden_base"), hiddenBaseRow[3])
+		for i := 5; i <= 8; i++ {
+			require.True(t, hiddenBaseRow[i].IsNull())
+		}
+		require.NotNil(t, visibleBaseRow)
+		require.Equal(t, types.NewStringDatum("$mlog$visible_base"), visibleBaseRow[3])
+		require.Equal(t, types.NewStringDatum("base_visible"), visibleBaseRow[8])
 	})
 
 	t.Run("uses base predicates only", func(t *testing.T) {
@@ -712,10 +778,32 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.base_deny", "test.base_keep", "test.$mlog$keep", "test.mv_keep"}, pm.calls)
-		require.Len(t, mt.rows, 1)
+		require.ElementsMatch(t, []string{
+			"test.base_deny", "test.$mlog$deny", "test.mv_deny",
+			"test.base_keep", "test.$mlog$keep", "test.mv_keep",
+		}, pm.calls)
+		require.Len(t, mt.rows, 2)
 
-		row := mt.rows[0]
+		var denyRow, keepRow []types.Datum
+		for _, row := range mt.rows {
+			if row[3].IsNull() {
+				denyRow = row
+				continue
+			}
+			if row[3].GetString() == "base_keep" {
+				keepRow = row
+			}
+		}
+		require.NotNil(t, denyRow)
+		for i := 0; i <= 3; i++ {
+			require.True(t, denyRow[i].IsNull())
+		}
+		require.Equal(t, types.NewIntDatum(3), denyRow[4])
+		require.Equal(t, types.NewStringDatum("$mlog$deny"), denyRow[5])
+		require.Equal(t, types.NewStringDatum("mv_deny"), denyRow[9])
+
+		row := keepRow
+		require.NotNil(t, row)
 		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[0])
 		require.Equal(t, types.NewStringDatum("test"), row[1])
 		require.Equal(t, types.NewIntDatum(2), row[2])
@@ -746,7 +834,7 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		pm := &stubPrivilegeManager{
 			allow: func(_, table string) bool {
 				switch table {
-				case "$mlog$hidden", "mv_hidden", "mv_hidden_by_mlog":
+				case "$mlog$hidden", "mv_hidden":
 					return false
 				default:
 					return true
@@ -757,11 +845,35 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), sctx)
 		require.NoError(t, err)
-		require.Len(t, mt.rows, 1)
-		require.Equal(t, types.NewStringDatum("base_with_hidden_mv"), mt.rows[0][3])
-		require.Equal(t, types.NewStringDatum("$mlog$visible"), mt.rows[0][5])
-		require.Equal(t, types.NewStringDatum("mv_visible"), mt.rows[0][9])
-		require.NotContains(t, pm.calls, "test.mv_hidden_by_mlog")
+		require.Len(t, mt.rows, 3)
+
+		var hiddenMLogRow, hiddenMViewRow, visibleRow []types.Datum
+		for _, row := range mt.rows {
+			switch {
+			case row[5].IsNull():
+				hiddenMLogRow = row
+			case !row[5].IsNull() && row[9].IsNull():
+				hiddenMViewRow = row
+			case !row[5].IsNull() && row[9].GetString() == "mv_visible":
+				visibleRow = row
+			}
+		}
+		require.NotNil(t, hiddenMLogRow)
+		require.Equal(t, types.NewStringDatum("base_with_hidden_mlog"), hiddenMLogRow[3])
+		require.True(t, hiddenMLogRow[4].IsNull())
+		require.True(t, hiddenMLogRow[5].IsNull())
+		require.Equal(t, types.NewStringDatum("mv_hidden_by_mlog"), hiddenMLogRow[9])
+		require.NotNil(t, hiddenMViewRow)
+		require.Equal(t, types.NewStringDatum("base_with_hidden_mv"), hiddenMViewRow[3])
+		require.Equal(t, types.NewStringDatum("$mlog$visible"), hiddenMViewRow[5])
+		for i := 6; i <= 9; i++ {
+			require.True(t, hiddenMViewRow[i].IsNull())
+		}
+		require.NotNil(t, visibleRow)
+		require.Equal(t, types.NewStringDatum("base_with_hidden_mv"), visibleRow[3])
+		require.Equal(t, types.NewStringDatum("$mlog$visible"), visibleRow[5])
+		require.Equal(t, types.NewStringDatum("mv_visible"), visibleRow[9])
+		require.Contains(t, pm.calls, "test.mv_hidden_by_mlog")
 	})
 
 	t.Run("uses table predicates only", func(t *testing.T) {
