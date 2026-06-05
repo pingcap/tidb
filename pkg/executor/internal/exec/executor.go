@@ -149,6 +149,7 @@ func ruv2ExecutorMetricByType(execType string) (ruv2ExecutorMetric, bool) {
 // single check.
 type ruv2NextCacheState struct {
 	metrics    *execdetails.RUV2Metrics
+	recorder   execdetails.ExecutorMetricRecorder
 	regionName string
 	info       ruv2ExecutorMetric
 	hasInfo    bool
@@ -163,6 +164,7 @@ func populateRUV2NextCache(ctx context.Context, cache *ruv2NextCacheState, e Exe
 	cache.regionName = execType + ".Next"
 	cache.info, cache.hasInfo = ruv2ExecutorMetricByType(execType)
 	cache.metrics = nil
+	cache.recorder = execdetails.ExecutorMetricRecorder{}
 	if !cache.hasInfo {
 		return
 	}
@@ -171,9 +173,10 @@ func populateRUV2NextCache(ctx context.Context, cache *ruv2NextCacheState, e Exe
 		return
 	}
 	cache.metrics = metrics
+	cache.recorder = execdetails.ResolveExecutorMetric(cache.info.level, cache.info.label)
 }
 
-func addRUV2ExecutorMetricCached(metrics *execdetails.RUV2Metrics, info ruv2ExecutorMetric, inRows, outRows, inCells, outCells int64) {
+func addRUV2ExecutorMetricCached(metrics *execdetails.RUV2Metrics, info ruv2ExecutorMetric, recorder execdetails.ExecutorMetricRecorder, inRows, outRows, inCells, outCells int64) {
 	if metrics == nil {
 		return
 	}
@@ -182,6 +185,10 @@ func addRUV2ExecutorMetricCached(metrics *execdetails.RUV2Metrics, info ruv2Exec
 		delta = inCells + outCells
 	}
 	if delta == 0 {
+		return
+	}
+	if recorder.Available() {
+		recorder.Record(metrics, delta)
 		return
 	}
 	metrics.AddExecutorMetric(info.level, info.label, delta)
@@ -620,6 +627,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		info        ruv2ExecutorMetric
 		trackRUV2   bool
 		ruv2Metrics *execdetails.RUV2Metrics
+		recorder    execdetails.ExecutorMetricRecorder
 	)
 	if provider, ok := e.(ruv2CacheProvider); ok {
 		cache := provider.ruv2NextCache()
@@ -629,6 +637,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		regionName = cache.regionName
 		info = cache.info
 		ruv2Metrics = cache.metrics
+		recorder = cache.recorder
 	} else {
 		execType := reflect.TypeOf(e).String()
 		regionName = execType + ".Next"
@@ -636,6 +645,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		if info, hasInfo = ruv2ExecutorMetricByType(execType); hasInfo {
 			if m := execdetails.RUV2MetricsFromContext(ctx); m != nil && !m.Bypass() {
 				ruv2Metrics = m
+				recorder = execdetails.ResolveExecutorMetric(info.level, info.label)
 			}
 		}
 	}
@@ -687,7 +697,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		inCells = stdatomic.LoadInt64(&myAcc.inCells)
 	}
 	outCells := calcCellCount(outRows, outCols)
-	addRUV2ExecutorMetricCached(ruv2Metrics, info, inRows, int64(outRows), inCells, outCells)
+	addRUV2ExecutorMetricCached(ruv2Metrics, info, recorder, inRows, int64(outRows), inCells, outCells)
 	// recheck whether the session/query is killed during the Next()
 	return e.HandleSQLKillerSignal()
 }
