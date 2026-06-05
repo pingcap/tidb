@@ -22,7 +22,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,9 +70,13 @@ func TestExportTableNonClusteredMock(t *testing.T) {
 	tk.MustExec("create table t2 (id int, v varchar(64), key(id))")
 	tk.MustExec("insert into t2 values (3,'c'),(1,'a'),(2,NULL)")
 
+	metrics.ExportRowsCounter.Reset()
+	metrics.ExportFilesCounter.Reset()
 	rows := tk.MustQuery(fmt.Sprintf("EXPORT TABLE test.t2 TO 'local://%s'", dir)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "succeed", rows[0][2])
+	require.Equal(t, 3.0, promtestutil.ToFloat64(metrics.ExportRowsCounter))
+	require.Equal(t, 1.0, promtestutil.ToFloat64(metrics.ExportFilesCounter))
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)

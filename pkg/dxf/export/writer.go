@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -134,12 +135,13 @@ func (e *csvEncoder) encodeChunk(chk *chunk.Chunk, buf []byte) ([]byte, error) {
 type fileWriter struct {
 	ctx context.Context
 
-	store    storeapi.Storage
-	db       string
-	table    string
-	ordinal  int
-	writerID int
-	fileSize int64
+	store        storeapi.Storage
+	db           string
+	table        string
+	ordinal      int
+	writerID     int
+	fileSize     int64
+	filesCounter prometheus.Counter
 
 	cur     objectio.Writer
 	fileIdx int
@@ -151,15 +153,17 @@ func newFileWriter(
 	store storeapi.Storage,
 	taskMeta *TaskMeta,
 	ordinal, writerID int,
+	filesCounter prometheus.Counter,
 ) *fileWriter {
 	return &fileWriter{
-		ctx:      ctx,
-		store:    store,
-		db:       taskMeta.DBName,
-		table:    taskMeta.TableInfo.Name.O,
-		ordinal:  ordinal,
-		writerID: writerID,
-		fileSize: taskMeta.FileSize,
+		ctx:          ctx,
+		store:        store,
+		db:           taskMeta.DBName,
+		table:        taskMeta.TableInfo.Name.O,
+		ordinal:      ordinal,
+		writerID:     writerID,
+		fileSize:     taskMeta.FileSize,
+		filesCounter: filesCounter,
 	}
 }
 
@@ -203,6 +207,7 @@ func (w *fileWriter) switchWriter() error {
 	w.cur = writer
 	w.curSize = 0
 	w.fileIdx++
+	w.filesCounter.Inc()
 	return nil
 }
 

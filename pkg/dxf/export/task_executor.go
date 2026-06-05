@@ -17,6 +17,7 @@ package export
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -25,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -67,10 +70,15 @@ func (e *exportTaskExecutor) GetStepExecutor(task *proto.Task) (execute.StepExec
 	}
 	switch task.Step {
 	case proto.ExportStepDump:
+		taskID := strconv.FormatInt(task.ID, 10)
 		return &dumpStepExecutor{
 			taskMeta: taskMeta,
 			store:    e.TaskStore,
 			logger:   logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("step", "dump")),
+			// rate() of these counters gives the per-task export speed.
+			rowsCounter:  metrics.ExportRowsCounter.WithLabelValues(taskID),
+			bytesCounter: metrics.ExportBytesCounter.WithLabelValues(taskID),
+			filesCounter: metrics.ExportFilesCounter.WithLabelValues(taskID),
 		}, nil
 	default:
 		return nil, errors.Errorf("unknown export step %d", task.Step)
@@ -82,6 +90,10 @@ type dumpStepExecutor struct {
 	taskMeta *TaskMeta
 	store    kv.Storage
 	logger   *zap.Logger
+
+	rowsCounter  prometheus.Counter
+	bytesCounter prometheus.Counter
+	filesCounter prometheus.Counter
 
 	objStore storeapi.Storage
 	colInfos []*model.ColumnInfo

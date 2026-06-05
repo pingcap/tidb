@@ -7,18 +7,21 @@ plan). This records what the prototype covers, the perf findings from the
 ## Prototype status
 
 Working end-to-end (`EXPORT TABLE db.t TO '<uri>' [FORMAT 'csv'] WITH
-thread=, file_size=, subtask_regions=, detached`):
+thread=, writers_per_encoder=, file_size=, subtask_regions=, detached`):
 
 - parser / planner / executor wiring; DXF task type `Export` with a single
   `Dump` step; region-based split (per add-index's `CalculateRegionBatch`,
   cloud branch); per-writer sub-range bounds fixed at schedule time
   (`SubtaskMeta.WriterBounds`) so retries rewrite identical files.
-- per-subtask pipeline: n encoders (n = task concurrency = `thread`), each
-  serving `writersPerEncoder`(=2) reader/writer pairs; m readers share one
+- per-subtask pipeline: n encoders (n = task concurrency = `thread`,
+  default min(8, node CPU)), each serving `writers_per_encoder`(default 2)
+  reader/writer pairs; m readers share one
   channel into the encoder, the encoder routes encoded buffers to per-writer
   channels; buffers and chunks recycled via `sync.Pool`.
 - CSV encoding via `pkg/format/textrow.AppendValueText`; S3/local output via
   `pkg/objstore` multipart (`PartSize` 8MiB × 4 concurrent per writer).
+- per-task Prometheus counters `tidb_export_{rows,bytes,files}_total`
+  (label `task_id`); `rate()` gives the live export speed.
 - service safepoint at the snapshot TS: set at submit (TTL 10min), kept
   alive by the scheduler, deleted in `OnDone`.
 - verified on real TiKV: clustered int PK (global file order across 8
@@ -42,11 +45,11 @@ Target deployment: submit from a user keyspace, execute on DXF service
 | Submit/wait from user KS | OK — `handle.SubmitTask` / `WaitTaskDoneOrPaused` go through `storage.GetDXFSvcTaskMgr()`, which returns the SYSTEM-KS task manager on nextgen |
 | Target scope | OK — `handle.GetTargetScope()` returns `dxf_service` on nextgen |
 | Scheduler store | OK — `scheduler.Param.TaskStore` is the task-keyspace store (framework guarantee) |
-| Executor store | OK — `GetStepExecutor` switches to `GetKSStore(task.Keyspace)` when the local store keyspace differs, same as IMPORT INTO (`pkg/dxf/importinto/task_executor.go:843`) |
+| Executor store | OK — the framework resolves the task-keyspace store (#68824), use `BaseTaskExecutor.TaskStore` |
 | Region lookup / cop scan with keyspace codec | OK — region cache PD client and distsql client apply the store codec |
 | GC barrier per keyspace | OK — `gc.NewManager(pd, store.GetCodec().GetKeyspaceID())` |
-| **MaxNodeCount** | **GAP** — we submit with 0 (no cap). IMPORT INTO computes it from data size (`CalcMaxNodeCountForImportInto`) and it drives tidb-worker auto-scaling; export should do the same from estimated table size |
-| SEM / S3 external ID | **GAP** — IMPORT INTO injects `S3ExternalID` into the URI on nextgen+SEM and runs SEM path checks (`planbuilder.go` buildImportInto); export skips both |
+| MaxNodeCount | fixed to 1 for now (single executor node); computing it from estimated table size like `CalcMaxNodeCountForImportInto` is the follow-up for auto-scaling |
+| SEM / S3 external ID | OK — same checks as IMPORT INTO: deny local destination, require explicit S3 credentials, deny user external ID, inject keyspace external ID on nextgen |
 | Not verified on a real nextgen cluster | run a real submit→execute round before benchmarking |
 
 ## Perf findings (10GiB / 10M rows × ~1KiB, thread=16 → 32 writers, single tidb + single tikv-slim, 32C host)
@@ -84,14 +87,13 @@ CPU profile of the export window (~108 core-seconds / 9.72GiB ≈ 11 cs/GiB):
      zero extra copies. Requires a small seekable multi-slice reader for
      retry rewind. Decide after profiling on a real nextgen cluster shows
      CPU is the NIC-saturation limit (~10% CPU at stake).
-3. **MaxNodeCount for auto-scaling** — estimate table size at submit (region
-   sizes, as the design doc's progress section already requires) and compute
-   like `CalcMaxNodeCountForImportInto`.
-4. **SEM/S3ExternalID parity with IMPORT INTO** on nextgen.
-5. TiKV-side read tuning: with scan supply fixed (multiple tikv-workers),
+3. **MaxNodeCount for auto-scaling** — currently fixed at 1 node; estimate
+   table size at submit (region sizes, as the design doc's progress section
+   already requires) and compute like `CalcMaxNodeCountForImportInto`.
+4. TiKV-side read tuning: with scan supply fixed (multiple tikv-workers),
    revisit `channelBufSize`, readers-per-encoder (`writersPerEncoder`), and
    distsql concurrency per sub-range.
-6. Carry-overs already tracked in the main plan: revert/cleanup, job table,
+5. Carry-overs already tracked in the main plan: revert/cleanup, job table,
    PostProcess files, parquet, compression, region-split helper shared with
    add-index (`pkg/ddl/backfilling_dist_scheduler.go:generatePlanForPhysicalTable`).
 
