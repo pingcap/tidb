@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -67,11 +68,23 @@ func (e *exportTaskExecutor) GetStepExecutor(task *proto.Task) (execute.StepExec
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return nil, errors.Annotate(err, "unmarshal export task meta failed")
 	}
+	// on nextgen the executor runs on DXF service nodes in the SYSTEM
+	// keyspace, the table data lives in the task's keyspace.
+	store := e.store
+	if store.GetKeyspace() != task.Keyspace {
+		var err error
+		if err2 := e.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
+			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
+			return err
+		}); err2 != nil {
+			return nil, err2
+		}
+	}
 	switch task.Step {
 	case proto.ExportStepDump:
 		return &dumpStepExecutor{
 			taskMeta: taskMeta,
-			store:    e.store,
+			store:    store,
 			logger:   logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("step", "dump")),
 		}, nil
 	default:
