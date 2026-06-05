@@ -374,6 +374,14 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 		return err
 	}
 	if err = e.checkPrivilegeAndStatus(ctx, taskManager, hasSuperPriv); err != nil {
+		// EXPORT TABLE prototype has no CANCEL of its own: if jobID is not an IMPORT INTO job,
+		// fall back to cancelling it as a raw DXF task id (flip tidb_global_task to cancelling,
+		// the same primitive IMPORT INTO uses). SUPER only.
+		if hasSuperPriv {
+			if cancelErr := cancelDXFTaskByID(ctx, e.jobID); cancelErr == nil {
+				return nil
+			}
+		}
 		return err
 	}
 
@@ -413,4 +421,15 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 		return err
 	}
 	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(jobID))
+}
+
+// cancelDXFTaskByID cancels a DXF task directly by its global task id, used as a fallback for
+// task types that have no dedicated CANCEL statement (e.g. the EXPORT TABLE prototype).
+func cancelDXFTaskByID(ctx context.Context, taskID int64) error {
+	manager, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	return manager.CancelTask(ctx, taskID)
 }
