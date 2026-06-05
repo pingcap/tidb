@@ -117,7 +117,7 @@ type ConflictDetector struct {
 // any conflict rules that constrain how it may be applied.
 type edge struct {
 	idx      uint64
-	joinType base.JoinType
+	joinType logicalop.JoinType
 	eqConds  []*expression.ScalarFunction
 	// nonEQConds are used in two situations:
 	// 1. store all non-eq conds for LogicalJoin, like otherCond, leftCond, or rightCond.
@@ -168,7 +168,7 @@ func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *Che
 	if !d.allInnerJoin {
 		return nil
 	}
-	cartesianEdge := d.makeEdge(base.InnerJoin, []expression.Expression{}, left.bitSet, right.bitSet, nil, nil)
+	cartesianEdge := d.makeEdge(logicalop.InnerJoin, []expression.Expression{}, left.bitSet, right.bitSet, nil, nil)
 	return &CheckConnectionResult{
 		node1:             left,
 		node2:             right,
@@ -264,7 +264,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 
 	vertexMap := make(map[int]*Node, len(group.vertexes))
 	for i, v := range group.vertexes {
-		if _, _, err := v.RecursiveDeriveStats(nil); err != nil {
+		if _, err := v.RecursiveDeriveStats(nil); err != nil {
 			return nil, err
 		}
 		vertexMap[v.ID()] = &Node{
@@ -312,7 +312,7 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 		// Selection-derived edge doesn't have child-edges and child-vertexes,
 		// because no need to generate ConflictRule for this edge.
 		// But its TES is its all children vertexes for correctness.
-		selEdge := d.makeEdgeInternal(base.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
+		selEdge := d.makeEdgeInternal(logicalop.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
 		selEdge.nonEQConds = conds
 		return append(childEdges, selEdge), childVertexes, nil
 	}
@@ -334,7 +334,7 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 	}
 
 	var curEdges []*edge
-	if joinop.JoinType == base.InnerJoin {
+	if joinop.JoinType == logicalop.InnerJoin {
 		if curEdges, err = d.makeInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges); err != nil {
 			return nil, curVertexes, err
 		}
@@ -370,21 +370,21 @@ func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVert
 	nonEQConds = append(nonEQConds, joinop.RightConditions...)
 
 	if len(conds) == 0 && len(nonEQConds) == 0 {
-		tmp := d.makeEdge(base.InnerJoin, []expression.Expression{}, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		tmp := d.makeEdge(logicalop.InnerJoin, []expression.Expression{}, leftVertexes, rightVertexes, leftEdges, rightEdges)
 		res = append(res, tmp)
 	}
 
 	condArg := make([]expression.Expression, 1)
 	for _, cond := range conds {
 		condArg[0] = cond
-		tmp := d.makeEdge(base.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		tmp := d.makeEdge(logicalop.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
 		tmp.eqConds = append(tmp.eqConds, cond.(*expression.ScalarFunction))
 		res = append(res, tmp)
 	}
 
 	for _, cond := range nonEQConds {
 		condArg[0] = cond
-		tmp := d.makeEdge(base.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		tmp := d.makeEdge(logicalop.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
 		tmp.nonEQConds = append(tmp.nonEQConds, cond)
 		res = append(res, tmp)
 	}
@@ -420,14 +420,14 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 }
 
 // makeEdge basically implements the pseudocode for CD-C in paper(Figure-11).
-func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
+func (d *ConflictDetector) makeEdge(joinType logicalop.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
 	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
 	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
 	tes := d.calcSES(conds)
 	return d.makeEdgeInternal(joinType, leftVertexes, rightVertexes, leftEdges, rightEdges, tes)
 }
 
-func (d *ConflictDetector) makeEdgeInternal(joinType base.JoinType, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge, tes intset.FastIntSet) *edge {
+func (d *ConflictDetector) makeEdgeInternal(joinType logicalop.JoinType, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge, tes intset.FastIntSet) *edge {
 	e := &edge{
 		// Each new edge is appended to either d.innerEdges or d.nonInnerEdges
 		// (see below), so their combined length before the append is the next
@@ -452,7 +452,7 @@ func (d *ConflictDetector) makeEdgeInternal(joinType base.JoinType, leftVertexes
 		e.tes = e.tes.Union(e.rightVertexes)
 	}
 
-	if joinType == base.InnerJoin {
+	if joinType == logicalop.InnerJoin {
 		d.innerEdges = append(d.innerEdges, e)
 	} else {
 		d.nonInnerEdges = append(d.nonInnerEdges, e)
@@ -530,7 +530,7 @@ func (d *ConflictDetector) calcSES(conds []expression.Expression) intset.FastInt
 	return res
 }
 
-// joinTypeConvertTable maps base.JoinType to indices used in rule tables.
+// joinTypeConvertTable maps logicalop.JoinType to indices used in rule tables.
 var joinTypeConvertTable = []int{
 	0, // INNER
 	1, // LEFT OUTER
@@ -697,7 +697,7 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	if p == nil {
 		return nil, errors.New("failed to make join plan")
 	}
-	if _, _, err := p.RecursiveDeriveStats(nil); err != nil {
+	if _, err := p.RecursiveDeriveStats(nil); err != nil {
 		return nil, err
 	}
 
@@ -917,7 +917,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 	return join, nil
 }
 
-func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
+func newCartesianJoin(ctx base.PlanContext, joinType logicalop.JoinType, left, right base.LogicalPlan, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
 	offset := left.QueryBlockOffset()
 	if offset != right.QueryBlockOffset() {
 		offset = -1

@@ -127,11 +127,11 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 
 	// For now, we only handle inner join and left/right outer join.
-	if join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin {
+	if join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin {
 		return makeSingleGroup(p)
 	}
 
-	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) {
 		return makeSingleGroup(p)
 	}
 
@@ -161,7 +161,7 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	// Because for NON-INNER JOIN with eqCond, it must be null-rejective on both sides.
 	// If we support reorder NON-INNER JOIN without eqCond in the future, we need to consider null-rejective property here.
 	// See assocRuleTable in conflict_detector.go for more details.
-	if join.JoinType != base.InnerJoin && len(join.EqualConditions) == 0 {
+	if join.JoinType != logicalop.InnerJoin && len(join.EqualConditions) == 0 {
 		return makeSingleGroup(p)
 	}
 
@@ -189,7 +189,7 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		root:         p,
 		vertexes:     []base.LogicalPlan{},
 		vertexHints:  vertexHints,
-		allInnerJoin: join.JoinType == base.InnerJoin,
+		allInnerJoin: join.JoinType == logicalop.InnerJoin,
 	}
 
 	leftShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[0], curLeadingHint)
@@ -396,7 +396,9 @@ func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*
 		bestPlan[mask] = node
 	}
 
-	cartesianFactor := j.ctx.GetSessionVars().CartesianJoinOrderThreshold
+	// In master branch, there is a sysvar called tidb_opt_cartesian_join_order_threshold.
+	// We don't have it in other branch, so just set it to 0.0
+	cartesianFactor := 0.0
 	fullMask := (uint64(1) << uint(nodeCount)) - 1
 	for subset := uint64(1); subset <= fullMask; subset++ {
 		if bits.OnesCount64(subset) == 1 {
@@ -569,7 +571,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		nodes = newNodes
 	}
 
-	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
+	// In master branch, there is a sysvar called tidb_opt_cartesian_join_order_threshold.
+	// We don't have it in other branch, so just set it to 0.0
+	var cartesianFactor float64 = 0.0
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
 	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
@@ -873,7 +877,7 @@ func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNo
 			}
 			var newJoin *Node
 			if fastPath {
-				p, err1 := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, vertexHints)
+				p, err1 := newCartesianJoin(ctx, logicalop.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, vertexHints)
 				newJoin = &Node{p: p}
 				err = err1
 			} else {
