@@ -1438,7 +1438,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				e.detectAndUpdateFormat(remotePath)
 				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
@@ -1475,15 +1474,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}); err != nil {
 			return err
 		}
-<<<<<<< HEAD
-=======
-		// filter unmatch files
-		for _, f := range processedFiles {
-			if f != nil {
-				dataFiles = append(dataFiles, f)
-			}
-		}
->>>>>>> ba22c174e4c (importinto: use real file size when calculate resource (#65762))
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
 		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
@@ -1534,6 +1524,8 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
+		zap.String("db", e.DBName),
+		zap.String("table", e.TableInfo.Name.O),
 		zap.Int("thread", e.ThreadCnt),
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
