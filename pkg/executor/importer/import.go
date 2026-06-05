@@ -378,6 +378,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
+	// exported for testing.
+	TotalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
 	globalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
@@ -1378,7 +1380,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
 		sourceType mydump.SourceType
 		// sizeExpansionRatio is the estimated size expansion for parquet format.
 		// For non-parquet format, it's always 1.0.
@@ -1412,7 +1413,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize = size
 	} else {
 		var commonPrefix string
 		if !storage.IsLocal(u) {
@@ -1438,7 +1438,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				e.detectAndUpdateFormat(remotePath)
 				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
@@ -1481,9 +1480,20 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err2
 		}
 	}
+	var totalSize, totalRealSize int64
+	for _, dfile := range dataFiles {
+		totalSize += dfile.FileSize
+		realSize := dfile.RealSize
+		failpoint.Inject("amplifyRealSize", func(val failpoint.Value) {
+			factor := int64(val.(int))
+			realSize *= factor
+		})
+		totalRealSize += realSize
+	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+	e.TotalRealSize = totalRealSize
 
 	return nil
 }
@@ -1500,8 +1510,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	if err != nil {
 		return err
 	}
-	totalSize := e.TotalFileSize
-	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	totalSize := e.TotalRealSize
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
@@ -1515,11 +1524,14 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
+		zap.String("db", e.DBName),
+		zap.String("table", e.TableInfo.Name.O),
 		zap.Int("thread", e.ThreadCnt),
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
 		zap.Int("targetNodeCPU", targetNodeCPUCnt),
-		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.String("totalFileSize", units.BytesSize(float64(e.TotalFileSize))),
+		zap.String("totalRealSize", units.BytesSize(float64(totalSize))),
 		zap.Int("fileCount", len(e.dataFiles)),
 		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
 		zap.Float64("indexSizeRatio", indexSizeRatio),
