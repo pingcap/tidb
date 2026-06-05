@@ -373,7 +373,7 @@ func FindAndRemovePlanByAstHint[T any](
 	// Step 1: Direct match by table name
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
-		tableAlias := extractLeadingHintTableAlias(ctx, plan)
+		tableAlias := util.ExtractJoinHintTableAlias(plan, plan.QueryBlockOffset())
 		if tableAlias != nil {
 			// Match db/table (supports astTbl.DBName == "*")
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
@@ -426,64 +426,6 @@ func FindAndRemovePlanByAstHint[T any](
 	}
 
 	return zero, plans, false
-}
-
-func extractLeadingHintTableAlias(ctx base.PlanContext, plan base.LogicalPlan) *hint.HintedTable {
-	if tableAlias := extractDerivedTableAliasFromDescendants(ctx, plan); tableAlias != nil {
-		return tableAlias
-	}
-	return util.ExtractTableAlias(plan, plan.QueryBlockOffset())
-}
-
-func extractDerivedTableAliasFromDescendants(ctx base.PlanContext, plan base.LogicalPlan) *hint.HintedTable {
-	var queryBlockNames []ast.HintTable
-	if p := ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-		queryBlockNames = *p
-	}
-	if len(queryBlockNames) == 0 {
-		return nil
-	}
-
-	parentOffset := plan.QueryBlockOffset()
-	var (
-		found      *ast.HintTable
-		foundQbOff int
-		ambiguous  bool
-	)
-	var walk func(base.LogicalPlan)
-	walk = func(cur base.LogicalPlan) {
-		if ambiguous {
-			return
-		}
-		offset := cur.QueryBlockOffset()
-		if offset > 0 && offset < len(queryBlockNames) && offset != parentOffset {
-			hintTable := queryBlockNames[offset]
-			if hintTable.TableName.L != "" {
-				if found == nil {
-					copied := hintTable
-					found = &copied
-					foundQbOff = offset
-				} else if found.DBName.L != hintTable.DBName.L || found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
-					ambiguous = true
-					return
-				}
-			}
-		}
-		for _, child := range cur.Children() {
-			walk(child)
-		}
-	}
-	for _, child := range plan.Children() {
-		walk(child)
-	}
-	if ambiguous || found == nil {
-		return nil
-	}
-	dbName := found.DBName
-	if dbName.L == "" {
-		dbName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	}
-	return &hint.HintedTable{DBName: dbName, TblName: found.TableName, SelectOffset: parentOffset}
 }
 
 // extract the number x from 'sel_x'

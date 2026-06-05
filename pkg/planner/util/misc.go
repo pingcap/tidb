@@ -291,6 +291,76 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 }
 
+// ExtractJoinHintTableAlias returns the alias that a logical join hint should
+// use for this plan node.
+//
+// It first tries to recover a derived-table alias from descendant query-block
+// metadata, then falls back to the plan's output names. The derived-table alias
+// belongs to the surrounding query block, so the returned SelectOffset is
+// always parentOffset in that case.
+func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTable {
+	if p == nil {
+		return nil
+	}
+
+	var queryBlockNames []ast.HintTable
+	if names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
+		queryBlockNames = *names
+	}
+	if len(queryBlockNames) > 0 {
+		if currentOffset := p.QueryBlockOffset(); currentOffset != parentOffset &&
+			currentOffset > 0 && currentOffset < len(queryBlockNames) &&
+			queryBlockNames[currentOffset].TableName.L != "" {
+			hintTable := queryBlockNames[currentOffset]
+			dbName := hintTable.DBName
+			if dbName.L == "" {
+				dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			}
+			return &h.HintedTable{DBName: dbName, TblName: hintTable.TableName, SelectOffset: parentOffset}
+		}
+
+		var (
+			found      *ast.HintTable
+			foundQbOff int
+			ambiguous  bool
+		)
+		var walk func(base.LogicalPlan)
+		walk = func(cur base.LogicalPlan) {
+			if ambiguous {
+				return
+			}
+			offset := cur.QueryBlockOffset()
+			if offset > 0 && offset < len(queryBlockNames) && offset != parentOffset {
+				hintTable := queryBlockNames[offset]
+				if hintTable.TableName.L != "" {
+					if found == nil {
+						copied := hintTable
+						found = &copied
+						foundQbOff = offset
+					} else if found.DBName.L != hintTable.DBName.L || found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
+						ambiguous = true
+						return
+					}
+				}
+			}
+			for _, child := range cur.Children() {
+				walk(child)
+			}
+		}
+		for _, child := range p.Children() {
+			walk(child)
+		}
+		if !ambiguous && found != nil {
+			dbName := found.DBName
+			if dbName.L == "" {
+				dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			}
+			return &h.HintedTable{DBName: dbName, TblName: found.TableName, SelectOffset: parentOffset}
+		}
+	}
+	return ExtractTableAlias(p, parentOffset)
+}
+
 // GetPushDownCtx creates a PushDownContext from PlanContext
 func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())

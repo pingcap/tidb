@@ -1598,8 +1598,8 @@ func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(hintInfo *utilhint.PlanHints)
 		return
 	}
 
-	lhsAlias := util.ExtractTableAlias(p.Children()[0], p.QueryBlockOffset())
-	rhsAlias := util.ExtractTableAlias(p.Children()[1], p.QueryBlockOffset())
+	lhsAlias := util.ExtractJoinHintTableAlias(p.Children()[0], p.QueryBlockOffset())
+	rhsAlias := util.ExtractJoinHintTableAlias(p.Children()[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.PreferJoinType |= utilhint.PreferMergeJoin
 		p.LeftPreferJoinType |= utilhint.PreferMergeJoin

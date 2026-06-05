@@ -143,7 +143,7 @@ func findOrderedLeadingChoice(group *joinGroup, orderingCols []*expression.Colum
 		choice := &OrderedLeadingChoice{CarrierVertex: vertex}
 		// The candidate may still be rejected by the caller if the current group
 		// cannot bridge it into a single-table internal LEADING hint.
-		choice.LeadingTable = util.ExtractTableAlias(vertex, vertex.QueryBlockOffset())
+		choice.LeadingTable = util.ExtractJoinHintTableAlias(vertex, vertex.QueryBlockOffset())
 		choice.Vertices = group.vertexes
 		return choice
 	}
