@@ -492,12 +492,12 @@
       {
         "SQL": "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
         "Plan": [
-          "IndexJoin_16 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
-          "├─TableReader_34(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_33",
-          "│ └─ExchangeSender_33 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_32 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableRangeScan_12",
-          "  └─TableRangeScan_12 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "IndexJoin_17 12500.00 root  inner join, inner:TableReader_14, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_35(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_34",
+          "│ └─ExchangeSender_34 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_33 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_14(Probe) 10000.00 root  data:TableRangeScan_13",
+          "  └─TableRangeScan_13 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
