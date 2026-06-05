@@ -217,6 +217,7 @@ func TestQ5(t *testing.T) {
 func TestQ14(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createLineItem(t, tk, dom)
 		createPart(t, tk, dom)
 		testkit.LoadTableStats("test.lineitem.json", dom)
@@ -296,6 +297,7 @@ func TestQ13(t *testing.T) {
 		tk.MustExec("use test")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 		integrationSuiteData := GetTPCHSuiteData()
