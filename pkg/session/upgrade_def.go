@@ -504,7 +504,8 @@ const (
 	version260 = 260
 
 	// version261 refreshes mysql.bind_info SQL digests after binding
-	// normalization starts skipping redundant parentheses.
+	// normalization starts skipping redundant parentheses for
+	// https://github.com/pingcap/tidb/issues/67363.
 	version261 = 261
 )
 
@@ -2139,24 +2140,16 @@ type bindingDigestUpdate struct {
 	originalSQL string
 	sqlDigest   string
 	duplicate   bool
-	changed     bool
 }
 
 func upgradeToVer261(s sessionapi.Session, _ int64) {
-	var err error
-	mustExecute(s, "BEGIN PESSIMISTIC")
-	defer func() {
-		if err != nil {
-			mustExecute(s, "ROLLBACK")
-			return
-		}
-		mustExecute(s, "COMMIT")
-	}()
-
-	mustExecute(s, bindinfo.LockBindInfoSQL)
-
+	// PR #68359 changes binding normalization for issue #67363: redundant
+	// expression parentheses are skipped when restoring SQL for bindings.
+	// Existing rows in mysql.bind_info may still store old original_sql and
+	// sql_digest values computed before that normalization change, so refresh
+	// them from bind_sql during upgrade.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, original_sql, bind_sql, default_db, charset, collation, sql_digest, plan_digest
+	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest
 		FROM mysql.bind_info
 		WHERE source != 'builtin'
 		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
@@ -2180,36 +2173,37 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		}
 		for i := range req.NumRows() {
 			row := req.GetRow(i)
-			bindSQL := row.GetString(2)
-			stmt, parseErr := p.ParseOneStmt(bindSQL, row.GetString(4), row.GetString(5))
+			bindSQL := row.GetString(1)
+			stmt, parseErr := p.ParseOneStmt(bindSQL, row.GetString(3), row.GetString(4))
 			if parseErr != nil {
+				// Keep upgrade compatible with clusters that already contain
+				// invalid binding rows. Such rows cannot participate in normal
+				// binding matching anyway, so log and leave them untouched.
 				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
 					zap.String("bind_sql", bindSQL), zap.Error(parseErr))
 				continue
 			}
 
-			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, row.GetString(3), false)
+			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, row.GetString(2), false)
 			if originalSQL == "" || sqlDigest == "" {
+				// Be defensive around restore failures. An empty normalized SQL
+				// would make the backfilled digest meaningless and could disturb
+				// existing binding rows more than the stale digest does.
 				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
 					zap.String("bind_sql", bindSQL))
 				continue
 			}
 
-			oldSQLDigest := ""
-			if !row.IsNull(6) {
-				oldSQLDigest = row.GetString(6)
-			}
 			planDigest := ""
-			planDigestNotNull := !row.IsNull(7)
+			planDigestNotNull := !row.IsNull(5)
 			if planDigestNotNull {
-				planDigest = row.GetString(7)
+				planDigest = row.GetString(5)
 			}
 
 			update := bindingDigestUpdate{
 				rowID:       row.GetInt64(0),
 				originalSQL: originalSQL,
 				sqlDigest:   sqlDigest,
-				changed:     originalSQL != row.GetString(1) || sqlDigest != oldSQLDigest,
 			}
 			updateIdx := len(updates)
 			updates = append(updates, update)
@@ -2225,13 +2219,16 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		req.Reset()
 	}
 	if closeErr := rs.Close(); closeErr != nil {
-		err = closeErr
 		logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(closeErr))
 	}
 
+	// Do not wrap these writes in one transaction. Some clusters can have many
+	// binding rows, and a single large transaction risks excessive memory usage
+	// during bootstrap upgrade. Update each binding row independently instead.
 	// Refreshing digests can merge bindings that previously differed only by
-	// redundant parentheses. Clear duplicate digest pairs before updating kept
-	// rows to avoid conflicts with digest_index.
+	// redundant parentheses. The row order above keeps the newest binding row for
+	// a merged digest pair and clears later duplicates before rewriting kept rows
+	// to avoid conflicts with digest_index.
 	for _, update := range updates {
 		if !update.duplicate {
 			continue
@@ -2243,9 +2240,7 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		if update.duplicate {
 			continue
 		}
-		if update.changed {
-			mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
-				update.originalSQL, update.sqlDigest, update.rowID)
-		}
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
+			update.originalSQL, update.sqlDigest, update.rowID)
 	}
 }
