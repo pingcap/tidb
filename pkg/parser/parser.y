@@ -1734,6 +1734,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %precedence local
 %precedence lowerThanRemove
 %precedence remove
+%precedence lowerThanReplayer
+%precedence replayer
 %precedence lowerThenOrder
 %precedence order
 %precedence returning
@@ -5891,6 +5893,13 @@ ExplainStmt:
 			Explore:   true,
 		}
 	}
+|	ExplainSym "EXPLORE" "REPLAYER" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			ReplayerFile: $4,
+			Explore:      true,
+		}
+	}
 |	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
@@ -7344,7 +7353,7 @@ UnReservedKeyword:
 |	"ESCAPE"
 |	"EVOLVE"
 |	"EXECUTE"
-|	"EXPLORE"
+|	"EXPLORE" %prec lowerThanReplayer
 |	"EXTENDED"
 |	"FIELDS"
 |	"FILE"

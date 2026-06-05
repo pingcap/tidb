@@ -18,8 +18,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -67,7 +70,7 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
 		}
 		if checkTotalFileSize {
-			if err := e.checkTotalFileSize(); err != nil {
+			if err := e.CheckImportDataSize(); err != nil {
 				return err
 			}
 		}
@@ -86,14 +89,32 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 	return nil
 }
 
-func (e *LoadDataController) checkTotalFileSize() error {
+// CheckImportDataSize checks whether source data files were discovered and are
+// within configured size limits.
+func (e *LoadDataController) CheckImportDataSize() error {
 	if e.TotalFileSize == 0 {
 		// this happens when:
 		// 1. no file matched when using wildcard
 		// 2. all matched file is empty(with or without wildcard)
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("No file matched, or the file is empty. Please provide a valid file location.")
 	}
-	return nil
+	return e.checkStarterMaxImportDataSize()
+}
+
+func (e *LoadDataController) checkStarterMaxImportDataSize() error {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+	maxImportDataSize := tidb.GetGlobalConfig().StarterParams.MaxImportDataSize
+	if maxImportDataSize == 0 || e.TotalRealSize <= 0 || uint64(e.TotalRealSize) <= uint64(maxImportDataSize) {
+		return nil
+	}
+	return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf(
+		"total real import data size %s exceeds maximum import size limit %s (total file size %s)",
+		units.BytesSize(float64(e.TotalRealSize)),
+		units.BytesSize(float64(maxImportDataSize)),
+		units.BytesSize(float64(e.TotalFileSize)),
+	))
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
