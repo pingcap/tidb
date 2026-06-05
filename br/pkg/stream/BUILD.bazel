@@ -34,6 +34,7 @@ go_library(
         "//br/pkg/utils/iter",
         "//pkg/ddl",
         "//pkg/domain",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
@@ -68,6 +69,7 @@ go_test(
     timeout = "short",
     srcs = [
         "decode_kv_test.go",
+        "export_test.go",
         "meta_kv_test.go",
         "rewrite_meta_rawkv_test.go",
         "search_test.go",
@@ -86,6 +88,7 @@ go_test(
         "//br/pkg/utils",
         "//br/pkg/utils/consts",
         "//pkg/ddl",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
