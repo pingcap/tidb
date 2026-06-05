@@ -166,7 +166,7 @@ func TestPlannerIssueRegressions(t *testing.T) {
 			Check(testkit.Rows("2"))
 		tk.MustQuery("show warnings").CheckContain("Use the alias 't2'")
 		tk.MustContainErrMsg("select * from `a`.`b.c`, `A`.`B.C`",
-			"[planner:1066]Not unique table/alias: 'a.b.c'")
+			"[planner:1066]Not unique table/alias: 'B.C'")
 
 		tk.MustExec("create database `v`")
 		tk.MustExec("create database `v.b`")

@@ -130,7 +130,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	v := preprocessor{
 		ctx:                ctx,
 		sctx:               sctx,
-		tableAliasInJoin:   make([]map[tableAliasKey]any, 0),
+		tableAliasInJoin:   make([]map[tableAliasKey]string, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		lockSelectCtxStack: make([]lockSelectCtx, 0),
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
@@ -236,7 +236,7 @@ type preprocessor struct {
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
-	tableAliasInJoin []map[tableAliasKey]any
+	tableAliasInJoin []map[tableAliasKey]string
 	preprocessWith   *preprocessWith
 
 	// lockSelectCtxStack tracks lock-clause resolution state for each SELECT. Each level keeps both
@@ -1138,7 +1138,7 @@ func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	if p.flag&parentIsJoin == 0 {
-		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[tableAliasKey]any))
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[tableAliasKey]string))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
 	isOracleMode := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
@@ -1155,7 +1155,7 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	p.flag |= parentIsJoin
 }
 
-func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[tableAliasKey]any) error {
+func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[tableAliasKey]string) error {
 	if ts, ok := node.(*ast.TableSource); ok {
 		tabName := ts.AsName
 		key := newTableAliasKey(tabName)
@@ -1163,18 +1163,21 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[tableAliasKe
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
 					key = newQualifiedTableAliasKey(tableNode.Schema, tableNode.Name)
-					tabName = key.displayName()
+					tabName = tableNode.Name
 				} else {
 					tabName = tableNode.Name
 					key = newTableAliasKey(tableNode.Name)
 				}
 			}
 		}
-		_, exists := tableAliases[key]
+		existingName, exists := tableAliases[key]
 		if len(tabName.L) != 0 && exists {
-			return plannererrors.ErrNonUniqTable.GenWithStackByArgs(tabName)
+			if existingName == "" {
+				existingName = tabName.O
+			}
+			return plannererrors.ErrNonUniqTable.GenWithStackByArgs(existingName)
 		}
-		tableAliases[key] = nil
+		tableAliases[key] = tabName.O
 	}
 	return nil
 }

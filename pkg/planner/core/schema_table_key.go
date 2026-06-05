@@ -40,10 +40,3 @@ func newTableAliasKey(name ast.CIStr) tableAliasKey {
 func newQualifiedTableAliasKey(schema, name ast.CIStr) tableAliasKey {
 	return tableAliasKey{schema: schema.L, name: name.L, qualified: true}
 }
-
-func (k tableAliasKey) displayName() ast.CIStr {
-	if k.qualified {
-		return ast.NewCIStr(k.schema + "." + k.name)
-	}
-	return ast.NewCIStr(k.name)
-}
