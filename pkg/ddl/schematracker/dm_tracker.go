@@ -284,6 +284,9 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		if baseCol == nil {
 			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
 		}
+		if err := ddl.CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
+			return err
+		}
 		ft := baseCol.FieldType
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{

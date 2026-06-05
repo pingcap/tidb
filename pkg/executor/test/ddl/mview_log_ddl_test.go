@@ -99,6 +99,29 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
 }
 
+func TestCreateMaterializedViewLogRejectUnsupportedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_tinyblob (id bigint not null primary key, b tinyblob null)")
+	tk.MustExec("create table t_blob (id bigint not null primary key, b blob null)")
+	tk.MustExec("create table t_mediumblob (id bigint not null primary key, b mediumblob null)")
+	tk.MustExec("create table t_longblob (id bigint not null primary key, b longblob null)")
+	for _, tbl := range []string{"t_tinyblob", "t_blob", "t_mediumblob", "t_longblob"} {
+		err := tk.ExecToErr(fmt.Sprintf("create materialized view log on %s (id, b)", tbl))
+		require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG does not support BLOB column b")
+	}
+
+	tk.MustExec("create table t_json (id bigint not null primary key, j json null)")
+	err := tk.ExecToErr("create materialized view log on t_json (id, j)")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG does not support JSON column j")
+
+	tk.MustExec("create table t_gen (id bigint not null primary key, g1 int not null, g2 int as (g1 + 1) virtual)")
+	err = tk.ExecToErr("create materialized view log on t_gen (id, g2)")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG does not support generated column g2")
+}
+
 func TestShowCreateMaterializedViewLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
