@@ -87,7 +87,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	// InterestingColumns might not be populated, extract from PushedDownConds
 	interestingColumns := dsBaseline.InterestingColumns
 	if len(interestingColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
-		interestingColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
+		interestingColumns = expression.ExtractColumnsFromExpressions(nil, dsBaseline.PushedDownConds, nil)
 	}
 
 	t.Logf("Interesting columns: %d (from PushedDownConds: %d), paths: %d", len(interestingColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.PossibleAccessPaths))
