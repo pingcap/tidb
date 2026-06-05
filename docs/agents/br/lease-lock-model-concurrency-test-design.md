@@ -13,6 +13,27 @@ Renewal operation hang / failure 相关测试的执行计划见
 `docs/agents/br/lease-lock-renewal-operation-tests-implementation-plan.md`。
 Terminal reason stability / normal unlock race 相关测试的执行计划见
 `docs/agents/br/lease-lock-terminal-tests-implementation-plan.md`。
+Cleanup / HA model 高优先级测试的执行计划和落地记录见
+`docs/agents/br/lease-lock-cleanup-ha-model-tests-implementation-plan.md`。
+
+截至 2026-06-05，Phase 2 已落地：
+
+- renewal operation hang / failure 与 low remaining lease guard；
+- terminal reason stability 与 normal unlock / in-flight renewal race；
+- cleanup/reacquire 竞态，当前已落地 migration write 与 append write smoke；
+- contender retry cleanup interleaving，当前已落地 migration write vs migration write，以及
+  writer cleanup stale read / live reader 混合 interleaving；
+- `.INTENT.` 生命周期乱序，当前已落地 in-flight intent、target commit failure cleanup、foreign
+  intent conservative blocking；
+- protected work death / hung-after-renewal-lost semantics，当前已落地 migration write 首版。
+
+仍作为后续补强保留：
+
+- fixed seed model；
+- protected work hung while renewal alive。
+- cleanup/reacquire 的 truncate family 扩展；
+- contender retry cleanup 的 append write vs append write 扩展；
+- protected work death / hung-after-loss 的 truncate 扩展。
 
 ## 背景
 
@@ -38,19 +59,19 @@ Phase 2 需要回答：
    临界区安全。
 2. stale cleanup 观察到旧 stale instance 后，新的 physical instance 被 acquire 时，不会被旧
    cleanup 决策误删。
-3. 多 contender 同时 `LockWithRetry`、cleanup、acquire、fail 时，互斥类 lock 不会同时进入受保护
+3. 多 contender 同时 `LockWithRetry`、cleanup、retry、acquire 时，互斥类 lock 不会同时进入受保护
    临界区。
 4. `.INTENT.` 创建、提交、失败、listing、cleanup 乱序时，不会留下阻塞后续 acquire 的 orphan
    intent。
 5. 固定 seed 的小模型乱序测试可以在失败日志里提供足够信息来复现和定位。
-6. holder 受保护业务循环死亡或长时间挂起时，测试能区分 safety 语义和 availability 语义：
-   死亡且 renewal 停止后应由 stale reclaim 恢复可用；挂起但 renewal 仍存活时应阻塞 contender，
-   不能伪装成 stale reclaim 成功。
+6. holder 受保护业务循环死亡或在 renewal lost 前后长时间挂起时，测试能区分 safety 语义和
+   availability 语义：死亡且 renewal 停止后应由 stale reclaim 恢复可用；挂起后 renewal lost 时不能在
+   barrier release 后继续 protected step。
 7. holder 受保护业务循环正常推进但 renewal loop 长时间挂起时，protected work 不能无限越过已经证明的
    lease window；一旦无法继续证明有效 lease，必须触发 lease lost 或停止 protected work。
-8. renewal proof 相关 operation 使用统一的 lease-bounded protection 口径，单次 operation timeout
-   cap 设为 10 分钟，并继续受当前 proven lease window 约束。覆盖 lock metadata read、lease clock
-   read、lock metadata write 和 post-write proof clock read。
+8. renewal proof 相关 operation 使用明确的 per-operation timeout 口径，单次 operation timeout
+   cap 设为 10 分钟；`renewalLoop` 在当前 proven lease window 已经不足以覆盖一次 bounded renewal
+   operation 时直接进入 lease-lost 路径，不再发起新的 renewal attempt。
 
 ## 非目标
 
@@ -73,8 +94,8 @@ pkg/objstore/locking_model_concurrency_test.go
 `pkg/objstore/locking_concurrency_test.go` 中的 audit / protected worker / intent listing helper。
 若 helper 明显变成 model harness 专属，则放在新文件内，避免继续膨胀第一阶段测试文件。
 
-由于新增 Go test file 和新的顶层 `TestXxx`，实现后需要运行 `make bazel_prepare` 并纳入
-`pkg/objstore/BUILD.bazel` 变更。
+由于在现有 Go test file 中新增顶层 `TestXxx`，实现后需要运行 `make bazel_prepare`；若产生
+`pkg/objstore/BUILD.bazel` 变更，需要一并纳入。
 
 ## Harness 设计
 
@@ -112,22 +133,10 @@ owner 只有 acquire 成功后才能记录 protected step。若 terminal reason 
   permanent renewal loss。
 - renewal `WriteFile` 返回的非 timeout 普通错误也属于 transient error；只有 context deadline 已经超时
   时，当前代码才把它归类为 `errRenewWriteTimeout`。
-
-renewal proof 相关 operation 应使用同一类 timeout policy：
-
-```text
-timeout = min(10min, remaining proven lease window / 2)
-```
-
-覆盖对象：
-
-- lock metadata `ReadFile`；
-- pre-write lease clock `Now`；
-- lock metadata `WriteFile`；
-- post-write proof lease clock `Now`。
-
-如果 remaining proven lease window 已经不足以给 operation 建立正数 timeout，应进入 lease-lost
-路径，而不是继续等待 storage / clock operation。
+- `renewalLoop` 在进入一次新的 `tryRenew` 前检查 `time.Until(leaseDeadline)`。如果当前剩余 proven
+  lease window 已经小于等于 `renewWriteTimeoutCap`，则不再发起 `ReadFile` / `WriteFile` 等 renewal
+  operation，直接调用 `onLeaseLost` 并退出。这避免 holder 在无法承受一次最坏 bounded renewal
+  operation 时继续推进 protected work。
 
 新增 bounded timeout 后，错误分类应继续区分 ordinary failure、non-mutating timeout 和 ambiguous
 mutating timeout：
@@ -150,17 +159,18 @@ mutating timeout：
 pre-write lease clock `Now` 失败或 timeout 也属于 mutation 前的 observation failure：它只表示 holder
 这一次没能获得可用于 renewal write 的 lease time，不应直接触发 `onLeaseLost`。
 
-这个 policy 已在当前实现中落地：read / pre-clock / write / post-clock 采用统一
-lease-bounded protection，operation cap 为 10 分钟，同时保持“一次普通读写失败不直接 lease lost”的
-retry 语义。
+这个 policy 已在当前实现中落地：read / pre-clock 有各自的 bounded context；write / post-write proof
+使用 old lease window 派生的 `renewalWriteTimeout`；`renewalLoop` 在剩余 proven lease window 不足一次
+bounded renewal operation 时提前触发 lease lost。这里不是一个所有阶段共享的 helper 或统一公式。
 
-测试上只需要验证统一 lease-bounded protection 的外部行为：
+测试上只需要验证 per-operation bound 与 proven-window guard 的外部行为：
 
 - read / pre-clock hang 到 timeout 后不会单次直接触发 `onLeaseLost`；
 - read / pre-clock hang 会消耗 retry budget 和 proven lease window；
+- low remaining lease guard 会在进入下一次 `tryRenew` 前停止 holder，且不会再发起 `ReadFile`；
 - write timeout 会触发 lease lost，并停止 protected work；
 - post-write proof clock hang / failure 会触发 lease lost，并停止 protected work；
-- 所有 operation 的单次等待上限都按 10 分钟 cap 与 remaining proven lease window 共同约束。
+- normal `Unlock` 取消 in-flight write / post-write proof 时不会误触 `onLeaseLost`。
 
 ### Controlled Storage
 
@@ -324,7 +334,7 @@ TestLeaseLockCleanupDoesNotDeleteReacquiredInstance
 目标交错：
 
 ```text
-cleanup reads old stale instance A
+cleanup decides to reclaim old stale instance A and blocks at DeleteFile(A)
 contender acquires new instance B in same family
 cleanup resumes and deletes only A
 holder B records protected step and unlocks
@@ -332,10 +342,8 @@ holder B records protected step and unlocks
 
 覆盖 family：
 
-- truncate；
-- migration write；
-- migration read, triggered by migration write contender cleanup；
-- append write。
+- 已落地：migration write。
+- 后续扩展：truncate；migration read, triggered by migration write contender cleanup；append write。
 
 断言：
 
@@ -343,7 +351,18 @@ holder B records protected step and unlocks
 - B 仍存在且 TxnID 不变；
 - holder B 可以继续 protected step；
 - holder B unlock 后 B 被删除；
-- 后续 acquire 成功。
+- 后续 acquire 成功；
+- 无 `.INTENT.` 残留。
+
+推荐 harness：
+
+- 手工写入 stale physical instance A，`ExpireAt` 早于 `now - staleReclaimGrace`；
+- 用 test storage wrapper 卡住 `DeleteFile(A)`，让 cleanup 已经完成 list / read / stale 判断但尚未真正删除；
+- 在 cleanup 卡住期间 acquire new physical instance B；
+- 放行 `DeleteFile(A)` 后，断言 cleanup 只删除 A，不影响 B。
+
+这个 case 的证明点是 cleanup 删除的是旧 physical path，不是同 family 的 live holder。无需断言 cleanup
+必须在 acquire B 前完成 listing；卡住 `DeleteFile(A)` 已经足以证明旧 cleanup 决策跨过了 B 的 acquire。
 
 ### 4. Contender Retry Cleanup Interleaving
 
@@ -353,15 +372,27 @@ holder B records protected step and unlocks
 TestLeaseLockContenderRetryCleanupInterleaving
 ```
 
+当前优先级：保留为高优先级。
+
 目标：
 
-多个 contender 同时 `LockWithRetry`，其中一个清理 stale blocker，另一个正在 acquire 或 verify。
+多个 contenders 同时 `LockWithRetry`。它们先被同一个 stale blocker A 阻塞；其中一个 contender
+进入 cleanup 并卡在 `DeleteFile(A)`，另一个 contender 仍在 acquire / retry / cleanup 路径中。放行
+cleanup 后，所有 contender 都必须重新走真实 acquire / verify 流程，最终互斥组合最多一个 holder 进入
+protected work。
+
+推荐 harness：
+
+- 手工写入 stale physical instance A；
+- 使用真实 `LockWithRetry`，只用 test storage wrapper 控制 cleanup `DeleteFile(A)` barrier；
+- 两个 contender 使用各自 context。第一个成功 acquire 后，测试取消其他 contender，避免等待完整 retry
+  budget；
+- 不断言谁赢、不强测 retry 次数，只断言互斥和 cleanup side effect。
 
 覆盖组合：
 
-- migration write vs migration write；
-- migration read vs migration write；
-- append write vs append write。
+- 已落地：migration write vs migration write。
+- 后续扩展：migration read vs migration write；append write vs append write。
 
 断言：
 
@@ -454,12 +485,13 @@ TestLeaseLockProtectedWorkDeathAndHangSemantics
    - contender 在 `ExpireAt + staleReclaimGrace` 前尝试 acquire，应被旧 physical instance 阻塞；
    - lease clock 推进到 `ExpireAt + staleReclaimGrace` 后，cleanup reclaim 旧 physical instance；
    - 后续 contender acquire 成功。
-2. protected work hung while renewal alive:
+2. protected work hung while renewal alive (optional / lower priority):
    - owner acquire lock 并启动 renewal，但 protected worker 停在测试控制的 barrier；
    - 等待 renewal 推进 `ExpireAt`；
    - contender 尝试 acquire / cleanup，应被 live holder 阻塞，不能删除 holder physical path；
    - release hung worker 后，holder 可以正常 unlock；
    - 后续 acquire 成功。
+   - 这个子场景与现有 live-holder cleanup / renewal 成功测试有较多重叠，当前不作为高优先级完成条件。
 3. hung protected work then renewal lost:
    - owner protected worker 挂在 barrier，renewal write 被注入 permanent loss；
    - `onLeaseLost` 必须记录 terminal reason；
@@ -468,7 +500,9 @@ TestLeaseLockProtectedWorkDeathAndHangSemantics
 断言：
 
 - 死亡且 renewal 停止的 holder 只能在 stale boundary 后被 reclaim；
-- 挂起但仍续约的 holder 不被 stale cleanup 删除；
+- 挂起后 renewal lost 的 holder 在 barrier release 后也不能继续 protected step；
+- audit 中 `lost` 之后没有 `step`；
+- 当前第一版覆盖 migration write。truncate 以及 append / read 组合等后续根据收益补充。
 - 挂起后丢锁的 holder 在 barrier release 后也不能继续业务 step；
 - event log 明确标出 `dead`、`hung`、`lease_lost`、`normal_unlock`，避免把 availability blocker
   误判成 lock safety failure。
@@ -624,7 +658,7 @@ window。
 WIP 验证优先运行：
 
 ```bash
-./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLock(TerminalRace|CleanupDoesNotDeleteReacquiredInstance|ContenderRetryCleanupInterleaving|IntentLifecycle|ModelFixedSeeds|ProtectedWorkDeathAndHangSemantics|RenewalObservationHangIsTransient|RenewalAmbiguousWriteAndProofFailureStopProtectedWork)' -count=1
+./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLock(TerminalReasonStableAfterLeaseLost|NormalUnlockWinsInFlightRenewal|CleanupDoesNotDeleteReacquiredInstance|ProtectedWorkDeathAndHangSemantics|RenewalObservationHangIsTransient|RenewalAmbiguousWriteAndProofFailureStopProtectedWork)' -count=1
 ```
 
 新增 Go file 或顶层 test 后运行：
@@ -652,13 +686,14 @@ Phase 2 完成后，应能明确回答：
 
 1. 终止竞态下 holder 不会在 lost 或 unlock 后继续推进受保护业务。
 2. cleanup 基于旧 stale observation 时不会删除 later-acquired new physical instance。
-3. 多 contender cleanup / retry / acquire 交错下互斥临界区不会重入。
-4. `.INTENT.` 生命周期乱序不会留下无法解释的 blocker。
-5. 固定 seed model 测试失败时可以直接用 seed 和 event log 复现。
-6. 受保护业务循环死亡和受保护业务循环挂起被区分处理：死亡依赖 stale reclaim 恢复，挂起但仍续约时保持互斥阻塞。
-7. mutation 前 observation failure 不会单次直接 lease lost，但 repeated failure 不能让业务越过最后一次
+3. 多 contender cleanup / retry / acquire 交错下，互斥类 lock 最多一个 holder 进入 protected work。
+4. 受保护业务循环死亡和挂起后 renewal lost 被区分处理：死亡依赖 stale reclaim 恢复；挂起后丢锁的
+   holder 在 barrier release 后不能继续 protected step。
+5. mutation 前 observation failure 不会单次直接 lease lost，但 repeated failure 不能让业务越过最后一次
    proven lease window。
-8. write timeout 和 post-write proof failure 会停止 protected work，避免 ambiguous mutation 或无法证明
+6. low remaining lease guard 会在进入新的 renewal attempt 前停止 holder，避免在无法承受一次 bounded
+   renewal operation 时继续 protected work。
+7. write timeout 和 post-write proof failure 会停止 protected work，避免 ambiguous mutation 或无法证明
    lease window 后继续业务。
-9. Renewal proof operation 的单次 bound 统一为 `min(10min, remaining proven lease window / 2)`，
-   覆盖 read、write 和 lease clock proof。
+8. `.INTENT.` 生命周期乱序、fixed seed model、protected work hung while renewal alive 作为后续补强项，
+   不作为当前高优先级 case 的完成条件。

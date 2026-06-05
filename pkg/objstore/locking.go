@@ -762,6 +762,17 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		var lastErr error
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
+			remainingLease := time.Until(leaseDeadline)
+			if remainingLease <= renewWriteTimeoutCap {
+				log.Warn("Lock renewal remaining proven lease window cannot cover one bounded renewal operation; calling onLeaseLost.",
+					zap.Stringer("lock", l),
+					zap.Int("attempt", attempt),
+					zap.Duration("remaining", remainingLease),
+					zap.Duration("operation-cap", renewWriteTimeoutCap))
+				invokeLost()
+				return
+			}
+
 			result, err := l.tryRenew(ctx)
 			if err == nil {
 				if l.renewalStopSignalClosed() {
@@ -790,7 +801,7 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 			}
 
 			retryBackoff := renewBaseBackoff * time.Duration(1<<attempt)
-			remainingLease := time.Until(leaseDeadline)
+			remainingLease = time.Until(leaseDeadline)
 			if remainingLease <= 0 {
 				log.Warn("Lock renewal proven lease window elapsed; calling onLeaseLost.",
 					zap.Stringer("lock", l),

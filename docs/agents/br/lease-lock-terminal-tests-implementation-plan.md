@@ -125,7 +125,7 @@ Validation evidence:
 - Final review follow-up rerun: `rg -n -P '`(MUST(?: NOT)?|SHOULD|MAY)`' AGENTS.md docs/agents/agents-review-guide.md docs/agents/br/lease-lock-model-concurrency-test-design.md docs/agents/br/lease-lock-terminal-tests-implementation-plan.md` exited 1 with no output, meaning no backticked normative keyword matches were found.
 - Final review follow-up rerun: `test -e docs/agents/br/lease-lock-terminal-tests-implementation-plan.md` and `test -e pkg/objstore/locking_model_concurrency_test.go` both exited 0.
 - Final independent proof-strength review found one blocking gap: normal unlock cancellation while post-write proof was in flight could be wrapped as permanent `errRenewPostWriteProofFailed`.
-- Final independent concurrency review of the first fix found no blocking issues in `renewalAttemptContext` / `renewalStopSignalClosed`; it noted parent context cancellation semantics as a non-blocking question.
+- Final independent concurrency review of the first fix found no blocking issues in the then-current renewal stop propagation helpers; it noted parent context cancellation semantics as a non-blocking question.
 - Post-write proof cancellation fix rerun: `gofmt -w pkg/objstore/locking.go pkg/objstore/locking_model_concurrency_test.go pkg/objstore/export_test.go` exited 0.
 - Post-write proof cancellation fix rerun: `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLock(TerminalReasonStableAfterLeaseLost|NormalUnlockWinsInFlightRenewal)' -count=1` exited 0.
 - Post-write proof cancellation fix rerun: `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLock(UnlockWaitsForInFlightRenewal|RenewalLostStopsCriticalSection|RenewalAmbiguousWriteAndProofFailureStopProtectedWork)' -count=1` exited 0.
@@ -140,7 +140,8 @@ Validation evidence:
 - Renewal context simplification rerun: `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLock(TerminalReasonStableAfterLeaseLost|NormalUnlockWinsInFlightRenewal)' -count=1` exited 0.
 - Renewal context simplification rerun: `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLock(UnlockWaitsForInFlightRenewal|RenewalLostStopsCriticalSection|RenewalAmbiguousWriteAndProofFailureStopProtectedWork)' -count=1` exited 0.
 - Attempt-timeout simplification: removed the outer `renewalAttemptTimeout` wrapper so `tryRenew` receives the renewal-owned context directly. Per-operation timeouts inside `tryRenew` now carry the operation-specific classification.
-- Timeout helper refactor: added `withRenewalTimeout` to centralize operation timeout context lifecycle without moving error classification out of `tryRenew`; both targeted terminal tests and affected concurrency regressions still exited 0.
+- Timeout helper refactor was reverted for readability. `tryRenew` now keeps explicit per-operation `context.WithTimeout` calls so the timeout and error classification stay local to each renewal phase.
+- Low remaining lease guard follow-up: `renewalLoop` now checks the current proven lease window before starting a new `tryRenew`; if it cannot cover one bounded renewal operation, it calls `onLeaseLost` without issuing another storage read. The targeted low-remaining subtest and related renewal / terminal regressions exited 0.
 
 Remaining gaps: Ready profile was intentionally not run, so this plan does not claim Ready or PR-readiness.
 
