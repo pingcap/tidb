@@ -502,6 +502,10 @@ const (
 
 	// Add mysql.tidb_masking_policy table.
 	version260 = 260
+
+	// version261 refreshes mysql.bind_info SQL digests after binding
+	// normalization starts skipping redundant parentheses.
+	version261 = 261
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -515,7 +519,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version260
+var currentBootstrapVersion int64 = version261
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -700,6 +704,7 @@ var (
 		{version: version258, fn: upgradeToVer258},
 		{version: version259, fn: upgradeToVer259},
 		{version: version260, fn: upgradeToVer260},
+		{version: version261, fn: upgradeToVer261},
 	}
 )
 
@@ -2127,4 +2132,120 @@ func upgradeToVer259(s sessionapi.Session, _ int64) {
 
 func upgradeToVer260(s sessionapi.Session, _ int64) {
 	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
+}
+
+type bindingDigestUpdate struct {
+	rowID       int64
+	originalSQL string
+	sqlDigest   string
+	duplicate   bool
+	changed     bool
+}
+
+func upgradeToVer261(s sessionapi.Session, _ int64) {
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+
+	mustExecute(s, bindinfo.LockBindInfoSQL)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, original_sql, bind_sql, default_db, charset, collation, sql_digest, plan_digest
+		FROM mysql.bind_info
+		WHERE source != 'builtin'
+		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(err))
+		return
+	}
+
+	req := rs.NewChunk(nil)
+	updates := make([]bindingDigestUpdate, 0)
+	seenDigestPair := make(map[string]struct{})
+	p := parser.New()
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := range req.NumRows() {
+			row := req.GetRow(i)
+			bindSQL := row.GetString(2)
+			stmt, parseErr := p.ParseOneStmt(bindSQL, row.GetString(4), row.GetString(5))
+			if parseErr != nil {
+				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
+					zap.String("bind_sql", bindSQL), zap.Error(parseErr))
+				continue
+			}
+
+			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, row.GetString(3), false)
+			if originalSQL == "" || sqlDigest == "" {
+				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
+					zap.String("bind_sql", bindSQL))
+				continue
+			}
+
+			oldSQLDigest := ""
+			if !row.IsNull(6) {
+				oldSQLDigest = row.GetString(6)
+			}
+			planDigest := ""
+			planDigestNotNull := !row.IsNull(7)
+			if planDigestNotNull {
+				planDigest = row.GetString(7)
+			}
+
+			update := bindingDigestUpdate{
+				rowID:       row.GetInt64(0),
+				originalSQL: originalSQL,
+				sqlDigest:   sqlDigest,
+				changed:     originalSQL != row.GetString(1) || sqlDigest != oldSQLDigest,
+			}
+			updateIdx := len(updates)
+			updates = append(updates, update)
+			if planDigestNotNull {
+				key := planDigest + "\x00" + sqlDigest
+				if _, ok := seenDigestPair[key]; ok {
+					updates[updateIdx].duplicate = true
+				} else {
+					seenDigestPair[key] = struct{}{}
+				}
+			}
+		}
+		req.Reset()
+	}
+	if closeErr := rs.Close(); closeErr != nil {
+		err = closeErr
+		logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(closeErr))
+	}
+
+	// Refreshing digests can merge bindings that previously differed only by
+	// redundant parentheses. Clear duplicate digest pairs before updating kept
+	// rows to avoid conflicts with digest_index.
+	for _, update := range updates {
+		if !update.duplicate {
+			continue
+		}
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
+			update.originalSQL, update.rowID)
+	}
+	for _, update := range updates {
+		if update.duplicate {
+			continue
+		}
+		if update.changed {
+			mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
+				update.originalSQL, update.sqlDigest, update.rowID)
+		}
+	}
 }
