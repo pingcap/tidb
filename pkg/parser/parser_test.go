@@ -5465,6 +5465,12 @@ func TestSystemVersioningMariaDBEnabled(t *testing.T) {
 		// ALTER TABLE ADD/DROP SYSTEM VERSIONING.
 		{"ALTER TABLE t ADD SYSTEM VERSIONING", true, "ALTER TABLE `t` ADD SYSTEM VERSIONING"},
 		{"ALTER TABLE t DROP SYSTEM VERSIONING", true, "ALTER TABLE `t` DROP SYSTEM VERSIONING"},
+		// WITHOUT SYSTEM VERSIONING works as a table option: WITHOUT is
+		// unambiguous in this position. The matching WITH SYSTEM VERSIONING
+		// cannot be supported here -- on lookahead WITH the LALR(1) parser
+		// commits to CreateTableSelectOpt (CTE clause) before TableOption
+		// becomes reachable.
+		{"CREATE TABLE t (a INT) WITHOUT SYSTEM VERSIONING", true, "CREATE TABLE `t` (`a` INT) WITHOUT SYSTEM VERSIONING"},
 	}
 	RunTest(t, table, false, true)
 }

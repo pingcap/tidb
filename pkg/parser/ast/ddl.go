@@ -2801,6 +2801,7 @@ const (
 	TableOptionIetfQuotes
 	TableOptionSequence
 	TableOptionAffinity
+	TableOptionMariaDBSystemVersioning
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -3227,6 +3228,12 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+	case TableOptionMariaDBSystemVersioning:
+		if n.BoolValue {
+			ctx.WriteKeyWord("WITH SYSTEM VERSIONING")
+		} else {
+			ctx.WriteKeyWord("WITHOUT SYSTEM VERSIONING")
+		}
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

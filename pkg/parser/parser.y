@@ -13585,6 +13585,20 @@ TableOption:
 		yylex.AppendError(yylex.Errorf("The IETF_QUOTES option is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
+|	"WITHOUT" "SYSTEM" "VERSIONING"
+	{
+		// MariaDB system-versioned table opt-out. WITHOUT is unambiguous in
+		// this position so the production fires cleanly. The matching `WITH
+		// SYSTEM VERSIONING` is intentionally not added: at lookahead `WITH`
+		// the LALR(1) parser commits to CreateTableSelectOpt (CTE clause)
+		// before reaching TableOption, and neither precedence directives nor
+		// keyword reservation reaches that earlier decision.
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionMariaDBSystemVersioning, BoolValue: false}
+	}
 
 ForceOpt:
 	/* empty */
