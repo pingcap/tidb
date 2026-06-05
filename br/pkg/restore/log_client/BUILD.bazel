@@ -116,11 +116,17 @@ go_test(
         "//br/pkg/utiltest",
         "//pkg/domain",
         "//pkg/kv",
+<<<<<<< HEAD
+=======
+        "//pkg/meta",
+        "//pkg/meta/metadef",
+>>>>>>> bb5cfc04300 (br: fix PiTR meta KV OOM by copying entries and deduplicating mDB keys in ReadFilteredEntriesFromFiles (#67268))
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
+        "//pkg/store/mockstore/unistore/tikv/mvcc",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/testkit",
