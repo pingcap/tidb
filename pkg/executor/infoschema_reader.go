@@ -1752,9 +1752,10 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		hasMLogPriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask)
 
 		baseInfo := baseInfos[i]
-		hasBasePriv := true
-		if checker != nil && baseInfo.name != "" {
-			hasBasePriv = checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.AllPrivMask)
+		showBaseInfo := hasMLogPriv
+		if !showBaseInfo {
+			showBaseInfo = checker == nil || baseInfo.name == "" ||
+				checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.AllPrivMask)
 		}
 
 		columnNames := make([]string, 0, len(mlogInfo.Columns))
@@ -1770,7 +1771,7 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			mlogColumns = strings.Join(columnNames, ",")
 		}
 		var baseCatalog, baseSchema, baseID, baseName any
-		if hasBasePriv {
+		if showBaseInfo {
 			baseCatalog = baseInfo.catalog
 			baseSchema = baseInfo.schema
 			baseID = baseInfo.id

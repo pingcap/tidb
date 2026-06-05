@@ -497,7 +497,7 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 
 		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.base", "test.$mlog$keep", "test.base"}, pm.calls)
+		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.base", "test.$mlog$keep"}, pm.calls)
 		require.Len(t, mt.rows, 2)
 
 		var denyRow, keepRow []types.Datum
@@ -591,7 +591,7 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 
 		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.$mlog$hidden_base", "test.base_hidden", "test.$mlog$visible_base", "test.base_visible"}, pm.calls)
+		require.ElementsMatch(t, []string{"test.$mlog$hidden_base", "test.$mlog$visible_base"}, pm.calls)
 		require.Len(t, mt.rows, 2)
 		var hiddenBaseRow, visibleBaseRow []types.Datum
 		for _, row := range mt.rows {
@@ -604,9 +604,10 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		}
 		require.NotNil(t, hiddenBaseRow)
 		require.Equal(t, types.NewStringDatum("$mlog$hidden_base"), hiddenBaseRow[3])
-		for i := 5; i <= 8; i++ {
-			require.True(t, hiddenBaseRow[i].IsNull())
-		}
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), hiddenBaseRow[5])
+		require.Equal(t, types.NewStringDatum("test"), hiddenBaseRow[6])
+		require.Equal(t, types.NewIntDatum(1), hiddenBaseRow[7])
+		require.Equal(t, types.NewStringDatum("base_hidden"), hiddenBaseRow[8])
 		require.NotNil(t, visibleBaseRow)
 		require.Equal(t, types.NewStringDatum("$mlog$visible_base"), visibleBaseRow[3])
 		require.Equal(t, types.NewStringDatum("base_visible"), visibleBaseRow[8])
