@@ -4723,7 +4723,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
-	countCnt := len(columns) + 1 // +1 for an extra handle column
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -4734,10 +4733,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IndexHints:          b.TableHints().IndexHintList,
 		IndexMergeHints:     indexMergeHints,
 		PossibleAccessPaths: possiblePaths,
-		Columns:             make([]*model.ColumnInfo, 0, countCnt),
+		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		PartitionNames:      tn.PartitionNames,
-		TblCols:             make([]*expression.Column, 0, countCnt),
-		TblColsByID:         make(map[int64]*expression.Column, countCnt),
+		TblCols:             make([]*expression.Column, 0, len(columns)),
+		TblColsByID:         make(map[int64]*expression.Column, len(columns)),
 		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
