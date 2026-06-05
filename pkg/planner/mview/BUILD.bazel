@@ -28,7 +28,7 @@ go_test(
     timeout = "short",
     srcs = ["mview_test.go"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         ":mview",
         "//pkg/domain",
