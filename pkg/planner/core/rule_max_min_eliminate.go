@@ -125,12 +125,12 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		newDs.SetSchema(p.Schema().Clone())
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
-		accessPaths := make([]*util.AccessPath, 0, len(p.PossibleAccessPaths))
+		newAccessPaths := make([]*util.AccessPath, 0, len(p.PossibleAccessPaths))
 		for _, path := range p.PossibleAccessPaths {
 			newPath := *path
-			accessPaths = append(accessPaths, &newPath)
+			newAccessPaths = append(newAccessPaths, &newPath)
 		}
-		newDs.PossibleAccessPaths = accessPaths
+		newDs.PossibleAccessPaths = newAccessPaths
 		return &newDs
 	}
 	// This won't happen, because we have checked the subtree.
