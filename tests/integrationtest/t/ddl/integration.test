@@ -134,3 +134,44 @@ PARTITION BY RANGE (YEAR(`dob`))
  PARTITION `p1980` VALUES LESS THAN (1990),
  PARTITION `p1990` VALUES LESS THAN (2000));
 ALTER TABLE members REORGANIZE PARTITION `p1990` INTO (PARTITION p1995 VALUES LESS THAN (1995),  PARTITION p2000 VALUES LESS THAN (2010));
+
+# TestAvoidDropModifyChangeColumnReferencedByPartialCondition
+create table t (a int, b int, key testidx(b) where a > 2);
+insert into t values (1, 2);
+--error 8272
+alter table t modify column a bigint;
+--error 8272
+alter table t drop column a;
+--error 8272
+alter table t change column a c int;
+alter table t drop index testidx;
+alter table t modify column b bigint;
+alter table t drop column b;
+drop table t;
+
+# TestRowIDIsNotAllowedForPartialIndex
+drop table if exists t;
+--error 8200
+create table t (a int, b int, key testidx(b) where _tidb_rowid > 2);
+create table t (a int, b int);
+--error 8200
+alter table t add index testidx(b) where _tidb_rowid > 2;
+
+# TestPartitionTableNotSupportedForPartialIndex
+drop table if exists t;
+--error 8200
+create table t (a int, b int, key testidx(b) where a > 5) partition by range (b) (partition p0 values less than (5));
+create table t (a int, b int) partition by range (b) (partition p0 values less than (5));
+--error 8200
+create index testidx on t(b) where a > 5;
+drop table t;
+create table t (a int, b int, key testidx(b) where a > 5);
+--error 8200
+alter table t partition by range (b) (partition p0 values less than (5));
+
+# TestUpdateAfterAddColumnForPartialIndex
+drop table if exists t;
+create table t (col2 int, key (col2) where col2 > 0);
+alter table t add column col1 int first;
+insert into t values (1, 1);
+update t set col1 = 5;

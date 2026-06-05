@@ -21,7 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table/tables/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -130,5 +132,103 @@ func TestPartialIndexDDL(t *testing.T) {
 		tk.MustExec("drop index idx on t;")
 		idx = findIndex(t, dom, "t", "idx")
 		require.Nil(t, idx)
+	})
+
+	t.Run("TestManipulateColumnReferencedByPartialIndex", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t(col1 int primary key, col2 int, col3 int);")
+
+		tk.MustExec("create index idx on t(col3) where col2 = 1;")
+		validatePartialIndexExists(t, dom, "t", "idx")
+
+		tk.MustGetDBError("alter table t drop column col2;", dbterror.ErrModifyColumnReferencedByPartialCondition)
+		tk.MustGetDBError("alter table t change column col2 col4 int;", dbterror.ErrModifyColumnReferencedByPartialCondition)
+		tk.MustGetDBError("alter table t modify column col2 int unsigned;", dbterror.ErrModifyColumnReferencedByPartialCondition)
+
+		tk.MustExec("drop table t;")
+		tk.MustExec("create table t(col1 int primary key, col2 int, col3 int, key t(col3) where col2 = 1);")
+
+		tk.MustGetDBError("alter table t drop column col2;", dbterror.ErrModifyColumnReferencedByPartialCondition)
+		tk.MustGetDBError("alter table t change column col2 col4 int;", dbterror.ErrModifyColumnReferencedByPartialCondition)
+		tk.MustGetDBError("alter table t modify column col2 int unsigned;", dbterror.ErrModifyColumnReferencedByPartialCondition)
+		tk.MustExec("drop table t;")
+	})
+
+	t.Run("TestPartialIndexCanOnlyBeCreatedWithFastReorg", func(t *testing.T) {
+		tk.MustExec("use test;")
+		tk.MustExec("create table t (a int, b int, c int, primary key (a))")
+		defer tk.MustExec("drop table if exists t;")
+		tk.MustExec("insert into t(a, b, c) values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
+
+		// Disable fast-reorg
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
+		tk.MustGetDBError("alter table t add index idx1(a) where c > 3", dbterror.ErrUnsupportedAddPartialIndex)
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+
+		tk.MustExec("alter table t add index idx0(a)")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx0", 3)
+		jobs := tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, jobs[0][7], "3")
+	})
+
+	t.Run("TestAddPartialIndex", func(t *testing.T) {
+		tk.MustExec("use test;")
+		tk.MustExec("create table t (a int, b int, c int, primary key (a))")
+		defer tk.MustExec("drop table if exists t;")
+		tk.MustExec("insert into t(a, b, c) values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
+
+		// Partial index with proper condition
+		tk.MustExec("alter table t add index idx1(a) where c >= 5")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx1", 1)
+		jobs := tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, jobs[0][7], "3")
+
+		// Partial index with condition that no row meets
+		tk.MustExec("alter table t add index idx2(a) where c >= 6")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx2", 0)
+		jobs = tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, jobs[0][7], "3")
+
+		// Multi-schema change add multiple partial indexes
+		tk.MustExec("alter table t add index idx5(a) where c >= 4, add index idx6(a) where c >= 5")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx5", 2)
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx6", 1)
+		jobs = tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, jobs[1][7], "3")
+
+		// Pushdown is disabled for `not` function, so the DDL cannot pushdown
+		tk.MustExec("INSERT INTO mysql.expr_pushdown_blacklist VALUES('not','tikv','');")
+		tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
+		tk.MustExec("alter table t add index idx7(a) where b is not null;")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx7", 3)
+		tk.MustExec("DELETE FROM mysql.expr_pushdown_blacklist WHERE name='not' AND store_type='tikv';")
+
+		// Multi-schema change add multiple indexes, including partial index and normal index
+		tk.MustExec("alter table t add index idx8(a), add index idx9(a) where c >= 5")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx8", 3)
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx9", 1)
+		jobs = tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, jobs[1][7], "3")
+
+		// Create index on table with `_tidb_rowid` column
+		tk.MustExec("create table t1 (a int, b int, c int)")
+		tk.MustExec("insert into t1(a, b, c) values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
+		tk.MustExec("alter table t1 add index idx1(a) where a > 1")
+		testutil.CheckIndexKVCount(t, tk, dom, "t1", "idx1", 2)
+
+		// Create normal index, the row count is still correct.
+		tk.MustExec("alter table t1 add index idx2(a)")
+		testutil.CheckIndexKVCount(t, tk, dom, "t1", "idx2", 3)
+		jobs = tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, jobs[0][7], "3")
+	})
+
+	t.Run("TestValidateColumnExistsInAddIndex", func(t *testing.T) {
+		tk.MustExec("use test;")
+		tk.MustExec("create table t (a int, b int);")
+		defer tk.MustExec("drop table if exists t;")
+		tk.MustExec("alter table t add index idx_b(b) where a = 1;")
+		tk.MustGetDBError("alter table t add index idx_b_2(b) where c = 1;",
+			dbterror.ErrUnsupportedAddPartialIndex)
 	})
 }
