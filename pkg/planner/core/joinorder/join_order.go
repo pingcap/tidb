@@ -573,7 +573,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 
 	// In master branch, there is a sysvar called tidb_opt_cartesian_join_order_threshold.
 	// We don't have it in other branch, so just set it to 0.0
-	var cartesianFactor float64 = 0.0
+	cartesianFactor := 0.0
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
 	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
