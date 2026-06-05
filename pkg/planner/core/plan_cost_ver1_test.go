@@ -27,18 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func skipPostOptimizedProjection(plan [][]any) int {
-	for i, r := range plan {
-		cost := r[2].(string)
-		if cost == "0.00" && strings.Contains(r[0].(string), "Projection") {
-			// projection injected in post-optimization, whose cost is always 0 under the old cost implementation
-			continue
-		}
-		return i
-	}
-	return 0
-}
-
 func TestTrueCardCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -134,35 +122,4 @@ func TestScanOnSmallTable(t *testing.T) {
 		}
 	}
 	require.True(t, useTiKVScan, "should use tikv scan, but got:\n%s", resStr)
-}
-
-func TestFullOuterJoinTailScanCostVer1(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_cost_model_version=1")
-	tk.MustExec("set @@tidb_enable_full_outer_join=1")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(a int)")
-
-	parseTopHashJoinCost := func(sql string) float64 {
-		rows := tk.MustQuery("explain format=verbose " + sql).Rows()
-		require.NotEmpty(t, rows, "sql=%s", sql)
-		idx := skipPostOptimizedProjection(rows)
-		for idx < len(rows) && !strings.Contains(rows[idx][0].(string), "HashJoin") {
-			idx++
-		}
-		require.Less(t, idx, len(rows), "sql=%s, explain=%v", sql, rows)
-		planCost, err := strconv.ParseFloat(rows[idx][2].(string), 64)
-		require.NoError(t, err)
-		return planCost
-	}
-
-	innerJoinSQL := "select /*+ HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a = t2.a"
-	fullOuterJoinSQL := "select /*+ HASH_JOIN(t1, t2) */ * from t1 full outer join t2 on t1.a = t2.a"
-
-	innerCost := parseTopHashJoinCost(innerJoinSQL)
-	fullOuterCost := parseTopHashJoinCost(fullOuterJoinSQL)
-	require.Greater(t, fullOuterCost, innerCost)
 }

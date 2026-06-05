@@ -573,9 +573,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
-	// PR2 gating for FULL OUTER JOIN:
+	// Current FULL OUTER JOIN limitations:
 	// 1) NATURAL/USING/full-join-without-ON are still out of scope.
-	// 2) full outer join is enabled in volcano path only.
+	// 2) FULL OUTER JOIN is enabled in volcano path only.
 	if joinNode.Tp == ast.FullJoin {
 		if !b.ctx.GetSessionVars().EnableFullOuterJoin {
 			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
@@ -617,7 +617,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.JoinType = logicalop.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
 	case ast.FullJoin:
-		// full outer join need to be checked elimination
+		// The rule EliminateOuterJoin does nothing with the full outer join, but a full outer join may be
+		// optimized to a one-sided outer join by null-reject checking. So we add the rule flag here for the
+		// potential optimization.
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
 		joinPlan.JoinType = logicalop.FullOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, joinPlan.Schema().Len())
