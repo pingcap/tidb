@@ -71,7 +71,9 @@ go_test(
     srcs = ["crr_checkpoint_test.go"],
     embed = [":operator"],
     flaky = True,
+    shard_count = 3,
     deps = [
+        "//br/pkg/metautil",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "@com_github_stretchr_testify//require",

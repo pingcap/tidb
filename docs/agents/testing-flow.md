@@ -40,6 +40,7 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 ```
 
 - The script enables failpoints, runs `go test`, and always disables failpoints during cleanup.
+- The underlying enable/disable path is serialized by `tools/check/failpoint-state.sh`; do not invoke `tools/bin/failpoint-ctl` directly from parallel agent tasks in the same worktree.
 - Pass additional `go test` flags after the package path, for example `./tools/check/failpoint-go-test.sh pkg/<package_name> -run <TestName> -count=1`.
 - If `-tags` is omitted, the script defaults to `-tags=intest,deadlock`.
 - Pass `-tags=intest,deadlock,nextgen` when a test run also needs `nextgen`.

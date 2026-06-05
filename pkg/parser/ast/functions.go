@@ -530,12 +530,12 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 	}
 	if n.FnName.L == JSONMemberOf {
 		if len(n.Args) == 2 {
-			if err := n.Args[0].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[0], restoreOpMemberOf, binaryOpLeftSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
 			}
 			ctx.WriteKeyWord(" MEMBER OF ")
 			ctx.WritePlain("(")
-			if err := n.Args[1].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[1], restoreOpMemberOf, binaryOpRightSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
 			}
 			ctx.WritePlain(")")
@@ -703,7 +703,7 @@ func (n *FuncCastExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	case CastBinaryOperator:
 		ctx.WriteKeyWord("BINARY ")
-		if err := n.Expr.Restore(ctx); err != nil {
+		if err := restoreExprWithUnaryOpParent(ctx, n.Expr); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 	}

@@ -46,6 +46,9 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
+	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
+		Param: scheduler.Param{TaskStore: store},
+	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -172,6 +175,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
+	ext.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
+		Param: scheduler.Param{TaskStore: store},
+	}
 	sch.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, "", 1, "", 0, proto.ExtraParams{}, task.Meta)

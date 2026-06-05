@@ -30,6 +30,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -49,42 +50,48 @@ import (
 
 const crossKSSessPoolSize = 5
 
+type runtimeEntry struct {
+	sessMgr       *SessionManager
+	activeHolders map[string]struct{}
+	lastReleaseAt time.Time
+}
+
 // Manager manages all cross keyspace sessions.
 type Manager struct {
 	mu sync.RWMutex
 	// the store of current instance
 	store kv.Storage
-	// keyspace name -> session manager
-	sessMgrs map[string]*SessionManager
+	// keyspace name -> runtime entry
+	runtimes map[string]*runtimeEntry
 }
 
 // NewManager creates a new cross keyspace session manager.
 func NewManager(store kv.Storage) *Manager {
 	return &Manager{
 		store:    store,
-		sessMgrs: make(map[string]*SessionManager),
+		runtimes: make(map[string]*runtimeEntry),
 	}
 }
 
 // GetAllKeyspace returns all keyspace names that have session managers.
-// used in tests.
 func (m *Manager) GetAllKeyspace() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return slices.Collect(maps.Keys(m.sessMgrs))
+	return slices.Collect(maps.Keys(m.runtimes))
 }
 
-// Get gets a session manager for the specified keyspace.
-// exported for test only.
-func (m *Manager) Get(ks string) (*SessionManager, bool) {
+func (m *Manager) get(ks string) (*SessionManager, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.getWithoutLock(ks)
 }
 
 func (m *Manager) getWithoutLock(ks string) (*SessionManager, bool) {
-	sessMgr, ok := m.sessMgrs[ks]
-	return sessMgr, ok
+	entry, ok := m.runtimes[ks]
+	if !ok {
+		return nil, false
+	}
+	return entry.sessMgr, true
 }
 
 // GetOrCreate gets or creates a session manager for the specified keyspace.
@@ -92,23 +99,102 @@ func (m *Manager) GetOrCreate(
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, err error) {
-	// misusing this function might cause data written to the wrong keyspace, or
-	// corrupt user data, and it's harder to diagnose those issues, so we use
-	// runtime check instead of intest.Assert here, in case some code path are not
-	// covered by tests.
-	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
-		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
+	if err := m.validateTargetKS(ks); err != nil {
+		return nil, err
 	}
-	if mgr, ok := m.Get(ks); ok {
+	if mgr, ok := m.get(ks); ok {
 		return mgr, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if mgr, ok := m.getWithoutLock(ks); ok {
-		return mgr, nil
+	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	return entry.sessMgr, nil
+}
+
+// Acquire acquires a runtime handle for the specified keyspace and holderID.
+// one holderID is not allowed to acquire the same keyspace multiple times.
+// Acquired handle must be released after use, otherwise the resources might
+// not be cleaned up in time.
+func (m *Manager) Acquire(
+	ks string,
+	holderID string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (sqlsvrapi.KSRuntimeHandle, error) {
+	if holderID == "" {
+		return nil, errors.New("cross keyspace runtime holderID must not be empty")
+	}
+	if err := m.validateTargetKS(ks); err != nil {
+		return nil, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := entry.activeHolders[holderID]; ok {
+		logutil.BgLogger().Warn("cross keyspace runtime already acquired",
+			zap.String("targetKS", ks),
+			zap.String("holderID", holderID),
+			zap.Int("activeHolderCount", len(entry.activeHolders)))
+		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
+	}
+	entry.activeHolders[holderID] = struct{}{}
+	logutil.BgLogger().Info("acquire cross keyspace runtime",
+		zap.String("targetKS", ks),
+		zap.String("holderID", holderID),
+		zap.Int("activeHolderCount", len(entry.activeHolders)))
+	return &runtimeHandle{
+		manager:  m,
+		targetKS: ks,
+		holderID: holderID,
+		entry:    entry,
+	}, nil
+}
+
+func (m *Manager) validateTargetKS(ks string) error {
+	// misusing cross keyspace sessions might cause data written to the wrong
+	// keyspace, or corrupt user data, and it's harder to diagnose those issues.
+	// so we use runtime check instead of intest.Assert here, in case some code
+	// paths are not covered by tests.
+	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
+		return errors.New("cross keyspace is not available in classic kernel or current keyspace")
+	}
+	return nil
+}
+
+func (m *Manager) getOrCreateEntryWithoutLock(
+	ks string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (*runtimeEntry, error) {
+	if entry, ok := m.runtimes[ks]; ok {
+		return entry, nil
+	}
+
+	createSessionManager := m.createSessionManager
+	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
+	mgr, err := createSessionManager(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	entry := &runtimeEntry{
+		sessMgr:       mgr,
+		activeHolders: make(map[string]struct{}),
+	}
+	m.runtimes[ks] = entry
+	return entry, nil
+}
+
+func (*Manager) createSessionManager(
+	ks string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (_ *SessionManager, err error) {
 	startTime := time.Now()
 	getStoreFn := getOrCreateStore
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
@@ -231,7 +317,6 @@ func (m *Manager) GetOrCreate(
 	mgr.wg.RunWithLog(func() {
 		minJobIDRefresher.Start(ctx)
 	})
-	m.sessMgrs[ks] = mgr
 
 	logutil.BgLogger().Info("create cross keyspace session manager",
 		zap.String("targetKS", ks), zap.Duration("cost", time.Since(startTime)))
@@ -239,14 +324,25 @@ func (m *Manager) GetOrCreate(
 	return mgr, nil
 }
 
-// CloseKS closes the session manager for the specified keyspace.
-func (m *Manager) CloseKS(targetKS string) {
+// release releases the runtime handle for the specified keyspace and holderID.
+// the resources will be cleaned up if there is no active holder after enough
+// time. we will impl this part later.
+func (m *Manager) release(targetKS string, holderID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if mgr, ok := m.sessMgrs[targetKS]; ok {
-		mgr.close()
-		delete(m.sessMgrs, targetKS)
+
+	entry, ok := m.runtimes[targetKS]
+	if !ok {
+		return
 	}
+	delete(entry.activeHolders, holderID)
+	if len(entry.activeHolders) == 0 {
+		entry.lastReleaseAt = time.Now()
+	}
+	logutil.BgLogger().Info("release cross keyspace runtime",
+		zap.String("targetKS", targetKS),
+		zap.String("holderID", holderID),
+		zap.Int("activeHolderCount", len(entry.activeHolders)))
 }
 
 // Close closes all session managers and their associated resources.
@@ -254,10 +350,10 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, mgr := range m.sessMgrs {
-		mgr.close()
+	for _, entry := range m.runtimes {
+		entry.sessMgr.close()
 	}
-	m.sessMgrs = make(map[string]*SessionManager)
+	m.runtimes = make(map[string]*runtimeEntry)
 }
 
 func getOrCreateStore(targetKS string) (kv.Storage, error) {
@@ -265,6 +361,28 @@ func getOrCreateStore(targetKS string) (kv.Storage, error) {
 		return kvstore.GetSystemStorage(), nil
 	}
 	return kvstore.InitStorage(targetKS)
+}
+
+type runtimeHandle struct {
+	manager     *Manager
+	targetKS    string
+	holderID    string
+	entry       *runtimeEntry
+	releaseOnce sync.Once
+}
+
+func (h *runtimeHandle) Store() kv.Storage {
+	return h.entry.sessMgr.Store()
+}
+
+func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
+	return h.entry.sessMgr.SessPool()
+}
+
+func (h *runtimeHandle) Release() {
+	h.releaseOnce.Do(func() {
+		h.manager.release(h.targetKS, h.holderID)
+	})
 }
 
 // SessionManager manages sessions for a specific keyspace.

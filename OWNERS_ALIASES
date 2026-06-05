@@ -40,19 +40,23 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
+    - joechenrh
   sig-approvers-expression:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-lightning:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
     - OliverS929
+    - joechenrh
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
@@ -74,15 +78,17 @@ aliases:
     - xhebox
     - tiancaiamao
     - YangKeao
-  sig-approvers-disttask:
+  sig-approvers-dxf:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - joechenrh
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
     - D3Hunter
+    - joechenrh
   sig-approvers-infoschema:
     - wjhuang2016
     - D3Hunter
@@ -177,6 +183,7 @@ aliases:
     - fengou1
     - fzzf678
     - gengliqi
+    - ghazalfamilyusa
     - henrybw
     - iamxy
     - js00070
@@ -191,6 +198,7 @@ aliases:
     - spongedu
     - tangwz
     - tsthght
+    - wddevries
     - xzhangxian1008
     - yibin87
     - zhangjinpeng1987
@@ -249,6 +257,7 @@ aliases:
     - ekexium
     - elsa0520
     - eurekaka
+    - fixdb
     - francis0407
     - fzhedu
     - glorv
@@ -311,7 +320,7 @@ aliases:
     - xhebox
     - xiongjiwei
     - xuyifangreeneyes
-    - YangKeao
+    - yangkeao
     - you06
     - youjiali1995
     - ywqzzy

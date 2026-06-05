@@ -282,6 +282,9 @@ type Config struct {
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 
+	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
+	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
+
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 
@@ -317,8 +320,12 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
+	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
+	// StarterParams contains Starter-only extension parameters.
+	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -360,6 +367,9 @@ type Config struct {
 
 	// MeteringConfigURI is the URI for metering configuration.
 	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
+
+	// CSE contains columnar-store related configuration.
+	CSE CSE `toml:"cse" json:"cse"`
 }
 
 // RUV2Config is the configuration for RU v2 weight calculation.
@@ -411,6 +421,30 @@ func DefaultRUV2Config() RUV2Config {
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
 	}
+}
+
+// CSE is the config collection for the cloud storage engine.
+type CSE struct {
+	ColumnarStoreType      string        `toml:"columnar-store-type" json:"columnar-store-type"`
+	ColumnarCollectTimeout time.Duration `toml:"columnar-collect-timeout" json:"columnar-collect-timeout"`
+}
+
+// IsTiFlashEnabled checks if TiFlash is enabled
+func (c *CSE) IsTiFlashEnabled() bool {
+	return c.ColumnarStoreType == "tiflash" || c.ColumnarStoreType == "both"
+}
+
+// IsColumnarStoreEnabled checks if Columnar store is enabled
+func (c *CSE) IsColumnarStoreEnabled() bool {
+	return c.ColumnarStoreType == "columnar" || c.ColumnarStoreType == "both"
+}
+
+// Valid checks if the Columnar store type is valid
+func (c *CSE) Valid() bool {
+	if c.ColumnarStoreType != "tiflash" && c.ColumnarStoreType != "columnar" && c.ColumnarStoreType != "both" {
+		return false
+	}
+	return true
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1031,6 +1065,18 @@ type Standby struct {
 	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
+// StarterParams contains Starter-only extension parameters.
+type StarterParams struct {
+	// ExportID is the export identifier supplied by standby activation.
+	ExportID string `toml:"export-id" json:"export-id"`
+	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
+	// It is only used in NextGen Starter deployments.
+	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
+	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
+	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
+	ManagerAddr string `toml:"manager-addr" json:"manager-addr"`
+}
+
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
@@ -1226,6 +1272,10 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	CSE: CSE{
+		ColumnarStoreType:      "tiflash",
+		ColumnarCollectTimeout: 5 * time.Second,
+	},
 }
 
 var (
@@ -1561,6 +1611,18 @@ func (c *Config) Valid() error {
 	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
 	}
+	if c.Standby.StandByMode && c.KeyspaceActivateMode {
+		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")
+	}
+	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
+	}
+	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	}
+	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")
+	}
 	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
 		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
 	}
@@ -1569,6 +1631,9 @@ func (c *Config) Valid() error {
 	}
 	if c.DeployMode == deploymode.Starter && !validMaxAllowedPacket(c.MaxAllowedPacket) {
 		return fmt.Errorf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	}
+	if err := c.KeyspaceObservability.Valid(); err != nil {
+		return err
 	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
@@ -1654,6 +1719,9 @@ func (c *Config) Valid() error {
 		}
 	}
 
+	if !c.CSE.Valid() {
+		return fmt.Errorf("invalid columnar-store-type=%s, valid types=%v", c.CSE.ColumnarStoreType, []string{"tiflash", "columnar", "both"})
+	}
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
