@@ -1118,7 +1118,7 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 }
 
 func (b *executorBuilder) buildExportTable(v *plannercore.ExportTable) exec.Executor {
-	latestIS := b.ctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	latestIS := b.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := latestIS.TableByID(context.Background(), v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
@@ -1128,8 +1128,8 @@ func (b *executorBuilder) buildExportTable(v *plannercore.ExportTable) exec.Exec
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "EXPORT")
 		return nil
 	}
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
-	return newExportTableExec(base, b.ctx, v, tbl)
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
+	return newExportTableExec(base, b.sctx, v, tbl)
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
