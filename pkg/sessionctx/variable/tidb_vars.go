@@ -333,6 +333,11 @@ const (
 	// TiDBOptEnableNoDecorrelateInSelect is the variable equivalent of NO_DECORRELATE hint.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
+	// TiDBOptEnableAlternativeLogicalPlans controls whether the optimizer may build
+	// an extra non-decorrelate logical alternative when decorrelation does not
+	// produce an equivalent same-order index join candidate.
+	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -610,6 +615,13 @@ const (
 	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
+
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
+
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projection operators
+	// when extracting join groups.
+	TiDBOptJoinReorderThroughProj = "tidb_opt_join_reorder_through_proj"
 
 	// TiDBOptJoinReorderThroughSel indicates whether join reorder considers
 	// joins through selection, allowing more flexible join ordering.
@@ -1293,6 +1305,9 @@ const (
 
 	// MaxPreSplitRegions is the maximum number of regions that can be pre-split.
 	MaxPreSplitRegions = 15
+
+	// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
+	TiDBEnableCachePrepareStmt = "tidb_enable_cache_prepare_stmt"
 )
 
 // Default TiDB system variable values.
@@ -1322,6 +1337,7 @@ const (
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableAlternativeLogicalPlans     = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
@@ -1421,6 +1437,8 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptEnableAdvancedJoinReorder     = true
+	DefTiDBOptJoinReorderThroughProj        = false
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
@@ -1653,6 +1671,7 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBLoadBindingTimeout                         = 200
+	DefEnableCachePrepareStmt                         = false
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
