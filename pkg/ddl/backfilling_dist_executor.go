@@ -37,8 +37,7 @@ import (
 var errBackfillTaskMetaOutdated = errors.New("backfill task meta is outdated")
 
 func isBackfillTaskMetaOutdatedErr(err error) bool {
-	return errors.Cause(err) == errBackfillTaskMetaOutdated ||
-		strings.Contains(err.Error(), errBackfillTaskMetaOutdated.Error())
+	return errors.Cause(err) == errBackfillTaskMetaOutdated
 }
 
 // Version constants for BackfillTaskMeta.
