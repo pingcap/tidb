@@ -10,17 +10,15 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/column",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
+        "//pkg/format/textrow",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/planner/core/resolve",
         "//pkg/server/err",
         "//pkg/server/internal/dump",
-        "//pkg/server/internal/util",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/hack",
-        "//pkg/util/logutil",
-        "@org_uber_go_zap//:zap",
     ],
 )
 

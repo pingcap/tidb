@@ -103,6 +103,8 @@ const (
 	DistributeTableCommand = "DISTRIBUTE TABLE"
 	// ImportIntoCommand represents IMPORT INTO statement
 	ImportIntoCommand = "IMPORT INTO"
+	// ExportTableCommand represents EXPORT TABLE statement
+	ExportTableCommand = "EXPORT TABLE"
 	// ReplaceCommand represents REPLACE statement
 	ReplaceCommand = "REPLACE"
 	// InsertCommand represents INSERT statement
@@ -675,6 +677,11 @@ func (n *DistributeTableStmt) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ImportIntoStmt) SEMCommand() string {
 	return ImportIntoCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ExportTableStmt) SEMCommand() string {
+	return ExportTableCommand
 }
 
 // SEMCommand returns the command string for the statement.

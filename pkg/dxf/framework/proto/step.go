@@ -57,6 +57,8 @@ func Step2Str(t TaskType, s Step) string {
 		return importIntoStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)
+	case Export:
+		return exportStep2Str(s)
 	}
 	return fmt.Sprintf("unknown type %s", t)
 }
@@ -160,6 +162,22 @@ func importIntoStep2Str(s Step) string {
 		return "collect-conflicts"
 	case ImportStepConflictResolution:
 		return "conflict-resolution"
+	default:
+		return unknownStepStr(s)
+	}
+}
+
+// Steps of Export, the initial step is StepInit(-1).
+// StepInit -> ExportStepDump -> StepDone
+const (
+	// ExportStepDump scans key-ordered spans of the table and writes data files.
+	ExportStepDump Step = 1
+)
+
+func exportStep2Str(s Step) string {
+	switch s {
+	case ExportStepDump:
+		return "dump"
 	default:
 		return unknownStepStr(s)
 	}

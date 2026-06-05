@@ -10,6 +10,7 @@ go_library(
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
         "//pkg/config",
+        "//pkg/format/textrow",
         "//pkg/parser/charset",
     ],
 )

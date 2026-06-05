@@ -382,6 +382,7 @@ var Keywords = []KeywordsType{
 	{"EXPANSION", false, "unreserved"},
 	{"EXPIRE", false, "unreserved"},
 	{"EXPLORE", false, "unreserved"},
+	{"EXPORT", false, "unreserved"},
 	{"EXTENDED", false, "unreserved"},
 	{"FAILED_LOGIN_ATTEMPTS", false, "unreserved"},
 	{"FAULTS", false, "unreserved"},
