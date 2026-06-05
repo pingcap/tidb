@@ -3104,15 +3104,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 			return errors.Trace(err)
 		}
-		if err := validateBackfillTaskMeta(task, reorgInfo); err != nil {
-			if !task.TaskBase.IsDone() {
-				if err1 := taskManager.FailTask(w.workCtx, task.ID, task.State, err); err1 != nil {
-					return err1
-				}
-				handle.NotifyTaskChange()
-			}
-			return err
-		}
 		taskID = task.ID
 		lastRequiredSlots = task.RequiredSlots
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
@@ -3219,23 +3210,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	err = g.Wait()
 	return err
-}
-
-func validateBackfillTaskMeta(task *proto.Task, reorgInfo *reorgInfo) error {
-	taskMeta := &BackfillTaskMeta{}
-	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
-		return errors.Trace(err)
-	}
-	job := reorgInfo.Job
-	if taskMeta.Job.ID != job.ID ||
-		taskMeta.Job.SchemaID != job.SchemaID ||
-		taskMeta.Job.TableID != job.TableID ||
-		!bytes.Equal(taskMeta.EleTypeKey, reorgInfo.currElement.TypeKey) ||
-		!slices.Equal(taskMeta.EleIDs, extractElemIDs(reorgInfo)) {
-		return errors.Annotatef(errBackfillTaskMetaOutdated,
-			"task ID: %d, task key: %s, job ID: %d", task.ID, task.Key, job.ID)
-	}
-	return nil
 }
 
 func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {

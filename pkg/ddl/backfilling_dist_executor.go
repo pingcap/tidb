@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
