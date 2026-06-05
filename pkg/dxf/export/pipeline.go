@@ -55,7 +55,6 @@ func sendCtx[T any](ctx context.Context, ch chan<- T, v T) error {
 	}
 }
 
-// recvCtx receives from ch unless ctx is done; ok is false when ch is closed.
 func recvCtx[T any](ctx context.Context, ch <-chan T) (v T, ok bool, err error) {
 	select {
 	case v, ok = <-ch:
@@ -180,7 +179,7 @@ func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writer
 			return err
 		}
 
-		e.summary.Bytes.Add(int64(len(buf)))
+		e.summary.Processed.Add(int64(len(buf)))
 		e.bufPool.Put(buf) //nolint:staticcheck
 	}
 }
