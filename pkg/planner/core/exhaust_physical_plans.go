@@ -419,6 +419,17 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 			joins = append(joins, getHashJoin(p, prop, 1, false))
 			joins = append(joins, getHashJoin(p, prop, 0, false))
 		}
+	case logicalop.FullOuterJoin:
+		// For full outer join in phase-1, always use the regular hash join probe path.
+		// Build side is still chosen by cost / hints.
+		if forceLeftToBuild {
+			joins = append(joins, getHashJoin(p, prop, 0, false))
+		} else if forceRightToBuild {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+		} else {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+			joins = append(joins, getHashJoin(p, prop, 0, false))
+		}
 	}
 
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
@@ -2036,6 +2047,18 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil, false, nil
 	}
+	if p.JoinType == logicalop.FullOuterJoin {
+		// Phase-1 restriction: full outer join runs on root hash join(v1) only.
+		if prop.IsFlashProp() {
+			return nil, true, nil
+		}
+		hashJoins, forced := getHashJoins(p, prop)
+		if forced && len(hashJoins) > 0 {
+			return hashJoins, true, nil
+		}
+		return hashJoins, true, nil
+	}
+
 	joins := make([]base.PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
 	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
