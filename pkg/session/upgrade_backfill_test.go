@@ -17,10 +17,14 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
@@ -88,4 +92,107 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
 	require.NoError(t, res.Close())
+}
+
+func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver260 := version260
+	seV260 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver260))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV260, ver260)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+
+	ver, err := GetBootstrapVersion(seV260)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver260), ver)
+
+	MustExec(t, seV260, "use test")
+	MustExec(t, seV260, "create table t_simple(a int, b int, key idx_simple_a(a), key idx_simple_b(b))")
+	MustExec(t, seV260, "create table t_issue(a int, b int, key idx_issue_a(a), key idx_issue_b(b))")
+
+	simpleBindSQL := "select /*+ use_index(t_simple, idx_simple_b) */ * from t_simple where a = 1"
+	issueBindSQL := "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where ((a = 1) and (b = 1))"
+	MustExec(t, seV260, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
+	MustExec(t, seV260, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
+
+	simpleOriginalV260, simpleDigestV260 := normalizeBindingDigestBeforeVer261(t, simpleBindSQL, "test")
+	issueOriginalV260, issueDigestV260 := normalizeBindingDigestBeforeVer261(t, issueBindSQL, "test")
+	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalV260, simpleDigestV260, "%idx_simple_b%")
+	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", issueOriginalV260, issueDigestV260, "%idx_issue_b%")
+
+	simpleDigestBefore := getBindingSQLDigest(t, seV260, "idx_simple_b")
+	issueDigestBefore := getBindingSQLDigest(t, seV260, "idx_issue_b")
+
+	store.SetOption(StoreBootstrappedKey, nil)
+	seV260.Close()
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	defer seCurVer.Close()
+	ver, err = GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	simpleDigestAfter := getBindingSQLDigest(t, seCurVer, "idx_simple_b")
+	issueDigestAfter := getBindingSQLDigest(t, seCurVer, "idx_issue_b")
+	require.Equal(t, simpleDigestBefore, simpleDigestAfter)
+	require.NotEqual(t, issueDigestBefore, issueDigestAfter)
+
+	MustExec(t, seCurVer, "admin reload bindings")
+	MustExec(t, seCurVer, "use test")
+	MustExec(t, seCurVer, "select * from t_simple where a = 1")
+	requireLastPlanFromBinding(t, seCurVer)
+	MustExec(t, seCurVer, "select * from t_issue where a = 1 and b = 1")
+	requireLastPlanFromBinding(t, seCurVer)
+}
+
+func normalizeBindingDigestBeforeVer261(t *testing.T, sql, defaultDB string) (string, string) {
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes |
+		format.RestoreSpacesAroundBinaryOperation |
+		format.RestoreStringWithoutCharset |
+		format.RestoreNameBackQuotes
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	restoreCtx.DefaultDB = defaultDB
+	require.NoError(t, stmt.Restore(restoreCtx))
+
+	normalized, digest := parser.NormalizeDigestForBinding(sb.String())
+	return normalized, digest.String()
+}
+
+func getBindingSQLDigest(t *testing.T, se sessionapi.Session, indexName string) string {
+	rs := MustExecToRecodeSet(t, se, "select sql_digest from mysql.bind_info where bind_sql like ?", "%"+indexName+"%")
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	digest := req.GetRow(0).GetString(0)
+	require.NoError(t, rs.Close())
+	return digest
+}
+
+func requireLastPlanFromBinding(t *testing.T, se sessionapi.Session) {
+	rs := MustExecToRecodeSet(t, se, "select @@last_plan_from_binding")
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
+	require.NoError(t, rs.Close())
 }
