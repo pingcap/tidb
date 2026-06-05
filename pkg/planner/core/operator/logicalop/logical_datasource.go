@@ -76,8 +76,6 @@ type DataSource struct {
 	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
 	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
-	// AllPossibleAccessPaths stores all the possible access paths before pruning.
-	AllPossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
@@ -122,9 +120,6 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
-
-	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
-	AskedColumnGroup [][]*expression.Column
 
 	// InterestingColumns stores columns from this DataSource that are used in the query.
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
@@ -384,8 +379,8 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
-	for _, path := range ds.AllPossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {

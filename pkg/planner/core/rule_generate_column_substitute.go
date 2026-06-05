@@ -74,7 +74,7 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 		return
 	}
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
-	for _, p := range ds.AllPossibleAccessPaths {
+	for _, p := range ds.PossibleAccessPaths {
 		if p.IsTablePath() {
 			continue
 		}

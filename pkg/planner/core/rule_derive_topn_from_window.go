@@ -93,7 +93,7 @@ func windowIsTopN(lp base.LogicalPlan) (bool, uint64) {
 	}
 
 	// Give up if TiFlash is one possible access path of all. Pushing down window aggregation is good enough in this case.
-	for _, path := range dataSource.AllPossibleAccessPaths {
+	for _, path := range dataSource.PossibleAccessPaths {
 		if path.StoreType == kv.TiFlash {
 			return false, 0
 		}

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -227,24 +226,21 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	if threshold < 0 {
 		return
 	}
-	if ds.AllPossibleAccessPaths == nil {
-		ds.AllPossibleAccessPaths = ds.PossibleAccessPaths
-	}
 	// If we have only one path, we don't need to prune indexes.
-	if len(ds.AllPossibleAccessPaths) <= 1 {
+	if len(ds.PossibleAccessPaths) <= 1 {
 		return
 	}
 	// If threshold = 0, we should only prune indexes with score == 0.
 	// Set threshold to the original number of paths as the logic
 	// will keep all indexes (up to the threshold) with score > 0.
 	if threshold == 0 {
-		threshold = len(ds.AllPossibleAccessPaths)
+		threshold = len(ds.PossibleAccessPaths)
 	}
 
 	// Prune indexes
 	prunedPaths := rule.PruneIndexesByWhereAndOrder(
 		ds,
-		ds.AllPossibleAccessPaths,
+		ds.PossibleAccessPaths,
 		ds.InterestingColumns,
 		threshold,
 	)
@@ -265,7 +261,7 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	}
 
 	// Only update if pruning actually occurred (paths changed)
-	if len(prunedPaths) < len(ds.AllPossibleAccessPaths) {
+	if len(prunedPaths) < len(ds.PossibleAccessPaths) {
 		// Union kept indexes instead of overwriting, to handle cases where the same physical table
 		// appears multiple times (e.g., self-joins, repeated subqueries). Each alias may keep different
 		// indexes, and we need to load stats for all indexes kept by any alias.
@@ -278,10 +274,7 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 			// First time seeing this physical table, create new set
 			keptIndexIDs[ds.PhysicalTableID] = tableKeptIndexes
 		}
-		ds.AllPossibleAccessPaths = prunedPaths
-		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
-		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
-		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
+		ds.PossibleAccessPaths = prunedPaths
 	}
 }
 

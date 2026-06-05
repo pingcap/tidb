@@ -132,14 +132,11 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedColGroups [][]*expression.Column, ds *logicalop.DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		intest.Assert(!ds.SCtx().GetSessionVars().InRestrictedSQL, "system table should have been skipped in restricted SQL mode")
 		return
-	}
-	if askedColGroups != nil {
-		ds.AskedColumnGroup = askedColGroups
 	}
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
@@ -309,16 +306,16 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
-		c.collectPredicateColumnsForDataSource(curColGroups, x)
+		c.collectPredicateColumnsForDataSource(x)
 		// Collect all interesting columns (WHERE + JOIN + ORDERING) for index pruning
 		if c.interestingColsByDS != nil {
 			c.collectInterestingColumnsForDataSource(x, currentJoinCols, currentOrderingCols)
 		}
 	case *logicalop.LogicalIndexScan:
-		c.collectPredicateColumnsForDataSource(curColGroups, x.Source)
+		c.collectPredicateColumnsForDataSource(x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalTableScan:
-		c.collectPredicateColumnsForDataSource(curColGroups, x.Source)
+		c.collectPredicateColumnsForDataSource(x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalProjection:
 		// Schema change from children to self.

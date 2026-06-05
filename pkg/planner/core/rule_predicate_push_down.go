@@ -69,7 +69,7 @@ func addPrefix4ShardIndexes(lp base.LogicalPlan, sc base.PlanContext, conds []ex
 	var err error
 	newConds := conds
 
-	for _, path := range ds.AllPossibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsUkShardIndexPath {
 			continue
 		}

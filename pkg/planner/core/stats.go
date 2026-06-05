@@ -137,7 +137,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	}
 	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
 	// Fill index paths for all paths.
-	for _, path := range ds.AllPossibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}
@@ -148,15 +148,14 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
-	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
+	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.PossibleAccessPaths))
 	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
 		return nil, err
 	}
 
-	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
-	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
+	// Index merge paths are generated from all conditions based on the current access path set.
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, err
 	}
@@ -573,8 +572,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths))
-	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths))
+	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
 	var (
 		selected, uniqueBest, refinedBest *util.AccessPath
 		isRefinedPath                     bool
@@ -582,7 +581,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
 	if ds.PreferStoreType&h.PreferTiFlash != 0 {
-		for _, path := range ds.AllPossibleAccessPaths {
+		for _, path := range ds.PossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
 				if err != nil {
@@ -595,7 +594,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	// step2: kv path should follow the heuristic rules.
-	for _, path := range ds.AllPossibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() {
 			err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
 			if err != nil {
