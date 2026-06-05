@@ -61,11 +61,12 @@ func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
 
 // GetPDAddrs returns the PD addresses from PD client.
 func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
-	pdAddrs := make([]string, 0)
-	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
 	if pdClient == nil {
 		return nil, errors.New("PD client not found")
 	}
+	pdAddrs := make([]string, 0)
+	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
+
 	for {
 		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
