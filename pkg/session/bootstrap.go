@@ -663,7 +663,8 @@ const (
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
+		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -679,7 +680,8 @@ const (
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL
+		done_time TIMESTAMP(6) NOT NULL,
+		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
@@ -1283,8 +1285,12 @@ const (
 	// introduced. Use tidb_distsql_scan_concurrency to preserve old analyze behavior.
 	version229 = 229
 
+	// version 230
+	// add idx_start_time index to tidb_runaway_watch and idx_done_time index to tidb_runaway_watch_done.
+	version230 = 230
+
 	// ...
-	// [version230, version238] is the version range reserved for patches of 8.5.x
+	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
 
@@ -1292,7 +1298,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version229
+var currentBootstrapVersion int64 = version230
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1477,6 +1483,7 @@ var (
 		upgradeToVer227,
 		upgradeToVer228,
 		upgradeToVer229,
+		upgradeToVer230,
 	}
 )
 
@@ -3457,6 +3464,15 @@ func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) 
 		cols = append(cols, row.GetString(0))
 	}
 	return cols
+}
+
+func upgradeToVer230(s sessiontypes.Session, ver int64) {
+	if ver >= version230 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
