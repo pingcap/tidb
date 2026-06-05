@@ -27,12 +27,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
->>>>>>> bb5cfc04300 (br: fix PiTR meta KV OOM by copying entries and deduplicating mDB keys in ReadFilteredEntriesFromFiles (#67268))
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
