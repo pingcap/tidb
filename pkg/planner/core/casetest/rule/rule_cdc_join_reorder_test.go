@@ -23,8 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCDCJoinReorder(tt *testing.T) {
-	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+func TestCDCJoinReorder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
 		tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
@@ -52,7 +53,7 @@ func TestCDCJoinReorder(tt *testing.T) {
 			Result []string
 		}
 		suite := GetCDCJoinReorderSuiteData()
-		suite.LoadTestCases(t, &input, &output, cascades, caller)
+		suite.LoadTestCases(t, &input, &output)
 
 		// Phase 1: Collect expected results using the old join reorder algorithm
 		// (CD-C is NOT enabled yet). These serve as the ground-truth baseline.
@@ -68,15 +69,14 @@ func TestCDCJoinReorder(tt *testing.T) {
 		for i, sql := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='brief' " + sql).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			})
-			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("EXPLAIN FORMAT='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
 
 			// Run with CD-C and cross-validate against the old algorithm baseline.
 			cdcResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 			require.Equalf(t, expectedResults[i], cdcResult,
 				"CD-C result differs from old algorithm for case[%d]: %s", i, sql)
 		}
-	})
 }
