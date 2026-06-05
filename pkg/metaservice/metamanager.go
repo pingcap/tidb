@@ -16,6 +16,7 @@ package metaservice
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -42,6 +43,24 @@ var ErrGroupNotMatch = errors.New("it is unexpected for the keyspace to have a g
 // ErrNilKeyspaceMeta indicates the caller passed a nil keyspace meta to GetGroup.
 var ErrNilKeyspaceMeta = errors.New("GetGroup: keyspace meta is nil")
 
+// ErrInvalidGroupID indicates the keyspace meta contains an invalid meta service group ID.
+var ErrInvalidGroupID = errors.New("invalid meta service group id: it must contain at least one letter and only contain letters, digits, '-' or '_'")
+
+// groupIDPattern validates keyspace meta service group IDs configured in keyspace meta.
+// Rules enforced by the pattern:
+//   - only ASCII letters, digits, '-' and '_' are allowed;
+//   - at least one letter is required, so pure numeric IDs (for example "123") are rejected.
+//
+// Note: the default global group ID "0" is not validated here; it is used when GroupIDKey is absent.
+var groupIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]*[A-Za-z][A-Za-z0-9_-]*$`)
+
+func validateGroupID(groupID string) error {
+	if !groupIDPattern.MatchString(groupID) {
+		return ErrInvalidGroupID
+	}
+	return nil
+}
+
 // Info includes the global meta service address and the TiDB meta service group info.
 type Info struct {
 	PDAddrs     []string
@@ -64,6 +83,9 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (
 	// TODO: Refactor meta service group storage format by moving it from config to dedicated fields in keyspace meta.
 	if val, ok := keyspaceMeta.Config[GroupIDKey]; ok {
 		groupID := val
+		if err := validateGroupID(groupID); err != nil {
+			return nil, err
+		}
 		addrsStr, addrsOk := keyspaceMeta.Config[GroupAddrsKey]
 		if !addrsOk {
 			return nil, ErrGroupNotMatch

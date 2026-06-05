@@ -39,14 +39,14 @@ func TestGetGroup(t *testing.T) {
 	// Test case with a valid group ID and addresses
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
-			metaservice.GroupIDKey:    "1", // Valid numeric string
+			metaservice.GroupIDKey:    "group1",
 			metaservice.GroupAddrsKey: expectedAddrsStr,
 		},
 	}
 
 	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
-	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
+	require.Equal(t, "group1", keyspaceMetaServiceGroup.GroupID)
 
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
@@ -54,7 +54,7 @@ func TestGetGroup(t *testing.T) {
 	keyspaceMeta.Config[metaservice.GroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
 	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
-	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
+	require.Equal(t, "group1", keyspaceMetaServiceGroup.GroupID)
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
 	// Test case where all addresses are blank
@@ -78,6 +78,47 @@ func TestGetGroup(t *testing.T) {
 	require.ElementsMatch(t, globalMetaAddrs, keyspaceMetaServiceGroup.Addrs)
 }
 
+func TestGetGroupRejectsInvalidGroupID(t *testing.T) {
+	globalMetaAddrs := []string{"127.0.0.1:2379"}
+	testCases := []struct {
+		name    string
+		groupID string
+	}{
+		{
+			name:    "numeric only",
+			groupID: "1",
+		},
+		{
+			name:    "contains space",
+			groupID: "group 1",
+		},
+		{
+			name:    "contains dot",
+			groupID: "group.1",
+		},
+		{
+			name:    "contains only separators and digits",
+			groupID: "1-2_3",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			keyspaceMeta := &keyspacepb.KeyspaceMeta{
+				Config: map[string]string{
+					metaservice.GroupIDKey:    tc.groupID,
+					metaservice.GroupAddrsKey: "127.0.0.1:2388,127.0.0.1:2389",
+				},
+			}
+
+			group, err := metaservice.GetGroup(keyspaceMeta, globalMetaAddrs)
+			require.Nil(t, group)
+			require.ErrorIs(t, err, metaservice.ErrInvalidGroupID)
+			require.ErrorContains(t, err, "invalid meta service group id")
+		})
+	}
+}
+
 // TestGetInfo tests the GetInfo function.
 func TestGetInfo(t *testing.T) {
 	expectPDAddrs := []string{"127.0.0.1:2380"}
@@ -94,7 +135,7 @@ func TestGetInfo(t *testing.T) {
 	// Test case with a valid keyspaceMeta
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
-			metaservice.GroupIDKey:    "2", // Valid numeric string
+			metaservice.GroupIDKey:    "group2",
 			metaservice.GroupAddrsKey: "127.0.0.1:2388,127.0.0.1:2389",
 		},
 	}
@@ -103,7 +144,7 @@ func TestGetInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, metaInfo)
 	require.Equal(t, globalMetaAddrs[0], metaInfo.GlobalAddrs[0])
-	require.Equal(t, "2", metaInfo.Group.GroupID)
+	require.Equal(t, "group2", metaInfo.Group.GroupID)
 	require.Equal(t, expectPDAddrs, metaInfo.PDAddrs)
 	expectedAddrs := []string{"127.0.0.1:2388", "127.0.0.1:2389"}
 	require.ElementsMatch(t, expectedAddrs, metaInfo.Group.Addrs)
