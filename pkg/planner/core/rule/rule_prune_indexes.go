@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 const (
@@ -131,7 +132,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		idxScore := scoreIndexPath(path, req, tableColumns)
 
 		if path.FullIdxCols != nil {
-			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
 		}
 
 		// Check if this index is specified in IndexMerge hints
