@@ -58,6 +58,25 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 	)
 }
 
+func shouldKeepIndexMergeCandidates(ds *logicalop.DataSource) bool {
+	sessionVars := ds.SCtx().GetSessionVars()
+	if (!sessionVars.GetEnableIndexMerge() && len(ds.IndexMergeHints) == 0) || sessionVars.StmtCtx.NoIndexMergeHint {
+		return false
+	}
+	if ds.TableInfo != nil && ds.TableInfo.TempTableType == model.TempTableLocal {
+		return false
+	}
+	if len(ds.IndexMergeHints) > 0 {
+		return true
+	}
+	for _, cond := range ds.AllConds {
+		if len(expression.SplitDNFItems(expression.PushDownNot(ds.SCtx().GetExprCtx(), cond))) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // PruneIndexesByWhereAndOrder prunes indexes based on their coverage of interesting columns.
 // It keeps the most promising indexes up to the threshold, prioritizing those that:
 // 1. Cover more interesting columns
@@ -66,6 +85,9 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 // 4. Have different consecutive column orderings (e.g., if interesting columns are A, B, keep both (A,B) and (B,A))
 func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, interestingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
+		return paths
+	}
+	if shouldKeepIndexMergeCandidates(ds) {
 		return paths
 	}
 
