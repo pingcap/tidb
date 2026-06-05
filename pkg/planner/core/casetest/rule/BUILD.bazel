@@ -5,6 +5,11 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+<<<<<<< HEAD
+=======
+        "rule_cdc_join_reorder_test.go",
+        "rule_common_handle_ordering_test.go",
+>>>>>>> 3032ee10c2f (planner: recognize order on common handle PK (#66645))
         "rule_derive_topn_from_window_test.go",
         "rule_eliminate_projection_test.go",
         "rule_inject_extra_projection_test.go",
@@ -15,7 +20,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 12,
+=======
+    shard_count = 23,
+>>>>>>> 3032ee10c2f (planner: recognize order on common handle PK (#66645))
     deps = [
         "//pkg/config",
         "//pkg/domain",
