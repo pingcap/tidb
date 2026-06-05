@@ -337,7 +337,8 @@ func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTa
 						copied := hintTable
 						found = &copied
 						foundQbOff = offset
-					} else if found.DBName.L != hintTable.DBName.L || found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
+					} else if found.DBName.L != hintTable.DBName.L ||
+						found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
 						ambiguous = true
 						return
 					}
