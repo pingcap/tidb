@@ -478,11 +478,11 @@
       {
         "SQL": "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
         "Plan": [
-          "MergeJoin_9 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
-          "├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
-          "│ └─TableFullScan_15 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "MergeJoin_10 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
+          "  └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
