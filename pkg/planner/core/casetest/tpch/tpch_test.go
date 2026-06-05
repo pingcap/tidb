@@ -54,6 +54,7 @@ func TestQ1(t *testing.T) {
 func TestQ2(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createPart(t, tk, dom)
 		createSupplier(t, tk, dom)
 		createPartsupp(t, tk, dom)
@@ -349,6 +350,7 @@ func TestQ18(t *testing.T) {
 func TestQ21(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createSupplier(t, tk, dom)
 		createLineItem(t, tk, dom)
 		createOrders(t, tk, dom)
@@ -383,6 +385,7 @@ func TestQ21(t *testing.T) {
 func TestQ22(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
 		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
