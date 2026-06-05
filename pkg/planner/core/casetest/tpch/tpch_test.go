@@ -268,6 +268,7 @@ func TestQ9(t *testing.T) {
 		createSupplier(t, tk, dom)
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 
 		integrationSuiteData := GetTPCHSuiteData()
 		var (
