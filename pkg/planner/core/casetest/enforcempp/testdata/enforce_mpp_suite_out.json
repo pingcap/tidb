@@ -453,15 +453,15 @@
       {
         "SQL": "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 2. new collation FIXME",
         "Plan": [
-          "TableReader_36 12487.50 root  MppVersion: 2, data:ExchangeSender_35",
-          "└─ExchangeSender_35 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_34 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
-          "    ├─ExchangeReceiver_15(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection_13 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "    │     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
-          "    └─Selection_17(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "      └─TableFullScan_16 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader_37 12487.50 root  MppVersion: 2, data:ExchangeSender_36",
+          "└─ExchangeSender_36 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_35 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "    ├─ExchangeReceiver_16(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_15 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_14 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "    │     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─Selection_18(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "      └─TableFullScan_17 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
