@@ -24,6 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 )
 
+// maxNodeCount limits the export task to a single executor node for now;
+// multi-node execution and auto-scaling sizing come later.
+const maxNodeCount = 1
+
 // SubmitTask submits an export DXF task.
 func SubmitTask(ctx context.Context, store kv.Storage, taskKey string, concurrency int, meta *TaskMeta) (*proto.Task, error) {
 	metaBytes, err := json.Marshal(meta)
@@ -31,5 +35,5 @@ func SubmitTask(ctx context.Context, store kv.Storage, taskKey string, concurren
 		return nil, errors.Trace(err)
 	}
 	return handle.SubmitTask(ctx, taskKey, proto.Export, store.GetKeyspace(),
-		concurrency, handle.GetTargetScope(), 0, metaBytes)
+		concurrency, handle.GetTargetScope(), maxNodeCount, metaBytes)
 }

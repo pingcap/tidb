@@ -4744,7 +4744,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
-			if err := checkNextGenS3PathWithSem(u); err != nil {
+			if err := checkNextGenS3PathWithSem("IMPORT INTO", u); err != nil {
 				return nil, err
 			}
 			values := u.Query()
@@ -4885,6 +4885,25 @@ var (
 
 func (b *PlanBuilder) buildExportTable(ctx context.Context, st *ast.ExportTableStmt) (base.Plan, error) {
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	u, err := url.Parse(st.Path)
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs("EXPORT TABLE destination", err.Error())
+	}
+	if semv1.IsEnabled() && objstore.IsLocal(u) {
+		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("EXPORT TABLE to server disk")
+	}
+	// same as IMPORT INTO: on a shared nextgen cluster the external ID
+	// restricts the S3 role access to the current tenant.
+	if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+		if err := checkNextGenS3PathWithSem("EXPORT TABLE", u); err != nil {
+			return nil, err
+		}
+		values := u.Query()
+		values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
+		u.RawQuery = values.Encode()
+		st.Path = u.String()
+	}
+
 	options := make([]*LoadDataOpt, 0, len(st.Options))
 	for _, opt := range st.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
@@ -6442,7 +6461,7 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 
 // For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
 // disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
-func checkNextGenS3PathWithSem(u *url.URL) error {
+func checkNextGenS3PathWithSem(cmd string, u *url.URL) error {
 	values := u.Query()
 	hasAccessKey := false
 	hasSecretAccessKey := false
@@ -6451,7 +6470,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
 		case s3like.S3ExternalID:
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(cmd + " with explicit external ID")
 		case s3like.S3AccessKey:
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
 		case s3like.S3SecretAccessKey:
@@ -6462,7 +6481,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	}
 
 	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
-		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(cmd + " from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil

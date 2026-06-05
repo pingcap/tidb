@@ -1139,7 +1139,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
+		err = checkNextGenS3PathWithSem("IMPORT INTO", u)
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO with explicit external ID")
 	}
@@ -1152,7 +1152,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
+		err = checkNextGenS3PathWithSem("IMPORT INTO", u)
 		require.NoError(t, err)
 	}
 
@@ -1167,7 +1167,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
+		err = checkNextGenS3PathWithSem("IMPORT INTO", u)
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
