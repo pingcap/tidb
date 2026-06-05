@@ -93,7 +93,13 @@ CPU profile of the export window (~108 core-seconds / 9.72GiB ≈ 11 cs/GiB):
 4. TiKV-side read tuning: with scan supply fixed (multiple tikv-workers),
    revisit `channelBufSize`, readers-per-encoder (`writersPerEncoder`), and
    distsql concurrency per sub-range.
-5. Carry-overs already tracked in the main plan: revert/cleanup, job table,
+5. **File-name field widths** — `<file>` is `%04d`; with a tiny `file_size`
+   and a huge per-writer range (>9999 files per writer) lexicographic order
+   breaks. Validate/widen at schedule time (the main plan's naming task).
+6. **Metric label cardinality** — the `task_id`-labeled export counters are
+   never unregistered (IMPORT INTO unregisters per task); fine for tests,
+   needs lifecycle management before production.
+7. Carry-overs already tracked in the main plan: revert/cleanup, job table,
    PostProcess files, parquet, compression, region-split helper shared with
    add-index (`pkg/ddl/backfilling_dist_scheduler.go:generatePlanForPhysicalTable`).
 

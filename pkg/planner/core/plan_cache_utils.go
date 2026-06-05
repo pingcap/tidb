@@ -101,7 +101,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	switch stmt := paramStmt.(type) {
-	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
+	case *ast.ImportIntoStmt, *ast.ExportTableStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, plannererrors.ErrUnsupportedPs
 	case *ast.SelectStmt:
 		if stmt.SelectIntoOpt != nil {
