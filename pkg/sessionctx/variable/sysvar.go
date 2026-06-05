@@ -2901,6 +2901,18 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(DefTiDBOptPartialOrderedIndexForTopN), Type: TypeBool, IsHintUpdatableVerified: true,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			// Only allow exact values: 0, 1, ON, OFF (case-insensitive).
+			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
+			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBOptPartialOrderedIndexForTopN, originalValue)
+			}
+			return normalizedValue, nil
+		}, SetSession: func(s *SessionVars, val string) error {
+			s.OptPartialOrderedIndexForTopN = TiDBOptOn(val)
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBExternalTS, Value: strconv.FormatInt(DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		ts, err := parseTSFromNumberOrTime(s, val)
 		if err != nil {
