@@ -254,6 +254,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	over              "OVER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
+	period            "PERIOD"
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
@@ -293,6 +294,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	starting          "STARTING"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
+	system            "SYSTEM"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	terminated        "TERMINATED"
@@ -322,6 +324,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	varcharType       "VARCHAR"
 	varcharacter      "VARCHARACTER"
 	varying           "VARYING"
+	versioning        "VERSIONING"
 	virtual           "VIRTUAL"
 	when              "WHEN"
 	where             "WHERE"
@@ -686,7 +689,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	super                      "SUPER"
 	swaps                      "SWAPS"
 	switchesSym                "SWITCHES"
-	system                     "SYSTEM"
 	systemTime                 "SYSTEM_TIME"
 	tables                     "TABLES"
 	tablespace                 "TABLESPACE"
@@ -2997,6 +2999,24 @@ AlterTableSpec:
 			Tp: ast.AlterTableWithoutValidation,
 		}
 	}
+|	"ADD" "SYSTEM" "VERSIONING"
+	{
+		// MariaDB system-versioning toggle. Parsed only when MariaDB mode is
+		// enabled via (*Parser).SetMariaDB; no engine semantics.
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableMariaDBAddSystemVersioning}
+	}
+|	"DROP" "SYSTEM" "VERSIONING"
+	{
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableMariaDBDropSystemVersioning}
+	}
 // Added in MySQL 8.0.13, see: https://dev.mysql.com/doc/refman/8.0/en/keywords.html for details
 |	"SECONDARY_LOAD"
 	{
@@ -4276,6 +4296,23 @@ ConstraintElem:
 			Tp:       ast.ConstraintCheck,
 			Expr:     $3.(ast.ExprNode),
 			Enforced: $5.(bool),
+		}
+	}
+|	"PERIOD" "FOR" "SYSTEM_TIME" '(' ColumnName ',' ColumnName ')'
+	{
+		// MariaDB system-versioned table period constraint. Parsed only when
+		// the MariaDB extension is enabled via (*Parser).SetMariaDB; carries
+		// no engine semantics, kept on the AST for restore.
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.Constraint{
+			Tp: ast.ConstraintMariaDBPeriodForSystemTime,
+			Keys: []*ast.IndexPartSpecification{
+				{Column: $5.(*ast.ColumnName)},
+				{Column: $7.(*ast.ColumnName)},
+			},
 		}
 	}
 
@@ -7620,7 +7657,6 @@ UnReservedKeyword:
 |	"WAIT"
 |	"CLIENT_ERRORS_SUMMARY"
 |	"BERNOULLI"
-|	"SYSTEM"
 |	"PERCENT"
 |	"PAUSE"
 |	"RESUME"

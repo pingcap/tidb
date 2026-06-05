@@ -5449,6 +5449,37 @@ func TestPrivilegeMariaDBDisabled(t *testing.T) {
 	RunTest(t, table, false, false)
 }
 
+func TestSystemVersioningMariaDBEnabled(t *testing.T) {
+	// MariaDB system-versioned tables: PERIOD FOR SYSTEM_TIME constraint and
+	// ALTER TABLE ADD/DROP SYSTEM VERSIONING. Accepted only when MariaDB
+	// mode is on; round-trip via Restore preserves the canonical form.
+	//
+	// WITH/WITHOUT SYSTEM VERSIONING as a CREATE TABLE option is intentionally
+	// not supported here: even with SYSTEM reserved, the LALR(1) parser
+	// commits to the CreateTableSelectOpt path on lookahead WITH and never
+	// reaches the TableOption alternative.
+	table := []testCase{
+		// PERIOD FOR SYSTEM_TIME constraint.
+		{"CREATE TABLE t (a INT, sys_s TIMESTAMP, sys_e TIMESTAMP, PERIOD FOR SYSTEM_TIME (sys_s, sys_e))", true,
+			"CREATE TABLE `t` (`a` INT,`sys_s` TIMESTAMP,`sys_e` TIMESTAMP,PERIOD FOR SYSTEM_TIME(`sys_s`, `sys_e`))"},
+		// ALTER TABLE ADD/DROP SYSTEM VERSIONING.
+		{"ALTER TABLE t ADD SYSTEM VERSIONING", true, "ALTER TABLE `t` ADD SYSTEM VERSIONING"},
+		{"ALTER TABLE t DROP SYSTEM VERSIONING", true, "ALTER TABLE `t` DROP SYSTEM VERSIONING"},
+	}
+	RunTest(t, table, false, true)
+}
+
+func TestSystemVersioningMariaDBDisabled(t *testing.T) {
+	// Same statements must be rejected when MariaDB mode is off so the
+	// MySQL-strict parser surface remains unaffected.
+	table := []testCase{
+		{"CREATE TABLE t (a INT, sys_s TIMESTAMP, sys_e TIMESTAMP, PERIOD FOR SYSTEM_TIME (sys_s, sys_e))", false, ""},
+		{"ALTER TABLE t ADD SYSTEM VERSIONING", false, ""},
+		{"ALTER TABLE t DROP SYSTEM VERSIONING", false, ""},
+	}
+	RunTest(t, table, false, false)
+}
+
 func TestComment(t *testing.T) {
 	table := []testCase{
 		{"create table t (c int comment 'comment')", true, "CREATE TABLE `t` (`c` INT COMMENT 'comment')"},
