@@ -16,7 +16,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -28,6 +28,7 @@ go_test(
         "//pkg/planner/util/coreusage",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/types",
