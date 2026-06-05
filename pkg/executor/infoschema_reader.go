@@ -1628,6 +1628,18 @@ func newMLogBaseTableInfos(
 	return baseInfos
 }
 
+func (e *memtableRetriever) getMLogBaseTableInfos(
+	ctx context.Context,
+	schemas []pmodel.CIStr,
+	tables []*model.TableInfo,
+) []mlogBaseTableInfo {
+	baseInfos := make([]mlogBaseTableInfo, 0, len(tables))
+	for i, tbl := range tables {
+		baseInfos = append(baseInfos, e.getMLogBaseTableInfo(ctx, schemas[i], tbl))
+	}
+	return baseInfos
+}
+
 func (e *memtableRetriever) getMLogBaseTableInfo(
 	ctx context.Context,
 	mlogSchema pmodel.CIStr,
@@ -1705,9 +1717,12 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		err       error
 	)
 	switch {
-	case (!hasMLogPredicates && !hasBasePredicates) || (hasMLogPredicates && !hasBasePredicates):
+	case !hasBasePredicates:
 		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
-	case !hasMLogPredicates && hasBasePredicates:
+		if err == nil {
+			baseInfos = e.getMLogBaseTableInfos(ctx, schemas, tables)
+		}
+	case !hasMLogPredicates:
 		var (
 			baseSchemas []pmodel.CIStr
 			baseTables  []*model.TableInfo
@@ -1736,12 +1751,7 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		}
 		hasMLogPriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask)
 
-		var baseInfo mlogBaseTableInfo
-		if i < len(baseInfos) {
-			baseInfo = baseInfos[i]
-		} else {
-			baseInfo = e.getMLogBaseTableInfo(ctx, schema, tbl)
-		}
+		baseInfo := baseInfos[i]
 		hasBasePriv := true
 		if checker != nil && baseInfo.name != "" {
 			hasBasePriv = checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.AllPrivMask)
