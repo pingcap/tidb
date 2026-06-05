@@ -1317,6 +1317,43 @@ func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
 
+func TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(64))")
+	for range 5 {
+		tk.MustExec(`insert into t values ("needle target")`)
+	}
+	for range 95 {
+		tk.MustExec(`insert into t values ("other value")`)
+	}
+	tk.MustExec("flush stats_delta *.*")
+	tk.MustExec("analyze table t all columns with 2 topn")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	query := "select * from t where a like '%needle%'"
+	actualRows, err := strconv.ParseFloat(tk.MustQuery("select count(*) from t where a like '%needle%'").Rows()[0][0].(string), 64)
+	require.NoError(t, err)
+
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8")
+	defaultEstimate := getTableReaderEstRows(t, tk, query)
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
+	topNAssistedEstimate := getTableReaderEstRows(t, tk, query)
+
+	// The default estimate is 0.8 * 100 = 80, while the topN assisted estimate should be around 5, which is much closer to the actual row count.
+	require.Less(t, math.Abs(topNAssistedEstimate-actualRows), math.Abs(defaultEstimate-actualRows))
+}
+
+func getTableReaderEstRows(t *testing.T, tk *testkit.TestKit, query string) float64 {
+	rows := tk.MustQuery("explain format = 'brief' " + query).Rows()
+	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	return estRows
+}
+
 func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outputType, store kv.Storage, dom *domain.Domain) {
 	h := dom.StatsHandle()
 	h.Clear()
