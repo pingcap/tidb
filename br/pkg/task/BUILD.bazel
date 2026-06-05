@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "task",
     srcs = [
+        "abort.go",
         "backup.go",
         "backup_ebs.go",
         "backup_raw.go",
@@ -69,6 +70,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle",
+        "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util",

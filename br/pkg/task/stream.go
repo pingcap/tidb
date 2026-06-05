@@ -2279,7 +2279,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
+		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter && cfg.ProtectTables)
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.

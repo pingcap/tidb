@@ -52,8 +52,6 @@ func newAbortRestoreCommand() *cobra.Command {
 		SilenceUsage: true,
 	}
 
-	task.DefineAbortRestoreFlags(command.PersistentFlags())
-
 	command.AddCommand(
 		newAbortRestoreFullCommand(),
 		newAbortRestoreDBCommand(),
@@ -120,7 +118,7 @@ func newAbortRestorePointCommand() *cobra.Command {
 }
 
 func runAbortRestoreCommand(command *cobra.Command, cmdName string) error {
-	cfg := task.AbortRestoreConfig{RestoreConfig: task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}}
+	cfg := task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
 	if err := cfg.ParseFromFlags(command.Flags(), false); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
