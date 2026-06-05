@@ -15,14 +15,24 @@
 package brietest
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -74,6 +84,45 @@ func TestBackupAndRestore(t *testing.T) {
 	tk.MustExec("use br")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 	tk.MustExec("drop database br")
+}
+
+func TestRestoreTableModeProtectsTablesBeforePipeline(t *testing.T) {
+	tk := initTestKit(t)
+	executor.ResetGlobalBRIEQueueForTest()
+
+	dbName := "br_restore_mode"
+	tk.MustExec("drop database if exists " + dbName)
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("create table " + dbName + ".t (id int primary key, v varchar(16))")
+	tk.MustExec("insert into " + dbName + ".t values (1, 'before')")
+
+	tmpDir := path.Join(makeTempDirForBackup(t), "backup")
+	require.NoError(t, os.RemoveAll(tmpDir))
+	tk.MustQuery("backup database " + dbName + " to 'local://" + tmpDir + "'")
+	tk.MustExec("drop database " + dbName)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-after-create-tables", func(errP *error) {
+		checkTK := testkit.NewTestKit(t, tk.Session().GetStore())
+		checkTK.MustGetErrCode("insert into "+dbName+".t values (2, 'during')", errno.ErrProtectedTableMode)
+		checkTK.MustGetErrCode("drop table "+dbName+".t", errno.ErrProtectedTableMode)
+		checkTK.MustGetErrCode("drop database "+dbName, errno.ErrProtectedTableMode)
+		alterRestoredTableModeToNormal(t, checkTK, dbName, "t")
+		*errP = errors.New("abort after restore creates tables")
+	})
+
+	err := tk.QueryToErr("restore database " + dbName + " from 'local://" + tmpDir + "'")
+	require.ErrorContains(t, err, "abort after restore creates tables")
+	tk.MustExec(fmt.Sprintf("delete from %s.%s", registry.RestoreRegistryDBName, registry.RestoreRegistryTableName))
+	tk.MustExec("drop database " + dbName)
+}
+
+func alterRestoredTableModeToNormal(t *testing.T, tk *testkit.TestKit, dbName, tableName string) {
+	dom := domain.GetDomain(tk.Session())
+	dbInfo, ok := dom.InfoCache().GetLatest().SchemaByName(ast.NewCIStr(dbName))
+	require.True(t, ok)
+	tbl, err := dom.InfoCache().GetLatest().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), tk.Session(), model.TableModeNormal, dbInfo.ID, tbl.Meta().ID))
 }
 
 func TestRestoreMultiTables(t *testing.T) {

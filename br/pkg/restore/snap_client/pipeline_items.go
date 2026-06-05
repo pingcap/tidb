@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -188,13 +189,14 @@ type PipelineContext struct {
 	Glue       glue.Glue
 }
 
-// RestorePipeline does checksum, load stats and wait for tiflash to be ready.
+// RestorePipeline sets restore tables back to normal mode, does checksum,
+// loads stats and waits for tiflash to be ready.
 func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*restoreutils.CreatedTable) (err error) {
 	start := time.Now()
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
 	}()
-	pipelineNum := 0
+	pipelineNum := 1
 	if plCtx.Checksum {
 		pipelineNum += 1
 	}
@@ -218,6 +220,8 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	defer updateCh.Close()
 
 	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical, loadSysTablePhysical: plCtx.LoadSysTablePhysical}
+	rc.registerSetTableModeToNormal(handlerBuilder, updateCh)
+
 	// pipeline checksum
 	if plCtx.Checksum {
 		rc.registerValidateChecksum(handlerBuilder, plCtx.KvClient, updateCh, plCtx.ChecksumConcurrency)
@@ -554,6 +558,63 @@ func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, s
 		return updateStatsMetaForNonPartitionTable(ctx, buffer, statsHandler, tbl)
 	}
 	return updateStatsMetaForPartitionTable(ctx, buffer, statsHandler, tbl)
+}
+
+func (rc *SnapClient) registerSetTableModeToNormal(
+	builder *PipelineConcurrentBuilder,
+	updateCh glue.Progress,
+) {
+	sessions := make([]glue.Session, 0)
+	for _, db := range rc.dbPool {
+		if db != nil && db.Session() != nil {
+			sessions = append(sessions, db.Session())
+		}
+	}
+	if rc.db != nil && rc.db.Session() != nil {
+		sessions = append(sessions, rc.db.Session())
+	}
+	sessionPool := make(chan glue.Session, len(sessions))
+	for _, session := range sessions {
+		sessionPool <- session
+	}
+	if len(sessions) == 0 {
+		log.Panic("No session registered to this client.")
+	}
+
+	builder.RegisterPipelineTask("Set Table Mode To Normal", uint(len(sessions)), func(c context.Context, tbl *restoreutils.CreatedTable) error {
+		if tbl.Table == nil || tbl.Table.Mode != model.TableModeRestore {
+			updateCh.Inc()
+			return nil
+		}
+		var session glue.Session
+		select {
+		case <-c.Done():
+			return c.Err()
+		case se, ok := <-sessionPool:
+			if !ok {
+				log.Panic("Session pool closed before pipeline finished.")
+			}
+			session = se
+		}
+
+		defer func() {
+			sessionPool <- session
+		}()
+		log.Debug("altering table mode to normal",
+			zap.Int64("schemaID", tbl.Table.DBID),
+			zap.Int64("tableID", tbl.Table.ID),
+			zap.Stringer("table", tbl.Table.Name))
+		if err := session.AlterTableMode(c, tbl.Table.DBID, tbl.Table.ID, model.TableModeNormal); err != nil {
+			return errors.Annotatef(err, "failed to alter table mode for table with schemaID=%d, tableID=%d",
+				tbl.Table.DBID, tbl.Table.ID)
+		}
+		tbl.Table.Mode = model.TableModeNormal
+		updateCh.Inc()
+		return nil
+	}, func(context.Context) error {
+		log.Info("all table modes set to normal")
+		return nil
+	})
 }
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(

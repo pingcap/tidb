@@ -78,6 +78,7 @@ const (
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
+	flagDestroyTables            = "destroy-tables"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -259,6 +260,36 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	return errors.Trace(err)
+}
+
+type AbortRestoreConfig struct {
+	RestoreConfig
+
+	DestroyTables bool `json:"destroy-tables" toml:"destroy-tables"`
+}
+
+// DefineAbortRestoreFlags defines flags for abort restore commands.
+func DefineAbortRestoreFlags(flags *pflag.FlagSet) {
+	flags.Bool(flagDestroyTables, true, "whether destroy restored tables when aborting restore")
+	_ = flags.MarkHidden(flagDestroyTables)
+}
+
+// ParseFromFlags parses the abort-restore-related flags from the flag set.
+func (cfg *AbortRestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
+	if err := cfg.RestoreConfig.ParseFromFlags(flags, skipCommonConfig); err != nil {
+		return errors.Trace(err)
+	}
+	if flags.Lookup(flagDestroyTables) == nil {
+		cfg.DestroyTables = true
+		return nil
+	}
+
+	var err error
+	cfg.DestroyTables, err = flags.GetBool(flagDestroyTables)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagDestroyTables)
+	}
+	return nil
 }
 
 // RestoreConfig is the configuration specific for restore tasks.
@@ -1516,7 +1547,21 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
+	// cfg.ExplicitFilter && isPiTR && !isIncremental --> PiTR w/ table filter only,
+	// delivered in first day of pitr table filter.
+	// Added: all type snapshot restore, for avoiding mistakenly
+	// drop table -> resume from checkpoint -> data loss.
+	if !isPiTR || (isPiTR && cfg.ExplicitFilter && !client.IsIncremental()) {
+		for i, table := range tables {
+			if table.Info.IsSequence() || table.Info.IsView() {
+				continue
+			}
+			tableCopy := *table
+			tableCopy.Info = table.Info.Clone()
+			tableCopy.Info.Mode = model.TableModeRestore
+			tables[i] = &tableCopy
+		}
+	}
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -1715,6 +1760,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.InjectCall("run-snapshot-restore-after-create-tables", &err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2731,26 +2780,9 @@ func createDBsAndTables(
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
-	isIncremental bool) {
-	if cfg.ExplicitFilter && isPiTR && !isIncremental {
-		for i, table := range tables {
-			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
-			if table.Info.IsSequence() {
-				continue
-			}
-			tableCopy := *table
-			tableCopy.Info = table.Info.Clone()
-			tableCopy.Info.Mode = model.TableModeRestore
-			tables[i] = &tableCopy
-		}
-		log.Info("set tables to restore mode for filtered PiTR restore", zap.Int("table count", len(tables)))
-	}
-}
-
 // RunRestoreAbort aborts a restore task by finding it in the registry and cleaning up
 // Similar to resumeOrCreate, it first resolves the restoredTS then finds and deletes the matching paused task
-func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *AbortRestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -2784,7 +2816,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 			// For PiTR with full backup, get startTS from full backup meta
 			if len(cfg.FullBackupStorage) > 0 && cfg.StartTS == 0 {
-				startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
+				startTS, fullClusterID, err := getFullBackupTS(ctx, &cfg.RestoreConfig)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -2869,7 +2901,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	}
 
 	// clean up checkpoint data
-	cleanUpCheckpoints(ctx, cfg)
+	cleanUpCheckpoints(ctx, &cfg.RestoreConfig)
 
 	log.Info("successfully aborted restore task and cleaned up checkpoint data. "+
 		"Use drop statements to clean up the restored data from the cluster if you want to.",
