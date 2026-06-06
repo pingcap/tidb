@@ -1373,3 +1373,23 @@ a	b	c
 6	6	10
 7	7	20
 8	8	30
+drop table if exists t1;
+create table t1(a int, b int, c int, d int, e int, index iea(e,a), index ieb(e,b), index iec(e,c), index ied(e,d));
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5));
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:iea(e, a)	range:[1 1,1 1], [1 2,1 2], [1 3,1 3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:ieb(e, b)	range:[1 2,1 2], [1 3,1 3], [1 4,1 4], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:iec(e, c)	range:[1 3,1 3], [1 4,1 4], [1 5,1 5], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(planner__core__indexmerge_path.t1.e, 1), or(in(planner__core__indexmerge_path.t1.a, 1, 2, 3), or(in(planner__core__indexmerge_path.t1.b, 2, 3, 4), in(planner__core__indexmerge_path.t1.c, 3, 4, 5)))
+  └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5)) limit 3;
+id	task	access object	operator info
+Limit	root		offset:0, count:3
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:iea(e, a)	range:[1 1,1 1], [1 2,1 2], [1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:ieb(e, b)	range:[1 2,1 2], [1 3,1 3], [1 4,1 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:iec(e, c)	range:[1 3,1 3], [1 4,1 4], [1 5,1 5], keep order:false, stats:pseudo
+  └─Limit(Probe)	cop[tikv]		offset:0, count:3
+    └─Selection	cop[tikv]		eq(planner__core__indexmerge_path.t1.e, 1), or(in(planner__core__indexmerge_path.t1.a, 1, 2, 3), or(in(planner__core__indexmerge_path.t1.b, 2, 3, 4), in(planner__core__indexmerge_path.t1.c, 3, 4, 5)))
+      └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
