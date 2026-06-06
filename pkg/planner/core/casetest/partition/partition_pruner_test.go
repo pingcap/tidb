@@ -121,6 +121,35 @@ func checkPrunePartitionInfo(c *testing.T, query string, infos1 string, plan []s
 	require.Equal(c, infos1, infos2, comment)
 }
 
+func getPartitionsFromPlan(plan []string) []string {
+	partitions := make([]string, 0, 1)
+	seen := make(map[string]struct{})
+	for _, row := range plan {
+		partitionList := coretestsdk.GetFieldValue("partition:", row)
+		if partitionList == "" {
+			continue
+		}
+		for _, partition := range strings.Split(partitionList, ",") {
+			partition = strings.TrimSpace(partition)
+			if partition == "" {
+				continue
+			}
+			if _, ok := seen[partition]; ok {
+				continue
+			}
+			seen[partition] = struct{}{}
+			partitions = append(partitions, partition)
+		}
+	}
+	sort.Strings(partitions)
+	return partitions
+}
+
+func checkPlanPartitions(c *testing.T, query string, expected []string, plan []string) {
+	comment := fmt.Sprintf("the query is: %v, the plan is:\n%v", query, strings.Join(plan, "\n"))
+	require.Equal(c, expected, getPartitionsFromPlan(plan), comment)
+}
+
 func TestListColumnsPartitionPruner(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
@@ -236,6 +265,108 @@ func TestPointGetIntHandleNotFirst(t *testing.T) {
 
 		tk.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
 		tk.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
+	})
+}
+
+func TestIndexJoinDerivesStaticPartitionPruningConds(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+		tk.MustExec("drop table if exists t_launch, t_log")
+		tk.MustExec(`create table t_launch (
+			id bigint primary key,
+			login_name varchar(64) not null,
+			created_time datetime not null,
+			key idx_launch_ct_ln(created_time, login_name)
+		)`)
+		tk.MustExec(`create table t_log (
+			id bigint not null,
+			login_name varchar(64) not null,
+			created_time datetime not null,
+			transaction_type tinyint not null,
+			amount bigint not null,
+			primary key (id, created_time),
+			key idx_log_core(login_name, transaction_type, created_time)
+		)
+		partition by range (TO_DAYS(created_time)) (
+			partition p0 values less than (TO_DAYS('2025-09-02')),
+			partition p1 values less than (TO_DAYS('2025-09-03')),
+			partition p2 values less than (MAXVALUE)
+		)`)
+
+		tk.MustExec(`insert into t_launch values
+			(1, 'u1', '2025-09-02 12:00:00'),
+			(2, 'u2', '2025-09-03 12:00:00')`)
+		tk.MustExec(`insert into t_log values
+			(11, 'u1', '2025-09-02 12:00:05', 3, 10),
+			(12, 'u2', '2025-09-03 12:00:05', 3, 10)`)
+
+		query := `select /*+ INL_HASH_JOIN(sl) */ l.id, sl.id
+from t_launch l use index (idx_launch_ct_ln)
+join t_log sl use index (idx_log_core)
+  on sl.login_name = l.login_name
+ and sl.transaction_type = 3
+ and sl.created_time >= l.created_time - interval 10 second
+ and sl.created_time <= l.created_time + interval 10 second
+		where l.created_time >= '2025-09-02 00:01:00'
+		  and l.created_time < '2025-09-02 23:59:00'
+		  and sl.amount <> 0`
+		tk.MustQuery(query).Check(testkit.Rows("1 11"))
+		plan := tk.MustQuery("explain format = 'plan_tree' " + query)
+		plan.MultiCheckContain([]string{
+			"IndexHashJoin",
+			"idx_log_core",
+		})
+		checkPlanPartitions(t, query, []string{"p1"}, testdata.ConvertRowsToStrings(plan.Rows()))
+	})
+}
+
+func TestIndexJoinDerivesStaticPartitionPruningCondsFromEqJoinKey(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+		tk.MustExec("drop table if exists t_launch_eq, t_log_eq")
+		tk.MustExec(`create table t_launch_eq (
+			id bigint primary key,
+			created_time datetime not null,
+			key idx_launch_ct(created_time)
+		)`)
+		tk.MustExec(`create table t_log_eq (
+			id bigint not null,
+			created_time datetime not null,
+			amount bigint not null,
+			primary key (id, created_time),
+			key idx_log_ct(created_time)
+		)
+		partition by range (TO_DAYS(created_time)) (
+			partition p0 values less than (TO_DAYS('2025-09-02')),
+			partition p1 values less than (TO_DAYS('2025-09-03')),
+			partition p2 values less than (MAXVALUE)
+		)`)
+
+		tk.MustExec(`insert into t_launch_eq values
+			(1, '2025-09-02 12:00:00'),
+			(2, '2025-09-03 12:00:00')`)
+		tk.MustExec(`insert into t_log_eq values
+			(11, '2025-09-02 12:00:00', 10),
+			(12, '2025-09-03 12:00:00', 10)`)
+
+		query := `select /*+ INL_HASH_JOIN(sl) */ l.id, sl.id
+from t_launch_eq l use index (idx_launch_ct)
+join t_log_eq sl use index (idx_log_ct)
+  on sl.created_time = l.created_time
+where l.created_time >= '2025-09-02 00:01:00'
+  and l.created_time < '2025-09-02 23:59:00'
+  and sl.amount <> 0`
+		tk.MustQuery(query).Check(testkit.Rows("1 11"))
+		plan := tk.MustQuery("explain format = 'plan_tree' " + query)
+		plan.MultiCheckContain([]string{
+			"IndexHashJoin",
+			"idx_log_ct",
+		})
+		checkPlanPartitions(t, query, []string{"p1"}, testdata.ConvertRowsToStrings(plan.Rows()))
 	})
 }
 
