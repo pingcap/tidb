@@ -141,6 +141,10 @@ func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
 func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []base.PhysicalPlan {
+	if p.JoinType == logicalop.FullOuterJoin {
+		return nil
+	}
+
 	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties)+1)
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
