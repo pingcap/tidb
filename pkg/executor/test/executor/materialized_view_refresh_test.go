@@ -1556,7 +1556,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverRevisionCASMismatch(t *
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
-	)).Check(testkit.Rows("failed complete manually 1 1"))
+	)).Check(testkit.Rows("failed complete out of place manual 1 1"))
 	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 	require.NotEmpty(t, tk.MustQuery("show index from mv where Key_name = 'idx_mv_s_refresh_ddl'").Rows())
