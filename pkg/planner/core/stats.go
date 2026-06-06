@@ -135,14 +135,8 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
-<<<<<<< HEAD
-	for _, path := range ds.PossibleAccessPaths {
-=======
-	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
-	// Fill index paths for all paths
 	ds.CheckPartialIndexes()
-	for _, path := range ds.AllPossibleAccessPaths {
->>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}

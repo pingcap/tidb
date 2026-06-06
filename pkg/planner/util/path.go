@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -423,8 +424,6 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }
-<<<<<<< HEAD
-=======
 
 // IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
 // the table scan.
@@ -465,4 +464,3 @@ func (path *AccessPath) IsUndetermined() bool {
 func (path *AccessPath) IsIndexJoinUnapplicable() bool {
 	return path.IsUndetermined()
 }
->>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))

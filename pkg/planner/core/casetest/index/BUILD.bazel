@@ -9,32 +9,18 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/parser/model",
-=======
-    shard_count = 11,
-    deps = [
-        "//pkg/domain",
-        "//pkg/domain/infosync",
-        "//pkg/parser/ast",
-        "//pkg/planner/util",
-        "//pkg/session/sessmgr",
->>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
-<<<<<<< HEAD
         "//pkg/util",
-=======
-        "@com_github_pingcap_failpoint//:failpoint",
->>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

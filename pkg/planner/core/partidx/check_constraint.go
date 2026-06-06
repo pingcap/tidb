@@ -69,7 +69,10 @@ func canBeImpliedFromExprs(
 	pre expression.Expression,
 	filters []expression.Expression,
 ) bool {
-	sf := pre.(*expression.ScalarFunction)
+	sf, ok := pre.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
 
 	if sf.FuncName.L == ast.UnaryNot {
 		nf, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
@@ -204,6 +207,14 @@ func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column,
 		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
 			return false
 		}
+	}
+	if filter.FuncName.L == ast.UnaryNot {
+		innerSf, ok := filter.GetArgs()[0].(*expression.ScalarFunction)
+		if !ok || innerSf.FuncName.L != ast.IsNull {
+			return false
+		}
+		col, ok := innerSf.GetArgs()[0].(*expression.Column)
+		return ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol)
 	}
 	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {
 		if filter.FuncName.L == ast.NullEQ {

@@ -1456,14 +1456,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// so that the table paths are still added here to avoid failing to find any physical plan.
 	allUndeterminedPath := true
 	for _, availablePath := range available {
-<<<<<<< HEAD
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
-=======
 		if !availablePath.IsUndetermined() {
 			allUndeterminedPath = false
 			break
->>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))
 		}
 	}
 	if allUndeterminedPath {
