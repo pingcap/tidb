@@ -573,6 +573,20 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		if x.StoreType == kv.TiFlash {
 			return false, "TiFlash plan is un-cacheable"
 		}
+		if x.tablePlan != nil {
+			subPlans = append(subPlans, x.tablePlan)
+		}
+	case *PhysicalIndexReader:
+		if x.indexPlan != nil {
+			subPlans = append(subPlans, x.indexPlan)
+		}
+	case *PhysicalIndexLookUpReader:
+		if x.indexPlan != nil {
+			subPlans = append(subPlans, x.indexPlan)
+		}
+		if x.tablePlan != nil {
+			subPlans = append(subPlans, x.tablePlan)
+		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "get a Shuffle plan"
 	case *PhysicalMemTable:

@@ -694,36 +694,17 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 // And we specially implement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
 // It's a special handler now, and it's not easy to extend to other constraints.
 func (ds *DataSource) CheckPartialIndexes() {
-	var columnNames types.NameSlice
 	var removedPaths map[int64]struct{}
 	partialIndexUsedHint, hasPartialIndex := false, false
 	for _, path := range ds.PossibleAccessPaths {
 		// If there is no condition expression, it is not a partial index.
 		// So we skip it directly.
-		if path.Index == nil || path.Index.ConditionExprString == "" {
+		if path.Index == nil || !path.Index.HasCondition() {
 			continue
 		}
 		hasPartialIndex = true
-		if columnNames == nil {
-			columnNames = make(types.NameSlice, 0, ds.schema.Len())
-			for i := range ds.Schema().Columns {
-				columnNames = append(columnNames, &types.FieldName{
-					TblName: ds.TableInfo.Name,
-					ColName: ds.Columns[i].Name,
-				})
-			}
-		}
-		// Convert the raw string expression to Expression.
-		expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), path.Index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
-		if err != nil {
-			if removedPaths == nil {
-				removedPaths = make(map[int64]struct{})
-			}
-			removedPaths[path.Index.ID] = struct{}{}
-			continue
-		}
-		cnfExprs := expression.SplitCNFItems(expr)
-		if !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+		valid, notAlwaysValid := ds.CheckPartialIndexByFilters(path.Index, ds.PushedDownConds)
+		if !valid {
 			if removedPaths == nil {
 				removedPaths = make(map[int64]struct{})
 			}
@@ -736,7 +717,7 @@ func (ds *DataSource) CheckPartialIndexes() {
 		// A special handler for plan cache.
 		// We only do it for single IS NOT NULL constraint now.
 		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
-			path.PartIdxCondNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+			path.PartIdxCondNotAlwaysValid = notAlwaysValid
 		}
 	}
 	// 1. No partial index,
@@ -761,4 +742,34 @@ func (ds *DataSource) CheckPartialIndexes() {
 			return checkIndex(path, false)
 		})
 	}
+}
+
+// CheckPartialIndexByFilters checks if filters can prove the partial index condition.
+// The second return value indicates whether the condition cannot be guaranteed for all parameter values.
+func (ds *DataSource) CheckPartialIndexByFilters(index *model.IndexInfo, filters []expression.Expression) (valid bool, notAlwaysValid bool) {
+	if index == nil || !index.HasCondition() {
+		return true, false
+	}
+	columnNames := make(types.NameSlice, 0, ds.schema.Len())
+	for i := range ds.Schema().Columns {
+		columnNames = append(columnNames, &types.FieldName{
+			TblName: ds.TableInfo.Name,
+			ColName: ds.Columns[i].Name,
+		})
+	}
+	expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
+	if err != nil {
+		return false, false
+	}
+	cnfExprs := expression.SplitCNFItems(expr)
+	exprCtx := ds.SCtx().GetExprCtx()
+	normalizedFilters := make([]expression.Expression, len(filters))
+	for i, filter := range filters {
+		normalizedFilters[i] = expression.PushDownNot(exprCtx, filter)
+		normalizedFilters[i] = expression.EliminateNoPrecisionLossCast(exprCtx, normalizedFilters[i])
+	}
+	if !partidx.CheckConstraints(ds.SCtx(), cnfExprs, normalizedFilters) {
+		return false, false
+	}
+	return true, !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, normalizedFilters)
 }

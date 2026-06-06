@@ -42,11 +42,11 @@ TableReader	3323.33	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='brief' select * from t where c = 10 and b > 30;
 id	estRows	task	access object	operator info
-Selection	1.00	root		gt(planner__core__casetest__index__partialindex.t.b, 30)
+Selection	0.33	root		gt(planner__core__casetest__index__partialindex.t.b, 30)
 └─Point_Get	1.00	root	table:t, index:idx3(c)	
 explain format='brief' select * from t where c = 10 and b > 40;
 id	estRows	task	access object	operator info
-Selection	1.00	root		gt(planner__core__casetest__index__partialindex.t.b, 40)
+Selection	0.33	root		gt(planner__core__casetest__index__partialindex.t.b, 40)
 └─Point_Get	1.00	root	table:t, index:idx3(c)	
 explain format='brief' select * from t where c > 20;
 id	estRows	task	access object	operator info
