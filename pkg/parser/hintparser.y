@@ -32,6 +32,8 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []model.CIStr
+    leadingList *ast.LeadingList
+    leadingElement interface{} // Modified: Represents either *ast.HintTable or *ast.LeadingList
 }
 
 %token	<number>
@@ -189,6 +191,12 @@ import (
 	PartitionList    "partition name list in optimizer hint"
 	PartitionListOpt "optional partition name list in optimizer hint"
 
+%type	<leadingList>
+	LeadingTableList "leading table list"
+
+%type	<leadingElement>
+	LeadingTableElement "leading element (table or list)"
+
 
 %start	Start
 
@@ -244,6 +252,27 @@ TableOptimizerHintOpt:
 	{
 		h := $3
 		h.HintName = model.NewCIStr($1)
+		$$ = h
+	}
+|	"LEADING" '(' QueryBlockOpt LeadingTableList ')'
+	{
+		h := &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			HintData: $4,
+		}
+		// For LEADING hints we need to maintain two views of the tables:
+		// h.HintData:
+		//   - Stores the structured AST node (LeadingList).
+		//   - Preserves the nesting and order information of LEADING(...),
+		//
+		// h.Tables:
+		//   - Stores a flat slice of all HintTable elements inside the LeadingList.
+		//   - Only used for initialization.
+		if leadingList, ok := h.HintData.(*ast.LeadingList); ok {
+			// be compatible with the prior flatten writing style
+			h.Tables = ast.FlattenLeadingList(leadingList)
+		}
 		$$ = h
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
@@ -414,6 +443,28 @@ HintStorageTypeAndTable:
 		h := $3
 		h.HintData = model.NewCIStr($1)
 		$$ = h
+	}
+
+LeadingTableList:
+	LeadingTableElement
+	{
+		$$ = &ast.LeadingList{Items: []interface{}{$1}}
+	}
+|	LeadingTableList ',' LeadingTableElement
+	{
+		$$ = $1
+		$$.Items = append($$.Items, $3)
+	}
+
+LeadingTableElement:
+	HintTable
+	{
+		tmp := $1
+		$$ = &tmp
+	}
+|	'(' LeadingTableList ')'
+	{
+		$$ = $2
 	}
 
 QueryBlockOpt:
@@ -655,7 +706,6 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
-|	"LEADING"
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
@@ -781,7 +831,7 @@ Identifier:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
-|   "NO_INDEX_LOOKUP_PUSHDOWN"
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

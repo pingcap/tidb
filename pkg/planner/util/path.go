@@ -206,6 +206,19 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 	return path.StoreType == kv.TiFlash && path.Index == nil
 }
 
+// IsFullScanRange checks whether this access path covers the full scan range without any
+// filtering that limits the scanned table or index ranges. For integer-handle table paths,
+// tableInfo is used to account for unsigned primary-key handle ranges.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	return ranger.HasFullRange(path.Ranges, unsignedIntHandle)
+}
+
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.

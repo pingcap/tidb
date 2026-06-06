@@ -10,6 +10,7 @@ go_library(
         "//pkg/ddl",
         "//pkg/ddl/ingest/testutil",
         "//pkg/domain",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/session",
         "//pkg/sessionctx/variable",

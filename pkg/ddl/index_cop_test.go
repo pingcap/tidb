@@ -44,7 +44,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		idxInfo := tblInfo.FindIndexByName(idx)
 
 		sctx := tk.Session()
-		copCtx, err := ddl.NewReorgCopContext(store, ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
+		copCtx, err := ddl.NewReorgCopContext(ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 		require.NoError(t, err)
 		require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 		startKey := tbl.RecordPrefix()

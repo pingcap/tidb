@@ -1859,3 +1859,72 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
+	sv := GetSysVar(TiDBOptPartialOrderedIndexForTopN)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, TypeBool, sv.Type)
+	require.Equal(t, "OFF", sv.Value)
+
+	vars := NewSessionVars(nil)
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := sv.Validate(vars, "ON", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "on", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "OFF", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "off", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "1", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "0", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	_, err = sv.Validate(vars, "true", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "false", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "2", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "-1", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "yes", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "no", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	err = sv.SetSessionFromHook(vars, "ON")
+	require.NoError(t, err)
+	require.True(t, vars.OptPartialOrderedIndexForTopN)
+
+	err = sv.SetSessionFromHook(vars, "OFF")
+	require.NoError(t, err)
+	require.False(t, vars.OptPartialOrderedIndexForTopN)
+}

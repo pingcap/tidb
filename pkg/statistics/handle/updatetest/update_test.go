@@ -131,7 +131,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(0), stats1.RealtimeCount)
 
-	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
+	rs := testKit.MustQuery("select modify_count from mysql.stats_meta").Sort()
 	rs.Check(testkit.Rows("40", "70"))
 
 	rs = testKit.MustQuery("select tot_col_size from mysql.stats_histograms").Sort()

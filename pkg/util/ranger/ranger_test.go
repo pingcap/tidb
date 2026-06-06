@@ -1939,6 +1939,92 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[]",
 		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
 	checkRangeFallbackAndReset(t, sctx, false)
+
+	t.Run("appending to one emitted range does not corrupt peer ranges", func(t *testing.T) {
+		appendTK := testkit.NewTestKit(t, store)
+		appendTK.MustExec("use test")
+		appendSctx := appendTK.Session()
+		appendRctx := appendSctx.GetRangerCtx()
+		sql := "select * from t1 where a in (10,20,30) and b in (40,50,60)"
+		selection := getSelectionFromQuery(t, appendSctx, sql)
+		conds := selection.Conditions
+		cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+		res, err := ranger.DetachCondAndBuildRangeForIndex(appendRctx, conds, cols, lengths, 0)
+		require.NoError(t, err)
+		require.Len(t, res.Ranges, 9)
+		peer := res.Ranges[1].Clone()
+		anotherPeer := res.Ranges[3].Clone()
+
+		res.Ranges[0].LowVal = append(res.Ranges[0].LowVal, types.NewIntDatum(999))
+		res.Ranges[0].HighVal = append(res.Ranges[0].HighVal, types.NewIntDatum(999))
+		res.Ranges[0].Collators = append(res.Ranges[0].Collators, nil)
+
+		require.Equal(t, peer.LowVal, res.Ranges[1].LowVal)
+		require.Equal(t, peer.HighVal, res.Ranges[1].HighVal)
+		require.NotNil(t, res.Ranges[1].Collators[0])
+		require.NotNil(t, res.Ranges[1].Collators[1])
+		require.Equal(t, anotherPeer.LowVal, res.Ranges[3].LowVal)
+		require.Equal(t, anotherPeer.HighVal, res.Ranges[3].HighVal)
+		require.NotNil(t, res.Ranges[3].Collators[0])
+		require.NotNil(t, res.Ranges[3].Collators[1])
+	})
+
+	t.Run("appending to point-plus-tail ranges does not corrupt peer ranges", func(t *testing.T) {
+		binaryCollator := collate.GetBinaryCollator()
+		pointRanges := ranger.Ranges{
+			{
+				LowVal:     []types.Datum{types.NewIntDatum(10)},
+				HighVal:    []types.Datum{types.NewIntDatum(10)},
+				Collators:  []collate.Collator{binaryCollator},
+				LowExclude: false,
+			},
+			{
+				LowVal:     []types.Datum{types.NewIntDatum(20)},
+				HighVal:    []types.Datum{types.NewIntDatum(20)},
+				Collators:  []collate.Collator{binaryCollator},
+				LowExclude: false,
+			},
+		}
+		tailRanges := ranger.Ranges{
+			{
+				LowVal:      []types.Datum{types.NewIntDatum(40), types.NewIntDatum(70)},
+				HighVal:     []types.Datum{types.NewIntDatum(40), types.NewIntDatum(80)},
+				Collators:   []collate.Collator{binaryCollator, binaryCollator},
+				LowExclude:  false,
+				HighExclude: false,
+			},
+			{
+				LowVal:      []types.Datum{types.NewIntDatum(50), types.NewIntDatum(70)},
+				HighVal:     []types.Datum{types.NewIntDatum(50), types.NewIntDatum(80)},
+				Collators:   []collate.Collator{binaryCollator, binaryCollator},
+				LowExclude:  false,
+				HighExclude: false,
+			},
+		}
+
+		appended, rangeFallback := ranger.AppendRanges2PointRanges(pointRanges, tailRanges, 0)
+		require.False(t, rangeFallback)
+		require.Len(t, appended, 4)
+		require.Equal(t, "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]", fmt.Sprintf("%v", appended))
+
+		peer := appended[1].Clone()
+		anotherPeer := appended[2].Clone()
+		appended[0].LowVal = append(appended[0].LowVal, types.NewIntDatum(999))
+		appended[0].HighVal = append(appended[0].HighVal, types.NewIntDatum(999))
+		appended[0].Collators = append(appended[0].Collators, nil)
+
+		require.Equal(t, peer.LowVal, appended[1].LowVal)
+		require.Equal(t, peer.HighVal, appended[1].HighVal)
+		require.NotNil(t, appended[1].Collators[0])
+		require.NotNil(t, appended[1].Collators[1])
+		require.NotNil(t, appended[1].Collators[2])
+		require.Equal(t, anotherPeer.LowVal, appended[2].LowVal)
+		require.Equal(t, anotherPeer.HighVal, appended[2].HighVal)
+		require.NotNil(t, appended[2].Collators[0])
+		require.NotNil(t, appended[2].Collators[1])
+		require.NotNil(t, appended[2].Collators[2])
+	})
+
 	quota := res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2221,6 +2307,17 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
+	peer := ranges[1].Clone()
+	anotherPeer := ranges[3].Clone()
+	ranges[0].LowVal = append(ranges[0].LowVal, types.NewStringDatum("tail-low"))
+	ranges[0].HighVal = append(ranges[0].HighVal, types.NewStringDatum("tail-high"))
+	ranges[0].Collators = append(ranges[0].Collators, nil)
+	require.Equal(t, peer.LowVal, ranges[1].LowVal)
+	require.Equal(t, peer.HighVal, ranges[1].HighVal)
+	require.NotNil(t, ranges[1].Collators[0])
+	require.Equal(t, anotherPeer.LowVal, ranges[3].LowVal)
+	require.Equal(t, anotherPeer.HighVal, ranges[3].HighVal)
+	require.NotNil(t, ranges[3].Collators[0])
 	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, quota)
 	require.NoError(t, err)
 	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
