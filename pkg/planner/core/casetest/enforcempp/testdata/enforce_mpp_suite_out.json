@@ -541,13 +541,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- 5. cartesian join, cartesian banned.",
         "Plan": [
-          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
-          "├─TableReader_19(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_18",
-          "│ └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_17 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader_14(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_13",
-          "  └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashJoin_9 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_20(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
+          "│ └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_18 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_14",
+          "  └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.",
@@ -562,13 +562,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- 6. cartesian join, broadcast banned.",
         "Plan": [
-          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
-          "├─TableReader_19(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_18",
-          "│ └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_17 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader_14(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_13",
-          "  └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashJoin_9 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_20(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
+          "│ └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_18 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_14",
+          "  └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
@@ -583,13 +583,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
         "Plan": [
-          "TableReader_29 100000000.00 root  MppVersion: 2, data:ExchangeSender_28",
-          "└─ExchangeSender_28 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 100000000.00 mpp[tiflash]  CARTESIAN inner join",
-          "    ├─ExchangeReceiver_13(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan_14(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_30 100000000.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "└─ExchangeSender_29 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 100000000.00 mpp[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_15(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -601,13 +601,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
         "Plan": [
-          "TableReader_29 100000000.00 root  MppVersion: 2, data:ExchangeSender_28",
-          "└─ExchangeSender_28 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 100000000.00 mpp[tiflash]  CARTESIAN inner join",
-          "    ├─ExchangeReceiver_13(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan_14(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_30 100000000.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "└─ExchangeSender_29 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 100000000.00 mpp[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_15(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
