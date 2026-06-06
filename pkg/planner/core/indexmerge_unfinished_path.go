@@ -193,9 +193,15 @@ func initUnfinishedPathsFromExpr(
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
+<<<<<<< HEAD
 					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].accessFilters = append(ret[i].accessFilters, cnfItem)
 					ret[i].idxColHasAccessFilter[j] = true
+=======
+					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
+					ret[i].idxColHasUsableFilter[j] = true
+>>>>>>> d568a8528e9 (planner: support using nested `IN` to build IndexMerge path (#68962))
 					// Once we find one valid access filter for this column, we directly go to the next column without
 					// looking into other filters.
 					break
