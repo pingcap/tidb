@@ -197,10 +197,10 @@ func TestDPJoinReorder(t *testing.T) {
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN  " + sql).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN " + sql).Rows())
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
-		tk.MustQuery("EXPLAIN  " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("EXPLAIN " + sql).Check(testkit.Rows(output[i].Plan...))
 
 		dpResult := testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		require.Equalf(t, greedyResults[i], dpResult,

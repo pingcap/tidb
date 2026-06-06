@@ -1208,7 +1208,7 @@
     "Name": "TestJoinReorderPushSelection",
     "Cases": [
       {
-        "SQL": "explain  select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
+        "SQL": "explain select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
         "Plan": [
           "Projection_19 2.40 root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
           "└─Selection_20 2.40 root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
@@ -1226,7 +1226,7 @@
         ]
       },
       {
-        "SQL": "explain  select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
+        "SQL": "explain select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
         "Plan": [
           "Projection_19 2.40 root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
           "└─MergeJoin_20 2.40 root  inner join, left key:test.t1.id, right key:test.t2.id",
@@ -1244,7 +1244,7 @@
         ]
       },
       {
-        "SQL": "explain  select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub inner join t4 on sub.id=t4.id",
+        "SQL": "explain select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub inner join t4 on sub.id=t4.id",
         "Plan": [
           "Projection_19 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
           "└─Selection_20 2.40 root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
@@ -1262,7 +1262,7 @@
         ]
       },
       {
-        "SQL": "explain  select * from t1 where exists (select 1 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id)",
+        "SQL": "explain select * from t1 where exists (select 1 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id)",
         "Plan": [
           "MergeJoin_24 2.40 root  semi join, left key:test.t1.id, right key:test.t2.id",
           "├─MergeJoin_28(Build) 2.40 root  inner join, left key:test.t2.id, right key:test.t5.id",
@@ -1282,7 +1282,7 @@
         ]
       },
       {
-        "SQL": "explain  select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub inner join t4 on sub.id=t4.id",
+        "SQL": "explain select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub inner join t4 on sub.id=t4.id",
         "Plan": [
           "Projection_18 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
           "└─HashJoin_30 2.40 root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
@@ -1300,7 +1300,7 @@
         ]
       },
       {
-        "SQL": "explain  select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub inner join t4 on sub.id=t4.id",
+        "SQL": "explain select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub inner join t4 on sub.id=t4.id",
         "Plan": [
           "Projection_18 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
           "└─HashJoin_30 2.40 root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
@@ -1318,7 +1318,7 @@
         ]
       },
       {
-        "SQL": "explain  select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1 inner join t4 on sub1.id=t4.id) sub2 inner join t5 on sub2.id=t5.id",
+        "SQL": "explain select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1 inner join t4 on sub1.id=t4.id) sub2 inner join t5 on sub2.id=t5.id",
         "Plan": [
           "Projection_24 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.name, test.t5.id, test.t5.name",
           "└─Selection_25 2.40 root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
@@ -1346,14 +1346,14 @@
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "  └─TableReader(Probe) root  data:Selection",
-          "    └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "      └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_8 3.00 root  test.t1.a",
+          "└─HashJoin_11 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_18(Build) 3.00 root  data:Selection_17",
+          "  │ └─Selection_17 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan_16 3.00 cop[tikv] table:t2 keep order:false",
+          "  └─TableReader_15(Probe) 3.00 root  data:Selection_14",
+          "    └─Selection_14 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan_13 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100",
@@ -1363,18 +1363,18 @@
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_14 3.00 root  test.t1.a",
+          "└─HashJoin_17 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader_29(Build) 3.00 root  data:Selection_28",
+          "  │ └─Selection_28 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan_27 3.00 cop[tikv] table:t3 keep order:false",
+          "  └─HashJoin_19(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader_26(Build) 3.00 root  data:Selection_25",
+          "    │ └─Selection_25 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan_24 3.00 cop[tikv] table:t2 keep order:false",
+          "    └─TableReader_23(Probe) 3.00 root  data:Selection_22",
+          "      └─Selection_22 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_21 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000"
@@ -1383,22 +1383,22 @@
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
-          "  │   └─TableFullScan cop[tikv] table:t4 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "      │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_23 3.00 root  test.t1.a",
+          "└─HashJoin_26 3.00 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "  ├─TableReader_43(Build) 3.00 root  data:Selection_42",
+          "  │ └─Selection_42 3.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │   └─TableFullScan_41 3.00 cop[tikv] table:t4 keep order:false",
+          "  └─HashJoin_28(Probe) 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader_40(Build) 3.00 root  data:Selection_39",
+          "    │ └─Selection_39 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan_38 3.00 cop[tikv] table:t3 keep order:false",
+          "    └─HashJoin_30(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader_37(Build) 3.00 root  data:Selection_36",
+          "      │ └─Selection_36 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan_35 3.00 cop[tikv] table:t2 keep order:false",
+          "      └─TableReader_34(Probe) 3.00 root  data:Selection_33",
+          "        └─Selection_33 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan_32 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000 1 10000"
@@ -1407,48 +1407,48 @@
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a JOIN t5 ON t4.a = t5.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t4.a, test.t5.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t5.a))",
-          "  │   └─TableFullScan cop[tikv] table:t5 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
-          "    │   └─TableFullScan cop[tikv] table:t4 keep order:false",
-          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "      │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "      └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "        ├─TableReader(Build) root  data:Selection",
-          "        │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "        │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "        └─TableReader(Probe) root  data:Selection",
-          "          └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "            └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_36 3.00 root  test.t1.a",
+          "└─HashJoin_39 3.00 root  inner join, equal:[eq(test.t4.a, test.t5.a)]",
+          "  ├─TableReader_61(Build) 3.00 root  data:Selection_60",
+          "  │ └─Selection_60 3.00 cop[tikv]  not(isnull(test.t5.a))",
+          "  │   └─TableFullScan_59 3.00 cop[tikv] table:t5 keep order:false",
+          "  └─HashJoin_41(Probe) 3.00 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "    ├─TableReader_58(Build) 3.00 root  data:Selection_57",
+          "    │ └─Selection_57 3.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan_56 3.00 cop[tikv] table:t4 keep order:false",
+          "    └─HashJoin_43(Probe) 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "      ├─TableReader_55(Build) 3.00 root  data:Selection_54",
+          "      │ └─Selection_54 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      │   └─TableFullScan_53 3.00 cop[tikv] table:t3 keep order:false",
+          "      └─HashJoin_45(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─TableReader_52(Build) 3.00 root  data:Selection_51",
+          "        │ └─Selection_51 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        │   └─TableFullScan_50 3.00 cop[tikv] table:t2 keep order:false",
+          "        └─TableReader_49(Probe) 3.00 root  data:Selection_48",
+          "          └─Selection_48 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "            └─TableFullScan_47 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": null
       },
       {
         "SQL": "SELECT * FROM t2 JOIN t1 ON t2.a = t1.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t2.a = t4.a ORDER BY t2.a",
         "Plan": [
-          "Sort root  test.t2.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
-          "  │   └─TableFullScan cop[tikv] table:t4 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "      │   └─TableFullScan cop[tikv] table:t1 keep order:false",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "          └─TableFullScan cop[tikv] table:t2 keep order:false"
+          "Sort_25 3.00 root  test.t2.a",
+          "└─HashJoin_28 3.00 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
+          "  ├─TableReader_45(Build) 3.00 root  data:Selection_44",
+          "  │ └─Selection_44 3.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │   └─TableFullScan_43 3.00 cop[tikv] table:t4 keep order:false",
+          "  └─HashJoin_30(Probe) 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader_42(Build) 3.00 root  data:Selection_41",
+          "    │ └─Selection_41 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan_40 3.00 cop[tikv] table:t3 keep order:false",
+          "    └─HashJoin_32(Probe) 3.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─TableReader_39(Build) 3.00 root  data:Selection_38",
+          "      │ └─Selection_38 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      │   └─TableFullScan_37 3.00 cop[tikv] table:t1 keep order:false",
+          "      └─TableReader_36(Probe) 3.00 root  data:Selection_35",
+          "        └─Selection_35 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "          └─TableFullScan_34 3.00 cop[tikv] table:t2 keep order:false"
         ],
         "Result": [
           "1 100 1 10 1 1000 1 10000"
@@ -1457,18 +1457,18 @@
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a AND t1.b < t2.b JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)], other cond:lt(test.t1.b, test.t2.b)",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_14 3.00 root  test.t1.a",
+          "└─HashJoin_17 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader_29(Build) 3.00 root  data:Selection_28",
+          "  │ └─Selection_28 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan_27 3.00 cop[tikv] table:t3 keep order:false",
+          "  └─HashJoin_19(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)], other cond:lt(test.t1.b, test.t2.b)",
+          "    ├─TableReader_26(Build) 3.00 root  data:Selection_25",
+          "    │ └─Selection_25 3.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    │   └─TableFullScan_24 3.00 cop[tikv] table:t2 keep order:false",
+          "    └─TableReader_23(Probe) 3.00 root  data:Selection_22",
+          "      └─Selection_22 3.00 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan_21 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000"
@@ -1477,36 +1477,36 @@
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.b = t3.b ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "  ├─HashJoin(Build) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  │ ├─TableReader(Build) root  data:Selection",
-          "  │ │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │ │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "  │ └─TableReader(Probe) root  data:Selection",
-          "  │   └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "  │     └─TableFullScan cop[tikv] table:t1 keep order:false",
-          "  └─TableReader(Probe) root  data:Selection",
-          "    └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "      └─TableFullScan cop[tikv] table:t3 keep order:false"
+          "Sort_14 3.00 root  test.t1.a",
+          "└─HashJoin_18 3.00 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─HashJoin_19(Build) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  │ ├─TableReader_26(Build) 3.00 root  data:Selection_25",
+          "  │ │ └─Selection_25 3.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │ │   └─TableFullScan_24 3.00 cop[tikv] table:t2 keep order:false",
+          "  │ └─TableReader_23(Probe) 3.00 root  data:Selection_22",
+          "  │   └─Selection_22 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │     └─TableFullScan_21 3.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader_29(Probe) 3.00 root  data:Selection_28",
+          "    └─Selection_28 3.00 cop[tikv]  not(isnull(test.t3.b))",
+          "      └─TableFullScan_27 3.00 cop[tikv] table:t3 keep order:false"
         ],
         "Result": null
       },
       {
         "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t3.b > 0 ORDER BY t1.a, t3.a",
         "Plan": [
-          "Sort root  test.t1.a, test.t3.a",
-          "└─HashJoin root  CARTESIAN inner join",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  gt(test.t3.b, 0)",
-          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_12 9.00 root  test.t1.a, test.t3.a",
+          "└─HashJoin_15 9.00 root  CARTESIAN inner join",
+          "  ├─TableReader_27(Build) 3.00 root  data:Selection_26",
+          "  │ └─Selection_26 3.00 cop[tikv]  gt(test.t3.b, 0)",
+          "  │   └─TableFullScan_25 3.00 cop[tikv] table:t3 keep order:false",
+          "  └─HashJoin_17(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader_24(Build) 3.00 root  data:Selection_23",
+          "    │ └─Selection_23 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan_22 3.00 cop[tikv] table:t2 keep order:false",
+          "    └─TableReader_21(Probe) 3.00 root  data:Selection_20",
+          "      └─Selection_20 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_19 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000",
@@ -1520,22 +1520,22 @@
       {
         "SQL": "SELECT /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ * FROM (t1 JOIN t2 ON t1.a = t2.a), (t3 JOIN t4 ON t3.a = t4.a) ORDER BY t1.a, t3.a",
         "Plan": [
-          "Sort root  test.t1.a, test.t3.a",
-          "└─HashJoin root  CARTESIAN inner join",
-          "  ├─HashJoin(Build) root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
-          "  │ ├─TableReader(Build) root  data:Selection",
-          "  │ │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
-          "  │ │   └─TableFullScan cop[tikv] table:t4 keep order:false",
-          "  │ └─TableReader(Probe) root  data:Selection",
-          "  │   └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "  │     └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_15 9.00 root  test.t1.a, test.t3.a",
+          "└─HashJoin_18 9.00 root  CARTESIAN inner join",
+          "  ├─HashJoin_28(Build) 3.00 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "  │ ├─TableReader_35(Build) 3.00 root  data:Selection_34",
+          "  │ │ └─Selection_34 3.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │ │   └─TableFullScan_33 3.00 cop[tikv] table:t4 keep order:false",
+          "  │ └─TableReader_32(Probe) 3.00 root  data:Selection_31",
+          "  │   └─Selection_31 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │     └─TableFullScan_30 3.00 cop[tikv] table:t3 keep order:false",
+          "  └─HashJoin_20(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader_27(Build) 3.00 root  data:Selection_26",
+          "    │ └─Selection_26 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan_25 3.00 cop[tikv] table:t2 keep order:false",
+          "    └─TableReader_24(Probe) 3.00 root  data:Selection_23",
+          "      └─Selection_23 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_22 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000 1 10000",
@@ -1545,18 +1545,18 @@
       {
         "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_13 3.00 root  test.t1.a",
+          "└─HashJoin_16 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader_28(Build) 3.00 root  data:Selection_27",
+          "  │ └─Selection_27 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan_26 3.00 cop[tikv] table:t3 keep order:false",
+          "  └─HashJoin_18(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader_25(Build) 3.00 root  data:Selection_24",
+          "    │ └─Selection_24 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan_23 3.00 cop[tikv] table:t2 keep order:false",
+          "    └─TableReader_22(Probe) 3.00 root  data:Selection_21",
+          "      └─Selection_21 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_20 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000"
@@ -1565,18 +1565,18 @@
       {
         "SQL": "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t2.a",
         "Plan": [
-          "Sort root  test.t2.a",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "  └─HashJoin(Probe) root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_11 3.00 root  test.t2.a",
+          "└─HashJoin_14 3.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader_26(Build) 3.00 root  data:Selection_25",
+          "  │ └─Selection_25 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan_24 3.00 cop[tikv] table:t3 keep order:false",
+          "  └─HashJoin_16(Probe) 3.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader_23(Build) 3.00 root  data:Selection_22",
+          "    │ └─Selection_22 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan_21 3.00 cop[tikv] table:t2 keep order:false",
+          "    └─TableReader_20(Probe) 3.00 root  data:Selection_19",
+          "      └─Selection_19 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_18 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000"
@@ -1585,22 +1585,22 @@
       {
         "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
         "Plan": [
-          "Sort root  test.t1.a",
-          "└─HashJoin root  left outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t4.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
-          "  │   └─TableFullScan cop[tikv] table:t4 keep order:false",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false",
-          "    └─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "      │   └─TableFullScan cop[tikv] table:t2 keep order:false",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:false"
+          "Sort_15 3.00 root  test.t1.a",
+          "└─HashJoin_18 3.00 root  left outer join, equal:[eq(test.t3.a, test.t4.a)]",
+          "  ├─TableReader_35(Build) 3.00 root  data:Selection_34",
+          "  │ └─Selection_34 3.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │   └─TableFullScan_33 3.00 cop[tikv] table:t4 keep order:false",
+          "  └─HashJoin_20(Probe) 3.00 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "    ├─TableReader_32(Build) 3.00 root  data:Selection_31",
+          "    │ └─Selection_31 3.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan_30 3.00 cop[tikv] table:t3 keep order:false",
+          "    └─HashJoin_22(Probe) 3.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader_29(Build) 3.00 root  data:Selection_28",
+          "      │ └─Selection_28 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan_27 3.00 cop[tikv] table:t2 keep order:false",
+          "      └─TableReader_26(Probe) 3.00 root  data:Selection_25",
+          "        └─Selection_25 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan_24 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
           "1 10 1 100 1 1000 1 10000",
