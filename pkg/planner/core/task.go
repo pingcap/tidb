@@ -399,20 +399,22 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
 	task := &MppTask{p: p}
-	if p.JoinType != logicalop.FullOuterJoin {
-		outerTaskIndex := 1 - p.InnerChildIdx
-		if p.JoinType != logicalop.InnerJoin {
-			if p.JoinType == logicalop.RightOuterJoin {
-				outerTaskIndex = 1
-			} else {
-				outerTaskIndex = 0
-			}
-		}
-		// can not use the task from tasks because it maybe updated.
-		outerTask := lTask
-		if outerTaskIndex == 1 {
+	var outerTask *MppTask
+	// can not use the task from tasks because it maybe updated.
+	switch p.JoinType {
+	case logicalop.FullOuterJoin:
+	case logicalop.InnerJoin:
+		if p.InnerChildIdx == 0 {
 			outerTask = rTask
+		} else {
+			outerTask = lTask
 		}
+	case logicalop.RightOuterJoin:
+		outerTask = rTask
+	default:
+		outerTask = lTask
+	}
+	if outerTask != nil {
 		task.partTp = outerTask.partTp
 		task.hashCols = outerTask.hashCols
 	}
