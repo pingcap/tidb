@@ -522,14 +522,14 @@
       {
         "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
         "Plan": [
-          "TableReader_48 12500.00 root  MppVersion: 2, data:ExchangeSender_47",
-          "└─ExchangeSender_47 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_46 12500.00 mpp[tiflash]  test.t.a",
-          "    └─HashJoin_41 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "      ├─ExchangeReceiver_44(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_43 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─TableFullScan_42 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─TableFullScan_45(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_49 12500.00 root  MppVersion: 2, data:ExchangeSender_48",
+          "└─ExchangeSender_48 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_47 12500.00 mpp[tiflash]  test.t.a",
+          "    └─HashJoin_42 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "      ├─ExchangeReceiver_45(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_44 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─TableFullScan_43 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan_46(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
