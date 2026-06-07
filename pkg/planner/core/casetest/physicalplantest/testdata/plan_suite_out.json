@@ -1634,14 +1634,14 @@
       {
         "SQL": "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
         "Plan": [
-          "TableReader_32 3.00 root  MppVersion: 2, data:ExchangeSender_31",
-          "└─ExchangeSender_31 3.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_30 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
-          "    ├─ExchangeReceiver_14(Build) 5.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 5.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection_12 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-          "    │     └─TableFullScan_11 5.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
-          "    └─TableFullScan_15(Probe) 3.00 mpp[tiflash] table:t2 keep order:false"
+          "TableReader_33 3.00 root  MppVersion: 2, data:ExchangeSender_32",
+          "└─ExchangeSender_32 3.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_31 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
+          "    ├─ExchangeReceiver_15(Build) 5.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 5.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_13 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "    │     └─TableFullScan_12 5.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "    └─TableFullScan_16(Probe) 3.00 mpp[tiflash] table:t2 keep order:false"
         ],
         "Warn": null
       },
@@ -1663,16 +1663,16 @@
       {
         "SQL": "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
         "Plan": [
-          "TableReader_34 3.00 root  MppVersion: 2, data:ExchangeSender_33",
-          "└─ExchangeSender_33 3.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_32 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
-          "    ├─ExchangeReceiver_17(Build) 3.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_16 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
-          "    │   └─TableFullScan_15 3.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─ExchangeReceiver_14(Probe) 5.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_13 5.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
-          "        └─Selection_12 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-          "          └─TableFullScan_11 5.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+          "TableReader_35 3.00 root  MppVersion: 2, data:ExchangeSender_34",
+          "└─ExchangeSender_34 3.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_33 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
+          "    ├─ExchangeReceiver_18(Build) 3.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_17 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
+          "    │   └─TableFullScan_16 3.00 mpp[tiflash] table:t2 keep order:false",
+          "    └─ExchangeReceiver_15(Probe) 5.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_14 5.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
+          "        └─Selection_13 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "          └─TableFullScan_12 5.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
         ],
         "Warn": null
       }
