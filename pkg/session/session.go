@@ -2678,7 +2678,23 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 
 	var recordSet sqlexec.RecordSet
-	if stmt.PsStmt != nil { // point plan short path
+	// Point plan short path. The prepared case (stmt.PsStmt != nil) has used
+	// this path historically. The non-prepared extension applies when the
+	// statement's Plan is already a *PointGetPlan or *BatchPointGetPlan (set
+	// by TryFastPlan or the non-prepared plan cache) and the session opt-in
+	// is enabled. Both cases skip the runStmt envelope (rich trace events,
+	// flight recorder triggers, telemetry counters) in favour of the
+	// simplified flow below. ExecStmt.PointGet's executor build path is
+	// plan-type-agnostic; its cache only fires for *PointGetExecutor on
+	// prepared statements.
+	useShortcut := stmt.PsStmt != nil
+	if !useShortcut && s.sessionVars.EnablePointGetExecShortcut {
+		switch stmt.Plan.(type) {
+		case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+			useShortcut = true
+		}
+	}
+	if useShortcut {
 		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
 		// Emit stmt.start trace event (simplified for point-get fast path)
