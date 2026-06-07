@@ -220,10 +220,6 @@ func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	e.currTouchedIdxes = e.currTouchedIdxes[:0]
 	clear(e.touched)
 
-	if err := e.BaseExecutor.Open(ctx); err != nil {
-		return err
-	}
-
 	if e.TargetTable == nil {
 		return errors.New("MVCompleteDeltaApply target table is nil")
 	}
@@ -234,6 +230,13 @@ func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	if child == nil {
 		return errors.New("MVCompleteDeltaApply child executor is nil")
 	}
+	childTypes := child.RetFieldTypes()
+	if err := validateMVCompleteDeltaWritableInputColTypes(e.TargetTable, childTypes, e.MWritableInputColIDs); err != nil {
+		return err
+	}
+	if err := validateMVCompleteDeltaWritableInputColTypes(e.TargetTable, childTypes, e.QWritableInputColIDs); err != nil {
+		return err
+	}
 
 	writableCols := e.TargetTable.WritableCols()
 	e.writableFieldTypes = make([]*types.FieldType, len(writableCols))
@@ -243,7 +246,11 @@ func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	e.oldRow = make([]types.Datum, len(writableCols))
 	e.newRow = make([]types.Datum, len(writableCols))
 	e.touched = make([]bool, len(writableCols))
-	if err := e.initCompareColumns(len(child.RetFieldTypes())); err != nil {
+	if err := e.initCompareColumns(len(childTypes)); err != nil {
+		return err
+	}
+
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.currTouchedIdxes = make([]int, 0, len(e.compareColumns))

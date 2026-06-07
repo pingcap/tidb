@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -27,11 +28,17 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -83,6 +90,72 @@ func TestShouldUseImportIntoForMVRefreshOutOfPlace(t *testing.T) {
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("tikv"))
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace(kv.TiDB.Name()))
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("mock-storage"))
+}
+
+func newTestMVCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
+	return tables.MockTableFromMeta(&model.TableInfo{
+		ID:    1,
+		Name:  pmodel.NewCIStr("mv"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      pmodel.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *tp,
+				State:     model.StatePublic,
+			},
+		},
+	}).(*tables.TableCommon)
+}
+
+func TestValidateMVCompleteDeltaWritableInputColTypesAllowsNullableInput(t *testing.T) {
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTp.AddFlag(mysql.NotNullFlag)
+	targetTbl := newTestMVCompleteDeltaTargetTable(targetTp)
+
+	inputTp := targetTp.Clone()
+	inputTp.DelFlag(mysql.NotNullFlag)
+	require.NoError(t, validateMVCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{inputTp}, []int{0}))
+
+	unsignedInputTp := inputTp.Clone()
+	unsignedInputTp.AddFlag(mysql.UnsignedFlag)
+	err := validateMVCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
+	require.ErrorContains(t, err, "type mismatch")
+}
+
+type mvCompleteDeltaApplyOpenProbeChild struct {
+	exec.BaseExecutor
+	opened bool
+}
+
+func (e *mvCompleteDeltaApplyOpenProbeChild) Open(context.Context) error {
+	e.opened = true
+	return nil
+}
+
+func TestMVCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.T) {
+	sctx := mock.NewContext()
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTbl := newTestMVCompleteDeltaTargetTable(targetTp)
+	childSchema := expression.NewSchema(&expression.Column{
+		Index:   0,
+		RetType: targetTp,
+	})
+	child := &mvCompleteDeltaApplyOpenProbeChild{
+		BaseExecutor: exec.NewBaseExecutor(sctx, childSchema, 0),
+	}
+	applyExec := &MVCompleteDeltaApplyExec{
+		BaseExecutor:         exec.NewBaseExecutor(sctx, nil, 0, child),
+		TargetTable:          targetTbl,
+		TargetHandleCols:     plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
+		MWritableInputColIDs: []int{1},
+		QWritableInputColIDs: []int{0},
+	}
+
+	err := applyExec.Open(context.Background())
+	require.ErrorContains(t, err, "writable input col id 1")
+	require.False(t, child.opened)
 }
 
 func TestMarkMVCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {

@@ -268,6 +268,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop index idx_base_b on t")
 	tk.MustExec("create index idx_mv_s on mv (s)")
 	tk.MustExec("drop index idx_mv_s on mv")
+	tk.MustExec("create index idx_mv_hypo_expr type hypo on mv ((s + 1))")
+	tk.MustExec("drop hypo index idx_mv_hypo_expr on mv")
 	tk.MustExec("alter table t add column c int")
 	tk.MustExec("alter table t add index idx_base_c_alter (c)")
 	err = tk.ExecToErr("alter table t modify column a bigint")
