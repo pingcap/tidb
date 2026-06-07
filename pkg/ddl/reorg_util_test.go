@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
 	lightningtikv "github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -609,8 +611,7 @@ func TestPredictTiKVIndexBytesBlockSample(t *testing.T) {
 }
 
 func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
-	lastHeartbeat := time.Date(2026, 6, 3, 12, 0, 0, 123, time.UTC).UnixNano()
-	store := &metapb.Store{Id: 1, LastHeartbeat: lastHeartbeat}
+	store := &metapb.Store{Id: 1}
 	stats := &pdpb.StoreStats{
 		StoreId:   1,
 		Capacity:  1024,
@@ -625,95 +626,6 @@ func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
 	require.EqualValues(t, 1024, got.TotalBytes)
 	require.EqualValues(t, 960, got.AvailableBytes)
 	require.EqualValues(t, 321, got.UsedBytes)
-	require.EqualValues(t, lastHeartbeat, got.LastHeartbeat)
-}
-
-func TestCalcObservedTiKVCapacityIncrease(t *testing.T) {
-	initial := &TiKVClusterCapacity{
-		Stores: []TiKVStoreCapacity{
-			{StoreID: 1, UsedBytes: 100},
-			{StoreID: 2, UsedBytes: 200},
-		},
-	}
-	final := &TiKVClusterCapacity{
-		Stores: []TiKVStoreCapacity{
-			{StoreID: 2, UsedBytes: 230},
-			{StoreID: 1, UsedBytes: 150},
-		},
-	}
-	observed := calcObservedTiKVCapacityIncrease(initial, final)
-	require.True(t, observed.reliable)
-	require.Equal(t, "ok", observed.reason)
-	require.EqualValues(t, 80, observed.increase)
-
-	observed = calcObservedTiKVCapacityIncrease(initial, &TiKVClusterCapacity{
-		Stores: []TiKVStoreCapacity{
-			{StoreID: 1, UsedBytes: 150},
-			{StoreID: 3, UsedBytes: 300},
-		},
-	})
-	require.False(t, observed.reliable)
-	require.Equal(t, "store_set_changed", observed.reason)
-	require.Zero(t, observed.increase)
-
-	observed = calcObservedTiKVCapacityIncrease(&TiKVClusterCapacity{UsedBytes: 100}, final)
-	require.False(t, observed.reliable)
-	require.Equal(t, "initial_store_details_unavailable", observed.reason)
-}
-
-func TestWaitForFreshTiKVCapacity(t *testing.T) {
-	capacityForTest := func(stores ...TiKVStoreCapacity) *TiKVClusterCapacity {
-		capacity := &TiKVClusterCapacity{Source: tikvCapacitySourcePDGRPCStoreStats}
-		for _, store := range stores {
-			appendTiKVStoreCapacity(capacity, &store)
-		}
-		return capacity
-	}
-
-	finishMarker := capacityForTest(
-		TiKVStoreCapacity{StoreID: 1, TotalBytes: 1000, AvailableBytes: 900, UsedBytes: 100, LastHeartbeat: 10},
-		TiKVStoreCapacity{StoreID: 2, TotalBytes: 1000, AvailableBytes: 800, UsedBytes: 200, LastHeartbeat: 20},
-	)
-	snapshots := []*TiKVClusterCapacity{
-		capacityForTest(
-			TiKVStoreCapacity{StoreID: 1, TotalBytes: 1000, AvailableBytes: 890, UsedBytes: 110, LastHeartbeat: 11},
-			TiKVStoreCapacity{StoreID: 2, TotalBytes: 1000, AvailableBytes: 800, UsedBytes: 200, LastHeartbeat: 20},
-		),
-		capacityForTest(
-			TiKVStoreCapacity{StoreID: 1, TotalBytes: 1000, AvailableBytes: 880, UsedBytes: 120, LastHeartbeat: 12},
-			TiKVStoreCapacity{StoreID: 2, TotalBytes: 1000, AvailableBytes: 770, UsedBytes: 230, LastHeartbeat: 21},
-		),
-	}
-	nextSnapshot := 0
-	finalCapacity, freshness := waitForFreshTiKVCapacity(context.Background(), finishMarker,
-		func(context.Context) (*TiKVClusterCapacity, error) {
-			require.Less(t, nextSnapshot, len(snapshots))
-			snapshot := snapshots[nextSnapshot]
-			nextSnapshot++
-			return snapshot, nil
-		},
-		time.Nanosecond,
-		time.Second)
-	require.Equal(t, "ok", freshness.reliableReason)
-	require.Equal(t, 2, freshness.refreshedStoreCount)
-	require.Equal(t, 2, freshness.expectedStoreCount)
-	require.Equal(t, 2, nextSnapshot)
-	require.Equal(t, "ok", calcObservedTiKVCapacityIncrease(finishMarker, finalCapacity).reason)
-	require.EqualValues(t, 110, finalCapacity.Stores[0].UsedBytes)
-	require.EqualValues(t, 230, finalCapacity.Stores[1].UsedBytes)
-	require.EqualValues(t, 11, finalCapacity.Stores[0].LastHeartbeat)
-	require.EqualValues(t, 21, finalCapacity.Stores[1].LastHeartbeat)
-
-	timeoutFinal, timeoutFreshness := waitForFreshTiKVCapacity(context.Background(), finishMarker,
-		func(context.Context) (*TiKVClusterCapacity, error) {
-			return snapshots[0], nil
-		},
-		time.Nanosecond,
-		time.Millisecond)
-	require.Equal(t, "pd_heartbeat_refresh_timeout", timeoutFreshness.reliableReason)
-	require.Equal(t, 1, timeoutFreshness.refreshedStoreCount)
-	require.EqualValues(t, 110, timeoutFinal.Stores[0].UsedBytes)
-	require.EqualValues(t, 200, timeoutFinal.Stores[1].UsedBytes)
 }
 
 func TestObservedTiKVUsageTaskTiming(t *testing.T) {
@@ -741,6 +653,94 @@ func TestObservedTiKVUsageTaskTiming(t *testing.T) {
 	taskEndTime, taskExecutionDuration = observedTiKVUsageTaskTiming(task, time.Time{})
 	require.Equal(t, start.Add(-time.Second), taskEndTime)
 	require.Zero(t, taskExecutionDuration)
+
+	t.Run("deduplicate ingested SSTs", func(t *testing.T) {
+		summary := &execute.SubtaskSummary{}
+		recorder := newIngestedSSTRecorder(summary)
+		recorder.RecordIngestedSST("classic/uuid/default", 100)
+		recorder.RecordIngestedSST("classic/uuid/default", 100)
+		recorder.RecordIngestedSST("classic/uuid/write", 40)
+		recorder.RecordIngestedSST("classic/zero/default", 0)
+		recorder.RecordIngestedSST("", 10)
+		require.EqualValues(t, 140, summary.IngestedSSTBytes.Load())
+		require.EqualValues(t, 3, summary.IngestedSSTCount.Load())
+		require.EqualValues(t, 1, summary.IngestedSSTZeroSizeCount.Load())
+		require.EqualValues(t, 1, summary.IngestedSSTInvalidIdentityCount.Load())
+
+		recorder.Reset()
+		require.Zero(t, summary.IngestedSSTBytes.Load())
+		require.Zero(t, summary.IngestedSSTCount.Load())
+		recorder.RecordIngestedSST("classic/uuid/default", 100)
+		require.EqualValues(t, 100, summary.IngestedSSTBytes.Load())
+	})
+
+	summarySubtask := func(t *testing.T, bytes, count, zeroSizeCount, invalidIdentityCount uint64) *proto.Subtask {
+		summary := &execute.SubtaskSummary{}
+		summary.IngestedSSTBytes.Store(bytes)
+		summary.IngestedSSTCount.Store(count)
+		summary.IngestedSSTZeroSizeCount.Store(zeroSizeCount)
+		summary.IngestedSSTInvalidIdentityCount.Store(invalidIdentityCount)
+		data, err := json.Marshal(summary)
+		require.NoError(t, err)
+		return &proto.Subtask{Summary: string(data)}
+	}
+
+	t.Run("summarize classic ingested SSTs", func(t *testing.T) {
+		observation, err := summarizeIngestedSSTBytes(ingestedSSTBytesSourceClassic, 200,
+			[]*proto.Subtask{summarySubtask(t, 100, 1, 0, 0)},
+			[]*proto.Subtask{summarySubtask(t, 40, 1, 0, 0)})
+		require.NoError(t, err)
+		require.EqualValues(t, 140, observation.bytes)
+		require.True(t, observation.reliable)
+		require.Equal(t, "ok", observation.reason)
+
+		observation, err = summarizeIngestedSSTBytes(
+			ingestedSSTBytesSourceClassic, 200,
+			[]*proto.Subtask{summarySubtask(t, 0, 1, 1, 0)})
+		require.NoError(t, err)
+		require.False(t, observation.reliable)
+		require.Equal(t, "classic_tikv_data_metric_unsupported", observation.reason)
+
+		observation, err = summarizeIngestedSSTBytes(
+			ingestedSSTBytesSourceClassic, 200,
+			[]*proto.Subtask{summarySubtask(t, 100, 2, 1, 0)})
+		require.NoError(t, err)
+		require.EqualValues(t, 100, observation.bytes)
+		require.False(t, observation.reliable)
+		require.Equal(t, "classic_tikv_data_metric_unsupported", observation.reason)
+
+		observation, err = summarizeIngestedSSTBytes(ingestedSSTBytesSourceClassic, 200, nil)
+		require.NoError(t, err)
+		require.False(t, observation.reliable)
+		require.Equal(t, "ingested_sst_summary_unavailable", observation.reason)
+	})
+
+	t.Run("summarize next-gen ingested SSTs", func(t *testing.T) {
+		observation, err := summarizeIngestedSSTBytes(
+			ingestedSSTBytesSourceNextGen, 200,
+			[]*proto.Subtask{summarySubtask(t, 0, 1, 1, 0)})
+		require.NoError(t, err)
+		require.False(t, observation.reliable)
+		require.Equal(t, "next_gen_sst_size_unavailable", observation.reason)
+
+		observation, err = summarizeIngestedSSTBytes(
+			ingestedSSTBytesSourceNextGen, 200,
+			[]*proto.Subtask{summarySubtask(t, 100, 1, 0, 1)})
+		require.NoError(t, err)
+		require.False(t, observation.reliable)
+		require.Equal(t, "ingested_sst_identity_unavailable", observation.reason)
+	})
+
+	t.Run("decode legacy block sample prediction", func(t *testing.T) {
+		taskMeta := &BackfillTaskMeta{}
+		err := json.Unmarshal([]byte(`{
+			"block_sample_steady_predicted_tikv_index_bytes":123,
+			"tikv_replica_count":3
+		}`), taskMeta)
+		require.NoError(t, err)
+		require.EqualValues(t, 123, taskMeta.blockSamplePredictedTiKVIndexAllReplicaBytes())
+		require.EqualValues(t, 41, taskMeta.blockSamplePredictedTiKVIndexSingleReplicaBytes())
+	})
 }
 
 func TestCollectTiKVStoreCapacity(t *testing.T) {
