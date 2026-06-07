@@ -107,6 +107,17 @@ type SubtaskSummary struct {
 	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 	// PutReqCnt is the number of put requests to the external storage.
 	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
+	// IngestedSSTBytes is the deduplicated size of SST files successfully
+	// ingested by this subtask.
+	IngestedSSTBytes atomic.Uint64 `json:"ingested_sst_bytes,omitempty"`
+	// IngestedSSTCount is the number of deduplicated SST files successfully
+	// ingested by this subtask.
+	IngestedSSTCount atomic.Uint64 `json:"ingested_sst_count,omitempty"`
+	// IngestedSSTZeroSizeCount counts ingested SSTs whose returned size is zero.
+	IngestedSSTZeroSizeCount atomic.Uint64 `json:"ingested_sst_zero_size_count,omitempty"`
+	// IngestedSSTInvalidIdentityCount counts ingested SSTs that cannot be
+	// deduplicated because the storage layer did not return an identity.
+	IngestedSSTInvalidIdentityCount atomic.Uint64 `json:"ingested_sst_invalid_identity_count,omitempty"`
 
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
@@ -188,8 +199,18 @@ func (s *SubtaskSummary) Reset() {
 	s.ReadBytes.Store(0)
 	s.PutReqCnt.Store(0)
 	s.GetReqCnt.Store(0)
+	s.IngestedSSTBytes.Store(0)
+	s.IngestedSSTCount.Store(0)
+	s.IngestedSSTZeroSizeCount.Store(0)
+	s.IngestedSSTInvalidIdentityCount.Store(0)
 	s.Progresses = s.Progresses[:0]
 	s.Update()
+}
+
+// IngestedSSTCollector is optionally implemented by collectors that need the
+// metadata of SST files after the storage layer confirms a successful ingest.
+type IngestedSSTCollector interface {
+	RecordIngestedSST(identity string, size uint64)
 }
 
 // Collector is the interface for collecting subtask metrics.
