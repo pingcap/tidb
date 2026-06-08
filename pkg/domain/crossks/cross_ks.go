@@ -58,9 +58,6 @@ type runtimeEntry struct {
 	sessMgr       *SessionManager
 	activeHolders map[string]struct{}
 	lastReleaseAt time.Time
-	// rawAccessed is set by the temporary raw getters. Raw users do not have a
-	// release boundary, so entries touched this way are not safe to idle-evict.
-	rawAccessed bool
 }
 
 // Manager manages all cross keyspace sessions.
@@ -70,8 +67,6 @@ type Manager struct {
 	store kv.Storage
 	// keyspace name -> runtime entry
 	runtimes map[string]*runtimeEntry
-
-	newSessionManager func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)
 }
 
 // NewManager creates a new cross keyspace session manager.
@@ -111,6 +106,9 @@ func (m *Manager) GetOrCreate(
 	if err := m.validateTargetKS(ks); err != nil {
 		return nil, err
 	}
+	if mgr, ok := m.get(ks); ok {
+		return mgr, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -118,7 +116,6 @@ func (m *Manager) GetOrCreate(
 	if err != nil {
 		return nil, err
 	}
-	entry.rawAccessed = true
 	return entry.sessMgr, nil
 }
 
@@ -184,12 +181,9 @@ func (m *Manager) getOrCreateEntryWithoutLock(
 		return entry, nil
 	}
 
-	newSessionManager := m.createSessionManager
-	if m.newSessionManager != nil {
-		newSessionManager = m.newSessionManager
-	}
-	failpoint.InjectCall("mockCreateSessionManager", &newSessionManager)
-	mgr, err := newSessionManager(ks, ksSessFactoryGetter)
+	createSessionManager := m.createSessionManager
+	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
+	mgr, err := createSessionManager(ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -334,12 +328,15 @@ func (*Manager) createSessionManager(
 	return mgr, nil
 }
 
-func (m *Manager) release(targetKS string, holderID string, entry *runtimeEntry) {
+// release releases the runtime handle for the specified keyspace and holderID.
+// the resources will be cleaned up if there is no active holder after enough
+// time.
+func (m *Manager) release(targetKS string, holderID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	current, ok := m.runtimes[targetKS]
-	if !ok || current != entry {
+	entry, ok := m.runtimes[targetKS]
+	if !ok {
 		return
 	}
 	delete(entry.activeHolders, holderID)
@@ -352,31 +349,35 @@ func (m *Manager) release(targetKS string, holderID string, entry *runtimeEntry)
 		zap.Int("activeHolderCount", len(entry.activeHolders)))
 }
 
-// RunGCLoop periodically evicts idle cross keyspace runtimes until ctx is canceled.
-func (m *Manager) RunGCLoop(ctx context.Context) {
-	ticker := time.NewTicker(crossKSRuntimeSweepInterval)
+// RunSystemKSGCLoop periodically evicts idle cross keyspace runtimes.
+// as the name noted, this loop only runs in SYSTEM keyspace, user keyspace
+// only access the SYSTEM ks, and will be kept alive.
+func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
+	interval := crossKSRuntimeSweepInterval
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
-			m.sweepIdleRuntimes(now, crossKSRuntimeIdleTimeout)
+		case <-ticker.C:
+			m.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
 		}
 	}
 }
 
-func (m *Manager) sweepIdleRuntimes(now time.Time, idleTimeout time.Duration) {
+func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
 	type evictedRuntime struct {
 		targetKS string
 		entry    *runtimeEntry
 	}
-	var evicted []evictedRuntime
 
+	evicted := make([]evictedRuntime, 0, 1)
+	now := time.Now()
 	m.mu.Lock()
 	for targetKS, entry := range m.runtimes {
-		if len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() || entry.rawAccessed {
+		if len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() {
 			continue
 		}
 		if now.Sub(entry.lastReleaseAt) < idleTimeout {
@@ -387,12 +388,12 @@ func (m *Manager) sweepIdleRuntimes(now time.Time, idleTimeout time.Duration) {
 	}
 	m.mu.Unlock()
 
-	for _, runtime := range evicted {
+	for _, item := range evicted {
 		logutil.BgLogger().Info("evict idle cross keyspace runtime",
-			zap.String("targetKS", runtime.targetKS),
+			zap.String("targetKS", item.targetKS),
 			zap.Duration("idleTimeout", idleTimeout),
-			zap.Time("lastReleaseAt", runtime.entry.lastReleaseAt))
-		runtime.entry.sessMgr.close()
+			zap.Time("lastReleaseAt", item.entry.lastReleaseAt))
+		item.entry.sessMgr.close()
 	}
 }
 
@@ -432,7 +433,7 @@ func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
 
 func (h *runtimeHandle) Release() {
 	h.releaseOnce.Do(func() {
-		h.manager.release(h.targetKS, h.holderID, h.entry)
+		h.manager.release(h.targetKS, h.holderID)
 	})
 }
 
@@ -481,13 +482,9 @@ func (m *SessionManager) close() {
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
-	if m.schemaVerSyncer != nil {
-		m.schemaVerSyncer.Close()
-	}
-	if m.etcdCli != nil {
-		if err := m.etcdCli.Close(); err != nil {
-			logger.Warn("failed to close etcd client", zap.Error(err))
-		}
+	m.schemaVerSyncer.Close()
+	if err := m.etcdCli.Close(); err != nil {
+		logger.Warn("failed to close etcd client", zap.Error(err))
 	}
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System

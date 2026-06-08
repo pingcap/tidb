@@ -388,7 +388,7 @@ func TestGCLoopExitsWhenContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		mgr.RunGCLoop(ctx)
+		mgr.RunSystemKSGCLoop(ctx)
 		close(done)
 	}()
 

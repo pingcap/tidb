@@ -814,9 +814,6 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(func() {
 		do.isSyncer.MDLCheckLoop(do.ctx)
 	}, "mdlCheckLoop")
-	do.wg.Run(func() {
-		do.crossKSSessMgr.RunGCLoop(do.ctx)
-	}, "crossKSSessMgrGCLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(func() {
 		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
@@ -851,6 +848,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	if kv.IsSystemKS(do.store) {
+		do.wg.Run(func() {
+			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
+		}, "crossKSSessMgrGCLoop")
+	}
 
 	return nil
 }
@@ -867,6 +869,11 @@ func (do *Domain) loadSysKSInfoSchema() error {
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
+// we should forbid direct access cross KS component through Domain. we should
+// use AcquireKSRuntime to manage their lifecycle.
+// but Session dependents on Domain, to create a session pool we need to access the
+// GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
+// it makes add restriction check here harder.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -876,6 +883,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
+// see comments of GetKSStore too.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
