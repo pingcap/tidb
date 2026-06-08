@@ -4255,6 +4255,7 @@ const (
 	nextGenCSEValueUserMetaSize    = 1 + 8 + 8
 	nextGenCSEValueVersionLen      = 8
 	nextGenCSEBlockKeySuffixMaxLen = int(^uint16(0))
+	nextGenCSEBinaryFuse8BitsPerKV = int64(9)
 )
 
 type sampleTiKVIndexPredictionResult struct {
@@ -4869,15 +4870,23 @@ func estimateSortedSampledIndexKVCSEPhysicalBytesWithSplit(sortedKVs []sampledIn
 }
 
 func estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs []sampledIndexKV, commitTS uint64) (int64, error) {
+	dataBlockBytes, entryCount, err := estimateSortedSampledIndexKVCSEDataBlockPhysicalBytes(sortedKVs, commitTS)
+	if err != nil {
+		return 0, err
+	}
+	return dataBlockBytes + estimateNextGenCSEBinaryFuse8FilterBytes(entryCount), nil
+}
+
+func estimateSortedSampledIndexKVCSEDataBlockPhysicalBytes(sortedKVs []sampledIndexKV, commitTS uint64) (int64, int, error) {
 	if len(sortedKVs) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if commitTS == 0 {
 		commitTS = tikvMVCCPredictionFallbackTS
 	}
 	encoder, err := zstd.NewWriter(nil)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	defer func() {
 		_ = encoder.Close()
@@ -4885,6 +4894,7 @@ func estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs []sampledIndexKV, co
 
 	var (
 		totalPhysicalBytes int64
+		entryCount         int
 		blockKVs           = make([]sampledIndexKV, 0, min(len(sortedKVs), blockSamplePredictionMaxRows))
 		blockBytes         int
 		lastKey            []byte
@@ -4910,17 +4920,18 @@ func estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs []sampledIndexKV, co
 		entrySize := nextGenCSEBlockEntrySize(kvPair, 0)
 		if len(blockKVs) > 0 && blockBytes+entrySize > nextGenCSEBlockSize {
 			if err := flushBlock(); err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 		}
 		blockKVs = append(blockKVs, kvPair)
 		blockBytes += entrySize
+		entryCount++
 		lastKey = kvPair.key
 	}
 	if err := flushBlock(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return totalPhysicalBytes, nil
+	return totalPhysicalBytes, entryCount, nil
 }
 
 func estimateSampledIndexKVCSEBlockPhysicalBytes(blockKVs []sampledIndexKV, commitTS uint64, encoder *zstd.Encoder) (int64, error) {
@@ -4954,6 +4965,16 @@ func estimateSampledIndexKVCSEBlockPhysicalBytes(blockKVs []sampledIndexKV, comm
 		}
 	}
 	return int64(len(encoder.EncodeAll(payload, nil))), nil
+}
+
+func estimateNextGenCSEBinaryFuse8FilterBytes(entryCount int) int64 {
+	if entryCount <= 0 {
+		return 0
+	}
+	// CSE writes one BinaryFuse8 auxiliary filter per SST. Its serialized
+	// fingerprint payload is approximately 9 bits per key and is not compressed
+	// with the data blocks.
+	return (int64(entryCount)*nextGenCSEBinaryFuse8BitsPerKV + 7) / 8
 }
 
 func nextGenCSEBlockEntrySize(kvPair sampledIndexKV, commonPrefixLen int) int {
