@@ -1115,6 +1115,10 @@ func TestLeaderTick(t *testing.T) {
 		if kerneltype.IsClassic() {
 			t.Skip("starter deploy mode is only available in nextgen kernel")
 		}
+		// In starter mode, the unified GC path is allowed to bypass gcWaitTime
+		// on the first eligible tick after startup. Seed gcLastRunTime far in the
+		// past so checkGCInterval passes, but keep lastFinish as "just now" to
+		// prove the first run is gated only by isNeedToWait().
 		txnSafePointSyncWaitTime = 0
 		veryLong := gcDefaultLifeTime * 10
 		lastRunBeforeFastStart := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
@@ -1142,11 +1146,16 @@ func TestLeaderTick(t *testing.T) {
 		}
 		require.NoError(t, err)
 
+		// A successful run updates gcLastRunTime. This shows the worker started
+		// immediately instead of being blocked by gcWaitTime.
 		lastRunAfterFastStart, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 		require.NoError(t, err)
 		require.NotNil(t, lastRunAfterFastStart)
 		require.True(t, lastRunAfterFastStart.After(lastRunBeforeFastStart))
 
+		// Once the first tick has finished, starter mode should fall back to the
+		// normal wait behavior and refuse to launch another unified GC job
+		// immediately.
 		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
 		err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
 		require.NoError(t, err)
@@ -1170,6 +1179,8 @@ func TestLeaderTick(t *testing.T) {
 		if kerneltype.IsClassic() {
 			t.Skip("deploy mode is only available in nextgen kernel")
 		}
+		// Premium mode never gets the fast-start exception. Even on the first
+		// tick, a recent lastFinish must still keep unified GC waiting.
 		txnSafePointSyncWaitTime = 0
 		veryLong := gcDefaultLifeTime * 10
 		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
@@ -1198,6 +1209,7 @@ func TestLeaderTick(t *testing.T) {
 		}
 		require.NoError(t, err)
 
+		// gcLastRunTime staying unchanged proves the job never started.
 		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 		require.NoError(t, err)
 		require.NotNil(t, lastRunAfterWait)
