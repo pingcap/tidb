@@ -195,7 +195,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)

@@ -420,7 +420,8 @@ func TestRestoreModeCleanupForFullAndPointRestore(t *testing.T) {
 	runFullRestoreModeAbortCase(t, kit, fmt.Sprintf("restore_mode_full_abort_%d", suffix))
 	runFullRestoreModeSuccessCase(t, kit, fmt.Sprintf("restore_mode_full_success_%d", suffix))
 	runPointRestoreModeAbortCase(t, kit, fmt.Sprintf("restore_mode_point_abort_%d", suffix))
-	runPointRestoreModeSuccessCase(t, kit, fmt.Sprintf("restore_mode_point_success_%d", suffix))
+	runPointRestoreModeExplicitFilterSuccessCase(t, kit, fmt.Sprintf("restore_mode_point_filtered_success_%d", suffix))
+	runPointRestoreModeNoFilterSuccessCase(t, kit, fmt.Sprintf("restore_mode_point_no_filter_success_%d", suffix))
 }
 
 func runFullRestoreModeAbortCase(t *testing.T, kit *LogBackupKit, tableName string) {
@@ -432,7 +433,7 @@ func runFullRestoreModeAbortCase(t *testing.T, kit *LogBackupKit, tableName stri
 	kit.WithChecker(func(err error) {
 		require.ErrorContains(t, err, "fail after protected tables are created")
 	}, func() {
-		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, true, func() {
+		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, true, nil, func() {
 			kit.RunFullRestore(func(rc *task.RestoreConfig) {
 				rc.Storage = kit.LocalURI(fullStorage)
 				rc.UseCheckpoint = true
@@ -457,7 +458,7 @@ func runFullRestoreModeSuccessCase(t *testing.T, kit *LogBackupKit, tableName st
 	fullStorage := tableName + "_full"
 	prepareRestoreModeFullBackup(t, kit, tableName, fullStorage)
 
-	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, false, func() {
+	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, false, nil, func() {
 		kit.RunFullRestore(func(rc *task.RestoreConfig) {
 			rc.Storage = kit.LocalURI(fullStorage)
 			rc.UseCheckpoint = true
@@ -478,7 +479,7 @@ func runPointRestoreModeAbortCase(t *testing.T, kit *LogBackupKit, tableName str
 	kit.WithChecker(func(err error) {
 		require.ErrorContains(t, err, "fail after protected tables are created")
 	}, func() {
-		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, true, func() {
+		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, true, nil, func() {
 			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
 				rc.Storage = kit.LocalURI(logStorage)
 				rc.FullBackupStorage = kit.LocalURI(fullStorage)
@@ -503,11 +504,11 @@ func runPointRestoreModeAbortCase(t *testing.T, kit *LogBackupKit, tableName str
 	kit.tk.MustExec(fmt.Sprintf("DROP TABLE test.%s", tableName))
 }
 
-func runPointRestoreModeSuccessCase(t *testing.T, kit *LogBackupKit, tableName string) {
+func runPointRestoreModeExplicitFilterSuccessCase(t *testing.T, kit *LogBackupKit, tableName string) {
 	filterStr := "test." + tableName
 	fullStorage, logStorage := prepareRestoreModePointBackup(t, kit, tableName)
 
-	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false, func() {
+	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false, nil, func() {
 		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
 			rc.Storage = kit.LocalURI(logStorage)
 			rc.FullBackupStorage = kit.LocalURI(fullStorage)
@@ -521,6 +522,33 @@ func runPointRestoreModeSuccessCase(t *testing.T, kit *LogBackupKit, tableName s
 		checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	requireNoRestoreRegistryEntry(t, kit.tk, restoreID)
 	kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", tableName)).Check(testkit.Rows("2"))
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE test.%s", tableName))
+}
+
+func runPointRestoreModeNoFilterSuccessCase(t *testing.T, kit *LogBackupKit, tableName string) {
+	filterStr := "*.*"
+	fullStorage, logStorage := prepareRestoreModePointBackupWithBinding(t, kit, tableName)
+
+	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false, func(checkTK *testkit.TestKit) {
+		requireBindInfoTableMode(t, checkTK, "Normal")
+		requireRestoreModeBinding(t, checkTK, tableName)
+	}, func() {
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			rc.Storage = kit.LocalURI(logStorage)
+			rc.FullBackupStorage = kit.LocalURI(fullStorage)
+			rc.UseCheckpoint = true
+			rc.WithSysTable = true
+		})
+	})
+	requireCheckpointMetadata(t, kit.tk, restoreID, false,
+		checkpoint.SnapshotRestoreCheckpointDatabaseName,
+		checkpoint.LogRestoreCheckpointDatabaseName,
+		checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	requireNoRestoreRegistryEntry(t, kit.tk, restoreID)
+	kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", tableName)).Check(testkit.Rows("2"))
+	requireBindInfoTableMode(t, kit.tk, "Normal")
+	requireRestoreModeBinding(t, kit.tk, tableName)
+	deleteRestoreModeBindingRows(kit.tk, tableName)
 	kit.tk.MustExec(fmt.Sprintf("DROP TABLE test.%s", tableName))
 }
 
@@ -563,6 +591,53 @@ func prepareRestoreModePointBackup(t *testing.T, kit *LogBackupKit, tableName st
 	return fullStorage, logStorage
 }
 
+func prepareRestoreModePointBackupWithBinding(t *testing.T, kit *LogBackupKit, tableName string) (string, string) {
+	fullStorage := tableName + "_full"
+	logStorage := tableName + "_log"
+	taskName := tableName + "_task"
+
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTS test.%s", tableName))
+	kit.tk.MustExec(fmt.Sprintf("CREATE TABLE test.%s (id INT PRIMARY KEY, a INT, v VARCHAR(16), KEY idx_a(a))", tableName))
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES (1, 1, 'base')", tableName))
+	kit.tk.MustExec(fmt.Sprintf(
+		"CREATE GLOBAL BINDING FOR SELECT * FROM test.%s WHERE a = 1 USING SELECT * FROM test.%s IGNORE INDEX (idx_a) WHERE a = 1",
+		tableName, tableName))
+	requireRestoreModeBinding(t, kit.tk, tableName)
+	startTS := kit.TSO()
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		bc.Storage = kit.LocalURI(fullStorage)
+		bc.BackupTS = startTS
+	})
+	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {
+		sc.Storage = kit.LocalURI(logStorage)
+		sc.StartTS = startTS
+	})
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES (2, 2, 'log')", tableName))
+	kit.forceFlushAndWait(taskName)
+	kit.StopTaskIfExists(taskName)
+	deleteRestoreModeBindingRows(kit.tk, tableName)
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE test.%s", tableName))
+	return fullStorage, logStorage
+}
+
+func requireRestoreModeBinding(t *testing.T, tk *testkit.TestKit, tableName string) {
+	t.Helper()
+	tk.MustQuery("SELECT COUNT(*) FROM mysql.bind_info WHERE original_sql LIKE ? OR bind_sql LIKE ?",
+		"%"+tableName+"%", "%"+tableName+"%").Check(testkit.Rows("1"))
+}
+
+func deleteRestoreModeBindingRows(tk *testkit.TestKit, tableName string) {
+	tk.MustExec("DELETE FROM mysql.bind_info WHERE original_sql LIKE ? OR bind_sql LIKE ?", "%"+tableName+"%", "%"+tableName+"%")
+	tk.MustExec("ADMIN RELOAD BINDINGS")
+}
+
+func requireBindInfoTableMode(t *testing.T, tk *testkit.TestKit, mode string) {
+	t.Helper()
+	tk.MustQuery(
+		"SELECT TIDB_TABLE_MODE FROM information_schema.tables WHERE table_schema = 'mysql' AND table_name = 'bind_info'",
+	).Check(testkit.Rows(mode))
+}
+
 func runWithSnapshotRestoreModeCheck(
 	t *testing.T,
 	kit *LogBackupKit,
@@ -570,8 +645,11 @@ func runWithSnapshotRestoreModeCheck(
 	cmdName string,
 	filterStr string,
 	failRestore bool,
+	snapshotFinishCheck func(*testkit.TestKit),
 	restore func(),
 ) (restoreID uint64) {
+	checkAfterSnapshotPipeline := cmdName == task.PointRestoreCmd && !failRestore
+	snapshotFinishCheckEnabled := false
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-after-create-tables", func(errP *error) {
 		checkTK := testkit.NewTestKit(t, kit.tk.Session().GetStore())
 		checkTK.MustGetErrCode(fmt.Sprintf("DROP TABLE test.%s", tableName), errno.ErrProtectedTableMode)
@@ -582,8 +660,22 @@ func runWithSnapshotRestoreModeCheck(
 		}
 	}))
 	defer func() {
+		if snapshotFinishCheckEnabled {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish"))
+		}
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-after-create-tables"))
 	}()
+	if checkAfterSnapshotPipeline {
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish", func(errP *error) {
+			checkTK := testkit.NewTestKit(t, kit.tk.Session().GetStore())
+			checkTK.MustGetErrCode(fmt.Sprintf("DROP TABLE test.%s", tableName), errno.ErrProtectedTableMode)
+			if snapshotFinishCheck != nil {
+				snapshotFinishCheck(checkTK)
+			}
+			require.NoError(t, *errP)
+		}))
+		snapshotFinishCheckEnabled = true
+	}
 
 	restore()
 	require.NotZero(t, restoreID)

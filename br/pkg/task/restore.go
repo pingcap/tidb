@@ -1384,6 +1384,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
+	keepTableModeRestore := isPiTR && cfg.ProtectTables && !client.IsIncremental()
 	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
 		if loadStatsPhysical {
 			log.Warn("Cannot set --fast-load-sys-tables when it is not full restore. Fallback to logically load stats.")
@@ -1526,14 +1527,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	// cfg.ExplicitFilter && isPiTR && !isIncremental --> PiTR w/ table filter only,
-	// delivered in first day of pitr table filter.
-	// Added: all type snapshot restore, for avoiding mistakenly
-	// drop table -> resume from checkpoint -> data loss.
-	if cfg.ProtectTables && (!isPiTR || (isPiTR && cfg.ExplicitFilter && !client.IsIncremental())) {
+	// Protect restored user tables until PITR log restore releases them. System
+	// tables stay writable because snapshot system table restore updates them.
+	if cfg.ProtectTables && (!isPiTR || keepTableModeRestore) {
 		for i, table := range tables {
 			if table.Info.IsSequence() || table.Info.IsView() {
 				continue
+			}
+			if keepTableModeRestore {
+				if _, ok := utils.GetSysDBCIStrName(table.DB.Name); ok {
+					continue
+				}
 			}
 			tableCopy := *table
 			tableCopy.Info = table.Info.Clone()
@@ -1860,6 +1864,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LoadStatsPhysical:    loadStatsPhysical,
 		LoadSysTablePhysical: loadSysTablePhysical,
 		WaitTiflashReady:     cfg.WaitTiflashReady,
+		KeepTableModeRestore: keepTableModeRestore,
 
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,

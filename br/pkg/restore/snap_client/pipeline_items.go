@@ -176,6 +176,7 @@ type PipelineContext struct {
 	LoadStatsPhysical    bool
 	LoadSysTablePhysical bool
 	WaitTiflashReady     bool
+	KeepTableModeRestore bool
 
 	// pipeline item configuration
 	LogProgress         bool
@@ -196,7 +197,10 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
 	}()
-	pipelineNum := 1
+	pipelineNum := 0
+	if !plCtx.KeepTableModeRestore {
+		pipelineNum += 1
+	}
 	if plCtx.Checksum {
 		pipelineNum += 1
 	}
@@ -220,7 +224,9 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	defer updateCh.Close()
 
 	handlerBuilder := &PipelineConcurrentBuilder{loadStatsPhysical: plCtx.LoadStatsPhysical, loadSysTablePhysical: plCtx.LoadSysTablePhysical}
-	rc.registerSetTableModeToNormal(handlerBuilder, updateCh)
+	if !plCtx.KeepTableModeRestore {
+		rc.registerSetTableModeToNormal(handlerBuilder, updateCh)
+	}
 
 	// pipeline checksum
 	if plCtx.Checksum {
