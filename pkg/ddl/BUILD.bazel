@@ -78,6 +78,7 @@ go_library(
     ],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/bdr",
         "//pkg/ddl/copr",

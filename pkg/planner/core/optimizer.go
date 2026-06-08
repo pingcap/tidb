@@ -93,6 +93,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ProjectionEliminator{},
 	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
+	&FullTextIndexResolverWhere{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
@@ -103,6 +104,8 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&FullTextIndexResolverTopN{},
+	&FullTextIndexResolverProjection{},
 	&rule.OrderAwareJoinReorder{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
@@ -112,6 +115,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
+	&FullTextIndexResolverRejectRemaining{},
 	&ResolveExpand{},
 }
 
@@ -353,6 +357,12 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
+		flag |= rule.FlagFullTextIndexResolveWhere
+		flag |= rule.FlagFullTextIndexResolveTopN
+		flag |= rule.FlagFullTextIndexResolveProjection
+		flag |= rule.FlagFullTextIndexResolveReject
 	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {

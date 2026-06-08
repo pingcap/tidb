@@ -28,6 +28,7 @@ const (
 	FlagEliminateProjection
 	FlagMaxMinEliminate
 	FlagConstantPropagation
+	FlagFullTextIndexResolveWhere
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
 	FlagJoinKeyTypeCast
@@ -38,6 +39,8 @@ const (
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
 	FlagPushDownTopN
+	FlagFullTextIndexResolveTopN
+	FlagFullTextIndexResolveProjection
 	FlagOrderAwareJoinReorder
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
@@ -47,6 +50,7 @@ const (
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
+	FlagFullTextIndexResolveReject
 	FlagResolveExpand
 )
 

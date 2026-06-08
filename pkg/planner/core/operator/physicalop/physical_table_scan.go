@@ -80,6 +80,27 @@ func buildInvertedIndexExtra(indexInfo *model.IndexInfo) *ColumnarIndexExtra {
 	}
 }
 
+func buildFullTextIndexExtra(indexInfo *model.IndexInfo, queryInfo *tipb.FTSQueryInfo) *ColumnarIndexExtra {
+	return &ColumnarIndexExtra{
+		IndexInfo: indexInfo,
+		QueryInfo: &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeFulltext,
+			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
+				FtsQueryInfo: queryInfo,
+			},
+		},
+	}
+}
+
+func (p *PhysicalTableScan) hasFullTextIndexPushDown() bool {
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
+			return true
+		}
+	}
+	return false
+}
+
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	PhysicalSchemaProducer
@@ -172,6 +193,9 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
+	if ds.FtsPushDown != nil {
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.FtsPushDown.IndexInfo, ds.FtsPushDown.QueryInfo))
+	}
 	return ts
 }
 
@@ -217,6 +241,9 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if isMatchProp && prop.VectorProp.VSInfo == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
+	}
+	if ds.FtsPushDown != nil {
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.FtsPushDown.IndexInfo, ds.FtsPushDown.QueryInfo))
 	}
 	return ts, rowCount
 }
@@ -511,6 +538,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if len(p.UsedColumnarIndexes) > 0 {
 		annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
 		invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+		ftsIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
 		for _, idx := range p.UsedColumnarIndexes {
 			if idx == nil {
 				continue
@@ -545,8 +573,38 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 					annIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
 				}
 				annIndexes = append(annIndexes, annIndexBuffer.String())
-			} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted && idx.QueryInfo != nil {
+			} else if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted {
 				invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
+			} else if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
+				ftsQueryInfo := idx.QueryInfo.GetFtsQueryInfo()
+				if ftsQueryInfo == nil {
+					continue
+				}
+				ftsIndexBuffer := bytes.NewBuffer(make([]byte, 0, 128))
+				if ftsQueryInfo.TopK != nil && *ftsQueryInfo.TopK < ^uint32(0) {
+					ftsIndexBuffer.WriteString("top")
+					if normalized {
+						ftsIndexBuffer.WriteString("K")
+					} else {
+						fmt.Fprint(ftsIndexBuffer, *ftsQueryInfo.TopK)
+					}
+					ftsIndexBuffer.WriteString(" ")
+				}
+				if normalized {
+					ftsIndexBuffer.WriteString("?")
+				} else {
+					ftsIndexBuffer.WriteString(ftsQueryInfo.QueryText)
+				}
+				if len(ftsQueryInfo.ColumnNames) > 0 {
+					ftsIndexBuffer.WriteString(" IN ")
+					ftsIndexBuffer.WriteString(ftsQueryInfo.ColumnNames[0])
+				}
+				cols := p.Schema().Columns
+				if len(cols) > 0 {
+					ftsIndexBuffer.WriteString("->")
+					ftsIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
+				}
+				ftsIndexes = append(ftsIndexes, ftsIndexBuffer.String())
 			}
 		}
 		if len(annIndexes) > 0 {
@@ -556,6 +614,10 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		if len(invertedIndexes) > 0 {
 			buffer.WriteString(", invertedindex:")
 			buffer.WriteString(strings.Join(invertedIndexes, ", "))
+		}
+		if len(ftsIndexes) > 0 {
+			buffer.WriteString(", ftsIndex:")
+			buffer.WriteString(strings.Join(ftsIndexes, ", "))
 		}
 	}
 
