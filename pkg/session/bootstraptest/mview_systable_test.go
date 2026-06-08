@@ -664,6 +664,10 @@ func TestUpgradeToVer228MaterializedViewLogPurgeCutoffTSO(t *testing.T) {
 		KEY idx_purge_time (PURGE_TIME),
 		KEY idx_purge_status (PURGE_STATUS, PURGE_TIME))`)
 	session.MustExec(t, seV227, "commit")
+	session.MustExec(t, seV227, "create user 'v228_super'@'%'")
+	session.MustExec(t, seV227, "create user 'v228_normal'@'%'")
+	session.MustExec(t, seV227, "update mysql.user set Super_priv='Y', Operate_view_priv='N' where User='v228_super' and Host='%'")
+	session.MustExec(t, seV227, "update mysql.user set Super_priv='N', Operate_view_priv='N' where User='v228_normal' and Host='%'")
 
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV227)
@@ -678,4 +682,6 @@ func TestUpgradeToVer228MaterializedViewLogPurgeCutoffTSO(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_CUTOFF_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
+	tk.MustQuery("select User, Operate_view_priv from mysql.user where User in ('v228_super', 'v228_normal') order by User").
+		Check(testkit.Rows("v228_normal N", "v228_super Y"))
 }
