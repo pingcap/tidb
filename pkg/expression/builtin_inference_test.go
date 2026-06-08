@@ -17,6 +17,8 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -27,6 +29,9 @@ import (
 )
 
 func TestEmbedTextBuiltin(t *testing.T) {
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
 	ctx := mock.NewContext()
 	withMockDefaultEmbedFn(t)
 
@@ -61,8 +66,24 @@ func TestEmbedTextBuiltin(t *testing.T) {
 func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 	ctx := mock.NewContext()
 	withMockDefaultEmbedFn(t)
+	enableNonStarterDeployModeForTest(t)
 
 	fn, err := NewFunction(
+		ctx,
+		ast.EmbedText,
+		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+		stringConst("mock/json"),
+		stringConst("[1,2,3]"),
+	)
+	require.NoError(t, err)
+	_, _, err = fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+
+	if !enableStarterDeployModeForTest(t) {
+		return
+	}
+
+	fn, err = NewFunction(
 		ctx,
 		ast.EmbedText,
 		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
@@ -119,4 +140,29 @@ func withMockDefaultEmbedFn(t *testing.T) {
 		embedFn.MustRegisterEmbedder("mock", inference.NewMockEmbedder())
 	}
 	t.Cleanup(inference.SetDefaultEmbedFnForTest(embedFn))
+}
+
+func enableStarterDeployModeForTest(t *testing.T) bool {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return false
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	return true
+}
+
+func enableNonStarterDeployModeForTest(t *testing.T) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
 }

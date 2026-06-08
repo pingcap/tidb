@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/inference/domainadaptor"
@@ -85,6 +86,15 @@ func (c *embedTextFunctionClass) getFunction(ctx BuildContext, args []Expression
 }
 
 func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+	sessionEvalCtx, ok := unwrapSessionEvalContext(ctx)
+	if !ok {
+		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
+	}
+	sessionCtx := sessionEvalCtx.Sctx()
+	if !deploymode.IsStarter() {
+		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
+	}
+
 	model, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroVectorFloat32, isNull, err
@@ -125,11 +135,6 @@ func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 			}
 		}
 	}
-	sessionEvalCtx, ok := unwrapSessionEvalContext(ctx)
-	if !ok {
-		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
-	}
-	sessionCtx := sessionEvalCtx.Sctx()
 
 	embedding, err := domainadaptor.GetEmbedFn(sessionCtx).Embed(func() bool {
 		// any kill signal should be handled.

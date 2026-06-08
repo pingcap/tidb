@@ -83,6 +83,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/exprctx",
@@ -223,6 +224,8 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/exprctx",

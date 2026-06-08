@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -4510,7 +4511,14 @@ func TestEmbedTextFunction(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_exp_embed_jina_ai_api_key").Check(testkit.Rows("******"))
 	tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = ''")
 
-	err := tk.QueryToErr("select embed_text('text-embedding-3', 'hello world')")
+	enableNonStarterDeployModeForTest(t)
+	err := tk.QueryToErr(`select embed_text('mock/json', '[1, 3, 4]')`)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+	if !enableStarterDeployModeForTest(t) {
+		return
+	}
+
+	err = tk.QueryToErr("select embed_text('text-embedding-3', 'hello world')")
 	require.ErrorContains(t, err, "model name must be in format")
 	err = tk.QueryToErr("select embed_text('openai/text-embedding-3', 'hello world')")
 	require.ErrorContains(t, err, "OpenAI API key is not configured")
@@ -4529,6 +4537,9 @@ func TestAutoEmbeddingGeneratedColumnDML(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
 	ensureMockEmbeddingProvider(t, tk)
 
 	tk.MustExec(`
@@ -4574,6 +4585,9 @@ func TestAutoEmbeddingVectorSearchRewrite(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
 	ensureMockEmbeddingProvider(t, tk)
 
 	tk.MustQuery(`select embed_text('mock/json', '[1,2,3]', '{"plus@search":1}')`).Check(testkit.Rows("[1,2,3]"))
@@ -4659,4 +4673,29 @@ func ensureMockEmbeddingProvider(t *testing.T, tk *testkit.TestKit) {
 	if !do.GetEmbedFn().HasEmbedder("mock") {
 		do.GetEmbedFn().MustRegisterEmbedder("mock", inference.NewMockEmbedder())
 	}
+}
+
+func enableStarterDeployModeForTest(t *testing.T) bool {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return false
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	return true
+}
+
+func enableNonStarterDeployModeForTest(t *testing.T) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
 }
