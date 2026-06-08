@@ -127,10 +127,29 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	MustExec(t, seV260, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
 	MustExec(t, seV260, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
 
+	issueDigestV261 := getBindingSQLDigest(t, seV260, "idx_issue_b")
+	issuePlanDigest := "issue-plan-digest-v261"
+	require.NotEmpty(t, issueDigestV261)
 	simpleOriginalV260, simpleDigestV260 := normalizeBindingDigestBeforeVer261(t, simpleBindSQL, "test")
 	issueOriginalV260, issueDigestV260 := normalizeBindingDigestBeforeVer261(t, issueBindSQL, "test")
 	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalV260, simpleDigestV260, "%idx_simple_b%")
-	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", issueOriginalV260, issueDigestV260, "%idx_issue_b%")
+	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalV260, issueDigestV260, issuePlanDigest, "%idx_issue_b%")
+	invalidBindSQL := "invalid binding"
+	MustExec(t, seV260, `insert into mysql.bind_info
+		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"select * from `test` . `t_issue` where `a` = ? and `b` = ?",
+		invalidBindSQL,
+		"test",
+		"enabled",
+		"2000-01-01 00:00:00.000000",
+		"2000-01-01 00:00:00.000000",
+		"",
+		"",
+		"manual",
+		issueDigestV261,
+		issuePlanDigest,
+	)
 
 	simpleDigestBefore := getBindingSQLDigest(t, seV260, "idx_simple_b")
 	issueDigestBefore := getBindingSQLDigest(t, seV260, "idx_issue_b")
@@ -152,6 +171,7 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	issueDigestAfter := getBindingSQLDigest(t, seCurVer, "idx_issue_b")
 	require.Equal(t, simpleDigestBefore, simpleDigestAfter)
 	require.NotEqual(t, issueDigestBefore, issueDigestAfter)
+	requireBindingDigestPairCleared(t, seCurVer, invalidBindSQL)
 
 	MustExec(t, seCurVer, "admin reload bindings")
 	MustExec(t, seCurVer, "use test")
@@ -179,13 +199,29 @@ func normalizeBindingDigestBeforeVer261(t *testing.T, sql, defaultDB string) (st
 }
 
 func getBindingSQLDigest(t *testing.T, se sessionapi.Session, indexName string) string {
-	rs := MustExecToRecodeSet(t, se, "select sql_digest from mysql.bind_info where bind_sql like ?", "%"+indexName+"%")
+	sqlDigest, _ := getBindingDigestPair(t, se, indexName)
+	return sqlDigest
+}
+
+func getBindingDigestPair(t *testing.T, se sessionapi.Session, indexName string) (string, string) {
+	rs := MustExecToRecodeSet(t, se, "select sql_digest, plan_digest from mysql.bind_info where bind_sql like ?", "%"+indexName+"%")
 	req := rs.NewChunk(nil)
 	require.NoError(t, rs.Next(context.Background(), req))
 	require.Equal(t, 1, req.NumRows())
-	digest := req.GetRow(0).GetString(0)
+	sqlDigest := req.GetRow(0).GetString(0)
+	planDigest := req.GetRow(0).GetString(1)
 	require.NoError(t, rs.Close())
-	return digest
+	return sqlDigest, planDigest
+}
+
+func requireBindingDigestPairCleared(t *testing.T, se sessionapi.Session, bindSQL string) {
+	rs := MustExecToRecodeSet(t, se, "select sql_digest, plan_digest from mysql.bind_info where bind_sql = ?", bindSQL)
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	require.True(t, req.GetRow(0).IsNull(0))
+	require.True(t, req.GetRow(0).IsNull(1))
+	require.NoError(t, rs.Close())
 }
 
 func requireLastPlanFromBinding(t *testing.T, se sessionapi.Session) {
