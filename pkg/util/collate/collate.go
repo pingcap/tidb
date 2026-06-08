@@ -335,14 +335,22 @@ func ConvertAndGetBinCollator(collate string) Collator {
 	return GetCollator(ConvertAndGetBinCollation(collate))
 }
 
-// IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
-// The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
-// and both xx_bin and collationBin are satisfied.
+// IsBinCollation returns whether the sortkey of a char/varchar under this collation
+// equals the raw data itself. This is a STORAGE-LEVEL property used by:
+//   - tablecodec: deciding whether restore-data is needed
+//   - NeedRestoredData: padding optimization
+//   - ranger/selectivity: assuming sortkey == data for fast paths
+//
+// DO NOT use this for coercibility derivation (use expression.isBinCollation instead).
+// The two concepts diverge on GBK: gbk_bin's Key() does UTF-8→GBK encoding conversion
+// (sortkey ≠ data), but it IS still a _bin collation for coercibility purposes.
+//
+// Included: ascii_bin, latin1_bin, utf8_bin, utf8mb4_bin, binary, utf8mb4_0900_bin
+// NOT included: gbk_bin (its Key() transforms data via encoding)
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
-	// TODO: define a constant to reference collations
+		collate == charset.CollationBin || collate == charset.CollationUTF8MB40900Bin
 }
 
 // IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.

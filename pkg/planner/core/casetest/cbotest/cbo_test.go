@@ -265,6 +265,83 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 	})
 }
 
+func TestTop2SeedGreedyJoinReorderWithLoadedStats(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, _, _ string) {
+		// This regression is anchored by a sanitized TiDB replayer stats fixture.
+		//
+		// Fact check with the same schema, loaded stats, and SQL:
+		//   - 1fc24d3cae1d3b07b09bf3d814887d2ff29fb882 (pre-fix):
+		//     root join was gjo_p.id = gjo_pi.p_id
+		//   - 375e6a135fe1dcc4f3b164ac14f52e872c1ebea8 (with top-2 seeds):
+		//     root join became gjo_pie.t_id = gjo_dim.id
+		tk.MustExec("set @@session.tidb_opt_enable_advanced_join_reorder = 1")
+		tk.MustExec("set @@session.tidb_opt_join_reorder_threshold = 0")
+		tk.MustExec("drop database if exists gjo_stats")
+		tk.MustExec("create database gjo_stats")
+		tk.MustExec("use gjo_stats")
+
+		tk.MustExec(`CREATE TABLE gjo_p (
+  id bigint NOT NULL AUTO_INCREMENT,
+  c_id bigint DEFAULT NULL,
+  d_at date DEFAULT NULL,
+  s_id varchar(255) COLLATE utf8_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY idx_s_c_d (s_id,c_id,d_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		tk.MustExec(`CREATE TABLE gjo_pi (
+  id bigint NOT NULL AUTO_INCREMENT,
+  p_id bigint DEFAULT NULL,
+  e_id bigint DEFAULT NULL,
+  flag tinyint(1) DEFAULT '0',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY idx_flag_p_e (flag,p_id,e_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		tk.MustExec(`CREATE TABLE gjo_pie (
+  id bigint NOT NULL AUTO_INCREMENT,
+  pi_id bigint NOT NULL,
+  t_id bigint NOT NULL,
+  amt decimal(16,2) NOT NULL DEFAULT '0.00',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY idx_t_pi (t_id,pi_id),
+  KEY idx_pi (pi_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		tk.MustExec(`CREATE TABLE gjo_dim (
+  id bigint NOT NULL AUTO_INCREMENT,
+  c_id bigint DEFAULT NULL,
+  name char(255) COLLATE utf8_unicode_ci NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY idx_c_name (c_id,name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		for _, statsFile := range []string{
+			"top2_seed_payrolls.json",
+			"top2_seed_payroll_items.json",
+			"top2_seed_payroll_item_earnings.json",
+			"top2_seed_company_earning_types.json",
+		} {
+			require.NoError(t, testkit.LoadTableStats(statsFile, dom))
+		}
+
+		query := "select 1 as one from gjo_pie inner join gjo_pi on gjo_pi.id = gjo_pie.pi_id " +
+			"inner join gjo_p on gjo_p.id = gjo_pi.p_id inner join gjo_dim on gjo_dim.id = gjo_pie.t_id " +
+			"where gjo_p.c_id = 7757616926251732 and gjo_p.d_at between '2026-01-01' and '2026-12-31' " +
+			"and gjo_dim.name in ('Paycheck Tips', 'Cash Tips') and gjo_p.s_id in ('processed', 'funded', 'paid', 'paid_and_unfunded') " +
+			"and gjo_pi.flag = false and amt > 0 limit 1"
+
+		briefPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + query).Rows())
+		require.NotContains(t, strings.Join(briefPlan, "\n"), "stats:pseudo")
+
+		planRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + query).Rows())
+		require.GreaterOrEqual(t, len(planRows), 5)
+		require.Contains(t, planRows[2], "outer key:gjo_stats.gjo_pie.t_id, inner key:gjo_stats.gjo_dim.id")
+		require.Contains(t, planRows[3], "outer key:gjo_stats.gjo_pi.id, inner key:gjo_stats.gjo_pie.pi_id")
+		require.Contains(t, planRows[4], "outer key:gjo_stats.gjo_p.id, inner key:gjo_stats.gjo_pi.p_id")
+	})
+}
+
 func TestStraightJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")

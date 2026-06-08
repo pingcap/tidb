@@ -1662,6 +1662,22 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
+	// MySQL 8.0 dual-password clauses (RETAIN CURRENT PASSWORD /
+	// DISCARD OLD PASSWORD) are accepted by the parser in this PR but the
+	// matching executor / privilege / storage logic lands in a follow-up
+	// (pingcap/tidb#68393). Reject explicitly with a stable error so users
+	// see "not supported yet" instead of silent success.
+	//
+	// Both the named-user form (Specs) and the current-user form
+	// (CurrentDualPasswordOption on the USER() branch) are caught here.
+	if s.CurrentDualPasswordOption != 0 {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
+	}
+	for _, spec := range s.Specs {
+		if spec.DualPasswordOption != 0 {
+			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
+		}
+	}
 	disableSandBoxMode := false
 	var err error
 	if e.Ctx().InSandBoxMode() {
@@ -2556,6 +2572,11 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
+	// See executeAlterUser: RETAIN CURRENT PASSWORD parsing lands in this PR;
+	// execution lands in pingcap/tidb#68393. Until then, fail closed.
+	if s.RetainCurrentPassword {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SET PASSWORD ... RETAIN CURRENT PASSWORD")
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.GetSysSession()
 	if err != nil {

@@ -84,7 +84,7 @@ func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 	}
 
 	for typ, expected := range cases {
-		actual, ok := ruv2ExecutorMetricByType[typ]
+		actual, ok := ruv2ExecutorMetricByType(typ)
 		require.True(t, ok, typ)
 		require.Equal(t, expected, actual)
 	}
@@ -94,7 +94,7 @@ func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 		"*executor.IndexLookUpJoin",
 		"*executor.SortExec",
 	} {
-		_, ok := ruv2ExecutorMetricByType[staleType]
+		_, ok := ruv2ExecutorMetricByType(staleType)
 		require.False(t, ok, staleType)
 	}
 }

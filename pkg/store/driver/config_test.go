@@ -17,8 +17,10 @@ package driver
 import (
 	"testing"
 
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/pd/client/opt"
 )
 
 func TestSetDefaultAndOptions(t *testing.T) {
@@ -34,4 +36,14 @@ func TestSetDefaultAndOptions(t *testing.T) {
 	require.Equal(t, globalConfig.TxnLocalLatches, d.txnLocalLatches)
 	require.Equal(t, globalConfig.PDClient, d.pdConfig)
 	require.Equal(t, origSecurity, config.GetGlobalConfig().Security)
+
+	metricscommon.SetConstLabels("keyspace_id", "42", "keyspace_name", "ks")
+	t.Cleanup(func() {
+		metricscommon.SetConstLabels()
+	})
+	pdOpt := opt.NewOption()
+	for _, apply := range d.pdClientOptions() {
+		apply(pdOpt)
+	}
+	require.Equal(t, metricscommon.GetConstLabels(), pdOpt.MetricsLabels)
 }

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -589,6 +590,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
+	for _, field := range config.GetGlobalConfig().GetKeyspaceObservabilitySlowLogFields() {
+		writeSlowLogItem(&buf, field.Name, field.Value)
+	}
 
 	if s.CurrentDBChanged {
 		fmt.Fprintf(&buf, "use %s;\n", strings.ToLower(s.CurrentDB))
@@ -852,8 +856,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 			if stmtDetailRaw != nil {
-				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
+				items.WriteSQLRespTotal = stmtDetailRaw.(*execdetails.StmtExecDetails).WriteSQLRespDuration
 			}
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {

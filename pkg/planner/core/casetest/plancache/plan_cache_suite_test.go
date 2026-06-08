@@ -493,13 +493,13 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_9"},
-			{"└─HashJoin_11"},
-			{"  ├─IndexReader_25(Build)"},
-			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
-			{"  └─TableReader_31(Probe)"},
-			{"    └─Selection_30"},
-			{"      └─TableFullScan_29"},
+			{"Projection_10"},
+			{"└─HashJoin_12"},
+			{"  ├─IndexReader_26(Build)"},
+			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
+			{"  └─TableReader_32(Probe)"},
+			{"    └─Selection_31"},
+			{"      └─TableFullScan_30"},
 		})
 
 	tk.MustExec("execute st using @b")

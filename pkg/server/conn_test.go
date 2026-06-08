@@ -547,6 +547,37 @@ func TestHandshakeResponseCompatibilityAndFailurePaths(t *testing.T) {
 		require.ErrorIs(t, err, mysql.ErrMalformPacket)
 	})
 
+	t.Run("truncated connect attrs length header", func(t *testing.T) {
+		data := buildHandshakeResponsePacket(mysql.ClientProtocol41|mysql.ClientConnectAtts, nil, nil)
+		data[len(data)-1] = 0xfe
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.ErrorIs(t, err, mysql.ErrMalformPacket)
+	})
+
+	t.Run("truncated auth length header", func(t *testing.T) {
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.LittleEndian, mysql.ClientProtocol41|mysql.ClientPluginAuthLenencClientData)
+		binary.Write(&buf, binary.LittleEndian, uint32(0)) // max packet size
+		buf.WriteByte(0)                                   // collation
+		buf.Write(make([]byte, 23))                        // reserved
+		buf.WriteString("root")
+		buf.WriteByte(0)    // user null-terminated
+		buf.WriteByte(0xfe) // truncated auth length-encoded header
+		data := buf.Bytes()
+
+		var p handshake.Response41
+		offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
+		require.NoError(t, err)
+
+		err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
+		require.ErrorIs(t, err, mysql.ErrMalformPacket)
+	})
+
 	t.Run("oversize connect attrs declaration rejected", func(t *testing.T) {
 		declaredLen := uint64(1<<20 + 1)
 		data := buildHandshakeResponsePacket(mysql.ClientProtocol41|mysql.ClientConnectAtts, nil, &declaredLen)

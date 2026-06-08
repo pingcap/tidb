@@ -88,9 +88,88 @@ func TestParseParquetSizeFlags(t *testing.T) {
 	require.EqualValues(t, 128*units.MiB, conf.ParquetRowGroupSize)
 }
 
+func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
+	t.Run("reject template without index when rows split mode and output template are both specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+	})
+
+	t.Run("accept template with index when rows and output template are both specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{.DB}}.{{.Table}}.{{.Index}}",
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("reject template when index only appears in a conditional guard", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{if .Index}}{{end}}{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+	})
+
+	t.Run("reject template when index is only conditionally rendered", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{if lt .Index 2}}{{.Index}}{{end}}{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+	})
+
+	t.Run("accept template when standalone index exists outside conditionals", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{if lt .Index 2}}prefix.{{end}}{{.DB}}.{{.Table}}.{{.Index}}",
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("accept template without index when rows is explicitly set to zero", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "0",
+			"--output-filename-template", "{{.DB}}.{{.Table}}",
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("reject template without index when filesize split mode and output template are both specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--filesize", "1MiB",
+			"--output-filename-template", "{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+	})
+
+	t.Run("accept template with index when filesize and output template are both specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--filesize", "1MiB",
+			"--output-filename-template", "{{.DB}}.{{.Table}}.{{.Index}}",
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("accept template without index when rows is not specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--output-filename-template", "{{.DB}}.{{.Table}}",
+		)
+		require.NoError(t, err)
+	})
+}
+
 func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
 	t.Helper()
+	conf, err := parseConfigFromArgsForTestWithErr(t, args...)
+	require.NoError(t, err)
+	return conf
+}
 
+func parseConfigFromArgsForTestWithErr(t *testing.T, args ...string) (*Config, error) {
+	t.Helper()
 	conf := DefaultConfig()
 	flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
 	conf.DefineFlags(flags)
@@ -99,7 +178,8 @@ func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
 	t.Cleanup(func() {
 		pflag.CommandLine = oldCommandLine
 	})
-	require.NoError(t, flags.Parse(args))
-	require.NoError(t, conf.ParseFromFlags(flags))
-	return conf
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	return conf, conf.ParseFromFlags(flags)
 }
