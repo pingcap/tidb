@@ -57,9 +57,8 @@ func (v *FullTextIndexPlanVisitor) getParent(n int) base.LogicalPlan {
 }
 
 func (v *FullTextIndexPlanVisitor) visit(plan base.LogicalPlan) (bool, error) {
-	switch x := plan.(type) {
-	case *logicalop.DataSource:
-		return v.onEnterDataSource(v, x)
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		return v.onEnterDataSource(v, ds)
 	}
 
 	v.parents = append(v.parents, plan)
@@ -81,7 +80,7 @@ func (v *FullTextIndexPlanVisitor) visit(plan base.LogicalPlan) (bool, error) {
 type FullTextIndexResolverWhere struct{}
 
 // Name returns the name of this optimization rule.
-func (o *FullTextIndexResolverWhere) Name() string {
+func (_ *FullTextIndexResolverWhere) Name() string {
 	return "fts_resolve_index_where"
 }
 
@@ -95,7 +94,7 @@ func (o *FullTextIndexResolverWhere) Optimize(_ context.Context, plan base.Logic
 	return plan, isChanged, err
 }
 
-func (o *FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
+func (_ *FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
 	parent0 := v.getParent(0)
 	if parent0 == nil {
 		return false, nil
@@ -193,7 +192,7 @@ func removeSelectionNode(v *FullTextIndexPlanVisitor, planSelection *logicalop.L
 type FullTextIndexResolverTopN struct{}
 
 // Name returns the name of this optimization rule.
-func (o *FullTextIndexResolverTopN) Name() string {
+func (_ *FullTextIndexResolverTopN) Name() string {
 	return "fts_resolve_index_topn"
 }
 
@@ -207,7 +206,7 @@ func (o *FullTextIndexResolverTopN) Optimize(_ context.Context, plan base.Logica
 	return plan, isChanged, err
 }
 
-func (o *FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
+func (_ *FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
 	if ds.FtsPushDown == nil {
 		return false, nil
 	}
@@ -254,7 +253,7 @@ func (o *FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisito
 
 	planTopN.ByItems[0].Expr = ds.Schema().Columns[len(ds.Schema().Columns)-1]
 	queryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
-	if planSelection == nil && len(ds.PushedDownConds) == 0 && planTopN.ByItems[0].Desc {
+	if planSelection == nil && len(ds.PushedDownConds) == 0 && planTopN.ByItems[0].Desc && len(planTopN.ByItems) == 1 {
 		topK := planTopN.Offset + planTopN.Count
 		if topK > uint64(maxFTSTopK) {
 			topK = uint64(maxFTSTopK)
@@ -269,7 +268,7 @@ func (o *FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisito
 type FullTextIndexResolverProjection struct{}
 
 // Name returns the name of this optimization rule.
-func (o *FullTextIndexResolverProjection) Name() string {
+func (_ *FullTextIndexResolverProjection) Name() string {
 	return "fts_resolve_index_projection"
 }
 
@@ -283,7 +282,7 @@ func (o *FullTextIndexResolverProjection) Optimize(_ context.Context, plan base.
 	return plan, isChanged, err
 }
 
-func (o *FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
+func (_ *FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
 	if ds.FtsPushDown == nil {
 		return false, nil
 	}
@@ -354,7 +353,7 @@ func (o *FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlan
 type FullTextIndexResolverRejectRemaining struct{}
 
 // Name returns the name of this optimization rule.
-func (o *FullTextIndexResolverRejectRemaining) Name() string {
+func (_ *FullTextIndexResolverRejectRemaining) Name() string {
 	return "fts_resolve_reject_remaining"
 }
 
@@ -373,8 +372,11 @@ func (o *FullTextIndexResolverRejectRemaining) visit(plan base.LogicalPlan) erro
 	switch p := plan.(type) {
 	case *logicalop.LogicalProjection:
 		for _, expr := range p.Exprs {
+			if expression.InterpretFullTextSearchExpr(expr) != nil {
+				return plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in SELECT requires a matching 'FTS_MATCH_WORD()' in WHERE. A valid example: SELECT FTS_MATCH_WORD(...) FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
+			}
 			if expression.ContainsFullTextSearchFn(expr) {
-				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' in SELECT must not be placed inside any other function or expression, and must be used with a corresponding 'FTS_MATCH_WORD()' in WHERE. A valid example: SELECT FTS_MATCH_WORD(...) FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
+				return plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in SELECT must not be wrapped in expressions. A valid example: SELECT FTS_MATCH_WORD(...) FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
 			}
 		}
 	case *logicalop.DataSource:

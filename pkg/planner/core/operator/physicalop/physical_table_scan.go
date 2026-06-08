@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -461,7 +462,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redactMode := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
 	if len(p.RangeInfo) > 0 {
 		if !normalized {
@@ -480,7 +481,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(AccessCondition.StringWithCtx(ectx, redact))
+				buffer.WriteString(AccessCondition.StringWithCtx(ectx, redactMode))
 			}
 			buffer.WriteString("], ")
 		}
@@ -490,7 +491,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		} else if !p.IsFullScan() {
 			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
-				buffer.WriteString(idxRange.Redact(redact))
+				buffer.WriteString(idxRange.Redact(redactMode))
 				buffer.WriteString(", ")
 			}
 		}
@@ -580,7 +581,8 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if ftsQueryInfo == nil {
 					continue
 				}
-				ftsIndexBuffer := bytes.NewBuffer(make([]byte, 0, 128))
+				ftsIndexBuffer := &strings.Builder{}
+				ftsIndexBuffer.Grow(128)
 				if ftsQueryInfo.TopK != nil && *ftsQueryInfo.TopK < ^uint32(0) {
 					ftsIndexBuffer.WriteString("top")
 					if normalized {
@@ -593,7 +595,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if normalized {
 					ftsIndexBuffer.WriteString("?")
 				} else {
-					ftsIndexBuffer.WriteString(ftsQueryInfo.QueryText)
+					redact.WriteRedact(ftsIndexBuffer, ftsQueryInfo.QueryText, redactMode)
 				}
 				if len(ftsQueryInfo.ColumnNames) > 0 {
 					ftsIndexBuffer.WriteString(" IN ")

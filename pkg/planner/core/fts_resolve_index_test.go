@@ -64,6 +64,8 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 			tiflash.Unlock()
 		}()
 		tk.MustExec("use test")
+		tk.MustExec("set global tidb_redact_log=OFF")
+		defer tk.MustExec("set global tidb_redact_log=OFF")
 		tk.MustExec("create table fts_t(id int primary key, title text, body text, fulltext key ft_title(title))")
 		tk.MustExec("alter table fts_t set tiflash replica 1")
 		testkit.SetTiFlashReplica(t, dom, "test", "fts_t")
@@ -76,6 +78,11 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 			"tiflash]",
 			"ftsIndex:top10 hello IN test.fts_t.title->",
 		})
+		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10").MultiCheckContain([]string{
+			"tiflash]",
+			"ftsIndex:hello IN test.fts_t.title->",
+		})
+		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10").CheckNotContain("ftsIndex:top10")
 		tk.MustQuery("explain format = 'plan_tree' select fts_match_word('hello', title) from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
 			"tiflash]",
 			"ftsIndex:hello IN test.fts_t.title->",
@@ -84,8 +91,16 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 			"tiflash]",
 			"ftsIndex:top10 hello IN test.fts_t.title->",
 		})
-		tk.MustContainErrMsg("explain select fts_match_word('hello', title) from fts_t", "Currently 'FTS_MATCH_WORD()' in SELECT must not be placed")
-		tk.MustContainErrMsg("explain select fts_match_word('hello', title) * 2 from fts_t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in SELECT must not be placed")
+		tk.MustExec("set global tidb_redact_log=ON")
+		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
+			"tiflash]",
+			"ftsIndex:? IN test.fts_t.title->",
+		})
+		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").CheckNotContain("ftsIndex:hello")
+		tk.MustExec("set global tidb_redact_log=OFF")
+
+		tk.MustContainErrMsg("explain select fts_match_word('hello', title) from fts_t", "'FTS_MATCH_WORD()' in SELECT requires a matching 'FTS_MATCH_WORD()' in WHERE")
+		tk.MustContainErrMsg("explain select fts_match_word('hello', title) * 2 from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must not be wrapped in expressions")
 		tk.MustContainErrMsg("explain select fts_match_word('world', title) from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must match the one in WHERE")
 		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
 		tk.MustContainErrMsg("explain select * from fts_t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
