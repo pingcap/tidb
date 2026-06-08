@@ -4878,11 +4878,13 @@ func estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs []sampledIndexKV, co
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	defer encoder.Close()
+	defer func() {
+		_ = encoder.Close()
+	}()
 
 	var (
 		totalPhysicalBytes int64
-		blockKVs           []sampledIndexKV
+		blockKVs           = make([]sampledIndexKV, 0, min(len(sortedKVs), blockSamplePredictionMaxRows))
 		blockBytes         int
 		lastKey            []byte
 	)
