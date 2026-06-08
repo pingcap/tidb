@@ -344,7 +344,7 @@ type streamMgr struct {
 }
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -968,7 +968,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer cancel()
 	log.Info("starting", zap.String("cmd", cmdName))
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err
@@ -1055,7 +1055,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	} else {
 		printer = stream.PrintTaskWithJSON(console)
 	}
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err
@@ -1307,7 +1307,7 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *clientv3.Client) error {
 	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, backupTS)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if !nameSet.Empty() {
 		return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
@@ -1434,6 +1434,12 @@ func RunStreamRestore(
 	cfg.RestoreStartTS = restoreStartTS
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
+
+	if cfg.CheckRequirements {
+		if err := checkIncompatibleChangefeed(ctx, cfg.RestoreTS, mgr.GetDomain().GetEtcdClient()); err != nil {
+			return err
+		}
+	}
 
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
@@ -1693,6 +1699,23 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
+	// Pre-split regions based on total data volume across ALL files.
+	// On success the pipeline-level per-batch split is skipped to avoid
+	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
+	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
+	if preSplitErr != nil {
+		log.Warn("pre-split regions failed, continuing with per-batch splitting",
+			zap.Error(preSplitErr))
+	}
+
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -1702,14 +1725,6 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
-
-	se, err := g.CreateSession(mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
-	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
 	// TODO: need keep the order of ssts for compatible of rewrite rules
 	// compacted ssts will set ts range for filter out irrelevant data
@@ -1744,9 +1759,20 @@ func restoreStream(
 		}
 
 		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
-		if err != nil {
-			return errors.Trace(err)
+		// Skip per-batch splitting when pre-split already covered all files;
+		// doing both passes would produce redundant split+scatter calls.
+		// Checkpoint filtering must still be applied on the pre-split path.
+		var logFilesIterWithSplit logclient.LogIter
+		if preSplitDone {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		logFilesIterWithSplit = iter.WithEmitSizeTrace(logFilesIterWithSplit, metrics.KVLogFileEmittedMemory.WithLabelValues("1-split"))
 

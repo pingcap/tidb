@@ -168,8 +168,22 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
-	return ranges, err
+	var remainedConds []expression.Expression
+	ranges, _, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
+	if err != nil {
+		return nil, err
+	}
+	// Residuals from the detacher don't cause incorrect results on this path:
+	//   - Binary-collation residuals are blocked upstream -- SplitCorColAccessCondFromFilters
+	//     in pkg/planner/util/path.go rejects collation-mismatched predicates before they
+	//     can be promoted into is.AccessCondition.
+	//   - For other shouldReserve cases (prefix indexes, range predicates), the planner
+	//     retains the original predicate in path.TableFilters, which becomes a parent
+	//     Selection / table-side filter; rebuilding only the access ranges here is safe.
+	// The assert below is a regression guard in case a future planner change introduces a
+	// shouldReserve case that isn't covered by one of these two mechanisms.
+	intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
+	return ranges, nil
 }
 
 type indexReaderExecutorContext struct {
@@ -1062,6 +1076,11 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	}
 
 	var builder distsql.RequestBuilder
+	// Set concurrency before SetDAGRequest intentionally.
+	// SetDAGRequest may override this value (e.g. to 1) for small-limit DAGs.
+	if indexScanConcurrency > 0 {
+		builder.SetConcurrency(indexScanConcurrency)
+	}
 	builder.SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
@@ -1069,7 +1088,6 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetConcurrency(indexScanConcurrency).
 		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.infoSchema).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).

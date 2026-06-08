@@ -3237,7 +3237,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
-	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return

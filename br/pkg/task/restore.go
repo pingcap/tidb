@@ -950,7 +950,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	})
 
 	// TODO: remove version checker from `NewMgr`
-	mgr, err := NewMgr(c, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(c, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1307,10 +1307,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 	if cfg.CheckRequirements {
-		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
-			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
-		if err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient()); err != nil {
-			return errors.Trace(err)
+		// When `restore point`, we have already checked changefeed compatibility outside.
+		if cfg.piTRTaskInfo == nil {
+			log.Info("Checking incompatible TiCDC changefeeds before restoring.", zap.Uint64("restore-ts", backupMeta.EndVersion))
+			if err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
@@ -2760,7 +2762,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	})
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
