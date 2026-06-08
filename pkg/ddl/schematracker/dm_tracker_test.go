@@ -589,6 +589,7 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, "create table test.t (a int)")
 	execCreate(t, tracker, "create table test.mv (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
 
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -612,4 +613,12 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
 	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow")
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mvInfo.ID}
+	require.NoError(t, tracker.PutTable(pmodel.NewCIStr("test"), shadowInfo))
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.shadow (a)"))
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
 }

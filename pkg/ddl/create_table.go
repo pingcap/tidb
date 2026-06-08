@@ -287,7 +287,12 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		}
 		return ver, errors.Trace(err)
 	}
-	if baseTblInfo.IsView() || baseTblInfo.IsSequence() || baseTblInfo.TempTableType != model.TempTableNone {
+	if baseTblInfo.IsView() ||
+		baseTblInfo.IsSequence() ||
+		baseTblInfo.TempTableType != model.TempTableNone ||
+		baseTblInfo.MaterializedView != nil ||
+		baseTblInfo.MaterializedViewShadow != nil ||
+		baseTblInfo.MaterializedViewLog != nil {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, baseTblInfo.Name, "BASE TABLE")
 	}

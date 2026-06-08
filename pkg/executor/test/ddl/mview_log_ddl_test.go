@@ -395,6 +395,52 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
 }
 
+func TestCreateMaterializedViewLogRejectShadowTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_shadow_mlog (a int not null, b int not null)")
+	tk.MustExec("insert into t_shadow_mlog values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_shadow_mlog (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_shadow_mlog (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_shadow_mlog group by a")
+	tk.MustExec("insert into t_shadow_mlog values (2, 3), (3, 4)")
+
+	const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
+	require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+		}
+	}()
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_shadow_mlog complete out of place")
+	}()
+
+	var shadowTableName string
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		shadowTableName = fmt.Sprint(rows[0][0])
+		return shadowTableName != ""
+	}, 30*time.Second, 100*time.Millisecond)
+
+	err := tk.ExecToErr(fmt.Sprintf("create materialized view log on `%s` (a)", shadowTableName))
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", shadowTableName, "BASE TABLE").Error(), err.Error())
+
+	require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+	enabled = false
+	require.NoError(t, <-refreshDone)
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+}
+
 func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
