@@ -283,7 +283,6 @@ github.com/fsouza/fake-gcs-server v1.44.0/go.mod h1:M02aKoTv9Tnlf+gmWnTok1PWVCUH
 github.com/fzipp/gocyclo v0.3.1/go.mod h1:DJHO6AUmbdqj2ET4Z9iArSuwWgYDRryYt2wASxc7x3E=
 github.com/getsentry/sentry-go v0.27.0 h1:Pv98CIbtB3LkMWmXi4Joa5OOcwbmnX88sF5qbK3r3Ps=
 github.com/getsentry/sentry-go v0.27.0/go.mod h1:lc76E2QywIyW8WuBnwl8Lc4bkmQH4+w1gwTf25trprY=
-github.com/ghodss/yaml v1.0.0 h1:wQHKEahhL6wmXdzwWG11gIVCkOv05bNOh+Rxn0yngAk=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/go-asn1-ber/asn1-ber v1.5.4 h1:vXT6d/FNDiELJnLb6hGNa309LMsrCoYFvpwHDF0+Y1A=
 github.com/go-asn1-ber/asn1-ber v1.5.4/go.mod h1:hEBeB/ic+5LoWskz+yKT7vGhhPYkProFKoKdwZRWMe0=
@@ -656,8 +655,6 @@ github.com/pingcap/fn v1.0.0/go.mod h1:u9WZ1ZiOD1RpNhcI42RucFh/lBuzTu6rw88a+oF2Z
 github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 h1:surzm05a8C9dN8dIUmo4Be2+pMRb6f55i+UIYrluu2E=
 github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20191211054548-3c6b38ea5107/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
-github.com/pingcap/kvproto v0.0.0-20260420101835-c50e8eda8a57 h1:iFijaCUH8WklpMLNevCjBSXDjUuyAoQ9+4eqihLAaN4=
-github.com/pingcap/kvproto v0.0.0-20260420101835-c50e8eda8a57/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/pingcap/kvproto v0.0.0-20260608025309-50b863799195 h1:JuajF3N4+xYrvBFtQsGtNeYylzrll1Mw5+QyDSR7V1M=
 github.com/pingcap/kvproto v0.0.0-20260608025309-50b863799195/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuRurdGxZXBz0At+9avep+ub7U1AGYLIMM=
@@ -805,8 +802,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260521074709-0df8691a666e h1:eXsf70YFSZGL+vg/N8lVM8gr6u87nsuGJvu9nuc04GI=
-github.com/tikv/client-go/v2 v2.0.8-0.20260521074709-0df8691a666e/go.mod h1:U3yIqdfS7ONRA+1Ospy0lujvkii1xi9mZAzLprFIMac=
 github.com/tikv/client-go/v2 v2.0.8-0.20260608080351-ddfbdda452e3 h1:1iKqIziQ/wu+Zj2EjEheW29Fi8SJoORzD2mwY98Fuq8=
 github.com/tikv/client-go/v2 v2.0.8-0.20260608080351-ddfbdda452e3/go.mod h1:QE2lX+BdnVF1NzhsJaqnMMTuyCMDPts+iDE0iAUai4U=
 github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e h1:QZZVH1lvNLCb3VndhRhW1dPFe9GITjJuNqOoFP0JeTw=
