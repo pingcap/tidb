@@ -892,7 +892,7 @@ func (wrapper *indexJoinInnerChildWrapper) chooseOrderedWindowPropForIndexJoin(i
 		return nil, true
 	}
 	for _, prop := range props {
-		if isMatchProp(wrapper.ds, path, prop) {
+		if matchProperty(wrapper.ds, path, prop).Matched() {
 			return prop, true
 		}
 	}

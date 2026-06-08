@@ -1010,6 +1010,9 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
 				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
 			}
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
 		}
 	}
 	killQuery(conn, maxExecutionTime, runaway)
@@ -1045,11 +1048,6 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
-	if conn.bufReadConn != nil {
-		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
-			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
-		}
-	}
 	sessVars.SQLKiller.FinishResultSet()
 }
 
@@ -1075,6 +1073,11 @@ func (s *Server) KillAllConnections() {
 		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
+		}
+		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
 		}
 		killQuery(conn, false, false)
 	}

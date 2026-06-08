@@ -43,7 +43,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = 5 * time.Minute
+	dumpStatsMaxDuration = 1 * time.Hour
 
 	// colStatsUsageLastUsedThrottleInterval is the minimum interval to update last_used_at when it already exists (non-NULL).
 	// This throttles frequent timestamp-only updates while allowing immediate NULL-to-value transitions.
@@ -74,11 +74,9 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if dumpAll {
 		return true
 	}
-	if item.InitTime.IsZero() {
-		item.InitTime = currentTime
-	}
+	intest.Assert(!item.InitTime.IsZero(), "InitTime should be initialized before evaluating dump conditions")
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once 5 minutes.
+		// Dump the stats to kv at least once per hour to make sure the stats can be updated when there are only few modifications.
 		return true
 	}
 	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
@@ -139,8 +137,14 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
+				// NOTE: Ensure InitTime is initialized before evaluating dump conditions.
 				item := deltaMap[id]
-				if !s.needDumpStatsDelta(is, dumpAll, id, item, batchStart) {
+				if item.InitTime.IsZero() {
+					item.InitTime = batchStart
+					deltaMap[id] = item
+				}
+				needDump := s.needDumpStatsDelta(is, dumpAll, id, item, batchStart)
+				if !needDump {
 					continue
 				}
 				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
@@ -405,14 +409,14 @@ func (s *statsUsageImpl) NewSessionStatsItem() any {
 	return s.SessionStatsList.NewSessionStatsItem()
 }
 
-func merge(s *SessionStatsItem, deltaMap *TableDelta, colMap *StatsUsage) {
+func merge(s *SessionStatsItem, deltaMap *TableDeltaMap, colMap *StatsUsage) {
 	deltaMap.Merge(s.mapper.GetDeltaAndReset())
 	colMap.Merge(s.statsUsage.GetUsageAndReset())
 }
 
 // SessionStatsItem is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsItem struct {
-	mapper     *TableDelta
+	mapper     *TableDeltaMap
 	statsUsage *StatsUsage
 	next       *SessionStatsItem
 	sync.Mutex
@@ -439,7 +443,7 @@ func (s *SessionStatsItem) Update(id int64, delta int64, count int64) {
 func (s *SessionStatsItem) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper = NewTableDelta()
+	s.mapper = NewTableDeltaMap()
 	s.statsUsage = NewStatsUsage()
 	s.next = nil
 	s.deleted = false
@@ -471,7 +475,7 @@ func (s *SessionStatsItem) UpdateColStatsUsage(colItems iter.Seq[model.TableItem
 */
 type SessionStatsList struct {
 	// tableDelta contains all the delta map from collectors when we dump them to KV.
-	tableDelta *TableDelta
+	tableDelta *TableDeltaMap
 
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
 	statsUsage *StatsUsage
@@ -483,10 +487,10 @@ type SessionStatsList struct {
 // NewSessionStatsList initializes a new SessionStatsList.
 func NewSessionStatsList() *SessionStatsList {
 	return &SessionStatsList{
-		tableDelta: NewTableDelta(),
+		tableDelta: NewTableDeltaMap(),
 		statsUsage: NewStatsUsage(),
 		listHead: &SessionStatsItem{
-			mapper:     NewTableDelta(),
+			mapper:     NewTableDeltaMap(),
 			statsUsage: NewStatsUsage(),
 		},
 	}
@@ -497,7 +501,7 @@ func (sl *SessionStatsList) NewSessionStatsItem() *SessionStatsItem {
 	sl.listHead.Lock()
 	defer sl.listHead.Unlock()
 	newCollector := &SessionStatsItem{
-		mapper:     NewTableDelta(),
+		mapper:     NewTableDeltaMap(),
 		next:       sl.listHead.next,
 		statsUsage: NewStatsUsage(),
 	}
@@ -508,7 +512,7 @@ func (sl *SessionStatsList) NewSessionStatsItem() *SessionStatsItem {
 // SweepSessionStatsList will loop over the list, merge each session's local stats into handle
 // and remove closed session's collector.
 func (sl *SessionStatsList) SweepSessionStatsList() {
-	deltaMap := NewTableDelta()
+	deltaMap := NewTableDeltaMap()
 	colMap := NewStatsUsage()
 	prev := sl.listHead
 	prev.Lock()
@@ -531,8 +535,8 @@ func (sl *SessionStatsList) SweepSessionStatsList() {
 	sl.statsUsage.Merge(colMap.GetUsageAndReset())
 }
 
-// SessionTableDelta returns the current *TableDelta.
-func (sl *SessionStatsList) SessionTableDelta() *TableDelta {
+// SessionTableDelta returns the current *TableDeltaMap.
+func (sl *SessionStatsList) SessionTableDelta() *TableDeltaMap {
 	return sl.tableDelta
 }
 
@@ -548,29 +552,29 @@ func (sl *SessionStatsList) ResetSessionStatsList() {
 	sl.statsUsage.Reset()
 }
 
-// TableDelta is used to collect tables' change information.
+// TableDeltaMap is used to collect tables' change information.
 // All methods of it are thread-safe.
-type TableDelta struct {
+type TableDeltaMap struct {
 	delta map[int64]variable.TableDelta // map[tableID]delta
 	lock  sync.Mutex
 }
 
-// NewTableDelta creates a new TableDelta.
-func NewTableDelta() *TableDelta {
-	return &TableDelta{
+// NewTableDeltaMap creates a new TableDeltaMap.
+func NewTableDeltaMap() *TableDeltaMap {
+	return &TableDeltaMap{
 		delta: make(map[int64]variable.TableDelta),
 	}
 }
 
-// Reset resets the TableDelta.
-func (m *TableDelta) Reset() {
+// Reset resets the TableDeltaMap.
+func (m *TableDeltaMap) Reset() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.delta = make(map[int64]variable.TableDelta)
 }
 
-// GetDeltaAndReset gets the delta and resets the TableDelta.
-func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
+// GetDeltaAndReset gets the delta and resets the TableDeltaMap.
+func (m *TableDeltaMap) GetDeltaAndReset() map[int64]variable.TableDelta {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	ret := m.delta
@@ -579,30 +583,28 @@ func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
 }
 
 // Update updates the delta of the table.
-func (m *TableDelta) Update(id int64, delta int64, count int64) {
+func (m *TableDeltaMap) Update(id int64, delta int64, count int64) {
+	intest.Assert(id > 0, "table ID should be greater than 0")
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	UpdateTableDeltaMap(m.delta, id, delta, count)
+	item := m.delta[id]
+	item.Delta += delta
+	item.Count += count
+	m.delta[id] = item
 }
 
-// Merge merges the deltaMap into the TableDelta.
-func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
+// Merge merges the deltaMap into the TableDeltaMap.
+func (m *TableDeltaMap) Merge(deltaMap map[int64]variable.TableDelta) {
 	if len(deltaMap) == 0 {
 		return
 	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	for id, item := range deltaMap {
-		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count)
+	for id, incoming := range deltaMap {
+		item := m.delta[id]
+		item.MergeFrom(incoming)
+		m.delta[id] = item
 	}
-}
-
-// UpdateTableDeltaMap updates the delta of the table.
-func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64) {
-	item := m[id]
-	item.Delta += delta
-	item.Count += count
-	m[id] = item
 }
 
 // StatsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).

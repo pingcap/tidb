@@ -94,13 +94,13 @@ func (role *RoleIdentity) String() string {
 	return fmt.Sprintf("`%s`@`%s`", role.Username, role.Hostname)
 }
 
-// GetUserAndHostName returns the user and host name if the given u is not nil.
-func GetUserAndHostName(u *UserIdentity) (username string, hostname string) {
-	if u == nil {
+// GetUserAndHostName returns the user and host name if the given user is not nil.
+func GetUserAndHostName(user *UserIdentity) (username string, hostname string) {
+	if user == nil {
 		return "", ""
 	}
-	if len(u.AuthUsername) > 0 && len(u.AuthHostname) > 0 {
-		return u.AuthUsername, u.AuthHostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		return user.AuthUsername, user.AuthHostname
 	}
-	return u.Username, u.Hostname
+	return user.Username, user.Hostname
 }

@@ -218,7 +218,7 @@ func TestPasswordManagement(t *testing.T) {
 
 	rootTK.MustExec(`set global validate_password.enable = OFF`)
 	rootTK.MustExec(`update mysql.user set Password_last_changed = date_sub(Password_last_changed,interval '3 0:0:1' DAY_SECOND)  where user = 'u2' and host = '%'`)
-	err = domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
+	err = domain.GetDomain(rootTK.Session()).NotifyUpdateAllUsersPrivilege()
 	require.NoError(t, err)
 	// Password expires and takes effect.
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22222"), nil, nil)
@@ -723,7 +723,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 		"JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')," +
 		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')," +
 		"JSON_EXTRACT(user_attributes, '$.metadata')from mysql.user where user= %? and host = %?"
-	err := domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
+	err := domain.GetDomain(rootTK.Session()).NotifyUpdateAllUsersPrivilege()
 	require.NoError(t, err)
 	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3 COMMENT 'test'`)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil, nil)
@@ -924,7 +924,7 @@ func changeAutoLockedLastChanged(tk *testkit.TestKit, ds, user string) {
 	changeTime := time.Now().Add(d).Format(time.UnixDate)
 	SQL = fmt.Sprintf(SQL, changeTime, user)
 	tk.MustExec(SQL)
-	domain.GetDomain(tk.Session()).NotifyUpdatePrivilege()
+	domain.GetDomain(tk.Session()).NotifyUpdateAllUsersPrivilege()
 }
 
 func checkUserUserAttributes(tk *testkit.TestKit, user, host, row string) {

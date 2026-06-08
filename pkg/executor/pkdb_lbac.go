@@ -78,7 +78,7 @@ func executeCreateSecurityLabelComponent(goCtx context.Context, sctx sessionctx.
 		return errors.Wrap(err, "failed to create security label component")
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeDropSecurityLabelComponent(goCtx context.Context, sctx sessionctx.Context, stmt *ast.DropSecurityLabelComponentStmt) error {
@@ -107,7 +107,7 @@ func executeDropSecurityLabelComponent(goCtx context.Context, sctx sessionctx.Co
 		return errors.Wrap(err, "failed to drop security label component")
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeCreateSecurityPolicy(goCtx context.Context, sctx sessionctx.Context, stmt *ast.CreateSecurityPolicyStmt) error {
@@ -152,7 +152,7 @@ func executeCreateSecurityPolicy(goCtx context.Context, sctx sessionctx.Context,
 		return errors.Wrap(err, "failed to create security policy")
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeDropSecurityPolicy(goCtx context.Context, sctx sessionctx.Context, stmt *ast.DropSecurityPolicyStmt) error {
@@ -199,7 +199,7 @@ func executeDropSecurityPolicy(goCtx context.Context, sctx sessionctx.Context, s
 		return errors.Wrap(err, "failed to drop security policy")
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeCreateSecurityLabel(goCtx context.Context, sctx sessionctx.Context, stmt *ast.CreateSecurityLabelStmt) error {
@@ -296,7 +296,7 @@ func executeCreateSecurityLabel(goCtx context.Context, sctx sessionctx.Context, 
 		return errors.Wrap(err, "failed to create security label")
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeDropSecurityLabel(goCtx context.Context, sctx sessionctx.Context, stmt *ast.DropSecurityLabelStmt) error {
@@ -344,7 +344,7 @@ func executeDropSecurityLabel(goCtx context.Context, sctx sessionctx.Context, st
 		return errors.Wrap(err, "failed to drop security label")
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func requireUserExists(ctx context.Context, sctx sessionctx.Context, op string, userSpec *ast.UserSpec) (lbac.UserHost, error) {
@@ -436,7 +436,7 @@ func executeGrantSecurityLabel(goCtx context.Context, sctx sessionctx.Context, s
 		}
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeRevokeSecurityLabel(goCtx context.Context, sctx sessionctx.Context, stmt *ast.RevokeSecurityLabelStmt) error {
@@ -464,7 +464,7 @@ func executeRevokeSecurityLabel(goCtx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeGrantExemption(goCtx context.Context, sctx sessionctx.Context, stmt *ast.GrantExemptionStmt) error {
@@ -501,7 +501,7 @@ func executeGrantExemption(goCtx context.Context, sctx sessionctx.Context, stmt 
 		}
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 func executeRevokeExemption(goCtx context.Context, sctx sessionctx.Context, stmt *ast.RevokeExemptionStmt) error {
@@ -533,7 +533,7 @@ func executeRevokeExemption(goCtx context.Context, sctx sessionctx.Context, stmt
 		}
 	}
 
-	return domain.GetDomain(sctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(sctx).NotifyUpdateAllUsersPrivilege()
 }
 
 // Helper functions for error checking

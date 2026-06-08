@@ -50,7 +50,7 @@ func (b *PlanBuilder) buildSignal(ctx context.Context, node *ast.Signal) (base.P
 	SignalInfos := make([]*SignalInfo, 0, len(node.SignalCons))
 	for _, SignalInf := range node.SignalCons {
 		mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-		expr, _, err := b.rewrite(ctx, SignalInf.Value, mockTablePlan, nil, true, nil)
+		expr, _, err := b.rewrite(ctx, SignalInf.Value, mockTablePlan, nil, true)
 		if err != nil {
 			return &p, err
 		}
@@ -69,7 +69,7 @@ func (b *PlanBuilder) buildGetDiagnostics(ctx context.Context, node *ast.GetDiag
 			p.Statements = append(p.Statements, &DiagnosticsStatement{v.Name, v.IsVariable, v.Condition})
 		case *ast.DiagnosticsConds:
 			mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-			expr, _, err := b.rewrite(ctx, v.Num, mockTablePlan, nil, true, nil)
+			expr, _, err := b.rewrite(ctx, v.Num, mockTablePlan, nil, true)
 			if err != nil {
 				b.ctx.GetSessionVars().StmtCtx.AppendError(err)
 				return &p, nil

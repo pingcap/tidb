@@ -40,7 +40,7 @@ func TestTaskState(t *testing.T) {
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
 	// 1. cancel task
-	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(1), id) TODO: unstable for infoschema v2
 	require.NoError(t, gm.CancelTask(ctx, id))
@@ -49,7 +49,7 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateCancelling, proto.StepInit)
 
 	// 2. cancel task by key session
-	id, err = gm.CreateTask(ctx, "key2", "test", 4, "", []byte("test"))
+	id, err = gm.CreateTask(ctx, "key2", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(2), id) TODO: unstable for infoschema v2
 	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -61,7 +61,7 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateCancelling, proto.StepInit)
 
 	// 3. fail task
-	id, err = gm.CreateTask(ctx, "key3", "test", 4, "", []byte("test"))
+	id, err = gm.CreateTask(ctx, "key3", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(3), id) TODO: unstable for infoschema v2
 	failedErr := errors.New("test err")
@@ -72,7 +72,7 @@ func TestTaskState(t *testing.T) {
 	require.ErrorContains(t, task.Error, "test err")
 
 	// 4. Reverted task
-	id, err = gm.CreateTask(ctx, "key4", "test", 4, "", []byte("test"))
+	id, err = gm.CreateTask(ctx, "key4", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(4), id) TODO: unstable for infoschema v2
 	task, err = gm.GetTaskByID(ctx, id)
@@ -90,7 +90,7 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateReverted, proto.StepInit)
 
 	// 5. pause task
-	id, err = gm.CreateTask(ctx, "key5", "test", 4, "", []byte("test"))
+	id, err = gm.CreateTask(ctx, "key5", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(5), id) TODO: unstable for infoschema v2
 	found, err := gm.PauseTask(ctx, "key5")
@@ -119,7 +119,7 @@ func TestTaskState(t *testing.T) {
 	require.Equal(t, proto.TaskStateRunning, task.State)
 
 	// 8. succeed task
-	id, err = gm.CreateTask(ctx, "key6", "test", 4, "", []byte("test"))
+	id, err = gm.CreateTask(ctx, "key6", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(6), id) TODO: unstable for infoschema v2
 	task, err = gm.GetTaskByID(ctx, id)
@@ -139,7 +139,7 @@ func TestModifyTask(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
-	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", 0, []byte("test"))
 	require.NoError(t, err)
 
 	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{

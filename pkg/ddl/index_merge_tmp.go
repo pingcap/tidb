@@ -44,7 +44,7 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), w.originIdxKeys)
+	batchVals, err := kv.BatchGetValue(context.Background(), txn, w.originIdxKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}

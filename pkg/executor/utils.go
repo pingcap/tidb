@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/extension"
@@ -43,10 +44,8 @@ func setToString(set []string) string {
 // addToSet add a value to the set, e.g:
 // addToSet("Select,Insert,Update", "Update") returns "Select,Insert,Update".
 func addToSet(set []string, value string) []string {
-	for _, v := range set {
-		if v == value {
-			return set
-		}
+	if slices.Contains(set, value) {
+		return set
 	}
 	return append(set, value)
 }

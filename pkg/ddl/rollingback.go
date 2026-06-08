@@ -29,10 +29,7 @@ import (
 
 // UpdateColsNull2NotNull changes the null option of columns of an index.
 func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
-	nullCols, err := getNullColInfos(tblInfo, indexInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	nullCols := getNullColInfos(tblInfo, indexInfo.Columns)
 
 	for _, col := range nullCols {
 		col.AddFlag(mysql.NotNullFlag)
@@ -66,10 +63,7 @@ func convertAddIdxJob2RollbackJob(
 	originalState := allIndexInfos[0].State
 	for _, indexInfo := range allIndexInfos {
 		if indexInfo.Primary {
-			nullCols, err := getNullColInfos(tblInfo, indexInfo)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
+			nullCols := getNullColInfos(tblInfo, indexInfo.Columns)
 			for _, col := range nullCols {
 				// Field PreventNullInsertFlag flag reset.
 				col.DelFlag(mysql.PreventNullInsertFlag)

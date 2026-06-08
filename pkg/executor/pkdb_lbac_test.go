@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension/enterprise/audit"
@@ -1927,8 +1928,8 @@ func TestLBACShowGrantsAfterHandleReset(t *testing.T) {
 	tk.MustExec("grant exemption on rule all for sg_policy to user 'sg_user'@'%'")
 
 	// Simulate restart: the privilege handle is recreated and needs to reload privilege tables.
-	handle := privileges.NewHandle(tk.Session().GetRestrictedSQLExecutor())
-	require.NoError(t, handle.Update())
+	handle := privileges.NewHandle(domain.GetDomain(tk.Session()).SysSessionPool())
+	require.NoError(t, handle.UpdateAll())
 	pm := privileges.NewUserPrivileges(handle, nil)
 	privilege.BindPrivilegeManager(tk.Session(), pm)
 

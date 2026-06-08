@@ -24,6 +24,7 @@ import (
 
 func TestBufferBatchGetter(t *testing.T) {
 	snap := newMockStore()
+	snap.commitTSBase = 1000
 	ka := []byte("a")
 	kb := []byte("b")
 	kc := []byte("c")
@@ -35,10 +36,12 @@ func TestBufferBatchGetter(t *testing.T) {
 
 	// middle value is the same as snap
 	middle := newMockStore()
+	middle.commitTSBase = 2000
 	require.NoError(t, middle.Set(ka, []byte("a1")))
 	require.NoError(t, middle.Set(kc, []byte("c1")))
 
 	buffer := newMockStore()
+	buffer.commitTSBase = 3000
 	require.NoError(t, buffer.Set(ka, []byte("a2")))
 	require.NoError(t, buffer.Delete(kb))
 
@@ -46,14 +49,23 @@ func TestBufferBatchGetter(t *testing.T) {
 	result, err := batchGetter.BatchGet(context.Background(), []kv.Key{ka, kb, kc, kd})
 	require.NoError(t, err)
 	require.Len(t, result, 3)
-	require.Equal(t, "a2", string(result[string(ka)]))
-	require.Equal(t, "c1", string(result[string(kc)]))
-	require.Equal(t, "d", string(result[string(kd)]))
+	require.Equal(t, kv.NewValueEntry([]byte("a2"), 0), result[string(ka)])
+	require.Equal(t, kv.NewValueEntry([]byte("c1"), 0), result[string(kc)])
+	require.Equal(t, kv.NewValueEntry([]byte("d"), 0), result[string(kd)])
+
+	// test commit ts option
+	result, err = batchGetter.BatchGet(context.Background(), []kv.Key{ka, kb, kc, kd, []byte("xx")}, kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+	require.Equal(t, kv.NewValueEntry([]byte("a2"), 3000+'a'), result[string(ka)])
+	require.Equal(t, kv.NewValueEntry([]byte("c1"), 2000+'c'), result[string(kc)])
+	require.Equal(t, kv.NewValueEntry([]byte("d"), 1000+'d'), result[string(kd)])
 }
 
 type mockBatchGetterStore struct {
-	index []kv.Key
-	value [][]byte
+	index        []kv.Key
+	value        [][]byte
+	commitTSBase uint64
 }
 
 func newMockStore() *mockBatchGetterStore {
@@ -66,19 +78,28 @@ func newMockStore() *mockBatchGetterStore {
 func (s *mockBatchGetterStore) Len() int {
 	return len(s.index)
 }
-func (s *mockBatchGetterStore) Get(_ context.Context, k kv.Key) ([]byte, error) {
+func (s *mockBatchGetterStore) Get(_ context.Context, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	var opt kv.GetOptions
+	opt.Apply(options)
+
+	var commitTS uint64
+	if opt.ReturnCommitTS() {
+		commitTS = s.commitTSBase + uint64(k[0])
+	}
+
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
-			return s.value[i], nil
+			return kv.NewValueEntry(s.value[i], commitTS), nil
 		}
 	}
-	return nil, kv.ErrNotExist
+	return kv.ValueEntry{}, kv.ErrNotExist
 }
 
-func (s *mockBatchGetterStore) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	m := make(map[string][]byte)
+func (s *mockBatchGetterStore) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	m := make(map[string]kv.ValueEntry)
+	getOptions := kv.BatchGetToGetOptions(options)
 	for _, k := range keys {
-		v, err := s.Get(ctx, k)
+		v, err := s.Get(ctx, k, getOptions...)
 		if err == nil {
 			m[string(k)] = v
 			continue
@@ -111,7 +132,7 @@ type mockBufferBatchGetterStore struct {
 	*mockBatchGetterStore
 }
 
-func (s *mockBufferBatchGetterStore) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (s *mockBufferBatchGetterStore) BatchGet(ctx context.Context, keys [][]byte, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
-	return s.mockBatchGetterStore.BatchGet(ctx, kvKeys)
+	return s.mockBatchGetterStore.BatchGet(ctx, kvKeys, options...)
 }

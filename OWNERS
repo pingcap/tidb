@@ -1,37 +1,55 @@
-# See the OWNERS docs at https://go.k8s.io/owners
+# See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners
+# The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 approvers:
   - 0xPoe
   - 3AceShowHand
   - 3pointer
   - 5kbpers
   - AilinKid
-  - amyangfei
   - AndreMouche
   - AndrewDi
+  - Benjamin2037
+  - BornChanger
+  - CharlesCheung96
+  - D3Hunter
+  - Deardrops
+  - Defined2014
+  - Ehco1996
+  - GMHDBJD
+  - IANTHEREAL
+  - JmPotato
+  - King-Dylan
+  - Leavrth
+  - Little-Wallace
+  - MyonKeminta
+  - OliverS929
+  - Reminiscent
+  - RidRisR
+  - SunRunAway
+  - Tammyxia
+  - WangXiangUSTC
+  - WizardXiao
+  - XuHuaiyu
+  - Yisaer
+  - YuJuncen
+  - amyangfei
   - andylokandy
   - asddongmen
   - b41sh
   - bb7133
-  - Benjamin2037
-  - BornChanger
   - breezewish
   - buchuitoudegou
   - c4pt0r
   - cbcwestwolf
   - cfzjywxk
-  - CharlesCheung96
   - chrysan
   - coocood
   - crazycs520
   - csuzhangxc
-  - D3Hunter
-  - Deardrops
-  - Defined2014
   - disksing
   - djshow832
   - dsdashun
   - dveeden
-  - Ehco1996
   - ekexium
   - elsa0520
   - eurekaka
@@ -39,7 +57,6 @@ approvers:
   - francis0407
   - fzhedu
   - glorv
-  - GMHDBJD
   - gozssky
   - guo-shaoge
   - hanfei1991
@@ -47,21 +64,19 @@ approvers:
   - hicqu
   - holys
   - hongyunyan
-  - IANTHEREAL
   - ichn-hu
   - imtbkcat
   - jackysp
   - jiyfhust
   - joccau
+  - joechenrh
   - july2993
   - kennytm
   - lance6716
   - lcwangchao
-  - Leavrth
   - leoppro
   - lichunzhu
   - lidezhu
-  - Little-Wallace
   - liuzix
   - lonng
   - lysu
@@ -70,45 +85,40 @@ approvers:
   - mjonss
   - mmyj
   - morgo
-  - MyonKeminta
   - ngaut
   - niubell
+  - nolouch
   - nrc
   - okJiang
   - overvenus
   - qiuyesuifeng
   - qw4990
   - rebelice
-  - Reminiscent
+  - rleungx
   - sdojjy
   - shenli
   - siddontang
   - sticnarf
-  - SunRunAway
   - suzaku
   - sylzd
-  - Tammyxia
   - tangenta
+  - terry1purcell
   - tiancaiamao
   - time-and-fate
   - tisonkun
-  - WangXiangUSTC
   - windtalker
   - winkyao
   - winoros
-  - WizardXiao
   - wjhuang2016
   - wk989898
+  - wlwilliamx
   - wshwsh12
   - xhebox
   - xiongjiwei
-  - XuHuaiyu
   - xuyifangreeneyes
   - yangkeao
-  - Yisaer
   - you06
   - youjiali1995
-  - YuJuncen
   - ywqzzy
   - zanmato1984
   - zhangjinpeng87
@@ -119,39 +129,39 @@ approvers:
   - zyguan
   - zz-jason
 reviewers:
+  - CabinfeverB
+  - ChenPeng2013
+  - LittleFall
+  - MoCuishle28
+  - SeaRise
+  - Tjianke
+  - TonsnakeLin
+  - Tristan1900
+  - TszKitLo40
   - aytrack
   - ben1009
   - bobotu
-  - CabinfeverB
   - charleszheng44
-  - ChenPeng2013
   - dhysum
   - fengou1
   - fzzf678
+  - gengliqi
   - ghazalfamilyusa
+  - henrybw
   - iamxy
-  - JmPotato
   - js00070
   - lamxTyler
-  - LittleFall
   - longfangsong
   - lyzx2001
   - mengxin9014
-  - MoCuishle28
   - mornyx
-  - nolouch
   - nongfushanquan
   - pingyu
-  - rleungx
-  - SeaRise
   - shihongzhi
   - spongedu
   - tangwz
-  - terry1purcell
-  - Tjianke
-  - TonsnakeLin
   - tsthght
-  - TszKitLo40
+  - wddevries
   - xzhangxian1008
   - yibin87
   - zhangjinpeng1987

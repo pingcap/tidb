@@ -82,23 +82,23 @@ type InjectedTransaction struct {
 }
 
 // Get returns an error if cfg.getError is set.
-func (t *InjectedTransaction) Get(ctx context.Context, k Key) ([]byte, error) {
+func (t *InjectedTransaction) Get(ctx context.Context, k Key, options ...GetOption) (ValueEntry, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
-		return nil, t.cfg.getError
+		return ValueEntry{}, t.cfg.getError
 	}
-	return t.Transaction.Get(ctx, k)
+	return t.Transaction.Get(ctx, k, options...)
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Transaction.BatchGet(ctx, keys)
+	return t.Transaction.BatchGet(ctx, keys, options...)
 }
 
 // Commit returns an error if cfg.commitError is set.
@@ -118,21 +118,21 @@ type InjectedSnapshot struct {
 }
 
 // Get returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
+func (t *InjectedSnapshot) Get(ctx context.Context, k Key, options ...GetOption) (ValueEntry, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
-		return nil, t.cfg.getError
+		return ValueEntry{}, t.cfg.getError
 	}
-	return t.Snapshot.Get(ctx, k)
+	return t.Snapshot.Get(ctx, k, options...)
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (t *InjectedSnapshot) BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Snapshot.BatchGet(ctx, keys)
+	return t.Snapshot.BatchGet(ctx, keys, options...)
 }
