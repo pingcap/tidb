@@ -18,10 +18,29 @@ import (
 	"fmt"
 	"testing"
 
+	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
+
+func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RUIncrementMap) {
+	if len(increments) == 0 {
+		return
+	}
+	a.mu.Lock()
+	version := a.currentVersion
+	a.mu.Unlock()
+	if version == 0 {
+		version = stmtstats.DefaultRUVersion()
+	}
+	a.addBatch(ruBatch{
+		timestamp: ts,
+		data:      increments,
+		version:   version,
+	})
+}
 
 // makeRUBatch creates a RUIncrementMap with numUsers users and numSQLsPerUser SQLs per user (up to numUsers*numSQLsPerUser keys).
 func makeRUBatch(numUsers, numSQLsPerUser int) stmtstats.RUIncrementMap {
@@ -170,6 +189,77 @@ func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
 	require.Nil(t, agg.takeReportRecords(61, 60, []byte("ks")))
 }
 
+func TestRUWindowAggregatorResetCurrentWindowDropsUntilBoundary(t *testing.T) {
+	t.Run("first batch establishes initial version", func(t *testing.T) {
+		agg := newRUWindowAggregator()
+		require.Zero(t, agg.currentVersion)
+
+		agg.addBatch(ruBatch{
+			timestamp: 1,
+			version:   rmclient.RUVersionV2,
+			data: stmtstats.RUIncrementMap{
+				{
+					User:       "u-init",
+					SQLDigest:  stmtstats.BinaryDigest("sql-init"),
+					PlanDigest: stmtstats.BinaryDigest("plan-init"),
+				}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+			},
+		})
+
+		agg.mu.Lock()
+		defer agg.mu.Unlock()
+		require.Equal(t, rmclient.RUVersionV2, agg.currentVersion)
+		require.Len(t, agg.buckets, 1)
+	})
+
+	t.Run("drop until next boundary", func(t *testing.T) {
+		agg := newRUWindowAggregator()
+		key := stmtstats.RUKey{
+			User:       "u-reset",
+			SQLDigest:  stmtstats.BinaryDigest("sql-reset"),
+			PlanDigest: stmtstats.BinaryDigest("plan-reset"),
+		}
+		agg.addBatchToBucket(121, stmtstats.RUIncrementMap{
+			key: {TotalRU: 3, ExecCount: 1, ExecDuration: 1},
+		})
+
+		agg.resetForHandover(rmclient.RUVersionV2, 125)
+		agg.addBatchToBucket(126, stmtstats.RUIncrementMap{
+			key: {TotalRU: 5, ExecCount: 1, ExecDuration: 1},
+		})
+		require.Nil(t, agg.takeReportRecords(180, 60, []byte("ks")))
+
+		agg.addBatchToBucket(181, stmtstats.RUIncrementMap{
+			key: {TotalRU: 7, ExecCount: 1, ExecDuration: 1},
+		})
+		records := agg.takeReportRecords(240, 60, []byte("ks"))
+		rec := findRURecord(t, records, "u-reset", "sql-reset", "plan-reset")
+		require.Len(t, rec.Items, 1)
+		require.Equal(t, uint64(180), rec.Items[0].TimestampSec)
+		require.InDelta(t, 7.0, rec.Items[0].TotalRu, 1e-9)
+	})
+
+	t.Run("aligned boundary keeps current window", func(t *testing.T) {
+		agg := newRUWindowAggregator()
+		key := stmtstats.RUKey{
+			User:       "u-aligned",
+			SQLDigest:  stmtstats.BinaryDigest("sql-aligned"),
+			PlanDigest: stmtstats.BinaryDigest("plan-aligned"),
+		}
+
+		agg.resetForHandover(rmclient.RUVersionV2, 180)
+		agg.addBatchToBucket(181, stmtstats.RUIncrementMap{
+			key: {TotalRU: 9, ExecCount: 1, ExecDuration: 1},
+		})
+
+		records := agg.takeReportRecords(240, 60, []byte("ks"))
+		rec := findRURecord(t, records, "u-aligned", "sql-aligned", "plan-aligned")
+		require.Len(t, rec.Items, 1)
+		require.Equal(t, uint64(180), rec.Items[0].TimestampSec)
+		require.InDelta(t, 9.0, rec.Items[0].TotalRu, 1e-9)
+	})
+}
+
 // Test gap 3: Concurrent pressure test for ruWindowAggregator.
 // Verifies that under high goroutine contention, addBatchToBucket does not panic
 // or lose structural integrity (records still produce valid reports).
@@ -234,54 +324,99 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 }
 
 func TestRUWindowAggregatorShiftsLateDataAfterWindowReported(t *testing.T) {
-	// A closed [0,60) window can be reported only once.
-	// Late writes to that window are shifted to the earliest still-open report window.
-	agg := newRUWindowAggregator()
+	t.Run("shift to next reportable window", func(t *testing.T) {
+		// A closed [0,60) window can be reported only once.
+		// Late writes to that window are shifted to the earliest still-open report window.
+		agg := newRUWindowAggregator()
 
-	agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
-		{
-			User:       "u1",
-			SQLDigest:  stmtstats.BinaryDigest("sql-a"),
-			PlanDigest: stmtstats.BinaryDigest("plan-a"),
-		}: {TotalRU: 10, ExecCount: 1, ExecDuration: 10},
-	})
-	first := agg.takeReportRecords(60, 60, []byte("ks"))
-	require.NotNil(t, first)
-	require.NotNil(t, findRURecordByDigest(first, "u1", "sql-a", "plan-a"))
+		agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-a"),
+				PlanDigest: stmtstats.BinaryDigest("plan-a"),
+			}: {TotalRU: 10, ExecCount: 1, ExecDuration: 10},
+		})
+		first := agg.takeReportRecords(60, 60, []byte("ks"))
+		require.NotNil(t, first)
+		require.NotNil(t, findRURecordByDigest(first, "u1", "sql-a", "plan-a"))
 
-	// Late data for [0,60) should be shifted into the next reportable window.
-	agg.addBatchToBucket(10, stmtstats.RUIncrementMap{
-		{
-			User:       "u1",
-			SQLDigest:  stmtstats.BinaryDigest("sql-late"),
-			PlanDigest: stmtstats.BinaryDigest("plan-late"),
-		}: {TotalRU: 999, ExecCount: 1, ExecDuration: 1},
-	})
-	agg.addBatchToBucket(61, stmtstats.RUIncrementMap{
-		{
-			User:       "u1",
-			SQLDigest:  stmtstats.BinaryDigest("sql-cur"),
-			PlanDigest: stmtstats.BinaryDigest("plan-cur"),
-		}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+		// Late data for [0,60) should be shifted into the next reportable window.
+		agg.addBatchToBucket(10, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-late"),
+				PlanDigest: stmtstats.BinaryDigest("plan-late"),
+			}: {TotalRU: 999, ExecCount: 1, ExecDuration: 1},
+		})
+		agg.addBatchToBucket(61, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-cur"),
+				PlanDigest: stmtstats.BinaryDigest("plan-cur"),
+			}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+		})
+
+		second := agg.takeReportRecords(120, 60, []byte("ks"))
+		require.NotEmpty(t, second)
+		late := findRURecordByDigest(second, "u1", "sql-late", "plan-late")
+		require.NotNil(t, late)
+		require.Len(t, late.Items, 1)
+		require.InDelta(t, 999.0, late.Items[0].TotalRu, 1e-9)
+		cur := findRURecordByDigest(second, "u1", "sql-cur", "plan-cur")
+		require.NotNil(t, cur)
+		require.Len(t, cur.Items, 1)
+		require.InDelta(t, 1.0, cur.Items[0].TotalRu, 1e-9)
+		require.InDelta(t, 1000.0, totalRUFromTopRURecords(second), 1e-9)
 	})
 
-	second := agg.takeReportRecords(120, 60, []byte("ks"))
-	require.NotEmpty(t, second)
-	late := findRURecordByDigest(second, "u1", "sql-late", "plan-late")
-	require.NotNil(t, late)
-	require.Len(t, late.Items, 1)
-	require.InDelta(t, 999.0, late.Items[0].TotalRu, 1e-9)
-	cur := findRURecordByDigest(second, "u1", "sql-cur", "plan-cur")
-	require.NotNil(t, cur)
-	require.Len(t, cur.Items, 1)
-	require.InDelta(t, 1.0, cur.Items[0].TotalRu, 1e-9)
-	require.InDelta(t, 1000.0, totalRUFromTopRURecords(second), 1e-9)
+	t.Run("drop on compacted late target is tracked", func(t *testing.T) {
+		agg := newRUWindowAggregator()
+		beforeDroppedKeys := readCounter(t, reporter_metrics.IgnoreLateCompactedRUKeysCounter)
+		beforeDroppedRU := readCounter(t, reporter_metrics.IgnoreLateCompactedRUTotalCounter)
+
+		agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-a"),
+				PlanDigest: stmtstats.BinaryDigest("plan-a"),
+			}: {TotalRU: 10, ExecCount: 1, ExecDuration: 10},
+		})
+		require.NotNil(t, agg.takeReportRecords(60, 60, []byte("ks")))
+
+		agg.addBatchToBucket(61, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-cur"),
+				PlanDigest: stmtstats.BinaryDigest("plan-cur"),
+			}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+		})
+		agg.addBatchToBucket(76, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-cur-2"),
+				PlanDigest: stmtstats.BinaryDigest("plan-cur-2"),
+			}: {TotalRU: 2, ExecCount: 1, ExecDuration: 1},
+		})
+		agg.addBatchToBucket(10, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest("sql-late"),
+				PlanDigest: stmtstats.BinaryDigest("plan-late"),
+			}: {TotalRU: 999, ExecCount: 1, ExecDuration: 1},
+		})
+
+		require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreLateCompactedRUKeysCounter)-beforeDroppedKeys, 1e-9)
+		require.InDelta(t, 999.0, readCounter(t, reporter_metrics.IgnoreLateCompactedRUTotalCounter)-beforeDroppedRU, 1e-9)
+	})
 }
 
 func TestLateDataUnderConcurrentReporting(t *testing.T) {
-	// Risk covered: concurrent report + late writes should not lose already collected RU.
-	// Late writes can be split across second/third window depending on interleaving.
+	// Risk covered: concurrent report + late writes are best-effort.
+	// Late writes can be split across second/third window or be dropped if they race
+	// with bucket compaction, but dropped RU must remain observable via metrics.
 	agg := newRUWindowAggregator()
+	beforeDroppedKeys := readCounter(t, reporter_metrics.IgnoreLateCompactedRUKeysCounter)
+	beforeDroppedRU := readCounter(t, reporter_metrics.IgnoreLateCompactedRUTotalCounter)
 	keyA := stmtstats.RUKey{
 		User:       "u-a",
 		SQLDigest:  stmtstats.BinaryDigest("sql-a"),
@@ -360,7 +495,10 @@ func TestLateDataUnderConcurrentReporting(t *testing.T) {
 	if rec := findRURecordByDigest(third, "u-late", "sql-late", "plan-late"); rec != nil {
 		lateTotal += sumTopRUItems(rec.Items)
 	}
-	require.InDelta(t, 200*999, lateTotal, 1e-6)
+	droppedKeys := readCounter(t, reporter_metrics.IgnoreLateCompactedRUKeysCounter) - beforeDroppedKeys
+	droppedRU := readCounter(t, reporter_metrics.IgnoreLateCompactedRUTotalCounter) - beforeDroppedRU
+	require.InDelta(t, float64(200*999), lateTotal+droppedRU, 1e-6)
+	require.InDelta(t, droppedRU/999.0, droppedKeys, 1e-9)
 }
 
 func TestRUWindowAggregatorFinalReportCappedTo100x100(t *testing.T) {
@@ -394,11 +532,13 @@ func TestRUWindowAggregatorFinalReportCappedTo100x100(t *testing.T) {
 	var othersUserTotalRU float64
 	for i := range records {
 		rec := records[i]
-		if rec.User == keyRUOthersUser && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+		if rec.User == othersUserWireLabel && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
 			othersUserTotalRU += sumTopRUItems(rec.Items)
 			continue
 		}
-		if rec.User == keyRUOthersUser {
+		if rec.User == othersUserWireLabel {
+			require.Zero(t, len(rec.SqlDigest))
+			require.Zero(t, len(rec.PlanDigest))
 			continue
 		}
 		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {
@@ -493,7 +633,9 @@ func TestRUWindowAggregatorOverCapBehaviorKeepsHotKeys(t *testing.T) {
 	realUsers := map[string]int{}
 	for i := range records {
 		rec := records[i]
-		if rec.User == keyRUOthersUser {
+		if rec.User == othersUserWireLabel {
+			require.Zero(t, len(rec.SqlDigest))
+			require.Zero(t, len(rec.PlanDigest))
 			continue
 		}
 		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {

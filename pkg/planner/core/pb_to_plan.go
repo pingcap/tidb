@@ -314,6 +314,11 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
 		}
 		innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
+	case *ast.FlushStmt:
+		if x.Tp != ast.FlushStatsDelta {
+			return nil, errors.Errorf("unexpected flush statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	case *ast.RefreshStatsStmt:
 		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	default:

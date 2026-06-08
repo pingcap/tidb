@@ -21,9 +21,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -59,7 +61,7 @@ type Handler interface {
 	// if it failed, Close still need to be called.
 	PreRun() error
 	// Run processes the conflicted KV pairs from the channel.
-	Run(context.Context, chan *external.KVPair) error
+	Run(context.Context, chan *simplesst.KVPair) error
 	// Close must be called regardless of PreRun/Run result.
 	Close(context.Context) error
 }
@@ -67,7 +69,7 @@ type Handler interface {
 // KVHandler handles a single conflict KV pair.
 // exported for test.
 type KVHandler interface {
-	Handle(context.Context, *external.KVPair) error
+	Handle(context.Context, *simplesst.KVPair) error
 }
 
 // EncodedRowHandler handles the re-encoded row from conflict KV.
@@ -84,6 +86,7 @@ type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
 	encoder     *importer.TableKVEncoder
+	collector   execute.Collector
 	logger      *zap.Logger
 	EncodedRowHandler
 
@@ -96,12 +99,17 @@ func NewBaseHandler(
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
 	encodedRowHdl EncodedRowHandler,
+	collector execute.Collector,
 	logger *zap.Logger,
 ) *BaseHandler {
+	if collector == nil {
+		collector = &execute.NoopCollector{}
+	}
 	return &BaseHandler{
 		targetTable:       targetTable,
 		kvGroup:           kvGroup,
 		encoder:           encoder,
+		collector:         collector,
 		logger:            logger,
 		EncodedRowHandler: encodedRowHdl,
 	}
@@ -113,11 +121,13 @@ func (*BaseHandler) PreRun() error {
 }
 
 // Run implements Handler interface.
-func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) error {
+func (h *BaseHandler) Run(ctx context.Context, pairCh chan *simplesst.KVPair) error {
 	for kvPair := range pairCh {
 		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
+		// Each item in pairCh is one conflict KV pair.
+		h.collector.Processed(1, 0)
 	}
 	return nil
 }
@@ -176,7 +186,7 @@ func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
 }
 
 // Handle implements KVHandler interface.
-func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
+func (h *DataKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
 	key, err := stripKeyspacePrefix(kv.Key)
 	if err != nil {
 		return err
@@ -223,7 +233,7 @@ func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filte
 
 // PreRun implements Handler interface.
 func (h *IndexKVHandler) PreRun() error {
-	indexID, err := external.KVGroup2IndexID(h.kvGroup)
+	indexID, err := globalsort.KVGroup2IndexID(h.kvGroup)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -243,7 +253,7 @@ func (h *IndexKVHandler) PreRun() error {
 }
 
 // Handle implements KVHandler interface.
-func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
+func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
 	key, err := stripKeyspacePrefix(kv.Key)
 	if err != nil {
 		return err

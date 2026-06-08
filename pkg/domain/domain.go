@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	disthandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -63,9 +62,9 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -116,6 +115,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -298,6 +298,15 @@ func (do *Domain) DDLExecutor() ddl.Executor {
 // GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
 func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
+}
+
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
 }
 
 // SetDDL sets DDL to domain, it's only used in tests.
@@ -843,18 +852,20 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	return nil
 }
 
-// TODO: we should sync the system keyspace info schema, not just load it,
-// currently, we assume there is no upgrade, so we only load the info schema of
-// system keyspace once, and it will not change during the lifetime of the domain,
-// it's not right, but it's enough to push subtasks which depends on it forward,
-// we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
+	// it will trigger the creation of system keyspace session manager,
+	// which will load the info schema cache.
 	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
+// we should forbid direct access cross KS component through Domain. we should
+// use AcquireKSRuntime to manage their lifecycle.
+// but Session dependents on Domain, to create a session pool we need to access the
+// GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
+// and trying to refactor that part can cause import cycle easily.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -864,6 +875,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
+// see comments of GetKSStore too.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -879,12 +891,6 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 		return nil, errors.Trace(err)
 	}
 	return mgr.SessPool(), nil
-}
-
-// CloseKSSessMgr closes the session manager for the given keyspace.
-// it's exported for test only.
-func (do *Domain) CloseKSSessMgr(targetKS string) {
-	do.crossKSSessMgr.CloseKS(targetKS)
 }
 
 // GetCrossKSMgr returns the cross keyspace session manager.
@@ -1127,7 +1133,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
-	disthandle.SetNodeResource(nodeRes)
+	storage.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1147,7 +1153,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		logger := logutil.BgLogger()
-		return local.InitializeRateLimiterParam(m, logger)
+		return ingestctrl.InitializeRateLimiterParam(m, logger)
 	}); err != nil {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
@@ -1175,11 +1181,16 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	} else {
 		totalDisk = sz.Capacity
 	}
+	nodeRes := proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk)
+	dxfNodeRes := nodeRes.LimitDXFResource(cfg.DXFResourceLimit)
 	logger.Info("initialize node resource",
 		zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))),
+		zap.Int("dxf-resource-limit", cfg.DXFResourceLimit),
+		zap.Int("dxf-usable-cpu", dxfNodeRes.TotalCPU),
+		zap.String("dxf-usable-mem", units.BytesSize(float64(dxfNodeRes.TotalMem))),
 		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
-	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
+	return dxfNodeRes, nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
@@ -1263,7 +1274,7 @@ func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 // GetPDClient returns the PD client.
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		return store.GetPDClient()
+		return store.GetPDClient().WithCallerComponent(caller.GetComponent(1))
 	}
 	return nil
 }
@@ -1707,6 +1718,15 @@ func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
 	do.resourceGroupsController.Store(controller)
+}
+
+// GetRUVersion returns the current RU calculation version for this keyspace.
+// Returns DefaultRUVersion (v1) if the resource groups controller is not available.
+func (do *Domain) GetRUVersion() rmclient.RUVersion {
+	if rgCtl := do.ResourceGroupsController(); rgCtl != nil {
+		return rgCtl.GetRUVersion()
+	}
+	return rmclient.DefaultRUVersion
 }
 
 // SetupHistoricalStatsWorker setups worker
@@ -2495,7 +2515,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return

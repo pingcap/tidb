@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"container/list"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"slices"
@@ -53,8 +54,16 @@ type StmtDigestKey struct {
 }
 
 // Init initialize the hash key.
-func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
-	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+// When user is empty (group_by_user disabled), the hash is byte-identical to
+// the pre-user-dimension layout. When user is non-empty, the hash appends a
+// length-prefixed user segment after resourceGroupName so the boundary is
+// unambiguous and pairs like ("rg", "alice") and ("rga", "lice") cannot
+// collide.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName, user string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName) + len(user)
+	if len(user) > 0 {
+		length += 4
+	}
 	if cap(key.hash) < length {
 		key.hash = make([]byte, 0, length)
 	} else {
@@ -65,6 +74,12 @@ func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resou
 	key.hash = append(key.hash, hack.Slice(prevDigest)...)
 	key.hash = append(key.hash, hack.Slice(planDigest)...)
 	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
+	if len(user) > 0 {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], uint32(len(user)))
+		key.hash = append(key.hash, buf[:]...)
+		key.hash = append(key.hash, hack.Slice(user)...)
+	}
 }
 
 // Hash implements SimpleLRUCache.Key.
@@ -90,6 +105,7 @@ type stmtSummaryByDigestMap struct {
 	optRefreshInterval     *atomic2.Int64
 	optHistorySize         *atomic2.Int32
 	optMaxSQLLength        *atomic2.Int32
+	optGroupByUser         *atomic2.Bool
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
@@ -277,7 +293,9 @@ type StmtExecInfo struct {
 	PlanInBinding  bool
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
-	execdetails.StmtExecDetails
+
+	WriteSQLRespDuration time.Duration
+
 	ResultRows        int64
 	TiKVExecDetails   *util.ExecDetails
 	Prepared          bool
@@ -285,6 +303,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	TotalRUV2         float64
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
@@ -321,6 +340,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
 		optMaxSQLLength:        atomic2.NewInt32(32768),
+		optGroupByUser:         atomic2.NewBool(false),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
@@ -354,8 +374,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	}
 
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
-	// Init hash value in advance, to reduce the time holding the lock.
-	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
 	var exist bool
 
@@ -368,6 +386,15 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// performance in this specific case.
 	ssMap.Lock()
 	defer ssMap.Unlock()
+
+	// Decide userForKey under the lock so SetGroupByUser's flag flip + Clear
+	// is atomic w.r.t. AddStatement; otherwise a post-clear insert could land
+	// under the wrong grouping mode.
+	userForKey := ""
+	if ssMap.optGroupByUser.Load() {
+		userForKey = sei.User
+	}
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName, userForKey)
 
 	// Check again. Statements could be added before disabling the flag and after Clear().
 	if !ssMap.Enabled() {
@@ -410,6 +437,11 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.Lock()
 	defer ssMap.Unlock()
 
+	ssMap.clearLocked()
+}
+
+// clearLocked removes all statement summaries. ssMap.Lock must be held.
+func (ssMap *stmtSummaryByDigestMap) clearLocked() {
 	ssMap.summaryMap.DeleteAll()
 	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
@@ -515,6 +547,28 @@ func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value int) error {
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
 	return int(ssMap.optHistorySize.Load())
+}
+
+// SetGroupByUser enables or disables grouping statement summaries by the
+// executing user. Switching the flag clears existing data because existing
+// rows were aggregated under a different grouping key.
+func (ssMap *stmtSummaryByDigestMap) SetGroupByUser(value bool) error {
+	// Hold ssMap.Lock across the flag flip and clear so AddStatement (which
+	// reads the flag under the same lock) cannot insert a record with the
+	// old grouping mode after Clear() completes.
+	ssMap.Lock()
+	defer ssMap.Unlock()
+	if ssMap.optGroupByUser.Load() == value {
+		return nil
+	}
+	ssMap.optGroupByUser.Store(value)
+	ssMap.clearLocked()
+	return nil
+}
+
+// GroupByUser reports whether statement summaries are grouped by user.
+func (ssMap *stmtSummaryByDigestMap) GroupByUser() bool {
+	return ssMap.optGroupByUser.Load()
 }
 
 // SetHistorySize sets the history size for all summaries.
@@ -934,7 +988,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
 	ssStats.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssStats.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
-	ssStats.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssStats.sumWriteSQLRespTotal += sei.WriteSQLRespDuration
 	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
@@ -942,7 +996,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
 
 	// request-units
-	ssStats.StmtRUSummary.Add(sei.RUDetail)
+	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
 
 	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
 	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
@@ -1038,10 +1092,12 @@ type StmtRUSummary struct {
 	MaxRRU            float64       `json:"max_rru"`
 	MaxWRU            float64       `json:"max_wru"`
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
+	SumRUV2           float64       `json:"sum_ruv2"`
+	MaxRUV2           float64       `json:"max_ruv2"`
 }
 
 // Add add a new sample value to the ru summary record.
-func (s *StmtRUSummary) Add(info *util.RUDetails) {
+func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
 	if info != nil {
 		rru := info.RRU()
 		s.SumRRU += rru
@@ -1059,6 +1115,10 @@ func (s *StmtRUSummary) Add(info *util.RUDetails) {
 			s.MaxRUWaitDuration = ruWaitDur
 		}
 	}
+	s.SumRUV2 += totalRUV2
+	if s.MaxRUV2 < totalRUV2 {
+		s.MaxRUV2 = totalRUV2
+	}
 }
 
 // Merge merges the value of 2 ru summary records.
@@ -1074,6 +1134,10 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+	s.SumRUV2 += other.SumRUV2
+	if s.MaxRUV2 < other.MaxRUV2 {
+		s.MaxRUV2 = other.MaxRUV2
 	}
 }
 
@@ -1107,13 +1171,14 @@ func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 // Add add a new sample value to the ru summary record.
 func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
 	if info != nil {
-		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
-		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
-		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
-		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
-		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
-		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
-		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone
-		s.UnpackedBytesReceivedTiFlashCrossZone += info.UnpackedBytesReceivedMPPCrossZone
+		snapshot := execdetails.LoadTiKVExecDetails(info)
+		s.UnpackedBytesSentTiKVTotal += snapshot.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += snapshot.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += snapshot.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += snapshot.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiFlashTotal += snapshot.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedTiFlashTotal += snapshot.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentTiFlashCrossZone += snapshot.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedTiFlashCrossZone += snapshot.UnpackedBytesReceivedMPPCrossZone
 	}
 }

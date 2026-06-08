@@ -16,6 +16,7 @@ package crossks_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +44,16 @@ import (
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
+var registerUnistoreOnce sync.Once
+
+func registerUnistore(t *testing.T) {
+	var err error
+	registerUnistoreOnce.Do(func() {
+		err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
+	})
+	require.NoError(t, err)
+}
+
 func TestManagerInClassical(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("only test in classic kernel")
@@ -50,7 +61,7 @@ func TestManagerInClassical(t *testing.T) {
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	_, err := dom.GetKSStore("aaa")
-	require.ErrorContains(t, err, "cross keyspace session manager is not available in classic kernel or current keyspace")
+	require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
 }
 
 func TestManager(t *testing.T) {
@@ -92,7 +103,7 @@ func TestManager(t *testing.T) {
 		},
 	)
 
-	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
+	registerUnistore(t)
 	sysKSStore, sysKSDom := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
 	sysKSTK.MustExec("use test")
@@ -100,7 +111,7 @@ func TestManager(t *testing.T) {
 
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
-		require.ErrorContains(t, err, "cross keyspace session manager is not available in classic kernel or current keyspace")
+		require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
 	})
 
 	t.Run("failed to get store in cross keyspace manager", func(t *testing.T) {
@@ -154,7 +165,8 @@ func TestManager(t *testing.T) {
 			t.Cleanup(func() {
 				// we have to close the cross keyspace session manager, as the
 				// store will be closed by testkit.CreateMockStoreAndDomainForKS
-				sysKSDom.CloseKSSessMgr(ks)
+				ksMgr := sysKSDom.GetCrossKSMgr()
+				ksMgr.CloseKS(ks)
 			})
 			mgr := storage.NewTaskManager(pool)
 			ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
@@ -213,7 +225,8 @@ func TestManager(t *testing.T) {
 		t.Cleanup(func() {
 			// we have to close the cross keyspace session manager, as the
 			// store will be closed by testkit.CreateMockStoreAndDomainForKS
-			sysKSDom.CloseKSSessMgr(userKS)
+			ksMgr := sysKSDom.GetCrossKSMgr()
+			ksMgr.CloseKS(userKS)
 		})
 
 		crossKSMgr := sysKSDom.GetCrossKSMgr()
@@ -245,4 +258,78 @@ func TestManager(t *testing.T) {
 			return coordinator.InternalSessionCount() == 0
 		}, 10*time.Second, 20*time.Millisecond)
 	})
+}
+
+func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
+	defer cluster.Terminate(t)
+	keyspaceIDs := map[string]uint32{
+		keyspace.System:     1,
+		"ks-runtime-domain": 2,
+	}
+	getETCDCli := func(ks string, ksID uint32) *clientv3.Client {
+		for i := range 2 {
+			cli := cluster.Client(i)
+			if cli == nil {
+				continue
+			}
+			cluster.TakeClient(i)
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			require.NoError(t, err)
+			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
+			return cli
+		}
+		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
+		return nil
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
+		func(cliP **clientv3.Client, ks string) {
+			id, ok := keyspaceIDs[ks]
+			require.True(t, ok)
+			*cliP = getETCDCli(ks, id)
+		},
+	)
+
+	registerUnistore(t)
+	sysKSStore, sysKSDom := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
+	storeMap := make(map[string]kv.Storage, 2)
+	storeMap[keyspace.System] = sysKSStore
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
+		func(fnP *func(string) (store kv.Storage, err error)) {
+			*fnP = func(ks string) (store kv.Storage, err error) {
+				return storeMap[ks], nil
+			}
+		},
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/skipCloseStore",
+		func(shouldCloseStore *bool) {
+			*shouldCloseStore = false
+		},
+	)
+
+	targetKS := "ks-runtime-domain"
+	targetStore, _ := testkit.CreateMockStoreAndDomainForKS(t, targetKS)
+	storeMap[targetKS] = targetStore
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = keyspace.System
+	})
+
+	handle, err := sysKSDom.AcquireKSRuntime(targetKS, "test/domain-runtime-handle")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		handle.Release()
+		ksMgr := sysKSDom.GetCrossKSMgr()
+		ksMgr.CloseKS(targetKS)
+	})
+	require.Same(t, targetStore, handle.Store())
+
+	crossKSMgr := sysKSDom.GetCrossKSMgr()
+	sessMgr, ok := crossKSMgr.Get(targetKS)
+	require.True(t, ok)
+	require.Same(t, sessMgr.Store(), handle.Store())
+	require.Same(t, sessMgr.SessPool(), handle.SessPool())
 }

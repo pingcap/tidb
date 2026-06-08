@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	litstorage "github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -70,6 +71,7 @@ type Manager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logger       *zap.Logger
+	sampleLogger *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
 	trace        *traceevent.Trace
@@ -78,8 +80,10 @@ type Manager struct {
 // NewManager creates a new task executor Manager.
 func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
+	sampleLogger := handle.NewSampleErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
+		sampleLogger = sampleLogger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
@@ -87,6 +91,7 @@ func NewManager(ctx context.Context, store kv.Storage, id string, taskTable Task
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
+		sampleLogger: sampleLogger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
 		trace:        traceevent.NewTrace(),
@@ -182,7 +187,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.logger.Error("failed to get executable task", zap.Error(err))
+		m.sampleLogger.Error("failed to get executable task", zap.Error(err))
 		return
 	}
 
@@ -310,6 +315,19 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
 	}
+
+	taskStore := m.store
+	if m.store.GetKeyspace() != task.Keyspace {
+		if err2 := m.taskTable.WithNewSession(func(se sessionctx.Context) error {
+			var err2 error
+			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
+			return err2
+		}); err2 != nil {
+			m.logger.Warn("get task store failed", zap.Int64("task-id", task.ID),
+				zap.String("task-key", task.Key), zap.Error(err2))
+			return false
+		}
+	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
 			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
@@ -335,7 +353,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
-		Store:     m.store,
+		TaskStore: taskStore,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {
@@ -390,7 +408,7 @@ func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		m.logger.Error("met retryable err", zap.Error(err))
+		m.logger.Warn("met retryable err", zap.Error(err))
 		return
 	}
 	err1 := m.runWithRetry(func() error {

@@ -1,0 +1,12 @@
+# Regular keyword
+SELECT * FROM information_schema.keywords WHERE WORD='ADD';
+SELECT * FROM information_schema.keywords WHERE WORD='ADD' AND RESERVED=1;
+SELECT COUNT(*) FROM information_schema.keywords WHERE WORD='ADD';
+
+# MariaDB-only keyword (not accepted in TiDB, but supported by the parser)
+# This is only accepted by the parser after (*Parser).SetMariaDB(true)
+# This is only used by DM to parse `GRANT BINLOG MONITOR...` from MariaDB
+# when checking privileges.
+#
+# See also: pkg/parser/generate_keyword/filter_mariadb.go
+SELECT COUNT(*) FROM information_schema.keywords WHERE WORD='MONITOR';

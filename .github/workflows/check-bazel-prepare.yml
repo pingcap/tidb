@@ -1,0 +1,42 @@
+name: Check Bazel Prepare
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-bazel-prepare-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check Bazel Prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.25
+          cache: false
+      - name: Set up Bazelisk
+        uses: bazel-contrib/setup-bazel@0.16.0
+        with:
+          bazelisk-cache: false
+          repository-cache: false
+          external-cache: false
+      - name: Check Bazel Prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Avoid the TiDB CI path that assumes Jenkins-owned temp directories.
+          unset CI
+          make check-bazel-prepare

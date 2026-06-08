@@ -520,7 +520,7 @@ explain format = 'plan_tree' select row_number() over( partition by i ) - x as r
 id	task	access object	operator info
 Projection	root		minus(Column, select.t.x)->Column
 └─Shuffle	root		execution info: concurrency:5, data sources:[TableReader]
-  └─Window	root		row_number()->Column#6 over(partition by select.t.i rows between current row and current row)
+  └─Window	root		row_number()->Column over(partition by select.t.i rows between current row and current row)
     └─Sort	root		select.t.i
       └─ShuffleReceiver	root		
         └─TableReader	root		data:TableFullScan
@@ -729,3 +729,5 @@ SELECT * FROM t1 STRAIGHT_JOIN t2 USING(i);
 Error 1054 (42S22): Unknown column 'i' in 'from clause'
 SELECT * FROM t1 STRAIGHT_JOIN t3 USING(id);
 Error 1054 (42S22): Unknown column 'id' in 'from clause'
+select $$;
+Error 1054 (42S22): Unknown column '$$' in 'field list'

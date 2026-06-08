@@ -784,6 +784,8 @@ select * from t group by b,d;
 --error 1055
 select * from t group by b,c;
 select * from t where c = d group by b, c;
+--error 1055
+select /* issue:68026 */ a from t where c = 1 or d = 1 group by b, c;
 select t.*, x.* from t, x where t.a = x.a group by t.a;
 select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
 select t.*, x.* from t, x where t.b = x.a group by t.b, t.d;
@@ -1073,6 +1075,8 @@ admin reload opt_rule_blacklist;
 
 # TestIssue61735AggregateTruncatedDecimal
 --enable_warnings
+select nullif(77.15, PI());
+select avg(nullif(77.15, PI()));
 select distinct avg(nullif(77.15, PI()));
 --disable_warnings
 

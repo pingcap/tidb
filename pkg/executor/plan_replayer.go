@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -44,6 +46,10 @@ import (
 
 var _ exec.Executor = &PlanReplayerExec{}
 var _ exec.Executor = &PlanReplayerLoadExec{}
+
+func init() {
+	plannercore.LoadPlanReplayerForExplainExplore = loadPlanReplayerForExplainExplore
+}
 
 // PlanReplayerExec represents a plan replayer executor.
 type PlanReplayerExec struct {
@@ -280,6 +286,62 @@ func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func loadPlanReplayerForExplainExplore(ctx sessionctx.Context, path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("plan replayer: file path is empty")
+	}
+
+	// #nosec G304 -- EXPLAIN EXPLORE REPLAYER intentionally reads the user-specified replayer file.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", errors.AddStack(err)
+	}
+
+	targetSQL, err := extractPlanReplayerTargetSQL(data)
+	if err != nil {
+		return "", err
+	}
+	err = (&PlanReplayerLoadInfo{
+		Path: path,
+		Ctx:  ctx,
+	}).Update(data)
+	if err != nil {
+		return "", err
+	}
+	return targetSQL, nil
+}
+
+func extractPlanReplayerTargetSQL(data []byte) (string, error) {
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", errors.AddStack(err)
+	}
+	for _, zipFile := range z.File {
+		if zipFile.Name != "sql/sql0.sql" || !zipFile.Mode().IsRegular() {
+			continue
+		}
+		r, err := zipFile.Open()
+		if err != nil {
+			return "", errors.AddStack(err)
+		}
+		buf := new(bytes.Buffer)
+		_, readErr := buf.ReadFrom(r)
+		closeErr := r.Close()
+		if readErr != nil {
+			return "", errors.AddStack(readErr)
+		}
+		if closeErr != nil {
+			return "", errors.AddStack(closeErr)
+		}
+		targetSQL := strings.TrimSpace(buf.String())
+		if targetSQL == "" {
+			return "", errors.New("plan replayer: target SQL is empty")
+		}
+		return targetSQL, nil
+	}
+	return "", errors.New("plan replayer: target SQL file sql/sql0.sql not found")
+}
+
 func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, domain.PlanReplayerTiFlashReplicasFile) == 0 {
@@ -406,6 +468,17 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
+// Plan replayer loads recorded statistics for troubleshooting/reproduction.
+// Auto-analyze can run right after restore and overwrite those stats, which
+// makes the restored environment drift from the captured one.
+func disableAutoAnalyzeForPlanReplayerLoad(ctx sessionctx.Context) error {
+	return errors.AddStack(ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(
+		context.Background(),
+		vardef.TiDBEnableAutoAnalyze,
+		vardef.Off,
+	))
+}
+
 // createSchemaAndItems creates schema and tables or views
 func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
@@ -446,6 +519,10 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 		}
 		_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
 		if err != nil {
+			if infoschema.ErrTableExists.Equal(err) {
+				logutil.BgLogger().Debug("plan replayer: skip existing schema item", zap.Error(err))
+				continue
+			}
 			return err
 		}
 	}
@@ -495,7 +572,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		return err
 	}
-
+	// Explicitly disable auto-analyze after restore so imported stats stay stable.
+	// Users can re-enable it manually when they no longer need a frozen replay env.
+	err = disableAutoAnalyzeForPlanReplayerLoad(e.Ctx)
+	if err != nil {
+		return err
+	}
 	// build schema and table first
 	var databaseSets map[string]struct{}
 	databaseSets, err = e.createTable(z)
@@ -535,6 +617,13 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
+
+	// Notify users that PLAN REPLAYER LOAD disables auto-analyze to keep restored stats stable.
+	e.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"`PLAN REPLAYER LOAD` sets @@global.%s=OFF to keep restored statistics stable; re-enable it manually if needed",
+		vardef.TiDBEnableAutoAnalyze,
+	))
+
 	return nil
 }
 

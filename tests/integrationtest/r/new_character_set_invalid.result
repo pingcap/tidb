@@ -52,4 +52,3 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `e` enum('红','jY') COLLATE gbk_bin DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin
-set @@sql_mode = '';

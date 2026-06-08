@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -48,6 +48,7 @@ type conflictResolutionStepExecutor struct {
 }
 
 var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
+var _ execute.Collector = &conflictResolutionStepExecutor{}
 
 // NewConflictResolutionStepExecutor creates a new StepExecutor for conflict
 // resolution step, exported for test.
@@ -136,10 +137,10 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	}
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
 	for i := range concurrency {
 		encoder := encoders[i]
-		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())
+		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e, e.GetMeterRecorder())
 		eg.Go(func() error {
 			return deleter.Run(egCtx, pairCh)
 		})
@@ -160,6 +161,14 @@ func (e *conflictResolutionStepExecutor) RealtimeSummary() *execute.SubtaskSumma
 
 func (e *conflictResolutionStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+// Accepted implements Collector.Accepted interface.
+func (*conflictResolutionStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *conflictResolutionStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
 }
 
 // when create encoder, if the table have generated column, when calling

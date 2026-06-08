@@ -2209,7 +2209,7 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc\\_' escape ''",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]]->Sel([like(test.t.c_str, abc\\_, 92)])->Projection)"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\\\\\",\"abc]\")]->Sel([like(test.t.c_str, abc\\_, 0)])->Projection)"
       },
       {
         "SQL": "select a from t where c_str like 'abc\\_'",

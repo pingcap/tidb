@@ -45,8 +45,6 @@ type ConsumptionReporter interface {
 	// ReportConsumption report the consumption directly, it's used at
 	// scenarios that the `ResourceGroupKVInterceptor` is not available.
 	ReportConsumption(resourceGroupName string, consumption *rmpb.Consumption)
-	// ReportTiKVRUV2Consumption reports TiKV-side RU v2 consumption for observation.
-	ReportTiKVRUV2Consumption(resourceGroupName string, ruv2 float64)
-	// ReportTiDBRUV2Consumption reports TiDB-side RU v2 consumption for observation.
-	ReportTiDBRUV2Consumption(resourceGroupName string, ruv2 float64)
+	// ReportRUV2Consumption reports engine-split RU v2 consumption for observation.
+	ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64)
 }

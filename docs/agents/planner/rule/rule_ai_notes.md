@@ -87,3 +87,65 @@ Reusable lessons:
   - optimizer path/branch conditions.
   This avoids misattributing the issue to impossible DDL concurrency.
 - Regression tests should intentionally force the vulnerable branch (here: `index stats invalid + partial column stats`) instead of relying on random timing.
+
+## 2026-03-25 - IndexMerge handle columns must come from DataSource schema (PR #65798)
+
+Background:
+- A planner fix for PK/common-handle tables updated `setIndexMergeTableScanHandleCols` and `overwritePartialTableScanSchema` to reuse `UnMutableHandleCols` instead of manufacturing `_tidb_rowid`.
+- Review surfaced one remaining inconsistency in `PhysicalIndexScan.InitSchema`: when scanning `p.Columns` for the handle column, the code still created a fresh fallback column if `DataSourceSchema` lookup failed.
+
+Key takeaways:
+- For partial index scans built from `DataSource`, `PhysicalIndexScan.DataSourceSchema` is the original datasource schema (`ds.Schema()`), not a pruned KV schema.
+- PK handle/common handle metadata is established when building `DataSource`, via `HandleCols` / `UnMutableHandleCols`, so the handle column should already be discoverable from `DataSourceSchema`.
+- Creating a synthetic handle column in `InitSchema` hides invariant violations and can silently diverge from the rest of the index-merge handle-column logic.
+
+Implementation choice:
+- Keep the table-scan side consistent by reusing `UnMutableHandleCols` in both `setIndexMergeTableScanHandleCols` and `overwritePartialTableScanSchema`.
+- In `PhysicalIndexScan.InitSchema`, require handle lookup to succeed from `DataSourceSchema`; use `intest.Assert` to make violations explicit in test builds instead of silently fabricating a new column.
+
+Reusable lessons:
+- When fixing planner bugs around handle columns, first identify which representation is the source of truth:
+  - `DataSourceSchema` for logical/original columns,
+  - `HandleCols` / `UnMutableHandleCols` for stable handle identity,
+  - `_tidb_rowid` only for tables that truly need extra handle.
+- If two index-merge construction paths both touch handle columns, patch them together. Fixing only the table-scan side or only the partial-index side usually leaves a second latent failure path behind.
+
+## 2026-04-08 - Outer join elimination can treat window top1 as unique (PR #67519)
+
+Background:
+- A planner change extends outer join elimination so the inner side can be treated as unique when it is a `Selection` over a `LogicalWindow` computing `row_number()`.
+
+Key takeaways:
+- The uniqueness proof is shape-sensitive, not a general window-property deduction.
+- The current rule only accepts:
+  - exactly one window function and it is `row_number()`,
+  - a `ROWS BETWEEN CURRENT ROW AND CURRENT ROW` frame,
+  - a selection predicate proving the window result column has upper bound `1`,
+  - partition-by columns fully covered by the inner join keys.
+- `hasRowNumberUpperBoundOne` intentionally covers only simple patterns:
+  - `rn = 1` via `isColEqConst`,
+  - simple `<` / `<=` upper bounds recognized by `expression.FindUpperBound`.
+- More complex forms such as `BETWEEN`, `IN (1)`, or compound rewrites are intentionally left out until there is a concrete need and proof they are normalized reliably before join elimination.
+
+Implementation choice:
+- Keep the helper local to `rule_join_elimination.go` and document the uniqueness argument directly at the helper boundary.
+- Prefer narrow syntactic recognition over broader but fragile expression reasoning, because a false positive here would make outer join elimination unsound.
+
+Review note:
+- Reviewers explicitly asked for comments on both the window-top1 uniqueness helper and the row-number upper-bound matcher, because the correctness argument is not obvious from the function names alone.
+
+## 2026-04-21 - Prefer larger planner rule suites when using RunTestUnderCascadesWithDomain
+
+Background:
+- `RunTestUnderCascadesWithDomain` initializes domain state and system tables. Splitting small planner rule regressions across many top-level tests adds repeated setup cost with little isolation benefit.
+
+Key takeaways:
+- For planner rule casetests that already share the same domain requirements and schema setup, prefer one larger suite with subtests over multiple small top-level tests.
+- Keep `RunTestUnderCascadesWithDomain` wrappers as few as possible and make each wrapper cover multiple related scenarios when the lifecycle is compatible.
+- When a testdata loader keys off the test name or caller, suite refactors should preserve the old lookup key explicitly instead of relying on nested subtest names.
+
+Implementation choice:
+- Merge `DerivedTopN` cases under one `TestDerivedTopNSuite` wrapper so both TiFlash/domain-dependent and plain TopN scenarios reuse the same domain initialization.
+
+Validation note:
+- Re-run the affected suite after the refactor because nested subtests can silently change testdata caller names and break recordings.

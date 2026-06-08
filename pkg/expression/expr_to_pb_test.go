@@ -17,6 +17,7 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -2127,6 +2128,36 @@ func TestPushDownSwitcher(t *testing.T) {
 	for i, pbExpr := range pbExprs {
 		require.Equalf(t, cases[i].sig, pbExpr.Sig, "function: %s, sig: %v", cases[i].name, cases[i].sig)
 	}
+
+	// Negative-zero float constants must not be pushed down because protobuf
+	// encoding loses the sign bit and changes the behavior of ATAN2.
+	negZero := &Constant{
+		Value:   types.NewFloat64Datum(math.Copysign(0, -1)),
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+	atan2WithNegZero, err := NewFunction(
+		mock.NewContext(),
+		ast.Atan2,
+		types.NewFieldType(mysql.TypeDouble),
+		genColumn(mysql.TypeDouble, 1),
+		negZero,
+	)
+	require.NoError(t, err)
+	require.Nil(t, (&PbConverter{client: client, ctx: ctx}).ExprToPB(atan2WithNegZero))
+
+	posZero := &Constant{
+		Value:   types.NewFloat64Datum(0),
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+	atan2WithPosZero, err := NewFunction(
+		mock.NewContext(),
+		ast.Atan2,
+		types.NewFieldType(mysql.TypeDouble),
+		genColumn(mysql.TypeDouble, 1),
+		posZero,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, (&PbConverter{client: client, ctx: ctx}).ExprToPB(atan2WithPosZero))
 
 	// All disabled
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("")`))

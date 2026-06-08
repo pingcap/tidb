@@ -210,6 +210,7 @@ func (op *LogicalApply) Hash64(h base.Hasher) {
 		}
 	}
 	h.HashBool(op.NoDecorrelate)
+	h.HashBool(op.IsLateral)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalApply pointer.
@@ -236,6 +237,9 @@ func (op *LogicalApply) Equals(other any) bool {
 		}
 	}
 	if op.NoDecorrelate != op2.NoDecorrelate {
+		return false
+	}
+	if op.IsLateral != op2.IsLateral {
 		return false
 	}
 	return true
