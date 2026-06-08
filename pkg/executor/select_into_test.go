@@ -415,6 +415,28 @@ func TestSelectIntoType(t *testing.T) {
 	}
 }
 
+func TestSelectIntoUserVarsDetachChunkData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, name varchar(20), balance decimal(15,2))")
+	tk.MustExec("insert into t values (1, 'alice', 10000.00), (2, 'bob', 5000.00)")
+
+	tk.MustExec("set @a = null")
+	tk.MustExec("set @b = null")
+	tk.MustExec("select balance into @a from t where id = 1")
+	tk.MustExec("select balance into @b from t where id = 2")
+	tk.MustQuery("select @a, @b").Check(testkit.Rows("10000.00 5000.00"))
+
+	tk.MustExec("set @s1 = null")
+	tk.MustExec("set @s2 = null")
+	tk.MustExec("select name into @s1 from t where id = 1")
+	tk.MustExec("select name into @s2 from t where id = 2")
+	tk.MustQuery("select @s1, @s2").Check(testkit.Rows("alice bob"))
+}
+
 func TestSelectIntoSPVarErrorMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

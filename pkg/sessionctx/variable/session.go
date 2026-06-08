@@ -728,7 +728,9 @@ func (s *UserVars) SetUserVarVal(name string, dt types.Datum) {
 	name = strings.ToLower(name)
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.values[name] = dt
+	// User variables outlive the executor chunks that produced the datum.
+	// Clone it here to detach from chunk-backed bytes / decimals.
+	s.values[name] = *dt.Clone()
 }
 
 // UnsetUserVar unset an user defined variable by name.
