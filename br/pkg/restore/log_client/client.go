@@ -168,6 +168,8 @@ type LogClient struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 	rateLimit     uint64
+	// regionScanConcurrency controls max in-flight region scan requests to PD.
+	regionScanConcurrency uint
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storeapi.Storage
@@ -182,6 +184,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	checkRequirements bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -197,6 +200,10 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+}
+
+func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
+	rc.checkRequirements = checkRequirements
 }
 
 type restoreStatistics struct {
@@ -224,9 +231,15 @@ func NewLogClient(
 		pdHTTPClient:       pdHTTPCli,
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
+		checkRequirements:  true,
 		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
 		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
+}
+
+// SetRegionScanConcurrency sets max in-flight region scan requests during compacted SST restore.
+func (rc *LogClient) SetRegionScanConcurrency(c uint) {
+	rc.regionScanConcurrency = c
 }
 
 // Close a client.
@@ -549,7 +562,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
@@ -1497,11 +1510,106 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return wrapper.WithSplit(ctx, logIter, strategy), nil
+}
+
+// WrapLogFilesIterWithCheckpointFilter applies only the checkpoint skip filter to
+// the log files iterator, without performing any region splitting. Used when
+// pre-split has already been done and per-batch splitting is skipped, but
+// checkpoint-based file filtering still needs to happen.
+func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
+	ctx context.Context,
+	logIter LogIter,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+) (LogIter, error) {
+	// splitFileThreshold is unused here: Accumulate is never called on this path.
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(file *LogDataFileInfo) bool {
+		return strategy.ShouldSkip(file)
+	}), nil
+}
+
+// PreSplitRegions performs a full pre-scan over ALL DML files and issues region
+// splits based on the total cumulative data volume. This avoids the problem where
+// per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
+// boundary, producing insufficient splits for workloads that spread data across many
+// regions (e.g., secondary index builds).
+//
+// Returns (true, nil) when splits were successfully issued; (false, nil) when
+// there are no DML files to split; (false, err) on any failure. Callers that
+// receive true should skip the fallback per-batch split to avoid redundant
+// split+scatter work.
+func (rc *LogClient) PreSplitRegions(
+	ctx context.Context,
+	rules map[int64]*restoreutils.RewriteRules,
+	splitSize uint64,
+	splitKeys int64,
+) (bool, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
+	strategy := split.NewBaseSplitStrategy(rules)
+
+	logIter, err := rc.LoadDMLFiles(ctx)
+	if err != nil {
+		return false, errors.Annotate(err, "pre-split: load DML files")
+	}
+
+	var fileCount int
+	startTime := time.Now()
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
+		if r.Err != nil {
+			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
+		}
+		file := r.Item
+		if file.IsMeta {
+			continue
+		}
+		if _, exist := rules[file.TableId]; !exist {
+			continue
+		}
+		splitHelper, exist := strategy.TableSplitter[file.TableId]
+		if !exist {
+			splitHelper = split.NewSplitHelper()
+			strategy.TableSplitter[file.TableId] = splitHelper
+		}
+		splitHelper.Merge(split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
+			},
+		})
+		fileCount++
+	}
+	log.Info("pre-split: merged all files",
+		zap.Int("file-count", fileCount),
+		zap.Duration("merge-took", time.Since(startTime)))
+
+	if fileCount == 0 {
+		return false, nil
+	}
+
+	splitStart := time.Now()
+	accumulations := strategy.GetAccumulations()
+	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
+		return false, errors.Annotate(err, "pre-split: execute regions")
+	}
+	log.Info("pre-split: completed",
+		zap.Duration("split-took", time.Since(splitStart)),
+		zap.Duration("total-took", time.Since(startTime)))
+	return true, nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
@@ -1623,15 +1731,15 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		)
 		childCols := colsToStr(fkRecord.Cols)
 		parentCols := colsToStr(fkRecord.RefCols)
-		addSQL.WriteString(fmt.Sprintf(alterTableAddForeignKeyFormat, childCols, parentCols))
+		fmt.Fprintf(&addSQL, alterTableAddForeignKeyFormat, childCols, parentCols)
 		addArgs = append(addArgs,
 			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
 		)
 		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
-			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
+			fmt.Fprintf(&addSQL, " ON DELETE %s", onDelete.String())
 		}
 		if onUpdate := ast.ReferOptionType(fkRecord.OnUpdate); onUpdate != ast.ReferOptionNoOption {
-			addSQL.WriteString(fmt.Sprintf(" ON UPDATE %s", onUpdate.String()))
+			fmt.Fprintf(&addSQL, " ON UPDATE %s", onUpdate.String())
 		}
 		fkSqls = append(fkSqls, checkpoint.CheckpointForeignKeyUpdateSQL{
 			FKID:       fkRecord.ID,
@@ -1651,15 +1759,15 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addArgs []any = make([]any, 0, 5+len(info.ColumnArgs))
 		)
 		if info.IsPrimary {
-			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
+			fmt.Fprintf(&addSQL, alterTableAddPrimaryFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
-			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
+			fmt.Fprintf(&addSQL, alterTableAddUniqueIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
-			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
+			fmt.Fprintf(&addSQL, alterTableAddIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}

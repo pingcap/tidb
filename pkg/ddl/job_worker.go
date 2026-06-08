@@ -425,6 +425,14 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 			// delete its arguments
 			job.ClearDecodedArgs()
 		}
+	case model.ActionAlterNoCacheTable:
+		if !job.IsCancelled() {
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			_, err = w.sess.Execute(ctx, fmt.Sprintf("delete from mysql.table_cache_meta where tid = %d", job.TableID), "alter_table_nocache_cleanup")
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1082,6 +1090,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:
 		ver, err = onAlterTableAffinity(jobCtx, job)
+	case model.ActionAlterTableSetRegionSplitPolicy:
+		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

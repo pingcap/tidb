@@ -1055,13 +1055,15 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 }
 
 func TestMDLTruncateTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk3 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	originalTableID := tbl.Meta().ID
 	tk.MustExec("begin")
 	tk.MustExec("select * from t for update")
 
@@ -1070,30 +1072,57 @@ func TestMDLTruncateTable(t *testing.T) {
 	wg.Add(2)
 	var timetk2 time.Time
 	var timetk3 time.Time
+	var errtk2 error
+	var errtk3 error
 
-	one := false
+	waitTableIDChanged := func() error {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			if err == nil && tbl.Meta().ID != originalTableID {
+				return nil
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return errors.New("timed out waiting for truncated table ID to refresh")
+	}
+
+	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if one {
+		if job.Type != model.ActionTruncateTable {
 			return
 		}
-		one = true
-		go func() {
-			tk3.MustExec("truncate table test.t")
-			timetk3 = time.Now()
-			wg.Done()
-		}()
+		once.Do(func() {
+			go func() {
+				defer wg.Done()
+				if err := waitTableIDChanged(); err != nil {
+					errtk3 = err
+					return
+				}
+				tk3 := testkit.NewTestKit(t, store)
+				tk3.MustExec("use test")
+				errtk3 = tk3.ExecToErr("truncate table test.t")
+				if errtk3 == nil {
+					timetk3 = time.Now()
+				}
+			}()
+		})
 	})
 
 	go func() {
-		tk2.MustExec("truncate table test.t")
-		timetk2 = time.Now()
-		wg.Done()
+		defer wg.Done()
+		errtk2 = tk2.ExecToErr("truncate table test.t")
+		if errtk2 == nil {
+			timetk2 = time.Now()
+		}
 	}()
 
 	time.Sleep(2 * time.Second)
 	timeMain := time.Now()
 	tk.MustExec("commit")
 	wg.Wait()
+	require.NoError(t, errtk2)
+	require.NoError(t, errtk3)
 	require.True(t, timetk2.After(timeMain))
 	require.True(t, timetk3.After(timeMain))
 }

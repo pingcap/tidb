@@ -21,12 +21,14 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -135,18 +137,60 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
 }
 
+func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
+	_, _ = testkit.CreateMockStoreAndDomain(t)
+	gm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(util.WithInternalSourceType(context.Background(), kv.InternalDistTask))
+	require.NotPanics(t, func() {
+		err := gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			timer := time.AfterFunc(100*time.Millisecond, cancel)
+			defer timer.Stop()
+
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "select sleep(10)")
+			if err != nil {
+				return err
+			}
+			return ctx.Err()
+		})
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
+	verifyCtx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	require.NoError(t, gm.WithNewTxn(verifyCtx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(verifyCtx, se.GetSQLExecutor(), "select 1")
+		return err
+	}))
+}
+
 func TestUpdateTaskExtraParams(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{
+		ManualRecovery: true,
+		PrepareMode:    proto.PrepareModeRequired,
+	}, []byte("test"))
 	require.NoError(t, err)
 	task, err := gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, proto.ExtraParams{}, task.ExtraParams)
+	require.Equal(t, proto.ExtraParams{
+		ManualRecovery: true,
+		PrepareMode:    proto.PrepareModeRequired,
+	}, task.ExtraParams)
 	require.NoError(t, gm.UpdateTaskExtraParams(ctx, id, proto.ExtraParams{MaxRuntimeSlots: 123}))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, proto.ExtraParams{MaxRuntimeSlots: 123}, task.ExtraParams)
+	require.Equal(t, proto.ExtraParams{
+		MaxRuntimeSlots: 123,
+	}, task.ExtraParams)
+
+	require.NoError(t, gm.UpdateTaskExtraParams(ctx, id, proto.ExtraParams{TargetSteps: []proto.Step{proto.StepOne}}))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.ExtraParams{
+		TargetSteps: []proto.Step{proto.StepOne},
+	}, task.ExtraParams)
 }
 
 func TestModifyTask(t *testing.T) {

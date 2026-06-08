@@ -1811,7 +1811,7 @@ Update	root		N/A
   │   └─TableDual	root		rows:1
   └─TableReader(Probe)	root		data:Selection
     └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
-      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo
+      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column) eq(test.tt.d, Column)], keep order:false, stats:pseudo
 CREATE TABLE test_62564(c0 DECIMAL);
 INSERT INTO test_62564 VALUES (0);
 SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);

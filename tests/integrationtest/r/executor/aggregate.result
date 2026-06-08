@@ -1483,6 +1483,8 @@ select * from t group by b,c;
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select * from t where c = d group by b, c;
 a	b	c	d
+select /* issue:68026 */ a from t where c = 1 or d = 1 group by b, c;
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select t.*, x.* from t, x where t.a = x.a group by t.a;
 a	b	c	d	a	b	c	d
 select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
@@ -1516,7 +1518,7 @@ a	b	c	d
 select * from (select * from t) as e group by b,d;
 a	b	c	d
 select * from (select * from t) as e group by b,c;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select c from t group by c,d order by d;
 c
 select c from t group by c order by d;
@@ -2060,11 +2062,15 @@ Projection	root		Column, Column, Column, Column
             └─TableFullScan	cop[tikv]	table:test	keep order:false
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
+select nullif(77.15, PI());
+nullif(77.15, PI())
+77.15
+select avg(nullif(77.15, PI()));
+avg(nullif(77.15, PI()))
+77.150000
 select distinct avg(nullif(77.15, PI()));
 avg(nullif(77.15, PI()))
-77.1500000000000000000000000000000000
-Level	Code	Message
-Warning	1265	Data truncated for column '%s' at row %d
+77.150000
 drop table if exists t_a;
 CREATE TABLE `t_a` (
 `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',

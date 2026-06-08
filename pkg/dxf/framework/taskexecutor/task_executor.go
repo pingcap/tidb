@@ -74,7 +74,10 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	Store  kv.Storage
+	// TaskStore is the store for task.Keyspace. It equals the instance store in
+	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
+	// it from the task keyspace.
+	TaskStore kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
@@ -84,7 +87,7 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.No
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-		Store:     store,
+		TaskStore: store,
 	}
 }
 
@@ -95,10 +98,11 @@ type BaseTaskExecutor struct {
 	// table, but if the task has modified params, it might be updated in memory
 	// to reflect that some param modification have been applied successfully,
 	// see detectAndHandleParamModifyLoop for more detail.
-	task   atomic.Pointer[proto.Task]
-	logger *zap.Logger
-	ctx    context.Context
-	cancel context.CancelFunc
+	task         atomic.Pointer[proto.Task]
+	logger       *zap.Logger
+	sampleLogger *zap.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
 	Extension
 
 	currSubtaskID atomic.Int64
@@ -123,16 +127,22 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 	)
+	sampleLogger := handle.NewSampleErrVerboseLogger(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
+		sampleLogger = sampleLogger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
 	subCtx = logutil.WithLogger(subCtx, logger)
 	taskExecutorImpl := &BaseTaskExecutor{
-		Param:  param,
-		ctx:    subCtx,
-		cancel: cancelFunc,
-		logger: logger,
+		Param:        param,
+		ctx:          subCtx,
+		cancel:       cancelFunc,
+		logger:       logger,
+		sampleLogger: sampleLogger,
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -164,7 +174,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
-			e.logger.Error("get subtasks failed", zap.Error(err))
+			e.logger.Warn("get subtasks failed", zap.Error(err))
 			continue
 		}
 		if len(subtasks) == 0 {
@@ -248,7 +258,13 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 }
 
 // Init implements the TaskExecutor interface.
-func (*BaseTaskExecutor) Init(_ context.Context) error {
+func (e *BaseTaskExecutor) Init(_ context.Context) error {
+	if e.TaskStore.GetKeyspace() != e.GetTaskBase().Keyspace {
+		// shouldn't happen normally, but since keyspace mismatch might cause
+		// correctness error, we check it at runtime too.
+		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
+			e.TaskStore.GetKeyspace(), e.GetTaskBase().Keyspace))
+	}
 	return nil
 }
 
@@ -301,7 +317,7 @@ func (e *BaseTaskExecutor) Run() {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
-			e.logger.Error("refresh task failed", zap.Error(err))
+			e.sampleLogger.Warn("refresh task failed", zap.Error(err))
 			continue
 		}
 
@@ -346,7 +362,7 @@ func (e *BaseTaskExecutor) Run() {
 		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
-			e.logger.Warn("get first subtask meets error", zap.Error(err))
+			e.sampleLogger.Warn("get first subtask meets error", zap.Error(err))
 			continue
 		} else if subtask == nil {
 			failpoint.Inject("avoidTaskExecutorExitWhenNoSubtask", func() {
@@ -368,7 +384,7 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		if e.stepExec == nil {
 			if err2 := e.createStepExecutor(); err2 != nil {
-				e.logger.Error("create step executor failed",
+				e.sampleLogger.Error("create step executor failed",
 					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
 				continue
 			}
@@ -384,7 +400,13 @@ func (e *BaseTaskExecutor) Run() {
 			// task executor keeps running its subtasks even though some subtask
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
-			e.logger.Error("run subtask failed", zap.Error(err))
+			if llog.IsContextCanceledError(err) {
+				// Context canceled is expected when scheduler/manager cancels executor,
+				// so log as info instead of a subtask failure.
+				e.sampleLogger.Info("subtask run canceled by context", llog.ShortError(err))
+			} else {
+				e.sampleLogger.Error("run subtask failed", zap.Error(err))
+			}
 		} else {
 			// if we run a subtask successfully, we will try to run next subtask
 			// immediately for once.

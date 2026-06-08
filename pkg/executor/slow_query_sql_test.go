@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
@@ -244,6 +245,10 @@ func TestSlowQuery(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	_, err = f.WriteString(`
+# Time: 2019-01-01T00:00:00+08:00
+# Request_unit_v2: 123.45
+# Request_unit_v2_detail: total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45
+select /* issue:67199 */ 1;
 # Time: 2020-10-13T20:08:13.970563+08:00
 # Plan_digest: 0368dd12858f813df842c17bcb37ca0e8858b554479bebcd78da1f8c14ad12d0
 select * from t;
@@ -317,6 +322,9 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 
 	// issues 58194
 	tk.MustQuery("select max(Mem_arbitration) from `information_schema`.`slow_query`").Check(testkit.Rows("215"))
+	tk.MustQuery("select Request_unit_v2, Request_unit_v2 + 1, Request_unit_v2_detail from `information_schema`.`slow_query` " +
+		"where query = 'select /* issue:67199 */ 1;'").
+		Check(testkit.Rows("123.45 124.45 total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45"))
 }
 
 func TestIssue37066(t *testing.T) {
@@ -451,6 +459,16 @@ func TestWarningsInSlowQuery(t *testing.T) {
 	}
 }
 
+// checkStorageEngines polls slow_query because the prior MustExec's slow-log
+// write isn't always immediately visible to the read here under CI load
+// (issue #66727).
+func checkStorageEngines(t *testing.T, tk *testkit.TestKit, where, expected string) {
+	t.Helper()
+	tk.EventuallyMustQueryAndCheck(
+		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where "+where,
+		nil, testkit.Rows(expected), 2*time.Second, 50*time.Millisecond)
+}
+
 func TestStorageEnginesInSlowQuery(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -458,11 +476,19 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
-	defer func() {
+	t.Cleanup(func() {
+		if t.Failed() {
+			// On failure, dump the slow log to disambiguate a missing entry from one
+			// that's present but doesn't match the expected pattern (issue #66727).
+			if data, err := os.ReadFile(f.Name()); err == nil {
+				t.Logf("slow log contents (%d bytes):\n%s", len(data), data)
+			}
+		}
+
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, f.Close())
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
-	}()
+	})
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -475,16 +501,12 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 
 	// Query that doesn't read from any storage engines
 	tk.MustExec("select 1")
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query = 'select 1;'").
-		Check(testkit.Rows("0 0"))
+	checkStorageEngines(t, tk, "query = 'select 1;'", "0 0")
 
 	// Query that only reads from TiKV
 	tk.MustExec("create table t_tikv (a int)")
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_tikv;'").
-		Check(testkit.Rows("1 0"))
+	checkStorageEngines(t, tk, "query like 'select%t_tikv;'", "1 0")
 
 	// Query that only reads from TiFlash
 	tk.MustExec("create table t_tiflash (a int)")
@@ -492,55 +514,136 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
 	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
 	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;")
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_tiflash;'").
-		Check(testkit.Rows("0 1"))
+	checkStorageEngines(t, tk, "query like 'select%t_tiflash;'", "0 1")
 
 	// Query that reads from both TiKV and TiFlash
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_tikv, t_tiflash;'").
-		Check(testkit.Rows("1 1"))
+	checkStorageEngines(t, tk, "query like 'select%t_tikv, t_tiflash;'", "1 1")
 
 	// Point get queries should register as reading from TiKV
 	tk.MustExec("create table t_pointget (a int primary key)")
 	query := "select a from t_pointget where a = 1"
 	tk.MustHavePlan(query, "Point_Get")
 	tk.MustExec(query)
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_pointget%;'").
-		Check(testkit.Rows("1 0"))
+	checkStorageEngines(t, tk, "query like 'select%t_pointget%;'", "1 0")
 
 	// Index readers should register as reading from TiKV
 	tk.MustExec("create table t_index_reader (a int, key (a))")
 	query = "select a from t_index_reader where a = 1"
 	tk.MustHavePlan(query, "IndexReader")
 	tk.MustQuery(query)
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_index_reader%;'").
-		Check(testkit.Rows("1 0"))
+	checkStorageEngines(t, tk, "query like 'select%t_index_reader%;'", "1 0")
 
 	// Index lookups should register as reading from TiKV
 	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
 	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_index_lookup%;'").
-		Check(testkit.Rows("1 0"))
+	checkStorageEngines(t, tk, "query like 'select%t_index_lookup%;'", "1 0")
 
 	// Index merge readers should register as reading from TiKV
 	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
 	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
 	tk.MustHavePlan(query, "IndexMerge")
 	tk.MustExec(query)
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%t_index_merge%;'").
-		Check(testkit.Rows("1 0"))
+	checkStorageEngines(t, tk, "query like 'select%t_index_merge%;'", "1 0")
 
 	// TABLESAMPLE queries should register as reading from TiKV
 	query = "select * from t_tikv tablesample regions();"
 	tk.MustHavePlan(query, "TableSample")
 	tk.MustExec(query)
-	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
-		"where query like 'select%tablesample%;'").
-		Check(testkit.Rows("1 0"))
+	checkStorageEngines(t, tk, "query like 'select%tablesample%;'", "1 0")
+}
+
+func TestSessionConnectAttrsInSlowQuery(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	_, err = f.WriteString(`# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@time_zone='+08:00'")
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+
+	// Verify Session_connect_attrs column is present and returns the correct JSON value.
+	rows := tk.MustQuery("select Session_connect_attrs from information_schema.slow_query " +
+		"where query = 'select * from t;'").Rows()
+	require.Len(t, rows, 1)
+	attrsStr := rows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, attrsStr)
+
+	// Verify individual keys are accessible via JSON_EXTRACT.
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$._client_name') from information_schema.slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"Go-MySQL-Driver"`))
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$.app_name') from information_schema.slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"test_app"`))
+}
+
+func TestSessionConnectAttrsMissingAndTruncatedInSlowQuery(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	_, err = f.WriteString(`# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 1111111111111111111111111111111111111111111111111111111111111111
+# Is_internal: false
+# Succ: true
+select * from t_no_attrs;
+# Time: 2024-01-15T10:00:01.000000+08:00
+# Txn_start_ts: 123456790
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.6
+# Digest: 2222222222222222222222222222222222222222222222222222222222222222
+# Is_internal: false
+# Succ: true
+# Session_connect_attrs: {"_truncated":"4","app_name":"trunc_case"}
+select * from t_truncated;
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@time_zone='+08:00'")
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+
+	// Missing Session_connect_attrs should parse to JSON null-like empty behavior.
+	tk.MustQuery("select Session_connect_attrs = cast('null' as json), JSON_EXTRACT(Session_connect_attrs, '$._truncated') is null from information_schema.slow_query " +
+		"where query = 'select * from t_no_attrs;' ").
+		Check(testkit.Rows("1 1"))
+
+	// Truncation metadata key should be preserved and queryable from JSON.
+	tk.MustQuery("select JSON_UNQUOTE(JSON_EXTRACT(Session_connect_attrs, '$._truncated')), JSON_UNQUOTE(JSON_EXTRACT(Session_connect_attrs, '$.app_name')) from information_schema.slow_query " +
+		"where query = 'select * from t_truncated;' ").
+		Check(testkit.Rows("4 trunc_case"))
 }

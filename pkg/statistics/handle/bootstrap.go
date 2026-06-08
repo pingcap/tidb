@@ -352,6 +352,10 @@ func (o genHistSQLOptions) assert() {
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
 	options.assert()
+	// Keep the ORDER_INDEX(tbl) hint: `tbl` still exists on clusters bootstrapped
+	// before stats_histograms moved to a clustered PRIMARY KEY. On fresh clusters
+	// it is inapplicable but harmless: the clustered PK scan is already ordered by
+	// table_id.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 
@@ -391,6 +395,9 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Co
 			break
 		}
 		h.initStatsHistograms4ChunkLite(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -424,6 +431,9 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is
 			break
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter, isFullCache(cache, totalMemory))
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -582,6 +592,7 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 // Returns a map where keys are table IDs that have bucket entries.
 func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
 	// Query to find table_ids that have buckets in the given range
+	// Keep the USE_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
 	// TODO: Figure out if HIGH_PRIORITY is working as intended here.
 	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
@@ -651,6 +662,9 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter, totalMemory, tablesWithBuckets)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -723,6 +737,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
 func genInitStatsBucketsSQLForIndexes(isPaging bool, tableRange [2]int64) string {
+	// Keep the ORDER_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -780,6 +795,9 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 			break
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -843,6 +861,9 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, sctx, cache, tableIDs...)
@@ -861,6 +882,8 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 			intest.Assert(table != nil, "table should not be nil")
 			h.Put(table.PhysicalID, table)
 		}
+		// Targeted refresh publishes refreshed tables to global LFU; make async admissions visible before returning.
+		h.StatsCache.WaitForAsyncUpdates()
 		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
 		cache.Close()
 	}
@@ -907,6 +930,9 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 
@@ -932,6 +958,8 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// CalcPreScalar writes tables back; drain before replacing/publishing the cache.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
 
 	// If tableIDs is empty, it means we load all the tables' stats.
@@ -944,6 +972,8 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 			intest.Assert(table != nil, "table should not be nil")
 			h.Put(table.PhysicalID, table)
 		}
+		// Targeted refresh publishes refreshed tables to global LFU; make async admissions visible before returning.
+		h.StatsCache.WaitForAsyncUpdates()
 		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
 		cache.Close()
 	}

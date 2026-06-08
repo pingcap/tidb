@@ -583,6 +583,10 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// CoprRequestRateLimit, if not nil, is used as the shared in-flight request
+	// limiter for all cop iterators created from this request. The token lifecycle
+	// is tied to request send/response receive instead of result consumption.
+	CoprRequestRateLimit *util.RateLimit
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
@@ -623,10 +627,15 @@ type Request struct {
 	ResourceGroupTagger *ResourceGroupTagBuilder
 	// Paging indicates whether the request is a paging request.
 	Paging struct {
+		// For coprocessor request in next-gen, the storage may return paging
+		// range even if paging is not enabled. coprocessor have a max_resp_size
+		// to control the response size, the default is 32MiB
 		Enable bool
 		// MinPagingSize is used when Paging is true.
 		MinPagingSize uint64
 		// MaxPagingSize is used when Paging is true.
+		// when enabled, this field is adjusted to be max(MaxPagingSize, paging.MinAllowedMaxPagingSize),
+		// see paging.GrowPagingSize
 		MaxPagingSize uint64
 	}
 	// RequestSource indicates whether the request is an internal request.
@@ -643,6 +652,13 @@ type Request struct {
 	TiKVClientReadTimeout uint64
 	// MaxExecutionTime is the timeout of the whole query execution
 	MaxExecutionTime uint64
+	// MaxKeysRead is the global limit on storage engine keys examined across all
+	// coprocessor tasks for this request (0 = unlimited).
+	MaxKeysRead uint64
+	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
+	// copIterator to enforce a statement-wide max_keys_read budget across
+	// multiple coprocessor iterators belonging to the same statement.
+	MaxKeysReadCounter *atomic.Uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 

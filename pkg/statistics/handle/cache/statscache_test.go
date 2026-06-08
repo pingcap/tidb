@@ -196,3 +196,7 @@ func (*mockStatsCacheInner) Close() {
 func (*mockStatsCacheInner) TriggerEvict() {
 	panic("not implemented")
 }
+
+func (*mockStatsCacheInner) WaitForAsyncUpdates() {
+	panic("not implemented")
+}

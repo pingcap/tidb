@@ -47,6 +47,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.90,
 		Comment:  "The quantile of TiDB slow query statistics with slow query time(second)",
 	},
+	"tidb_slow_query_qps": {
+		PromQL:  "sum(rate(tidb_server_slow_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "TiDB slow query processing numbers per second",
+	},
 	"tidb_slow_query_cop_process_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
 		Labels:   []string{"instance"},
