@@ -114,6 +114,9 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
 
+	// Start from bootstrap version 260 so the next bootstrap runs upgradeToVer261.
+	// The test still executes on current code, so rows created below need their
+	// persisted digest fields rewritten to the pre-v261 algorithm explicitly.
 	ver, err := GetBootstrapVersion(seV260)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver260), ver)
@@ -124,16 +127,52 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 
 	simpleBindSQL := "select /*+ use_index(t_simple, idx_simple_b) */ * from t_simple where a = 1"
 	issueBindSQL := "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where ((a = 1) and (b = 1))"
+	// These extra bindings only differ by redundant parentheses. Before the
+	// issue #67363 digest fix they have different sql_digest values, but after
+	// upgradeToVer261 refreshes the digest they collapse to the same binding key.
+	// Their timestamps are older than the binding created through SQL above, so
+	// that row remains the deterministic winner and these rows become losers.
+	duplicateIssueBindings := []struct {
+		bindSQL    string
+		querySQL   string
+		createTime string
+		updateTime string
+	}{
+		{
+			bindSQL:    "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where (((a = 1)) and (b = 1))",
+			querySQL:   "select * from t_issue where (((a = 1)) and (b = 1))",
+			createTime: "2000-01-03 00:00:00.000000",
+			updateTime: "2000-01-03 00:00:00.000000",
+		},
+		{
+			bindSQL:    "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where ((a = 1) and ((b = 1)))",
+			querySQL:   "select * from t_issue where ((a = 1) and ((b = 1)))",
+			createTime: "2000-01-02 00:00:00.000000",
+			updateTime: "2000-01-02 00:00:00.000000",
+		},
+	}
 	MustExec(t, seV260, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
 	MustExec(t, seV260, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
 
-	issueDigestV261 := getBindingSQLDigest(t, seV260, "idx_issue_b")
+	issueDigestV261 := getEnabledBindingSQLDigest(t, seV260, "idx_issue_b")
 	issuePlanDigest := "issue-plan-digest-v261"
 	require.NotEmpty(t, issueDigestV261)
 	simpleOriginalV260, simpleDigestV260 := normalizeBindingDigestBeforeVer261(t, simpleBindSQL, "test")
 	issueOriginalV260, issueDigestV260 := normalizeBindingDigestBeforeVer261(t, issueBindSQL, "test")
+	// Simulate bindings that were persisted before version 261. The simple
+	// binding should normalize to the same digest after upgrade, while the issue
+	// binding should move from the old parenthesized digest to issueDigestV261.
 	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalV260, simpleDigestV260, "%idx_simple_b%")
 	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalV260, issueDigestV260, issuePlanDigest, "%idx_issue_b%")
+	oldIssueDigests := map[string]struct{}{issueDigestV260: {}}
+	for _, duplicate := range duplicateIssueBindings {
+		duplicateDigest := insertBindingWithOldDigest(t, seV260, duplicate.bindSQL, duplicate.createTime, duplicate.updateTime, issuePlanDigest)
+		require.NotContains(t, oldIssueDigests, duplicateDigest)
+		oldIssueDigests[duplicateDigest] = struct{}{}
+	}
+	// Keep one unparsable row on the post-v261 digest pair. Even though it cannot
+	// be refreshed, it must still participate in duplicate detection; otherwise
+	// updating a valid row to issueDigestV261 could hit digest_index.
 	invalidBindSQL := "invalid binding"
 	MustExec(t, seV260, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
@@ -152,8 +191,10 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	)
 
 	simpleDigestBefore := getBindingSQLDigest(t, seV260, "idx_simple_b")
-	issueDigestBefore := getBindingSQLDigest(t, seV260, "idx_issue_b")
+	issueDigestBefore := issueDigestV260
 
+	// Reboot the store into the current bootstrap version. This is the point
+	// where upgradeToVer261 scans mysql.bind_info and refreshes binding digests.
 	store.SetOption(StoreBootstrappedKey, nil)
 	seV260.Close()
 	dom.Close()
@@ -168,17 +209,56 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	simpleDigestAfter := getBindingSQLDigest(t, seCurVer, "idx_simple_b")
-	issueDigestAfter := getBindingSQLDigest(t, seCurVer, "idx_issue_b")
+	issueDigestAfter := getEnabledBindingSQLDigest(t, seCurVer, "idx_issue_b")
 	require.Equal(t, simpleDigestBefore, simpleDigestAfter)
 	require.NotEqual(t, issueDigestBefore, issueDigestAfter)
+	// After all parenthesized forms collapse to the same digest pair, only the
+	// deterministic winner should stay enabled. Duplicate losers are marked
+	// deleted and their digest pair is cleared to avoid unique-index conflicts.
+	requireBindingStatusCounts(t, seCurVer, "idx_issue_b", map[string]int64{
+		"deleted": int64(len(duplicateIssueBindings)),
+		"enabled": 1,
+	})
+	for _, duplicate := range duplicateIssueBindings {
+		requireBindingDeletedAndDigestPairCleared(t, seCurVer, duplicate.bindSQL)
+	}
 	requireBindingDeletedAndDigestPairCleared(t, seCurVer, invalidBindSQL)
 
+	// The deleted duplicates should not matter to query behavior. Every
+	// parenthesis variant now normalizes to the enabled winner and can still take
+	// effect through the refreshed binding digest.
 	MustExec(t, seCurVer, "admin reload bindings")
 	MustExec(t, seCurVer, "use test")
 	MustExec(t, seCurVer, "select * from t_simple where a = 1")
 	requireLastPlanFromBinding(t, seCurVer)
 	MustExec(t, seCurVer, "select * from t_issue where a = 1 and b = 1")
 	requireLastPlanFromBinding(t, seCurVer)
+	MustExec(t, seCurVer, "select * from t_issue where ((a = 1) and (b = 1))")
+	requireLastPlanFromBinding(t, seCurVer)
+	for _, duplicate := range duplicateIssueBindings {
+		MustExec(t, seCurVer, duplicate.querySQL)
+		requireLastPlanFromBinding(t, seCurVer)
+	}
+}
+
+func insertBindingWithOldDigest(t *testing.T, se sessionapi.Session, bindSQL, createTime, updateTime, planDigest string) string {
+	originalSQL, sqlDigest := normalizeBindingDigestBeforeVer261(t, bindSQL, "test")
+	MustExec(t, se, `insert into mysql.bind_info
+		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		originalSQL,
+		bindSQL,
+		"test",
+		"enabled",
+		createTime,
+		updateTime,
+		"",
+		"",
+		"manual",
+		sqlDigest,
+		planDigest,
+	)
+	return sqlDigest
 }
 
 func normalizeBindingDigestBeforeVer261(t *testing.T, sql, defaultDB string) (string, string) {
@@ -203,6 +283,16 @@ func getBindingSQLDigest(t *testing.T, se sessionapi.Session, indexName string) 
 	return sqlDigest
 }
 
+func getEnabledBindingSQLDigest(t *testing.T, se sessionapi.Session, indexName string) string {
+	rs := MustExecToRecodeSet(t, se, "select sql_digest from mysql.bind_info where status = 'enabled' and bind_sql like ?", "%"+indexName+"%")
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	sqlDigest := req.GetRow(0).GetString(0)
+	require.NoError(t, rs.Close())
+	return sqlDigest
+}
+
 func getBindingDigestPair(t *testing.T, se sessionapi.Session, indexName string) (string, string) {
 	rs := MustExecToRecodeSet(t, se, "select sql_digest, plan_digest from mysql.bind_info where bind_sql like ?", "%"+indexName+"%")
 	req := rs.NewChunk(nil)
@@ -212,6 +302,25 @@ func getBindingDigestPair(t *testing.T, se sessionapi.Session, indexName string)
 	planDigest := req.GetRow(0).GetString(1)
 	require.NoError(t, rs.Close())
 	return sqlDigest, planDigest
+}
+
+func requireBindingStatusCounts(t *testing.T, se sessionapi.Session, indexName string, expected map[string]int64) {
+	rs := MustExecToRecodeSet(t, se, "select status, count(*) from mysql.bind_info where bind_sql like ? group by status", "%"+indexName+"%")
+	req := rs.NewChunk(nil)
+	actual := make(map[string]int64)
+	for {
+		require.NoError(t, rs.Next(context.Background(), req))
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := range req.NumRows() {
+			row := req.GetRow(i)
+			actual[row.GetString(0)] = row.GetInt64(1)
+		}
+		req.Reset()
+	}
+	require.Equal(t, expected, actual)
+	require.NoError(t, rs.Close())
 }
 
 func requireBindingDeletedAndDigestPairCleared(t *testing.T, se sessionapi.Session, bindSQL string) {
