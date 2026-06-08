@@ -33,6 +33,17 @@ import (
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+func setSpillTestConfig(t *testing.T, rowTableSegmentSize int64, chunkSize int) {
+	oldRowTableSegmentSize := maxRowTableSegmentSize
+	oldSpillChunkSize := spillChunkSize
+	maxRowTableSegmentSize = rowTableSegmentSize
+	spillChunkSize = chunkSize
+	t.Cleanup(func() {
+		maxRowTableSegmentSize = oldRowTableSegmentSize
+		spillChunkSize = oldSpillChunkSize
+	})
+}
+
 type hashJoinInfo struct {
 	ctx                   sessionctx.Context
 	schema                *expression.Schema

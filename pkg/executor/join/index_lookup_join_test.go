@@ -189,7 +189,7 @@ func TestIssue54055(t *testing.T) {
 	tk.MustExec("set @@tidb_index_join_batch_size=32;")
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_1", "2*return(false)->1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_1", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_2", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_1"))
