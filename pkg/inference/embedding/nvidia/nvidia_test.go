@@ -165,6 +165,69 @@ func TestNvidiaEmbedder_WithOptions(t *testing.T) {
 	})
 }
 
+func TestNvidiaEmbedder_ResponseIndexValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		responseData string
+		errContains  string
+	}{
+		{
+			name: "out of order",
+			responseData: `[
+				{"object":"embedding","index":1,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="},
+				{"object":"embedding","index":0,"embedding":"oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="}
+			]`,
+		},
+		{
+			name: "duplicate index",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":"oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="},
+				{"object":"embedding","index":0,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="}
+			]`,
+			errContains: "duplicate index 0",
+		},
+		{
+			name: "out of range index",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":"oTwEP2H/Kz4Jwho/Gf2RPvl5lb3N1IU+z+t6Pb9Sej5h/6u+UXO5vQ=="},
+				{"object":"embedding","index":2,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="}
+			]`,
+			errContains: "out of range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"object":"list","model":"baai/bge-m3","data":` + tt.responseData + `}`))
+			}))
+			defer server.Close()
+
+			embedder := NewNvidiaEmbedder(EmbedderConfig{
+				GetAPIKey:  func() string { return "test-api-key" },
+				GetBaseURL: func() string { return server.URL },
+			})
+
+			embeddings, err := embedder.CreateEmbeddings(context.Background(), "baai/bge-m3", []string{"a", "b"}, nil)
+			if tt.errContains != "" {
+				require.Nil(t, embeddings)
+				require.ErrorContains(t, err, tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, embeddings, 2)
+			require.Equal(t, []float32{
+				0.5165501, 0.16796638, 0.60452324, 0.2851341, -0.07298655, 0.26138917, 0.06126004, 0.24445628, -0.33593276, -0.09055198,
+			}, embeddings[0])
+			require.Equal(t, []float32{
+				0.24713585, 0.0253526, 0.34393325, 0.3717625, 0.42621103, -0.2551519, -0.50032157, 0.24290097, 0.08847887, 0.34332827,
+			}, embeddings[1])
+		})
+	}
+}
+
 func TestNvidiaEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	mockResponse := `{
     "status": 403,

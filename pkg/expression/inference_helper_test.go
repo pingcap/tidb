@@ -176,6 +176,13 @@ func TestExtractAutoEmbedInfoFromAST(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid EMBED_TEXT() usage")
 	require.Nil(t, result)
 
+	// Too many arguments
+	expr = parseExpr(t, "embed_text('model1', 'text', '{}', 'extra')")
+	result, err = ExtractAutoEmbedInfoFromAST(expr)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid EMBED_TEXT() usage")
+	require.Nil(t, result)
+
 	// Model name not a string constant
 	expr = parseExpr(t, "embed_text(col1, 'text')")
 	result, err = ExtractAutoEmbedInfoFromAST(expr)

@@ -51,7 +51,7 @@ type EmbedderConfig struct {
 // NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
 func NewHuggingFaceEmbedder(cfg EmbedderConfig) *Embedder {
 	return &Embedder{
-		client: http.Client{},
+		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg,
 	}
 }
@@ -120,7 +120,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if resp.StatusCode != http.StatusOK {
 		logutil.BgLogger().Error("HuggingFace API request failed",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)),
+			zap.String("body", base.SanitizeErrorBodyForLog(body)),
 		)
 
 		if resp.StatusCode == http.StatusUnauthorized {

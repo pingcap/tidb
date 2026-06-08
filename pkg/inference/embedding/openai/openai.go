@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
@@ -53,7 +52,7 @@ type EmbedderConfig struct {
 // NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
 func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 	return &Embedder{
-		client: http.Client{},
+		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg,
 	}
 }
@@ -119,7 +118,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if resp.StatusCode != http.StatusOK {
 		logutil.BgLogger().Error("OpenAI API request failed",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)),
+			zap.String("body", base.SanitizeErrorBodyForLog(body)),
 		)
 		if resp.StatusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
@@ -139,21 +138,24 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if err := json.Unmarshal(body, &respObj); err != nil {
 		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
 	}
-	sort.Slice(respObj.Data, func(i, j int) bool {
-		return respObj.Data[i].Index < respObj.Data[j].Index
-	})
 	if len(respObj.Data) != len(texts) {
 		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(respObj.Data), len(texts))
 	}
 	embeddings := make([][]float32, len(respObj.Data))
-	for row, item := range respObj.Data {
+	for _, item := range respObj.Data {
+		if item.Index < 0 || item.Index >= len(texts) {
+			return nil, fmt.Errorf("response data index %d is out of range [0, %d)", item.Index, len(texts))
+		}
+		if embeddings[item.Index] != nil {
+			return nil, fmt.Errorf("response data contains duplicate index %d", item.Index)
+		}
 		// item.Embedding is []byte. During JSON unmarshal,
 		// it is already base64 decoded by Golang from base64.
 		e, err := base.DecodeFloat32ArrayBytes(item.Embedding)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode embedding for index %d", item.Index)
 		}
-		embeddings[row] = e
+		embeddings[item.Index] = e
 	}
 	return embeddings, nil
 }

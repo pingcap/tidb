@@ -20,6 +20,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
+	"time"
+)
+
+const (
+	// DefaultHTTPClientTimeout bounds embedding provider requests when the caller context is not cancelled.
+	DefaultHTTPClientTimeout = 30 * time.Second
+
+	maxLoggedErrorBodyBytes = 4096
+)
+
+var (
+	sensitiveJSONFieldPattern = regexp.MustCompile(`(?i)("(?:authorization|api[_-]?key|token|access[_-]?token|credentials)"\s*:\s*")([^"]*)(")`)
+	bearerTokenPattern        = regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9._~+/=-]+`)
 )
 
 // Embedder is an interface for embedding providers.
@@ -60,4 +74,14 @@ func JSONFieldsWithOptions(fields map[string]any, opts map[string]any) map[strin
 // MarshalJSONWithOptions marshals fixed request fields plus provider-specific options.
 func MarshalJSONWithOptions(fields map[string]any, opts map[string]any) ([]byte, error) {
 	return json.Marshal(JSONFieldsWithOptions(fields, opts))
+}
+
+// SanitizeErrorBodyForLog redacts common credential fields from a provider error response body before logging.
+func SanitizeErrorBodyForLog(body []byte) string {
+	s := string(body)
+	if len(s) > maxLoggedErrorBodyBytes {
+		s = s[:maxLoggedErrorBodyBytes] + "...[truncated]"
+	}
+	s = sensitiveJSONFieldPattern.ReplaceAllString(s, `$1[REDACTED]$3`)
+	return bearerTokenPattern.ReplaceAllString(s, "Bearer [REDACTED]")
 }

@@ -20,7 +20,7 @@ type Request struct {
 }
 
 // Response is the model for HuggingFace embeddings API response.
-// HuggingFace returns a 2D array of float64 values directly.
+// HuggingFace returns a 2D array of float32 values directly.
 type Response [][]float32
 
 // ErrorResponse is the model for HuggingFace embeddings API response when an error occurs.

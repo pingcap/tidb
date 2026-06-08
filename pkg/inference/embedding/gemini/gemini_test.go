@@ -183,6 +183,40 @@ func TestGeminiEmbedder_WithOptions(t *testing.T) {
 	})
 }
 
+func TestGeminiEmbedder_EscapeModelInURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/text%20embedding%2F004%3Fx=1:batchEmbedContents", r.URL.EscapedPath())
+		require.Empty(t, r.URL.RawQuery)
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, `{
+			"requests": [
+				{
+					"model": "models/text embedding/004?x=1",
+					"content": {
+						"parts": [{"text": "test"}]
+					}
+				}
+			]
+		}`, string(body))
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"embeddings":[{"values":[1.0]}]}`))
+	}))
+	defer server.Close()
+
+	embedder := NewGeminiEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return server.URL + "/" },
+	})
+
+	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text embedding/004?x=1", []string{"test"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]float32{{1.0}}, embeddings)
+}
+
 func TestGeminiEmbedder_InvalidAPIKey(t *testing.T) {
 	mockResponse := `{
 		"error": {

@@ -76,7 +76,11 @@ func (m *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 				if err != nil {
 					return nil, fmt.Errorf("invalid delay duration: %s", delayVal)
 				}
-				time.Sleep(dur)
+				select {
+				case <-time.After(dur):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 			} else {
 				return nil, fmt.Errorf("invalid type for 'delay' option: %T", delay)
 			}

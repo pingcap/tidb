@@ -51,6 +51,11 @@ func TestMockEmbedder_Basic(t *testing.T) {
 	_, err = embedder.CreateEmbeddings(ctx, "json", []string{"invalid"}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid character")
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = embedder.CreateEmbeddings(cancelledCtx, "json", []string{"[]"}, map[string]any{"delay": "1h"})
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestMockEmbedder_WithPlus(t *testing.T) {

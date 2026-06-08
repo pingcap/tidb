@@ -63,3 +63,12 @@ func TestDecodeBase64EmbeddingF32(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid embedding data")
 }
+
+func TestSanitizeErrorBodyForLog(t *testing.T) {
+	body := []byte(`{"authorization":"Bearer secret-token","api_key":"plain-key","message":"Bearer another-secret"}`)
+	sanitized := SanitizeErrorBodyForLog(body)
+	require.NotContains(t, sanitized, "secret-token")
+	require.NotContains(t, sanitized, "plain-key")
+	require.NotContains(t, sanitized, "another-secret")
+	require.Contains(t, sanitized, "[REDACTED]")
+}

@@ -4503,6 +4503,9 @@ func TestEmbedTextFunction(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	ensureMockEmbeddingProvider(t, tk)
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = ''")
+	})
 
 	tk.MustQuery("select @@global.tidb_exp_embed_jina_ai_api_key").Check(testkit.Rows(""))
 	tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = 'test_key'")

@@ -156,6 +156,69 @@ func TestJinaEmbedder_WithOptions(t *testing.T) {
 	})
 }
 
+func TestJinaEmbedder_ResponseIndexValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		responseData string
+		errContains  string
+	}{
+		{
+			name: "out of order",
+			responseData: `[
+				{"object":"embedding","index":1,"embedding":"bTC0vQlWEz+9nwo+JkCYvp5FSj7cU9q+l3O6PgBCTD7oCUe+LLyzPg=="},
+				{"object":"embedding","index":0,"embedding":"39MmPZun+j7S4Gw+ZEDbvkeeKj5cVwa/96yDPjPxED6S+VW+3JGYPg=="}
+			]`,
+		},
+		{
+			name: "duplicate index",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":"39MmPZun+j7S4Gw+ZEDbvkeeKj5cVwa/96yDPjPxED6S+VW+3JGYPg=="},
+				{"object":"embedding","index":0,"embedding":"bTC0vQlWEz+9nwo+JkCYvp5FSj7cU9q+l3O6PgBCTD7oCUe+LLyzPg=="}
+			]`,
+			errContains: "duplicate index 0",
+		},
+		{
+			name: "out of range index",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":"39MmPZun+j7S4Gw+ZEDbvkeeKj5cVwa/96yDPjPxED6S+VW+3JGYPg=="},
+				{"object":"embedding","index":2,"embedding":"bTC0vQlWEz+9nwo+JkCYvp5FSj7cU9q+l3O6PgBCTD7oCUe+LLyzPg=="}
+			]`,
+			errContains: "out of range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"object":"list","model":"jina-embeddings-v3","data":` + tt.responseData + `}`))
+			}))
+			defer server.Close()
+
+			embedder := NewJinaEmbedder(EmbedderConfig{
+				GetAPIKey:  func() string { return "test-api-key" },
+				GetBaseURL: func() string { return server.URL },
+			})
+
+			embeddings, err := embedder.CreateEmbeddings(context.Background(), "jina-embeddings-v3", []string{"a", "b"}, nil)
+			if tt.errContains != "" {
+				require.Nil(t, embeddings)
+				require.ErrorContains(t, err, tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, embeddings, 2)
+			require.Equal(t, []float32{
+				0.0407294, 0.48955998, 0.23132637, -0.42822564, 0.1666194, -0.5247705, 0.257179, 0.1415451, -0.20895985, 0.29798782,
+			}, embeddings[0])
+			require.Equal(t, []float32{
+				-0.08798299, 0.57553154, 0.13537498, -0.2973644, 0.1975312, -0.42642105, 0.36416313, 0.19947052, -0.19437373, 0.351045,
+			}, embeddings[1])
+		})
+	}
+}
+
 func TestJinaEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	// Mock unauthorized response from real Jina API
 	mockResponse := `{"detail":"Unauthorized"}`

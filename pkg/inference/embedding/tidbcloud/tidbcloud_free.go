@@ -45,7 +45,7 @@ type EmbedderConfig struct {
 // NewTiDBCloudFreeEmbedder creates a new TiDBCloudFreeEmbedder instance with the provided configuration.
 func NewTiDBCloudFreeEmbedder(cfg EmbedderConfig) *Embedder {
 	return &Embedder{
-		client: http.Client{},
+		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg,
 	}
 }
@@ -123,7 +123,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if resp.StatusCode != http.StatusOK {
 		logutil.BgLogger().Error("TiDB Cloud Inference API request failed",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)))
+			zap.String("body", base.SanitizeErrorBodyForLog(body)))
 		// Try to unmarshal an error response if available
 		var errResp ErrorResponse
 		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != "" {

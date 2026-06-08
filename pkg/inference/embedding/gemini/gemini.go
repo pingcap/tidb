@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -50,7 +52,7 @@ type EmbedderConfig struct {
 // NewGeminiEmbedder creates a new GeminiEmbedder instance with the provided configuration.
 func NewGeminiEmbedder(cfg EmbedderConfig) *Embedder {
 	return &Embedder{
-		client: http.Client{},
+		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg,
 	}
 }
@@ -95,8 +97,8 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		baseURL = DefaultAPIBaseURL
 	}
 
-	// Construct the full URL with model and endpoint
-	fullURL := fmt.Sprintf("%s/%s:batchEmbedContents", baseURL, model)
+	// Construct the full URL with model and endpoint.
+	fullURL := fmt.Sprintf("%s/%s:batchEmbedContents", strings.TrimRight(baseURL, "/"), url.PathEscape(model))
 
 	jsonData, err := json.Marshal(map[string]any{"requests": requests})
 	if err != nil {
@@ -125,7 +127,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if resp.StatusCode != http.StatusOK {
 		logutil.BgLogger().Error("Gemini API request failed",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)),
+			zap.String("body", base.SanitizeErrorBodyForLog(body)),
 		)
 		var errResp ErrorResponse
 		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {

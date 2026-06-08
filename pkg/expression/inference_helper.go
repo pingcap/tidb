@@ -80,7 +80,7 @@ func ExtractAutoEmbedInfoFromAST(expr ast.ExprNode) (*AutoEmbedInfo, error) {
 	if fnCall.FnName.L != ast.EmbedText {
 		return nil, fmt.Errorf("only generated column using EMBED_TEXT() are allowed")
 	}
-	if len(fnCall.Args) < 2 {
+	if len(fnCall.Args) < 2 || len(fnCall.Args) > 3 {
 		return nil, fmt.Errorf("invalid EMBED_TEXT() usage")
 	}
 

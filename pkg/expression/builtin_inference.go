@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -51,6 +51,13 @@ type BuiltinEmbedTextSig struct {
 	IsFromVecSearch bool
 }
 
+// EmbedTextArgs contains the evaluated arguments for an EMBED_TEXT() invocation.
+type EmbedTextArgs struct {
+	Model string
+	Text  string
+	Opts  map[string]any
+}
+
 // Clone implements builtinFunc interface.
 func (b *BuiltinEmbedTextSig) Clone() builtinFunc {
 	newSig := &BuiltinEmbedTextSig{IsFromVecSearch: b.IsFromVecSearch}
@@ -95,51 +102,15 @@ func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
 	}
 
-	model, isNull, err := b.args[0].EvalString(ctx, row)
+	embedArgs, isNull, err := EvalEmbedTextArgs(ctx, row, b.args, b.IsFromVecSearch)
 	if isNull || err != nil {
 		return types.ZeroVectorFloat32, isNull, err
-	}
-	text, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return types.ZeroVectorFloat32, isNull, err
-	}
-	var opts map[string]any = nil
-	if len(b.args) == 3 {
-		options, isNull, err := b.args[2].EvalString(ctx, row)
-		if err != nil {
-			return types.ZeroVectorFloat32, false, err
-		}
-		if !isNull && len(options) > 0 {
-			// Parse the options (which must be a JSON string) into a map
-			err := json.Unmarshal([]byte(options), &opts)
-			if err != nil {
-				return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT expects options in JSON format")
-			}
-			// Special treatment for options with @search suffix:
-			// - If this function is used in a vector search context (i.e., VEC_EMBED_XXX_DISTANCE),
-			//   @search options will take effect.
-			// - Otherwise, @search options will be ignored.
-			//
-			// To avoid mutating the map while iterating, we collect the keys first.
-			searchOpts := make([]string, 0, len(opts))
-			for k := range opts {
-				if strings.HasSuffix(k, "@search") {
-					searchOpts = append(searchOpts, k)
-				}
-			}
-			for _, k := range searchOpts {
-				if b.IsFromVecSearch {
-					opts[strings.TrimSuffix(k, "@search")] = opts[k]
-				}
-				delete(opts, k)
-			}
-		}
 	}
 
 	embedding, err := domainadaptor.GetEmbedFn(sessionCtx).Embed(func() bool {
 		// any kill signal should be handled.
 		return sessionCtx.GetSessionVars().SQLKiller.GetKillSignal() > 0
-	}, model, text, opts)
+	}, embedArgs.Model, embedArgs.Text, embedArgs.Opts)
 	if err != nil {
 		return types.ZeroVectorFloat32, false, err
 	}
@@ -148,6 +119,46 @@ func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, false, err
 	}
 	return embeddingVec, false, nil
+}
+
+// EvalEmbedTextArgs evaluates EMBED_TEXT() arguments without calling the remote embedding provider.
+func EvalEmbedTextArgs(ctx EvalContext, row chunk.Row, args []Expression, isFromVecSearch bool) (*EmbedTextArgs, bool, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, false, fmt.Errorf("invalid EMBED_TEXT() usage")
+	}
+	model, isNull, err := args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	text, isNull, err := args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	var opts map[string]any
+	if len(args) == 3 {
+		options, isNull, err := args[2].EvalString(ctx, row)
+		if err != nil {
+			return nil, false, err
+		}
+		if !isNull && len(options) > 0 {
+			if err := json.Unmarshal([]byte(options), &opts); err != nil {
+				return nil, false, fmt.Errorf("EMBED_TEXT expects options in JSON format")
+			}
+			searchOpts := make([]string, 0, len(opts))
+			for k := range opts {
+				if strings.HasSuffix(k, "@search") {
+					searchOpts = append(searchOpts, k)
+				}
+			}
+			for _, k := range searchOpts {
+				if isFromVecSearch {
+					opts[strings.TrimSuffix(k, "@search")] = opts[k]
+				}
+				delete(opts, k)
+			}
+		}
+	}
+	return &EmbedTextArgs{Model: model, Text: text, Opts: opts}, false, nil
 }
 
 // RequiredOptionalEvalProps implements RequiredOptionalEvalProps interface.

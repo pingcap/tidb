@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/inference/domainadaptor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -676,9 +678,10 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 		return rows, nil
 	}
 
-	rowCntInLoadData := uint64(0)
-	if e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt {
-		rowCntInLoadData = e.rowCount
+	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
+	firstBatchRowIdx := uint64(0)
+	if rowCount := uint64(len(rows)); e.rowCount >= rowCount {
+		firstBatchRowIdx = e.rowCount - rowCount
 	}
 
 	type autoEmbeddingEvalTask struct {
@@ -691,6 +694,10 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 	type autoEmbeddingEvalResult struct {
 		val types.Datum
 		err error
+	}
+	type autoEmbeddingEvalInput struct {
+		args   *expression.EmbedTextArgs
+		isNull bool
 	}
 
 	tasks := make([]autoEmbeddingEvalTask, 0, len(rows))
@@ -717,18 +724,62 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 		return rows, nil
 	}
 
+	if !deploymode.IsStarter() {
+		return nil, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
+	}
+
+	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(autoEmbeddingEvalBatchSizeHint * autoEmbeddingEvalMaxConcurrentBatches)
 	results := make([]autoEmbeddingEvalResult, len(tasks))
-	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	inputs := make([]autoEmbeddingEvalInput, len(tasks))
+	for i, task := range tasks {
+		sf, ok := task.expr.(*expression.ScalarFunction)
+		if !ok {
+			results[i].err = fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
+			continue
+		}
+		embedSig, ok := sf.Function.(*expression.BuiltinEmbedTextSig)
+		if !ok {
+			results[i].err = fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
+			continue
+		}
+		embedArgs, isNull, err := expression.EvalEmbedTextArgs(evalCtx, chunk.MutRowFromDatums(task.row).ToRow(), sf.GetArgs(), embedSig.IsFromVecSearch)
+		if err != nil || isNull {
+			results[i].err = err
+			inputs[i].isNull = isNull
+			continue
+		}
+		inputs[i].args = embedArgs
+	}
+	embedFn := domainadaptor.GetEmbedFn(e.Ctx())
+	sessionVars := e.Ctx().GetSessionVars()
 	for i := range tasks {
-		i := i
 		eg.Go(func() error {
 			if err := egCtx.Err(); err != nil {
 				return err
 			}
-			task := tasks[i]
-			results[i].val, results[i].err = task.expr.Eval(evalCtx, chunk.MutRowFromDatums(task.row).ToRow())
+			if results[i].err != nil {
+				return nil
+			}
+			if inputs[i].isNull {
+				results[i].val.SetNull()
+				return nil
+			}
+			embedArgs := inputs[i].args
+			embedding, err := embedFn.Embed(func() bool {
+				return sessionVars.SQLKiller.GetKillSignal() > 0
+			}, embedArgs.Model, embedArgs.Text, embedArgs.Opts)
+			if err != nil {
+				results[i].err = err
+				return nil
+			}
+			embeddingVec, err := types.CreateVectorFloat32(embedding)
+			if err != nil {
+				results[i].err = err
+				return nil
+			}
+			results[i].val = types.NewVectorFloat32Datum(embeddingVec)
 			return nil
 		})
 	}
@@ -742,10 +793,15 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 			return nil, result.err
 		}
 		val, err := table.CastValue(e.Ctx(), result.val, task.col.ToInfo(), false, false)
-		if err = e.handleErr(task.col, &result.val, task.rowIdx, err); err != nil {
+		rowIdx := int(firstBatchRowIdx) + task.rowIdx
+		if err = e.handleErr(task.col, &result.val, rowIdx, err); err != nil {
 			return nil, err
 		}
 		rows[task.rowIdx][task.colIdx] = val
+		rowCntInLoadData := uint64(0)
+		if inLoadData {
+			rowCntInLoadData = firstBatchRowIdx + uint64(task.rowIdx) + 1
+		}
 		if err = task.col.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &rows[task.rowIdx][task.colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
