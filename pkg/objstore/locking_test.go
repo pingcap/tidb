@@ -1225,73 +1225,145 @@ func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
 }
 
 func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
-	ctx := context.Background()
-	strg, _ := createMockStorage(t)
-	// Tight timing: 5 retries × ~5ms backoff = ~155ms tail. TTL = 1s gives margin.
-	defer objstore.TESTSetLeaseConstants(1*time.Second, 20*time.Millisecond, 5, 5*time.Millisecond)()
+	t.Run("persistent fast failures eventually lose lease", func(t *testing.T) {
+		ctx := context.Background()
+		strg, _ := createMockStorage(t)
+		// Tight timing: 5 retries x ~5ms backoff = ~155ms tail. TTL = 1s gives margin.
+		defer objstore.TESTSetLeaseConstants(1*time.Second, 20*time.Millisecond, 5, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(100*time.Millisecond, 20*time.Millisecond)()
 
-	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
-	require.NoError(t, err)
-	defer objstore.TESTStopRenewal(lock)
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
 
-	require.NoError(t, failpoint.Enable(
-		"github.com/pingcap/tidb/pkg/objstore/local_write_file_err",
-		`return("simulated outage")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
-	}()
+		require.NoError(t, failpoint.Enable(
+			"github.com/pingcap/tidb/pkg/objstore/local_write_file_err",
+			`return("simulated outage")`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
+		}()
 
-	lostCh := make(chan struct{}, 1)
-	objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
+		lostCh := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
 
-	select {
-	case <-lostCh:
-		// expected
-	case <-time.After(2 * time.Second):
-		t.Fatal("onLeaseLost was not invoked after persistent renewal failures")
-	}
+		select {
+		case <-lostCh:
+			// expected
+		case <-time.After(2 * time.Second):
+			t.Fatal("onLeaseLost was not invoked after persistent renewal failures")
+		}
+	})
+
+	t.Run("default retry budget tolerates fast outage beyond old retry tail", func(t *testing.T) {
+		ctx := context.Background()
+		strg, _ := createMockStorage(t)
+		snapshot := objstore.TESTGetLeaseTimingConstants()
+		scaled := snapshot
+		scaled.TTL = time.Second
+		scaled.Interval = 20 * time.Millisecond
+		scaled.WriteTimeoutCap = 100 * time.Millisecond
+		scaled.MinRemaining = 20 * time.Millisecond
+		scaled.BaseBackoff = 5 * time.Millisecond
+		objstore.TESTRestoreLeaseTimingConstants(scaled)
+		defer objstore.TESTRestoreLeaseTimingConstants(snapshot)
+
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
+
+		require.NoError(t, failpoint.Enable(
+			"github.com/pingcap/tidb/pkg/objstore/local_write_file_err",
+			`return("simulated outage")`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
+		}()
+
+		lostCh := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
+
+		select {
+		case <-lostCh:
+			t.Fatal("default renewal retry budget should tolerate fast failures longer than the old 5-retry tail")
+		case <-time.After(250 * time.Millisecond):
+		}
+
+		select {
+		case <-lostCh:
+			// expected eventually when the shortened lease window is no longer safe.
+		case <-time.After(2 * time.Second):
+			t.Fatal("onLeaseLost was not invoked after the retry budget exhausted the safe lease window")
+		}
+	})
 }
 
-func TestStartRenewalStopsBeforeProvenLeaseWindowOnTransientBackoff(t *testing.T) {
-	ctx := context.Background()
-	base, _ := createMockStorage(t)
-	storage := &failWriteAfterStorage{
-		Storage:   base,
-		failAfter: 1,
-		failed:    make(chan struct{}),
-	}
-	defer objstore.TESTSetLeaseConstants(90*time.Millisecond, 10*time.Millisecond, 5, 50*time.Millisecond)()
-	defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, 30*time.Millisecond)()
+func TestStartRenewalChecksRetrySafetyBeforeEachAttempt(t *testing.T) {
+	t.Run("remaining lease must cover the write timeout cap", func(t *testing.T) {
+		ctx := context.Background()
+		base, _ := createMockStorage(t)
+		storage := &failWriteAfterStorage{
+			Storage:   base,
+			failAfter: 0,
+			failed:    make(chan struct{}),
+		}
+		defer objstore.TESTSetLeaseConstants(300*time.Millisecond, 150*time.Millisecond, 5, 10*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(200*time.Millisecond, 10*time.Millisecond)()
 
-	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
-	clock := &sequenceLeaseClock{
-		times: []time.Time{
-			leaseNow,
-			leaseNow.Add(time.Millisecond),
-			leaseNow.Add(10 * time.Millisecond),
-			leaseNow.Add(70 * time.Millisecond),
-			leaseNow.Add(80 * time.Millisecond),
-		},
-	}
-	lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", clock)
-	require.NoError(t, err)
-	defer objstore.TESTStopRenewal(lock)
-	storage.path = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
+		lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
+		storage.path = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
 
-	lostCh := make(chan struct{}, 1)
-	objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
+		lostCh := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
 
-	select {
-	case <-storage.failed:
-	case <-time.After(time.Second):
-		t.Fatal("renewal write did not reach the injected transient failure")
-	}
-	select {
-	case <-lostCh:
-		// expected: the 50ms retry backoff cannot fit in the remaining proven lease window.
-	case <-time.After(30 * time.Millisecond):
-		t.Fatal("onLeaseLost was not invoked before retry backoff exceeded the proven lease window")
-	}
+		select {
+		case <-storage.failed:
+			t.Fatal("renewal write should not run when remaining lease cannot cover the operation timeout cap")
+		case <-lostCh:
+			// expected: LeaseTTL/3 is below renewWriteTimeoutCap in this test,
+			// so the effective retry-safety threshold must use the cap.
+		case <-time.After(time.Second):
+			t.Fatal("onLeaseLost was not invoked when remaining lease could not cover the operation timeout cap")
+		}
+	})
+
+	t.Run("retry safety is checked when the next attempt starts", func(t *testing.T) {
+		ctx := context.Background()
+		base, _ := createMockStorage(t)
+		storage := &failWriteAfterStorage{
+			Storage:   base,
+			failAfter: 0,
+			failed:    make(chan struct{}),
+		}
+		defer objstore.TESTSetLeaseConstants(120*time.Millisecond, 40*time.Millisecond, 5, 50*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(10*time.Millisecond, 10*time.Millisecond)()
+
+		lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", localLeaseClock())
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
+		storage.path = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
+
+		lostCh := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
+
+		select {
+		case <-storage.failed:
+		case <-time.After(time.Second):
+			t.Fatal("renewal write did not reach the injected transient failure")
+		}
+		select {
+		case <-lostCh:
+			t.Fatal("onLeaseLost should wait until the next renewal attempt observes a low retry-safety window")
+		case <-time.After(25 * time.Millisecond):
+		}
+		select {
+		case <-lostCh:
+			// expected: the retry woke up and checked the remaining lease before
+			// starting another renewal attempt.
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("onLeaseLost was not invoked when the next attempt had too little retry-safety window")
+		}
+	})
 }
 
 func TestStartRenewalPanicsOnDoubleCall(t *testing.T) {

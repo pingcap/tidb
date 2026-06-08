@@ -183,8 +183,9 @@ var (
 
 	// renewMaxRetries and renewBaseBackoff define the exponential-backoff
 	// retry schedule used by the renewal goroutine after a tryRenew failure.
-	// With base 5s and 5 attempts the schedule is 5→10→20→40→80s (155s total).
-	renewMaxRetries  = 5
+	// Retry is additionally bounded by the proven lease window; with the
+	// default 1h LeaseTTL, retry stops before remaining lease falls below 20m.
+	renewMaxRetries  = 20
 	renewBaseBackoff = 5 * time.Second
 
 	// nowFunc is indirected so tests can inject deterministic time.
@@ -489,6 +490,14 @@ func isPermanentRenewalLoss(err error) bool {
 		stderrors.Is(err, errRenewRemainingLeaseTooSmall)
 }
 
+func minRenewRetryRemainingLease() time.Duration {
+	retryThreshold := LeaseTTL / 3
+	if retryThreshold < renewWriteTimeoutCap {
+		return renewWriteTimeoutCap
+	}
+	return retryThreshold
+}
+
 func renewalWriteTimeout(expireAt, leaseNow time.Time) (time.Duration, error) {
 	if expireAt.IsZero() {
 		return renewWriteTimeoutCap, nil
@@ -763,12 +772,13 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
 			remainingLease := time.Until(leaseDeadline)
-			if remainingLease <= renewWriteTimeoutCap {
-				log.Warn("Lock renewal remaining proven lease window cannot cover one bounded renewal operation; calling onLeaseLost.",
+			minRetryRemaining := minRenewRetryRemainingLease()
+			if remainingLease <= minRetryRemaining {
+				log.Warn("Lock renewal remaining proven lease window fell below retry threshold; calling onLeaseLost.",
 					zap.Stringer("lock", l),
 					zap.Int("attempt", attempt),
 					zap.Duration("remaining", remainingLease),
-					zap.Duration("operation-cap", renewWriteTimeoutCap))
+					zap.Duration("retry-threshold", minRetryRemaining))
 				invokeLost()
 				return
 			}
