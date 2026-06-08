@@ -18,6 +18,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/meta/model",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",

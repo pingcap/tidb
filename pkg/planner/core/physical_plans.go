@@ -1280,6 +1280,11 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix index length in bytes.
+	PrefixLen int
 }
 
 // GetPartitionBy returns partition by fields
@@ -1323,7 +1328,8 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer +
+		size.SizeOfUint64*2 + size.SizeOfInt64 + size.SizeOfInt
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -1714,6 +1720,9 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
+	// Apply outer/inner order after decorrelation.
+	FromDecorrelatedApply bool
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1737,6 +1746,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.Copy()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
 	return cloned, nil
 }
 
@@ -2070,6 +2080,11 @@ type PhysicalLimit struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix index length in bytes.
+	PrefixLen int
 }
 
 // GetPartitionBy returns partition by fields
@@ -2100,7 +2115,7 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2 + size.SizeOfInt64 + size.SizeOfInt
 	return
 }
 

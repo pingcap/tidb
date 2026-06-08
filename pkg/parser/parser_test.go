@@ -4850,19 +4850,37 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 3)
 	require.Equal(t, "leading", hints[0].HintName.L)
-	require.Len(t, hints[0].Tables, 1)
-	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	leadingList1, ok := hints[0].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList1.Items, 1)
+	hintTable1, ok := leadingList1.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t1", hintTable1.TableName.L)
 
 	require.Equal(t, "leading", hints[1].HintName.L)
-	require.Len(t, hints[1].Tables, 2)
-	require.Equal(t, "t2", hints[1].Tables[0].TableName.L)
-	require.Equal(t, "t3", hints[1].Tables[1].TableName.L)
+	leadingList2, ok := hints[1].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList2.Items, 2)
+	hintTable2, ok := leadingList2.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t2", hintTable2.TableName.L)
+	hintTable3, ok := leadingList2.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t3", hintTable3.TableName.L)
 
 	require.Equal(t, "leading", hints[2].HintName.L)
-	require.Len(t, hints[2].Tables, 3)
-	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
-	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
-	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+	leadingList3, ok := hints[2].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList3.Items, 3)
+	hintTable4, ok := leadingList3.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t4", hintTable4.TableName.L)
+	hintTable5, ok := leadingList3.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t5", hintTable5.TableName.L)
+	hintTable6, ok := leadingList3.Items[2].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t6", hintTable6.TableName.L)
 
 	// Test NO_HASH_JOIN
 	stmt, _, err = p.Parse("select /*+ NO_HASH_JOIN(t1, t2), NO_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
@@ -7747,4 +7765,13 @@ func TestTableAffinityOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestPartialIndex(t *testing.T) {
+	cases := []testCase{
+		{"create table `t` (`id` int primary key,`col` int,index(`col`) where `col`>100)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`col` INT,INDEX(`col`) WHERE `col`>100)"},
+		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
+		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
+	}
+	RunTest(t, cases, false)
 }

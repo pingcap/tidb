@@ -2285,10 +2285,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.GetDSN(func(config *mysql.Config) {
@@ -3402,70 +3402,6 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 	})
 }
 
-func TestIssue57531(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
-
-	var rsCnt int
-	for i := range 2 {
-		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-			conn, err := dbt.GetDB().Conn(context.Background())
-			require.NoError(t, err)
-			defer func() {
-				_ = conn.Close()
-			}()
-			netConn := getRawNetConn(t, conn)
-
-			// execute `select sleep(300)`
-			startErrCh := make(chan error, 1)
-			go func() {
-				if i == 0 {
-					startErrCh <- nil
-					conn.QueryContext(context.Background(), "select sleep(300)")
-				} else {
-					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
-					startErrCh <- err
-					if err != nil {
-						return
-					}
-					defer func() {
-						_ = stmt.Close()
-					}()
-					stmt.Exec(300)
-				}
-			}()
-			require.NoError(t, <-startErrCh)
-			// have two sessions
-			require.Eventually(t, func() bool {
-				rsCnt = 0
-				rs := dbt.MustQuery("show processlist")
-				for rs.Next() {
-					rsCnt++
-				}
-				err := rs.Err()
-				closeErr := rs.Close()
-				return err == nil && closeErr == nil && rsCnt == 2
-			}, 5*time.Second, 50*time.Millisecond)
-
-			// close tcp connection
-			netConn.Close()
-		})
-
-		// the `select sleep(300)` is killed
-		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-			require.Eventually(t, func() bool {
-				rs := dbt.MustQuery("show processlist")
-				cnt := 0
-				for rs.Next() {
-					cnt++
-				}
-				err := rs.Err()
-				closeErr := rs.Close()
-				return err == nil && closeErr == nil && cnt == 1
-			}, 5*time.Second, 50*time.Millisecond)
-		})
-	}
-}
-
 func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	enableFastConnectionAliveMonitor(t)
@@ -3995,4 +3931,83 @@ func TestAuditPluginRetrying(t *testing.T) {
 		resetTestResults()
 		runExplicitTransactionRetry(db, true)
 	})
+}
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	processlistCount := func(dbt *testkit.DBTestKit) int {
+		rsCnt := 0
+		rs := dbt.MustQuery("show processlist")
+		for rs.Next() {
+			rsCnt++
+		}
+		require.NoError(t, rs.Err())
+		require.NoError(t, rs.Close())
+		return rsCnt
+	}
+
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var netConn net.Conn
+			conn, err := dbt.GetDB().Conn(context.Background())
+			require.NoError(t, err)
+			defer func() {
+				_ = conn.Close()
+			}()
+
+			// get the TCP connection
+			err = conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			require.NotNil(t, netConn)
+
+			// execute `select sleep(300)`
+			queryDone := make(chan struct{})
+			go func() {
+				defer close(queryDone)
+				if i == 0 {
+					rows, err := conn.QueryContext(context.Background(), "select sleep(300)")
+					if err == nil {
+						_ = rows.Close()
+					}
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					if err == nil {
+						defer stmt.Close()
+						_, _ = stmt.Exec(300)
+					}
+				}
+			}()
+
+			// have two sessions
+			require.Eventually(t, func() bool {
+				return processlistCount(dbt) == 2
+			}, time.Second, time.Millisecond*10)
+
+			// close tcp connection
+			require.NoError(t, netConn.Close())
+
+			select {
+			case <-queryDone:
+			case <-time.After(time.Second * 3):
+				require.Fail(t, "query did not exit after closing the TCP connection")
+			}
+			_ = conn.Close()
+
+			// the `select sleep(300)` is killed
+			require.Eventually(t, func() bool {
+				return processlistCount(dbt) == 1
+			}, time.Second*3, time.Millisecond*10)
+		})
+	}
 }

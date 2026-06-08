@@ -546,6 +546,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 	ctx context.Context,
 	restoreID uint64,
 	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
 	tables []*metautil.Table,
 ) error {
 	registrations, err := r.GetRegistrationsByMaxID(ctx, restoreID)
@@ -570,7 +571,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 		f = filter.CaseInsensitive(f)
 
 		// check if a table is already being restored
-		if err := r.checkForTableConflicts(tracker, tables, regInfo, f, restoreID); err != nil {
+		if err := r.checkForTableConflicts(tracker, dbs, tables, regInfo, f, restoreID); err != nil {
 			return err
 		}
 	}
@@ -586,13 +587,14 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 // match with the given filter, indicating a conflict with an existing restore task
 func (r *Registry) checkForTableConflicts(
 	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
 	tables []*metautil.Table,
 	regInfo RegistrationInfoWithID,
 	f filter.Filter,
 	curRestoreID uint64,
 ) error {
 	// function to handle conflict when found
-	handleConflict := func(dbName, tableName string) error {
+	handleTableConflict := func(dbName, tableName string) error {
 		log.Warn("table already covered by another restore task",
 			zap.Uint64("existing_restore_id", regInfo.restoreID),
 			zap.Uint64("current_restore_id", curRestoreID),
@@ -609,24 +611,47 @@ func (r *Registry) checkForTableConflicts(
 				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
 			dbName, tableName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
+	handleSchemaConflict := func(dbName string) error {
+		log.Warn("schema already covered by another restore task",
+			zap.Uint64("existing_restore_id", regInfo.restoreID),
+			zap.Uint64("current_restore_id", curRestoreID),
+			zap.String("database", dbName),
+			zap.Strings("filter_strings", regInfo.FilterStrings),
+		)
+		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
+			"database %s cannot be restored concurrently by current task with ID %d "+
+				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
+			dbName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
+	}
 
 	// Use PiTRTableTracker if available for PiTR task
 	if tracker != nil && len(tracker.GetDBNameToTableName()) > 0 {
 		for dbName, tableNames := range tracker.GetDBNameToTableName() {
+			if utils.MatchSchema(f, dbName, regInfo.WithSysTable) {
+				return handleSchemaConflict(dbName)
+			}
 			for tableName := range tableNames {
 				if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-					return handleConflict(dbName, tableName)
+					return handleTableConflict(dbName, tableName)
 				}
 			}
 		}
 	} else {
+		// for existing point restore task, we need to check database conflicts with snapshot restore.
+		if regInfo.Cmd == "Point Restore" {
+			for _, db := range dbs {
+				if utils.MatchSchema(f, db.Info.Name.O, regInfo.WithSysTable) {
+					return handleSchemaConflict(db.Info.Name.O)
+				}
+			}
+		}
 		// use tables as this is a snapshot restore task
 		for _, table := range tables {
 			dbName := table.DB.Name.O
 			tableName := table.Info.Name.O
 
 			if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-				return handleConflict(dbName, tableName)
+				return handleTableConflict(dbName, tableName)
 			}
 		}
 	}

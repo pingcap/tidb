@@ -1833,6 +1833,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		return nil, errors.Trace(err)
 	}
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
 	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
@@ -2238,6 +2239,8 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	}
+	// reuse existing database ids if it exists in the current cluster
+	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
 	// replace temp id with read global id
 	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {

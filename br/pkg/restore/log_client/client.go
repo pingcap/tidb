@@ -204,6 +204,8 @@ type LogClient struct {
 	dom           *domain.Domain
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
+	// regionScanConcurrency controls max in-flight region scan requests to PD.
+	regionScanConcurrency uint
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -270,6 +272,11 @@ func NewLogClient(
 		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
 		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
+}
+
+// SetRegionScanConcurrency sets max in-flight region scan requests during compacted SST restore.
+func (rc *LogClient) SetRegionScanConcurrency(c uint) {
+	rc.regionScanConcurrency = c
 }
 
 // Close a client.
@@ -577,7 +584,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	fileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
@@ -1648,6 +1655,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// WHERE CONDITION
+		if len(info.IndexInfo.ConditionExprString) > 0 {
+			addSQL.WriteString(" WHERE ")
+			addSQL.WriteString(info.IndexInfo.ConditionExprString)
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()

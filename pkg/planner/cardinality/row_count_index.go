@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -60,6 +61,14 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	// Fast-path: a full-range scan over a non-MV index returns exactly RealtimeCount
+	// regardless of histogram availability, so we can short-circuit before
+	// IndexStatsIsInvalid — which would otherwise queue an unnecessary async
+	// histogram load whenever the index stats are not fully loaded.
+	if idx != nil && canSkipIndexEstimation(idx, indexRanges) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+		return float64(realtimeCnt), nil
+	}
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -336,8 +345,11 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		count *= increaseFactor
 
-		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := count >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
@@ -667,4 +679,40 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// canSkipIndexEstimation checks whether expensive index row count estimation
+// (V1/V2) can be skipped because the ranges cover all rows. Returns true only when:
+//  1. The ranges include a truly full range including NULLs ([NULL, +inf)),
+//     not just [MinNotNull, +inf) which excludes NULLs and would overestimate.
+//  2. The index is not an MV index (which can have multiple entries per row).
+func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) bool {
+	if idx.Info.MVIndex {
+		return false
+	}
+	return slices.ContainsFunc(indexRanges, isFullRangeIncludingNulls)
+}
+
+// isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull) inclusive,
+// not KindMinNotNull and not an exclusive lower bound, so NULL rows are guaranteed to be
+// included in the count.
+func isFullRangeIncludingNulls(ran *ranger.Range) bool {
+	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	// An exclusive bound on NULL (low) or +inf (high) would drop those endpoints
+	// and shrink the range, so the fast path must not apply.
+	if ran.LowExclude || ran.HighExclude {
+		return false
+	}
+	for i := range ran.LowVal {
+		if ran.LowVal[i].Kind() != types.KindNull {
+			return false
+		}
+		if ran.HighVal[i].Kind() != types.KindMaxValue {
+			return false
+		}
+	}
+	return true
 }
