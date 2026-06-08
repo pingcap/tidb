@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	goerrors "errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/docker/go-units"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -4244,6 +4246,16 @@ const (
 	tikvMVCCPredictionFallbackTS = uint64(1) << 56
 )
 
+const (
+	nextGenCSEBlockSize            = 32 * units.KiB
+	nextGenCSEBlockFormatV1        = 1
+	nextGenCSEValueMeta            = 0
+	nextGenCSEValueUserMetaFormat  = 1
+	nextGenCSEValueUserMetaSize    = 1 + 8 + 8
+	nextGenCSEValueVersionLen      = 8
+	nextGenCSEBlockKeySuffixMaxLen = int(^uint16(0))
+)
+
 type sampleTiKVIndexPredictionResult struct {
 	PredictedBytes                 uint64
 	MVCCOverheadBytes              uint64
@@ -4804,6 +4816,13 @@ func estimateSampledKVsPhysicalBytesWithSplit(
 }
 
 func estimateSortedSampledIndexKVPhysicalBytes(sortedKVs []sampledIndexKV) (int64, error) {
+	if kerneltype.IsNextGen() {
+		return estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs, tikvMVCCPredictionFallbackTS)
+	}
+	return estimateSortedSampledIndexKVPhysicalBytesClassic(sortedKVs)
+}
+
+func estimateSortedSampledIndexKVPhysicalBytesClassic(sortedKVs []sampledIndexKV) (int64, error) {
 	memFS := vfs.NewMem()
 	const sampleSSTName = "ddl-sample-prediction.sst"
 	f, err := memFS.Create(sampleSSTName)
@@ -4842,12 +4861,134 @@ func estimateSortedSampledIndexKVPhysicalBytes(sortedKVs []sampledIndexKV) (int6
 	return physicalBytes, nil
 }
 
+func estimateSortedSampledIndexKVCSEPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int, commitTS uint64) (int64, error) {
+	return estimateSampledKVsPhysicalBytesWithSplit(sortedKVs, splitCount, func(kvs []sampledIndexKV) (int64, error) {
+		return estimateSortedSampledIndexKVCSEPhysicalBytes(kvs, commitTS)
+	})
+}
+
+func estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs []sampledIndexKV, commitTS uint64) (int64, error) {
+	if len(sortedKVs) == 0 {
+		return 0, nil
+	}
+	if commitTS == 0 {
+		commitTS = tikvMVCCPredictionFallbackTS
+	}
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer encoder.Close()
+
+	var (
+		totalPhysicalBytes int64
+		blockKVs           []sampledIndexKV
+		blockBytes         int
+		lastKey            []byte
+	)
+	flushBlock := func() error {
+		if len(blockKVs) == 0 {
+			return nil
+		}
+		physicalBytes, err := estimateSampledIndexKVCSEBlockPhysicalBytes(blockKVs, commitTS, encoder)
+		if err != nil {
+			return err
+		}
+		totalPhysicalBytes += physicalBytes
+		blockKVs = blockKVs[:0]
+		blockBytes = 0
+		return nil
+	}
+
+	for _, kvPair := range sortedKVs {
+		if lastKey != nil && bytes.Equal(kvPair.key, lastKey) {
+			continue
+		}
+		entrySize := nextGenCSEBlockEntrySize(kvPair, 0)
+		if len(blockKVs) > 0 && blockBytes+entrySize > nextGenCSEBlockSize {
+			if err := flushBlock(); err != nil {
+				return 0, err
+			}
+		}
+		blockKVs = append(blockKVs, kvPair)
+		blockBytes += entrySize
+		lastKey = kvPair.key
+	}
+	if err := flushBlock(); err != nil {
+		return 0, err
+	}
+	return totalPhysicalBytes, nil
+}
+
+func estimateSampledIndexKVCSEBlockPhysicalBytes(blockKVs []sampledIndexKV, commitTS uint64, encoder *zstd.Encoder) (int64, error) {
+	if len(blockKVs) == 0 {
+		return 0, nil
+	}
+	commonPrefixLen := sharedPrefixLength(blockKVs[0].key, blockKVs[len(blockKVs)-1].key)
+	if commonPrefixLen > nextGenCSEBlockKeySuffixMaxLen {
+		return 0, errors.Errorf("next-gen CSE block common prefix length %d exceeds u16 limit", commonPrefixLen)
+	}
+
+	var payload []byte
+	payload = binary.LittleEndian.AppendUint32(payload, nextGenCSEBlockFormatV1)
+	payload = binary.LittleEndian.AppendUint32(payload, uint32(len(blockKVs)))
+	offset := uint32(0)
+	for _, kvPair := range blockKVs {
+		payload = binary.LittleEndian.AppendUint32(payload, offset)
+		entrySize := nextGenCSEBlockEntrySize(kvPair, commonPrefixLen)
+		if int64(offset)+int64(entrySize) > int64(^uint32(0)) {
+			return 0, errors.Errorf("next-gen CSE block offset exceeds u32 limit")
+		}
+		offset += uint32(entrySize)
+	}
+	payload = binary.LittleEndian.AppendUint16(payload, uint16(commonPrefixLen))
+	payload = append(payload, blockKVs[0].key[:commonPrefixLen]...)
+	for _, kvPair := range blockKVs {
+		var err error
+		payload, err = appendNextGenCSEBlockEntry(payload, kvPair, commonPrefixLen, commitTS)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(encoder.EncodeAll(payload, nil))), nil
+}
+
+func nextGenCSEBlockEntrySize(kvPair sampledIndexKV, commonPrefixLen int) int {
+	return 2 + len(kvPair.key) - commonPrefixLen +
+		1 + nextGenCSEValueVersionLen + 1 + nextGenCSEValueUserMetaSize + len(kvPair.value)
+}
+
+func appendNextGenCSEBlockEntry(payload []byte, kvPair sampledIndexKV, commonPrefixLen int, commitTS uint64) ([]byte, error) {
+	keySuffixLen := len(kvPair.key) - commonPrefixLen
+	if keySuffixLen < 0 || keySuffixLen > nextGenCSEBlockKeySuffixMaxLen {
+		return nil, errors.Errorf("next-gen CSE block key suffix length %d exceeds u16 limit", keySuffixLen)
+	}
+	payload = binary.LittleEndian.AppendUint16(payload, uint16(keySuffixLen))
+	payload = append(payload, kvPair.key[commonPrefixLen:]...)
+	payload = append(payload, nextGenCSEValueMeta)
+	payload = binary.LittleEndian.AppendUint64(payload, commitTS)
+	payload = append(payload, byte(nextGenCSEValueUserMetaSize))
+	payload = appendNextGenCSEUserMeta(payload, commitTS)
+	payload = append(payload, kvPair.value...)
+	return payload, nil
+}
+
+func appendNextGenCSEUserMeta(payload []byte, commitTS uint64) []byte {
+	payload = append(payload, nextGenCSEValueUserMetaFormat)
+	payload = binary.LittleEndian.AppendUint64(payload, commitTS)
+	payload = binary.LittleEndian.AppendUint64(payload, commitTS)
+	return payload
+}
+
 type sampledTiKVMVCCKVs struct {
 	defaultKVs []sampledIndexKV
 	writeKVs   []sampledIndexKV
 }
 
 func estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int, commitTS uint64) (int64, error) {
+	if kerneltype.IsNextGen() {
+		return estimateSortedSampledIndexKVCSEPhysicalBytesWithSplit(sortedKVs, splitCount, commitTS)
+	}
 	return estimateSampledTiKVMVCCKVsPhysicalBytesWithSplit(buildBlockSampledTiKVMVCCKVs(sortedKVs, commitTS), splitCount)
 }
 

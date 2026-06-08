@@ -1042,6 +1042,47 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.Len(t, mvccKVs.defaultKVs[0].value, tikvMVCCShortValueMaxBytes+1)
 	})
 
+	t.Run("block sample prediction estimates next-gen CSE data blocks", func(t *testing.T) {
+		ts := uint64(404411537129996288)
+		key := []byte("t_index_prefix_000001")
+		value := []byte("index-value")
+		commonPrefixLen := len("t_index_prefix_")
+		entry, err := appendNextGenCSEBlockEntry(nil, sampledIndexKV{key: key, value: value}, commonPrefixLen, ts)
+		require.NoError(t, err)
+		require.Len(t, entry, nextGenCSEBlockEntrySize(sampledIndexKV{key: key, value: value}, commonPrefixLen))
+		require.Equal(t, uint16(len("000001")), binary.LittleEndian.Uint16(entry[:2]))
+		pos := 2
+		require.Equal(t, []byte("000001"), entry[pos:pos+len("000001")])
+		pos += len("000001")
+		require.Equal(t, byte(nextGenCSEValueMeta), entry[pos])
+		pos++
+		require.Equal(t, ts, binary.LittleEndian.Uint64(entry[pos:pos+nextGenCSEValueVersionLen]))
+		pos += nextGenCSEValueVersionLen
+		require.Equal(t, byte(nextGenCSEValueUserMetaSize), entry[pos])
+		pos++
+		require.Equal(t, byte(nextGenCSEValueUserMetaFormat), entry[pos])
+		require.Equal(t, ts, binary.LittleEndian.Uint64(entry[pos+1:pos+9]))
+		require.Equal(t, ts, binary.LittleEndian.Uint64(entry[pos+9:pos+17]))
+		pos += nextGenCSEValueUserMetaSize
+		require.Equal(t, value, entry[pos:])
+
+		prefixKVs := make([]sampledIndexKV, 0, 2048)
+		for i := 0; i < cap(prefixKVs); i++ {
+			prefixKVs = append(prefixKVs, sampledIndexKV{
+				key:   []byte(fmt.Sprintf("t_index_prefix_payload_%08d", i)),
+				value: []byte(strings.Repeat("same-value-", 8)),
+			})
+		}
+		sortedKVs := sortedKVsForTest(prefixKVs)
+		nextGenBytes, err := estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs, ts)
+		require.NoError(t, err)
+		require.Positive(t, nextGenBytes)
+		require.Less(t, nextGenBytes, sampledIndexKVLogicalBytes(sortedKVs))
+		splitNextGenBytes, err := estimateSortedSampledIndexKVCSEPhysicalBytesWithSplit(sortedKVs, 8, ts)
+		require.NoError(t, err)
+		require.Greater(t, splitNextGenBytes, nextGenBytes)
+	})
+
 	t.Run("block sample prediction uses physical estimate for all encodings", func(t *testing.T) {
 		ts := uint64(404411537129996288)
 		sctx := mock.NewContext()
