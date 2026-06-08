@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"os/user"
@@ -1293,19 +1294,8 @@ var (
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
 	conf := defaultConf
-	conf.ExtendedErrorMsgs = cloneStringMap(defaultConf.ExtendedErrorMsgs)
+	conf.ExtendedErrorMsgs = maps.Clone(defaultConf.ExtendedErrorMsgs)
 	return &conf
-}
-
-func cloneStringMap(src map[string]string) map[string]string {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
 
 // GetGlobalConfig returns the global configuration for this server.
@@ -1557,6 +1547,9 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
+	if metaData.IsDefined("extended-error-msgs") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("extended-error-msgs can only be configured when deploy-mode is starter")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1621,6 +1614,9 @@ func (c *Config) Valid() error {
 	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	}
+	if len(c.ExtendedErrorMsgs) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("extended-error-msgs can only be configured when deploy-mode is starter")
 	}
 	for pattern := range c.ExtendedErrorMsgs {
 		if _, err := regexp.Compile(pattern); err != nil {
@@ -1820,7 +1816,7 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
-	conf.ExtendedErrorMsgs = cloneStringMap(defaultConf.ExtendedErrorMsgs)
+	conf.ExtendedErrorMsgs = maps.Clone(defaultConf.ExtendedErrorMsgs)
 	if intest.InTest && kerneltype.IsNextGen() {
 		// In test mode, without reading a config file, we still assume the `GetGlobalConfig()` returns
 		// a valid config file. However, the "valid" nextgen config file should always have a keyspace name.

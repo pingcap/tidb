@@ -183,8 +183,8 @@ func TestExtendedErrorMsgsConfig(t *testing.T) {
 `), 0644))
 
 	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
 	require.NoError(t, conf.Load(configFile))
-	require.NoError(t, conf.Valid())
 	require.Equal(t, map[string]string{
 		`^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`:                                                "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details",
 		`^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$`:                     "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details",
@@ -199,10 +199,25 @@ func TestExtendedErrorMsgsConfig(t *testing.T) {
 
 func TestExtendedErrorMsgsInvalidRegexp(t *testing.T) {
 	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
 	conf.ExtendedErrorMsgs = map[string]string{
 		"[": "invalid regexp",
 	}
 	require.ErrorContains(t, conf.Valid(), "invalid extended-error-msgs regexp")
+
+	conf = NewConfig()
+	conf.ExtendedErrorMsgs = map[string]string{
+		".*": "not allowed",
+	}
+	require.ErrorContains(t, conf.Valid(), "extended-error-msgs can only be configured when deploy-mode is starter")
+
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+[extended-error-msgs]
+".*" = "not allowed"
+`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "extended-error-msgs can only be configured when deploy-mode is starter")
 }
 
 func TestKeyspaceObservability(t *testing.T) {

@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExtendErrorMessageByRegex(t *testing.T) {
+func TestExtendByRegex(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.ExtendedErrorMsgs = map[string]string{
@@ -88,13 +88,13 @@ func TestExtendErrorMessageByRegex(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, tt.message)
-			ExtendErrorMessage(sqlErr)
+			Extend(sqlErr)
 			require.Equal(t, tt.expected, sqlErr.Message)
 		})
 	}
 }
 
-func TestExtendErrorMessageWithoutConfig(t *testing.T) {
+func TestExtendWithoutConfig(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.ExtendedErrorMsgs = nil
@@ -104,11 +104,11 @@ func TestExtendErrorMessageWithoutConfig(t *testing.T) {
 	})
 
 	sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, "Exceeded resource group quota limitation")
-	ExtendErrorMessage(sqlErr)
+	Extend(sqlErr)
 	require.Equal(t, "Exceeded resource group quota limitation", sqlErr.Message)
 }
 
-func TestExtendErrorMessageSkipsInvalidRegex(t *testing.T) {
+func TestExtendSkipsInvalidRegex(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.ExtendedErrorMsgs = map[string]string{
@@ -121,11 +121,11 @@ func TestExtendErrorMessageSkipsInvalidRegex(t *testing.T) {
 	})
 
 	sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, "sleep() argument is greater than 31536000")
-	ExtendErrorMessage(sqlErr)
+	Extend(sqlErr)
 	require.Equal(t, "sleep() argument is greater than 31536000, see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details.", sqlErr.Message)
 }
 
-func TestExtendErrorMessagePrefersLongestPattern(t *testing.T) {
+func TestExtendPrefersLongestPattern(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.ExtendedErrorMsgs = map[string]string{
@@ -138,6 +138,6 @@ func TestExtendErrorMessagePrefersLongestPattern(t *testing.T) {
 	})
 
 	sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, "Access denied for user 'root.foo'@'127.0.0.1' (using password: YES)")
-	ExtendErrorMessage(sqlErr)
+	Extend(sqlErr)
 	require.Equal(t, "Access denied for user 'root.foo'@'127.0.0.1' (using password: YES), specific user prefix message.", sqlErr.Message)
 }

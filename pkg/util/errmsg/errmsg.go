@@ -27,8 +27,12 @@ import (
 
 var regexpCache sync.Map
 
-// ExtendErrorMessage appends a configured message suffix to selected SQL errors.
-func ExtendErrorMessage(m *mysql.SQLError) {
+// Extend appends a configured suffix to selected SQL errors in place.
+// It reads config.GetGlobalConfig().ExtendedErrorMsgs, sorts patterns on each
+// call by length descending and lexicographic order, and applies only the first
+// matching regexp. Invalid patterns are skipped because Config.Valid should have
+// rejected them before serving traffic.
+func Extend(m *mysql.SQLError) {
 	if m == nil {
 		return
 	}
