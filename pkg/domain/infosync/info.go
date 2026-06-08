@@ -56,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -335,6 +336,44 @@ func GetServerInfoByID(ctx context.Context, id string) (*serverinfo.ServerInfo, 
 		return nil, err
 	}
 	return is.svrInfoSyncer.GetServerInfoByID(ctx, id)
+}
+
+// SetKeyspaceConfig patches the keyspace config in merge style.
+func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config any) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if is.pdHTTPCli == nil {
+		return errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
+	}
+
+	params, err := toUpdateKeyspaceConfigParams(config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = is.pdHTTPCli.UpdateKeyspaceConfig(ctx, keyspaceName, params)
+	return errors.Trace(err)
+}
+
+func toUpdateKeyspaceConfigParams(config any) (*pdhttp.UpdateKeyspaceConfigParams, error) {
+	if params, ok := config.(*pdhttp.UpdateKeyspaceConfigParams); ok {
+		return params, nil
+	}
+	if params, ok := config.(pdhttp.UpdateKeyspaceConfigParams); ok {
+		return &params, nil
+	}
+
+	payload, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+
+	var params pdhttp.UpdateKeyspaceConfigParams
+	if err := json.Unmarshal(payload, &params); err != nil {
+		return nil, err
+	}
+	return &params, nil
 }
 
 // GetAllServerInfo gets all servers static information from etcd.
