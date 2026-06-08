@@ -387,6 +387,9 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	err = tk.ExecToErr("create materialized view log on mysql.user (User)")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("mysql", "user", "BASE TABLE").Error(), err.Error())
 
+	err = tk.ExecToErr("create materialized view log on information_schema.tables (TABLE_SCHEMA)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("information_schema", "tables", "BASE TABLE").Error(), err.Error())
+
 	tk.MustExec("drop table t")
 	tk.MustExec("create temporary table t (a int)")
 	err = tk.ExecToErr("create materialized view log on t (a)")

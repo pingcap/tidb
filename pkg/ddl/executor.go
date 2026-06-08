@@ -1226,7 +1226,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 
 func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.TableInfo) bool {
 	return tblInfo != nil &&
-		!util.IsSysDB(schemaLowerName) &&
+		!util.IsMemOrSysDB(schemaLowerName) &&
 		!tblInfo.IsView() &&
 		!tblInfo.IsSequence() &&
 		tblInfo.TempTableType == model.TempTableNone
