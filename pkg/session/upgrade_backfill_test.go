@@ -144,7 +144,7 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	chk = res.NewChunk(nil)
 	require.NoError(t, res.Next(ctx, chk))
 	require.Equal(t, 1, chk.NumRows())
-	require.Equal(t, "0", chk.GetRow(0).GetString(1))
+	require.Equal(t, "0.8", chk.GetRow(0).GetString(1))
 	require.NoError(t, res.Close())
 
 	res = MustExecToRecodeSet(t, seCurVer, "select cast(@@global.tidb_default_string_match_selectivity as char)")
