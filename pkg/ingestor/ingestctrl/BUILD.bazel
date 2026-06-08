@@ -146,6 +146,7 @@ go_test(
         "//br/pkg/restore/split",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/errno",
         "//pkg/ingestor/engineapi",
         "//pkg/ingestor/errdef",
