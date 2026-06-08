@@ -275,56 +275,9 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
-<<<<<<< HEAD
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
 	registerStores()
 	err := metricsutil.RegisterMetrics()
-=======
-	// we cannot add this check inside config.Valid(), as previous '-V' also relies
-	// on initialized global config.
-	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().Standby.StandByMode {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
-		os.Exit(0)
-	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode || config.GetGlobalConfig().KeyspaceActivateMode) {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name, standby mode or keyspace-activate mode is not supported for classic TiDB")
-		os.Exit(0)
-	}
-
-	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
-
-	var standbyController server.StandbyController
-	var activationMetadata map[string]string
-	if config.GetGlobalConfig().Standby.StandByMode {
-		mgrCli, err := createMgrClientForStarter()
-		terror.MustNil(err)
-		standbyController = standby.NewLoadKeyspaceController(mgrCli)
-	}
-
-	var err error
-
-	// If running standby mode, wait for activate request.
-	if standbyController != nil {
-		standbyController.WaitForActivate()
-		// EndStandby only execute once. If server is created
-		// successfully, the defer has no effect. If panics
-		// before server is created, the defer makes sure to
-		// notify the activate caller.
-		defer standbyController.EndStandby(err)
-		// need to validate config again in case of config change via standby
-		terror.MustNil(config.GetGlobalConfig().Valid())
-		if c, ok := standbyController.(*standby.LoadKeyspaceController); ok {
-			activationMetadata = c.ActivationMetadata()
-		}
-	}
-
-	signal.SetupUSR1Handler()
-	err = registerStores()
-	terror.MustNil(err)
-	if deploymode.IsStarter() {
-		err = prepareKeyspaceObservabilityForStarter(activationMetadata)
-		terror.MustNil(err)
-	}
-	err = metricsutil.RegisterMetrics()
->>>>>>> 0c62aa51fbf (store: mark TiDB requests for max-ts validation (#68779))
 	terror.MustNil(err)
 
 	if variable.EnableTmpStorageOnOOM.Load() {

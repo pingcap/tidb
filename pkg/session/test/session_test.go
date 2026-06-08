@@ -691,14 +691,6 @@ func TestRequestSource(t *testing.T) {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				tikvrpc.AttachContext(req, req.Context)
-<<<<<<< HEAD
-				requestSource := req.Context.GetRequestSource()
-				readType := ""
-				switch req.Req.(type) {
-				case *kvrpcpb.PrewriteRequest, *kvrpcpb.CommitRequest:
-				case *coprocessor.Request, *kvrpcpb.GetRequest, *kvrpcpb.BatchGetRequest:
-					readType = "leader_" // read request will be attached with read type
-=======
 				requestSource := ""
 				requestOrigin := kvrpcpb.RequestOrigin_RequestOriginUnknown
 				readType := ""
@@ -726,7 +718,6 @@ func TestRequestSource(t *testing.T) {
 					requestOrigin = r.GetContext().GetRequestOrigin()
 				default:
 					fmt.Printf("unexpected request type %T\n", r)
->>>>>>> 0c62aa51fbf (store: mark TiDB requests for max-ts validation (#68779))
 				}
 				require.Equal(t, readType+source, requestSource)
 				require.Equal(t, kvrpcpb.RequestOrigin_RequestOriginTiDB, requestOrigin)
