@@ -61,11 +61,10 @@ func validateGroupID(groupID string) error {
 	return nil
 }
 
-// Info includes the global meta service address and the TiDB meta service group info.
+// Info includes the PD addresses and the TiDB meta service group info.
 type Info struct {
-	PDAddrs     []string
-	GlobalAddrs []string
-	Group       *Group
+	PDAddrs []string
+	Group   *Group
 }
 
 // Group includes keyspace meta service group info.
@@ -75,7 +74,7 @@ type Group struct {
 }
 
 // GetGroup returns the keyspace meta service group.
-func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (*Group, error) {
+func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Group, error) {
 	if keyspaceMeta == nil {
 		return nil, ErrNilKeyspaceMeta
 	}
@@ -113,37 +112,35 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string) (
 	// If keyspace doesn't have GroupIDKey, use the global meta service group.
 	group = &Group{
 		GroupID: GlobalGroupID,
-		Addrs:   globalMetaAddrs,
+		Addrs:   pdAddrs,
 	}
 	log.Info("get default keyspace meta service group info ", zap.Any("group-info", group))
 	return group, nil
 }
 
 // GetInfo return meta service info.
-func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMetaAddrs []string, pdAddrs []string) (*Info, error) {
+func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Info, error) {
 	// If non-keyspace then return global meta service or not enable meta service group.
 	if keyspaceMeta == nil {
 		keyspaceMetaServiceGroup := &Group{
 			GroupID: GlobalGroupID,
-			Addrs:   globalMetaAddrs,
+			Addrs:   pdAddrs,
 		}
 		metaInfo := &Info{
-			PDAddrs:     pdAddrs,
-			GlobalAddrs: globalMetaAddrs,
-			Group:       keyspaceMetaServiceGroup,
+			PDAddrs: pdAddrs,
+			Group:   keyspaceMetaServiceGroup,
 		}
 		log.Info("return meta service group info", zap.Any("meta-service-info", metaInfo))
 		return metaInfo, nil
 	}
 
-	keyspaceServiceGroup, err := GetGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceServiceGroup, err := GetGroup(keyspaceMeta, pdAddrs)
 	if err != nil {
 		return nil, err
 	}
 	metaInfo := &Info{
-		PDAddrs:     pdAddrs,
-		GlobalAddrs: globalMetaAddrs,
-		Group:       keyspaceServiceGroup,
+		PDAddrs: pdAddrs,
+		Group:   keyspaceServiceGroup,
 	}
 	log.Info("return keyspace meta service group info", zap.Any("meta-service-info", metaInfo))
 	return metaInfo, nil
