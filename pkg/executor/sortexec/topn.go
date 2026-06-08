@@ -25,16 +25,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-<<<<<<< HEAD
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
->>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -93,8 +88,6 @@ type TopNExec struct {
 	isSpillTriggeredInStage2ForTest bool
 
 	Concurrency int
-<<<<<<< HEAD
-=======
 
 	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	ColumnIdxsUsedByChild []int
@@ -102,7 +95,6 @@ type TopNExec struct {
 	typeCtx types.Context
 
 	RankInfo rankInfo
->>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
 }
 
 // Open implements the Executor Open interface.
@@ -122,15 +114,11 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
 
-<<<<<<< HEAD
-	if variable.EnableTmpStorageOnOOM.Load() {
-=======
 	if len(e.RankInfo.TruncateKeyPrefixCharCounts) > 0 {
 		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	}
 
 	if vardef.EnableTmpStorageOnOOM.Load() {
->>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		diskTracker := e.Ctx().GetSessionVars().StmtCtx.DiskTracker
 		if diskTracker != nil {
