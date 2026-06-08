@@ -26,7 +26,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-const getAllMembersBackoff = 5000
+const getAllMembersBackoffMs = 5000
 
 // client is used to implement etcd meta service.
 type client struct {
@@ -65,7 +65,7 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 		return nil, errors.New("PD client not found")
 	}
 	pdAddrs := make([]string, 0)
-	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
+	bo := tikv.NewBackoffer(ctx, getAllMembersBackoffMs)
 
 	for {
 		members, err := pdClient.GetAllMembers(ctx)
