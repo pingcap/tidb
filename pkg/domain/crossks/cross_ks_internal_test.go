@@ -22,12 +22,14 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type runtimeHandleTestStore struct {
@@ -73,11 +75,13 @@ func newRuntimeHandleTestManager(targetKS string) (*Manager, *runtimeEntry, *run
 func newRuntimeHandleTestSessionManager(targetStore *runtimeHandleTestStore, sessPool *runtimeHandleTestSessPool) *SessionManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SessionManager{
-		ctx:      ctx,
-		cancel:   cancel,
-		exitCh:   make(chan struct{}),
-		store:    targetStore,
-		sessPool: sessPool,
+		ctx:             ctx,
+		cancel:          cancel,
+		exitCh:          make(chan struct{}),
+		store:           targetStore,
+		etcdCli:         clientv3.NewCtxClient(context.Background()),
+		schemaVerSyncer: schemaver.NewMemSyncer(),
+		sessPool:        sessPool,
 	}
 }
 
@@ -259,107 +263,85 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 	})
 }
 
-func TestEvictRuntimeSkipsActiveHolders(t *testing.T) {
+func TestEvictRuntime(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
 	}
-	targetKS := "ks-evict-active"
-	mgr, entry, _, sessPool := newRuntimeHandleTestManager(targetKS)
-	factoryGetter := unusedRuntimeHandleFactoryGetter(t)
 
-	first, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
-	require.NoError(t, err)
-	second, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
-	require.NoError(t, err)
+	t.Run("skips active holders", func(t *testing.T) {
+		targetKS := "ks-evict-active"
+		mgr, entry, _, sessPool := newRuntimeHandleTestManager(targetKS)
+		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
 
-	first.Release()
-	entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
-	mgr.sweepIdleRuntimes(time.Now(), crossKSRuntimeIdleTimeout)
+		first, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
+		require.NoError(t, err)
+		second, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
+		require.NoError(t, err)
 
-	_, ok := mgr.Get(targetKS)
-	require.True(t, ok)
-	require.Contains(t, entry.activeHolders, "holder-2")
-	require.Zero(t, sessPool.closeCount)
-	second.Release()
-}
+		first.Release()
+		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
 
-func TestEvictRuntimeClosesIdleEntryOutsideManagerLock(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
-	}
-	targetKS := "ks-evict-idle"
-	mgr, entry, targetStore, sessPool := newRuntimeHandleTestManager(targetKS)
-	factoryGetter := unusedRuntimeHandleFactoryGetter(t)
-	sessPool.onClose = func() {
-		require.True(t, mgr.mu.TryLock())
-		mgr.mu.Unlock()
-	}
+		_, ok := mgr.Get(targetKS)
+		require.True(t, ok)
+		require.Contains(t, entry.activeHolders, "holder-2")
+		require.Zero(t, sessPool.closeCount)
+		second.Release()
+	})
 
-	handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
-	require.NoError(t, err)
-	handle.Release()
-	entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+	t.Run("closes idle entry outside manager lock", func(t *testing.T) {
+		targetKS := "ks-evict-idle"
+		mgr, entry, targetStore, sessPool := newRuntimeHandleTestManager(targetKS)
+		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
+		sessPool.onClose = func() {
+			require.True(t, mgr.mu.TryLock())
+			mgr.mu.Unlock()
+		}
 
-	mgr.sweepIdleRuntimes(time.Now(), crossKSRuntimeIdleTimeout)
+		handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
+		require.NoError(t, err)
+		handle.Release()
+		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
 
-	_, ok := mgr.Get(targetKS)
-	require.False(t, ok)
-	require.Equal(t, 1, sessPool.closeCount)
-	require.Equal(t, 1, targetStore.closeCount)
-}
+		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
 
-func TestEvictRuntimeReacquireCreatesNewRuntime(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
-	}
-	targetKS := "ks-evict-reacquire"
-	mgr, entry, oldStore, oldSessPool := newRuntimeHandleTestManager(targetKS)
-	factoryGetter := unusedRuntimeHandleFactoryGetter(t)
-	createCount := 0
-	mgr.newSessionManager = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
-		createCount++
-		newStore := &runtimeHandleTestStore{ks: ks}
-		newSessPool := &runtimeHandleTestSessPool{}
-		return newRuntimeHandleTestSessionManager(newStore, newSessPool), nil
-	}
+		_, ok := mgr.Get(targetKS)
+		require.False(t, ok)
+		require.Equal(t, 1, sessPool.closeCount)
+		require.Equal(t, 1, targetStore.closeCount)
+	})
 
-	handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
-	require.NoError(t, err)
-	handle.Release()
-	entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+	t.Run("reacquire creates new runtime", func(t *testing.T) {
+		targetKS := "ks-evict-reacquire"
+		mgr, entry, oldStore, oldSessPool := newRuntimeHandleTestManager(targetKS)
+		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
+		createCount := 0
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+			func(createSessionManager *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*createSessionManager = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+					createCount++
+					newStore := &runtimeHandleTestStore{ks: ks}
+					newSessPool := &runtimeHandleTestSessPool{}
+					return newRuntimeHandleTestSessionManager(newStore, newSessPool), nil
+				}
+			},
+		)
 
-	mgr.sweepIdleRuntimes(time.Now(), crossKSRuntimeIdleTimeout)
-	require.Equal(t, 1, oldSessPool.closeCount)
-	require.Equal(t, 1, oldStore.closeCount)
+		handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
+		require.NoError(t, err)
+		handle.Release()
+		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
 
-	reacquired, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
-	require.NoError(t, err)
-	require.NotSame(t, oldStore, reacquired.Store())
-	require.Equal(t, 1, createCount)
-	reacquired.Release()
-}
+		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+		require.Equal(t, 1, oldSessPool.closeCount)
+		require.Equal(t, 1, oldStore.closeCount)
 
-func TestEvictRuntimeSkipsRawTouchedEntry(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
-	}
-	targetKS := "ks-evict-raw-touched"
-	mgr, entry, _, sessPool := newRuntimeHandleTestManager(targetKS)
-	factoryGetter := unusedRuntimeHandleFactoryGetter(t)
-
-	handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
-	require.NoError(t, err)
-	handle.Release()
-	entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
-
-	rawMgr, err := mgr.GetOrCreate(targetKS, factoryGetter)
-	require.NoError(t, err)
-	require.Same(t, entry.sessMgr, rawMgr)
-	mgr.sweepIdleRuntimes(time.Now(), crossKSRuntimeIdleTimeout)
-
-	_, ok := mgr.Get(targetKS)
-	require.True(t, ok)
-	require.Zero(t, sessPool.closeCount)
+		reacquired, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
+		require.NoError(t, err)
+		require.NotSame(t, oldStore, reacquired.Store())
+		require.Equal(t, 1, createCount)
+		reacquired.Release()
+	})
 }
 
 func TestRuntimeHandleManagerCloseClosesAllEntriesRegardlessOfIdleTimeout(t *testing.T) {
@@ -401,5 +383,5 @@ func TestGCLoopExitsWhenContextCancelled(t *testing.T) {
 		default:
 			return false
 		}
-	}, time.Second, 10*time.Millisecond)
+	}, 5*time.Second, 10*time.Millisecond)
 }

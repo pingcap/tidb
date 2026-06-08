@@ -352,6 +352,9 @@ func (m *Manager) release(targetKS string, holderID string) {
 // RunSystemKSGCLoop periodically evicts idle cross keyspace runtimes.
 // as the name noted, this loop only runs in SYSTEM keyspace, user keyspace
 // only access the SYSTEM ks, and will be kept alive.
+// Note: there are raw caller to GetOrCreate which conflicts with the GC loop.
+// we will make the API more clear in the future after we can refactor those
+// callers to use Acquire instead of GetOrCreate directly.
 func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 	interval := crossKSRuntimeSweepInterval
 	ticker := time.NewTicker(interval)
