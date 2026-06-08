@@ -79,6 +79,12 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
+		if tblInfo.MaterializedViewLog != nil {
+			if err = setMLogAddedColumnOriginDefault(colFromArgs); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		columnInfo = InitAndAddColumnToTable(tblInfo, colFromArgs)
 		logutil.DDLLogger().Info("run add column job", zap.Stringer("job", job), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
@@ -126,6 +132,7 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
+		syncMLogColumnsAfterAddColumn(tblInfo)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -143,6 +150,43 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func setMLogAddedColumnOriginDefault(colInfo *model.ColumnInfo) error {
+	if colInfo == nil {
+		return nil
+	}
+	if field_types.HasCharset(&colInfo.FieldType) && colInfo.GetCharset() != charset.CharsetBin {
+		return colInfo.SetOriginDefaultValue(" ")
+	}
+	if colInfo.GetOriginDefaultValue() != nil {
+		return nil
+	}
+	zeroVal := table.GetZeroValue(colInfo)
+	originDefault, err := zeroVal.ToString()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return colInfo.SetOriginDefaultValue(originDefault)
+}
+
+func syncMLogColumnsAfterAddColumn(tblInfo *model.TableInfo) {
+	if tblInfo == nil || tblInfo.MaterializedViewLog == nil {
+		return
+	}
+	trackedCols := make([]pmodel.CIStr, 0, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		if col.State != model.StatePublic || isMLogMetaColumnName(col.Name.L) {
+			continue
+		}
+		trackedCols = append(trackedCols, col.Name)
+	}
+	tblInfo.MaterializedViewLog.Columns = trackedCols
+}
+
+func isMLogMetaColumnName(name string) bool {
+	return name == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
+		name == strings.ToLower(model.MaterializedViewLogOldNewColumnName)
 }
 
 func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {

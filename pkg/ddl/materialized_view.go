@@ -572,20 +572,40 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
 	}
 
-	// TODO: split ALTER MATERIALIZED VIEW LOG into per-action handlers and
-	// dedicated DDL job args when schema-changing actions (for example column
-	// add/drop) are supported.
+	baseColMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
+	for _, col := range baseTable.Meta().Columns {
+		baseColMap[col.Name.L] = col
+	}
+	mlogColSet := make(map[string]struct{}, len(mlogTable.Meta().Columns)+len(s.Actions))
+	for _, col := range mlogTable.Meta().Columns {
+		mlogColSet[col.Name.L] = struct{}{}
+	}
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewLogActionPurge:
 			if _, _, _, err := buildMLogPurgeMeta(ctx, action.Purge); err != nil {
 				return err
 			}
+		case ast.AlterMaterializedViewLogActionAddColumn:
+			for _, col := range action.Cols {
+				if _, exists := mlogColSet[col.L]; exists {
+					return infoschema.ErrColumnExists.GenWithStackByArgs(col.O)
+				}
+				if baseColMap[col.L] == nil {
+					return infoschema.ErrColumnNotExists.GenWithStackByArgs(col.O, s.Table.Name.O)
+				}
+				mlogColSet[col.L] = struct{}{}
+			}
 		default:
 			return errors.Errorf("unknown alter materialized view log action type: %d", action.Tp)
 		}
 	}
 
+	lastTrackedCol := pmodel.CIStr{}
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if len(mlogInfo.Columns) > 0 {
+		lastTrackedCol = mlogInfo.Columns[len(mlogInfo.Columns)-1]
+	}
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewLogActionPurge:
@@ -599,11 +619,45 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 			); err != nil {
 				return err
 			}
+		case ast.AlterMaterializedViewLogActionAddColumn:
+			for _, col := range action.Cols {
+				baseCol := baseColMap[col.L]
+				if err := e.addMaterializedViewLogColumn(ctx, schemaName, mlogName, baseCol, lastTrackedCol); err != nil {
+					return err
+				}
+				lastTrackedCol = col
+			}
 		default:
 			return errors.Errorf("unknown alter materialized view log action type: %d", action.Tp)
 		}
 	}
 	return nil
+}
+
+func (e *executor) addMaterializedViewLogColumn(
+	ctx sessionctx.Context,
+	schemaName pmodel.CIStr,
+	mlogName pmodel.CIStr,
+	baseCol *model.ColumnInfo,
+	afterCol pmodel.CIStr,
+) error {
+	ft := baseCol.FieldType
+	ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+	spec := &ast.AlterTableSpec{
+		Tp: ast.AlterTableAddColumns,
+		NewColumns: []*ast.ColumnDef{{
+			Name: &ast.ColumnName{Name: baseCol.Name},
+			Tp:   &ft,
+		}},
+		Position: &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
+	}
+	if afterCol.L != "" {
+		spec.Position = &ast.ColumnPosition{
+			Tp:             ast.ColumnPositionAfter,
+			RelativeColumn: &ast.ColumnName{Name: afterCol},
+		}
+	}
+	return e.AddColumn(ctx, ast.Ident{Schema: schemaName, Name: mlogName}, spec)
 }
 
 func (e *executor) alterMaterializedViewLogPurge(

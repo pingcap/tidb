@@ -881,6 +881,54 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 	))
 }
 
+func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, added int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100, 1000)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t add column (added)",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "mlog add-column write-reorg")
+
+	// The new mlog column is not public yet, so mlog writing should continue with the
+	// previous tracked column set instead of treating the transient metadata as corrupt.
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set untracked = 1001 where id = 1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	tk.MustExec("update t set added = 101 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, added, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 11 100 U -1",
+		"1 11 101 U 1",
+	))
+}
+
 func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

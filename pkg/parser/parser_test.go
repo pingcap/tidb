@@ -1296,6 +1296,7 @@ func TestDBAStmt(t *testing.T) {
 		// for show create materialized view log
 		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
 		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
+		{"alter materialized view log on test.t add column (a, b)", true, "ALTER MATERIALIZED VIEW LOG ON `test`.`t` ADD COLUMN (`a`, `b`)"},
 		// for show materialized views
 		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
 		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
