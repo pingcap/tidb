@@ -445,6 +445,8 @@ func TestSetSpeedLimitCloseCallbackIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, createCallBack(importer))
 
+	cancel()
+
 	closeOnceDone := make(chan error, 1)
 	go func() {
 		closeOnceDone <- closeCallBack(importer)

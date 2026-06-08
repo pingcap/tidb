@@ -76,6 +76,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
+	resetSpeedLimitTimeout    = time.Minute
 	defaultDDLConcurrency     = 100
 	maxSplitKeysOnce          = 10240
 )
@@ -708,7 +709,9 @@ func SetSpeedLimitCallbacks(
 			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
 			var resetErr error
 			for retry := range resetSpeedLimitRetryTimes {
-				resetErr = setFn(importer, 0)
+				resetCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetSpeedLimitTimeout)
+				resetErr = SetSpeedLimitFn(resetCtx, pdClient, pool)(importer, 0)
+				cancel()
 				if resetErr != nil {
 					log.Warn("failed to reset speed limit, retry it",
 						zap.Int("retry time", retry), logutil.ShortError(resetErr))
