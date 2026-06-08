@@ -1606,6 +1606,9 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Valid values: "DISABLE" and "COST".
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -1950,6 +1953,11 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 	} else {
 		s.StmtCtx.AppendExtraWarning(errors.NewNoStackError(warning))
 	}
+}
+
+// IsPartialOrderedIndexForTopNEnabled indicates whether partial ordered index optimization for TopN is enabled.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -2311,6 +2319,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
 		EnableCachePrepareStmt:        DefEnableCachePrepareStmt,
 		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
+		OptPartialOrderedIndexForTopN: DefTiDBOptPartialOrderedIndexForTopN,
 
 		TiDBOptEnableAdvancedJoinReorder: DefTiDBOptEnableAdvancedJoinReorder,
 	}

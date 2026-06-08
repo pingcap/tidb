@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -118,7 +118,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	}
 
-	if vardef.EnableTmpStorageOnOOM.Load() {
+	if variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		diskTracker := e.Ctx().GetSessionVars().StmtCtx.DiskTracker
 		if diskTracker != nil {
@@ -445,7 +445,7 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
 			key := row.GetString(e.RankInfo.truncateKeyColIdxs[i])
 			tmpDatum.SetValue(key, e.RankInfo.truncateFieldTypes[i])
 			ranger.CutDatumByPrefixLen(&tmpDatum, e.RankInfo.TruncateKeyPrefixCharCounts[i], e.RankInfo.truncateFieldTypes[i])
-			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.RankInfo.truncateFieldCollators[i].ImmutableKey(tmpDatum.GetString())))})
+			prefixKeys = append(prefixKeys, truncateKey{val: string(e.RankInfo.truncateFieldCollators[i].Key(tmpDatum.GetString()))})
 		}
 	}
 	return prefixKeys, nil

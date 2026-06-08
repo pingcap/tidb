@@ -1043,6 +1043,11 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
+	if copTask, ok := t.(*CopTask); ok {
+		if copTask.partialOrderMatchResult != nil && copTask.partialOrderMatchResult.Matched {
+			return handlePartialOrderTopN(p, copTask)
+		}
+	}
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -1078,6 +1083,53 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		return t
 	}
 	return attachPlan2Task(p, rootTask)
+}
+
+// handlePartialOrderTopN handles the partial order TopN scenario.
+//
+// Case 1: two-phase TopN, where TiDB keeps TopN and TiKV applies a partial-order Limit:
+//
+//	TopN(with partial info)
+//	  └─IndexLookUp
+//	     └─Limit(with partial info)
+//
+// Case 2: one-phase TopN, where the whole TopN can be executed in the coprocessor:
+//
+//	TopN(with partial info)
+//	  ├─IndexPlan
+//	  └─TablePlan
+func handlePartialOrderTopN(p *PhysicalTopN, copTask *CopTask) base.Task {
+	matchResult := copTask.partialOrderMatchResult
+	partialOrderedLimit := p.Count + p.Offset
+	p.PrefixCol = matchResult.PrefixCol
+	p.PrefixLen = matchResult.PrefixLen
+
+	canPushLimit := len(copTask.idxMergePartPlans) == 0 &&
+		!copTask.indexPlanFinished &&
+		len(copTask.rootTaskConds) == 0 &&
+		copTask.indexPlan != nil
+	if canPushLimit {
+		maxX := estimateMaxXForPartialOrder(p.SCtx(), copTask)
+		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
+		childProfile := copTask.indexPlan.StatsInfo()
+		limitStats := util.DeriveLimitStats(childProfile, estimatedRows)
+
+		pushedDownLimit := PhysicalLimit{
+			Count:     partialOrderedLimit,
+			PrefixCol: matchResult.PrefixCol,
+			PrefixLen: matchResult.PrefixLen,
+		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
+		pushedDownLimit.SetChildren(copTask.indexPlan)
+		pushedDownLimit.SetSchema(copTask.indexPlan.Schema())
+		copTask.indexPlan = pushedDownLimit
+	}
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask)
+}
+
+// estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
+func estimateMaxXForPartialOrder(_ base.PlanContext, _ *CopTask) uint64 {
+	return 0
 }
 
 // Attach2Task implements the PhysicalPlan interface.

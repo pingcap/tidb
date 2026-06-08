@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -57,7 +57,7 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 	}
 
 	for i := range rankTopNCase.truncateKeyExprs {
-		// -2 means use provided data
+		// -2 means use provided data as-is.
 		opt.Ndvs[i] = -2
 	}
 
@@ -122,7 +122,7 @@ func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockData
 
 	topNexec := &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &physicalop.PhysicalLimit{Offset: offset, Count: count},
+		Limit:       &plannercore.PhysicalLimit{Offset: offset, Count: count},
 		Concurrency: 5,
 	}
 

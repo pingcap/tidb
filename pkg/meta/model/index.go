@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -120,6 +121,7 @@ type IndexInfo struct {
 	MVIndex             bool             `json:"mv_index"`                      // Whether the index is multivalued index.
 	VectorInfo          *VectorIndexInfo `json:"vector_index"`                  // VectorInfo is the vector index information.
 	ConditionExprString string           `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn   `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -138,6 +140,12 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	if index.AffectColumn != nil {
+		ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
+		for i := range index.AffectColumn {
+			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
+		}
 	}
 	return &ni
 }
@@ -203,6 +211,21 @@ func (index *IndexInfo) IsPublic() bool {
 // For a TiFlash local index, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsTiFlashLocalIndex() bool {
 	return index.VectorInfo != nil
+}
+
+// HasCondition checks whether the index has a partial index condition.
+func (index *IndexInfo) HasCondition() bool {
+	return len(index.ConditionExprString) > 0
+}
+
+// ConditionExpr parses and returns the condition expression of the partial index.
+func (index *IndexInfo) ConditionExpr() (ast.ExprNode, error) {
+	stmtStr := "select " + index.ConditionExprString
+	stmts, _, err := parser.New().ParseSQL(stmtStr)
+	if err != nil {
+		return nil, err
+	}
+	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.

@@ -181,25 +181,28 @@ TopN	5.00	root		planner__core__partial_order_topn.t_char.code, offset:0, count:5
   └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_char	keep order:false, stats:pseudo
 explain format='brief' select  /*+ use_index(t_varchar, idx_name_prefix) */ id, name from t_varchar where data = 'fruit' order by name limit 5;
 id	estRows	task	access object	operator info
-TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
-└─IndexLookUp	10.00	root		
-  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
-  └─Selection(Probe)	10.00	cop[tikv]		eq(planner__core__partial_order_topn.t_varchar.data, "fruit")
-    └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name
+└─TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
+  └─IndexLookUp	10.00	root		
+    ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
+    └─Selection(Probe)	10.00	cop[tikv]		eq(planner__core__partial_order_topn.t_varchar.data, "fruit")
+      └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
 explain format='brief' select  /*+ use_index(t_char, idx_code_prefix) */ id, code as c from t_char where value > 200 order by code limit 5;
 id	estRows	task	access object	operator info
-TopN	5.00	root		planner__core__partial_order_topn.t_char.code, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_char.code, prefix_len:8
-└─IndexLookUp	3333.33	root		
-  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_char, index:idx_code_prefix(code)	keep order:true, stats:pseudo
-  └─Selection(Probe)	3333.33	cop[tikv]		gt(planner__core__partial_order_topn.t_char.value, 200)
-    └─TableRowIDScan	10000.00	cop[tikv]	table:t_char	keep order:false, stats:pseudo
+Projection	5.00	root		planner__core__partial_order_topn.t_char.id, planner__core__partial_order_topn.t_char.code
+└─TopN	5.00	root		planner__core__partial_order_topn.t_char.code, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_char.code, prefix_len:8
+  └─IndexLookUp	3333.33	root		
+    ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_char, index:idx_code_prefix(code)	keep order:true, stats:pseudo
+    └─Selection(Probe)	3333.33	cop[tikv]		gt(planner__core__partial_order_topn.t_char.value, 200)
+      └─TableRowIDScan	10000.00	cop[tikv]	table:t_char	keep order:false, stats:pseudo
 explain format='brief' select  /*+ use_index(t_varchar, idx_name_prefix) */ id, name from t_varchar where data = 'fruit' order by name limit 5;
 id	estRows	task	access object	operator info
-TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
-└─IndexLookUp	10.00	root		
-  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
-  └─Selection(Probe)	10.00	cop[tikv]		eq(planner__core__partial_order_topn.t_varchar.data, "fruit")
-    └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name
+└─TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
+  └─IndexLookUp	10.00	root		
+    ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
+    └─Selection(Probe)	10.00	cop[tikv]		eq(planner__core__partial_order_topn.t_varchar.data, "fruit")
+      └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
 explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col where a = 1 order by b limit 5;
 id	estRows	task	access object	operator info
 TopN	5.00	root		planner__core__partial_order_topn.t_multi_col.b, offset:0, count:5
@@ -298,8 +301,8 @@ TopN	5.00	root		planner__core__partial_order_topn.t_multi_col.a, planner__core__
 explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by upper(name) limit 5;
 id	estRows	task	access object	operator info
 Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data
-└─TopN	5.00	root		Column#5, offset:0, count:5
-  └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data, upper(planner__core__partial_order_topn.t_varchar.name)->Column#5
+└─TopN	5.00	root		Column#4, offset:0, count:5
+  └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data, upper(planner__core__partial_order_topn.t_varchar.name)->Column#4
     └─IndexLookUp	5.00	root		
       ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:false, stats:pseudo
       └─TopN(Probe)	5.00	cop[tikv]		upper(planner__core__partial_order_topn.t_varchar.name), offset:0, count:5
@@ -307,8 +310,8 @@ Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__c
 explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by concat(name, data) limit 5;
 id	estRows	task	access object	operator info
 Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data
-└─TopN	5.00	root		Column#5, offset:0, count:5
-  └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data, concat(planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data)->Column#5
+└─TopN	5.00	root		Column#4, offset:0, count:5
+  └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data, concat(planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data)->Column#4
     └─IndexLookUp	5.00	root		
       ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:false, stats:pseudo
       └─TopN(Probe)	5.00	cop[tikv]		concat(planner__core__partial_order_topn.t_varchar.name, planner__core__partial_order_topn.t_varchar.data), offset:0, count:5
@@ -341,15 +344,15 @@ TopN	5.00	root		planner__core__partial_order_topn.t_join1.name, offset:0, count:
     └─TableFullScan	10000.00	cop[tikv]	table:t_join1	keep order:false, stats:pseudo
 explain format='brief' select name, count(*) from t_varchar group by name order by name limit 5;
 id	estRows	task	access object	operator info
-Projection	5.00	root		planner__core__partial_order_topn.t_varchar.name, Column#5
+Projection	5.00	root		planner__core__partial_order_topn.t_varchar.name, Column#4
 └─TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5
-  └─HashAgg	8000.00	root		group by:planner__core__partial_order_topn.t_varchar.name, funcs:count(Column#6)->Column#5, funcs:firstrow(planner__core__partial_order_topn.t_varchar.name)->planner__core__partial_order_topn.t_varchar.name
+  └─HashAgg	8000.00	root		group by:planner__core__partial_order_topn.t_varchar.name, funcs:count(Column#5)->Column#4, funcs:firstrow(planner__core__partial_order_topn.t_varchar.name)->planner__core__partial_order_topn.t_varchar.name
     └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:planner__core__partial_order_topn.t_varchar.name, funcs:count(1)->Column#6
+      └─HashAgg	8000.00	cop[tikv]		group by:planner__core__partial_order_topn.t_varchar.name, funcs:count(1)->Column#5
         └─TableFullScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
 explain format='brief' (select name from t_varchar order by name limit 3) union all (select name from t_no_prefix order by name limit 3) order by name limit 5;
 id	estRows	task	access object	operator info
-TopN	5.00	root		Column#9, offset:0, count:5
+TopN	5.00	root		Column#7, offset:0, count:5
 └─Union	6.00	root		
   ├─Limit	3.00	root		offset:0, count:5
   │ └─TopN	3.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:3, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
@@ -365,20 +368,20 @@ TopN	5.00	root		Column#9, offset:0, count:5
           └─IndexFullScan	3.00	cop[tikv]	table:t_no_prefix, index:idx_name(name)	keep order:true, stats:pseudo
 explain format='brief' select  /*+ force_index(t_varchar, idx_name_prefix) */ id, upper(name) as upper_name from t_varchar order by upper_name limit 5;
 id	estRows	task	access object	operator info
-Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, upper(planner__core__partial_order_topn.t_varchar.name)->Column#5
+Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, upper(planner__core__partial_order_topn.t_varchar.name)->Column#4
 └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name
-  └─TopN	5.00	root		Column#6, offset:0, count:5
-    └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, upper(planner__core__partial_order_topn.t_varchar.name)->Column#6
+  └─TopN	5.00	root		Column#5, offset:0, count:5
+    └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, upper(planner__core__partial_order_topn.t_varchar.name)->Column#5
       └─IndexLookUp	5.00	root		
         ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:false, stats:pseudo
         └─TopN(Probe)	5.00	cop[tikv]		upper(planner__core__partial_order_topn.t_varchar.name), offset:0, count:5
           └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
 explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ id, length(name) as name_len from t_varchar order by name_len limit 5;
 id	estRows	task	access object	operator info
-Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, length(planner__core__partial_order_topn.t_varchar.name)->Column#5
+Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, length(planner__core__partial_order_topn.t_varchar.name)->Column#4
 └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name
-  └─TopN	5.00	root		Column#6, offset:0, count:5
-    └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, length(planner__core__partial_order_topn.t_varchar.name)->Column#6
+  └─TopN	5.00	root		Column#5, offset:0, count:5
+    └─Projection	5.00	root		planner__core__partial_order_topn.t_varchar.id, planner__core__partial_order_topn.t_varchar.name, length(planner__core__partial_order_topn.t_varchar.name)->Column#5
       └─IndexLookUp	5.00	root		
         ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:false, stats:pseudo
         └─TopN(Probe)	5.00	cop[tikv]		length(planner__core__partial_order_topn.t_varchar.name), offset:0, count:5
@@ -399,11 +402,12 @@ KEY `idx1` (`c1`,`c2`,`c3`(10))
 );
 explain format='brief' select /*+ use_index(t15, idx1) */ c1 from t15 where length(c1) > 13 order by c1, c4, c3 limit 10922 offset 55010;
 id	estRows	task	access object	operator info
-TopN	8000.00	root		planner__core__partial_order_topn.t15.c1, planner__core__partial_order_topn.t15.c4, planner__core__partial_order_topn.t15.c3, offset:55010, count:10922
-└─IndexLookUp	8000.00	root		
-  ├─Selection(Build)	8000.00	cop[tikv]		gt(length(cast(planner__core__partial_order_topn.t15.c1, var_string(20))), 13)
-  │ └─IndexFullScan	10000.00	cop[tikv]	table:t15, index:idx1(c1, c2, c3)	keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	8000.00	cop[tikv]	table:t15	keep order:false, stats:pseudo
+Projection	8000.00	root		planner__core__partial_order_topn.t15.c1
+└─TopN	8000.00	root		planner__core__partial_order_topn.t15.c1, planner__core__partial_order_topn.t15.c4, planner__core__partial_order_topn.t15.c3, offset:55010, count:10922
+  └─IndexLookUp	8000.00	root		
+    ├─Selection(Build)	8000.00	cop[tikv]		gt(length(cast(planner__core__partial_order_topn.t15.c1, var_string(20))), 13)
+    │ └─IndexFullScan	10000.00	cop[tikv]	table:t15, index:idx1(c1, c2, c3)	keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	8000.00	cop[tikv]	table:t15	keep order:false, stats:pseudo
 explain format='brief' select /*+ use_index(t12, idx1) */ c0, c1 from t12 where length(c0) > 13 order by c0, c1 limit 10922 offset 55010;
 id	estRows	task	access object	operator info
 TopN	8000.00	root		planner__core__partial_order_topn.t12.c0, planner__core__partial_order_topn.t12.c1, offset:55010, count:10922

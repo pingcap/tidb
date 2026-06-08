@@ -722,11 +722,6 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
-<<<<<<< HEAD
-=======
-	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
-		return err
-	}
 	if p.PrefixCol != nil {
 		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
@@ -734,7 +729,6 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 		}
 		p.PrefixCol = newCol.(*expression.Column)
 	}
->>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
 	return
 }
 
