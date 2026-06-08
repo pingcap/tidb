@@ -20,10 +20,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -453,7 +455,7 @@ func TestWriteSlowLog(t *testing.T) {
 	checkWriteSlowLog(true)
 }
 
-func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
+func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	original := config.GetGlobalConfig()
 	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
 	t.Cleanup(func() {
@@ -488,11 +490,19 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	sessVars.RUV2Metrics.AddResultChunkCells(100)
 	sessVars.RUV2Metrics.AddPlanCnt(2)
 	sessVars.RUV2Metrics.AddSessionParserTotal(3)
-
-	expected := sessVars.RUV2Metrics.CalculateRUValues(sessVars.RUV2Weights())
 	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
 	ruDetails.AddTiKVRUV2(23456)
+	rawRUV2 := &kvrpcpb.RUV2{
+		ReadRpcCount:                 5,
+		WriteRpcCount:                7,
+		StorageProcessedKeysBatchGet: 11,
+	}
+	ruDetails.AddRUV2(rawRUV2)
 	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
+	// Build expected metrics by cloning the current state and manually adding
+	// the RUV2 counters (without draining ruDetails, since FinishExecuteStmt will drain).
+	expected := sessVars.RUV2Metrics.Clone()
+	execdetails.UpdateRUV2MetricsFromRUV2(expected, rawRUV2)
 
 	execStmt := &executor.ExecStmt{
 		Ctx:      ctx,
@@ -502,9 +512,12 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 	execStmt.FinishExecuteStmt(0, nil, false)
 
 	require.Equal(t, float64(23456), ruDetails.TiKVRUV2())
+	require.Equal(t, int64(5), sessVars.RUV2Metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(7), sessVars.RUV2Metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(11), sessVars.RUV2Metrics.TiKVStorageProcessedKeysBatchGet())
 	require.Equal(t, "rg1", reporter.group)
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
-	require.Equal(t, expected, reporter.tidbRUV2)
+	require.Equal(t, expected.CalculateRUValues(sessVars.RUV2Weights()), reporter.tidbRUV2)
 	require.Equal(t, float64(412), reporter.tiflashRU)
 
 	t.Run("stmt summary ignores optimistic autocommit retry count", func(t *testing.T) {
@@ -568,6 +581,60 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 		require.Zero(t, reporter.tikvRUV2)
 		require.Zero(t, reporter.tidbRUV2)
 		require.Zero(t, reporter.tiflashRU)
+	})
+
+	t.Run("network traffic stats are read atomically", func(t *testing.T) {
+		reporter := &mockRUV2ConsumptionReporter{}
+		ctx := &mockRUV2ReportingContext{
+			Context:  mock.NewContext(),
+			reporter: reporter,
+		}
+		sessVars := ctx.GetSessionVars()
+		sessVars.StartTime = time.Now()
+		sessVars.StmtCtx.StmtType = "Select"
+		sessVars.StmtCtx.OriginalSQL = "select 1"
+		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+		sessVars.RUV2Metrics = execdetails.NewRUV2Metrics()
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tikvExecDetail := goCtx.Value(util.ExecDetailsKey).(*util.ExecDetails)
+		execStmt := &executor.ExecStmt{
+			Ctx:      ctx,
+			GoCtx:    goCtx,
+			StmtNode: &ast.SelectStmt{},
+		}
+
+		done := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					atomic.AddInt64(&tikvExecDetail.WaitKVRespDuration, int64(time.Millisecond))
+					atomic.AddInt64(&tikvExecDetail.WaitPDRespDuration, int64(time.Millisecond))
+					atomic.AddInt64(&tikvExecDetail.BackoffDuration, int64(time.Millisecond))
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 1)
+				}
+			}
+		}()
+
+		for range 64 {
+			execStmt.FinishExecuteStmt(0, nil, false)
+		}
+
+		close(done)
+		wg.Wait()
 	})
 }
 

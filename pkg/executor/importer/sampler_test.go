@@ -28,8 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -203,16 +201,12 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 	}
 
 	t.Run("parser_close_on_error", func(t *testing.T) {
-		newChunk := func() *checkpoints.ChunkCheckpoint {
-			return &checkpoints.ChunkCheckpoint{
-				FileMeta: mydump.SourceFileMeta{
-					Path:     "test.sql",
-					FileSize: 16,
-				},
-				Chunk: mydump.Chunk{
-					Offset:       1,
-					PrevRowIDMax: 1,
-				},
+		newChunk := func() *Chunk {
+			return &Chunk{
+				Path:         "test.sql",
+				FileSize:     16,
+				Offset:       1,
+				PrevRowIDMax: 1,
 			}
 		}
 
@@ -237,6 +231,57 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 		_, err = ctrl.getParser(context.Background(), newChunk())
 		require.Error(t, err)
 		require.True(t, reader.closed)
+	})
+
+	t.Run("sql_source_size_uses_consumed_bytes_not_buffered_progress", func(t *testing.T) {
+		dir := t.TempDir()
+		var fileSB strings.Builder
+		fileSB.WriteString("INSERT INTO t VALUES\n")
+		for i := 0; i < 20; i++ {
+			_, err := fmt.Fprintf(&fileSB, "(%d,'v%d','w%d','x%d')", i, i, i, i)
+			require.NoError(t, err)
+			if i < 19 {
+				fileSB.WriteString(",\n")
+				continue
+			}
+			fileSB.WriteString(";\n")
+		}
+		content := fileSB.String()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "001.sql"), []byte(content), 0o644))
+
+		p := parser.New()
+		node, err := p.ParseOneStmt(`create table t (a int, b text, c text, d text, index idx(a));`, "", "")
+		require.NoError(t, err)
+		sctx := utilmock.NewContext()
+		tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+		require.NoError(t, err)
+		tblInfo.State = model.StatePublic
+		table := tables.MockTableFromMeta(tblInfo)
+
+		ctrl, err := NewLoadDataController(&Plan{
+			Path:         filepath.Join(dir, "*.sql"),
+			Format:       DataFormatSQL,
+			InImportInto: true,
+		}, table, &ASTArgs{})
+		require.NoError(t, err)
+		ctrl.logger = zap.Must(zap.NewDevelopment())
+		ctx := context.Background()
+		require.NoError(t, ctrl.InitDataFiles(ctx))
+
+		sampled, err := SampleFileImportKVSize(
+			ctx,
+			ctrl.buildKVSizeSampleConfig(),
+			table,
+			ctrl.dataStore,
+			ctrl.dataFiles,
+			nil,
+			ctrl.logger,
+		)
+		require.NoError(t, err)
+		require.Positive(t, sampled.SourceSize)
+		require.Positive(t, sampled.TotalKVSize())
+		require.Greater(t, sampled.SourceSize, int64(len(content)/2))
+		require.Less(t, sampled.SourceSize, int64(len(content)*2))
 	})
 }
 func TestSampleIndexSizeRatioVeryLongRows(t *testing.T) {

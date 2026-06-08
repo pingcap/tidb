@@ -1132,9 +1132,10 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 
 func TestProcessNextGenS3Path(t *testing.T) {
 	for _, str := range []string{
-		"S3://bucket?External-id=abc",
-		"oss://bucket?External-id=abc",
-		"oSS://bucket?External-id=abc",
+		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
+		"oss://bucket?External-id=abc&role-arn=arn",
+		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1144,13 +1145,31 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
-		"s3://bucket",
-		"oss://bucket",
+		"s3://bucket?access-key=ak&secret-access-key=sk",
+		"s3://bucket?access_key=ak&secret_access_key=sk",
+		"oss://bucket?role-arn=arn",
+		"oss://bucket?role_arn=arn",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
 		err = checkNextGenS3PathWithSem(u)
 		require.NoError(t, err)
+	}
+
+	for _, str := range []string{
+		"s3://bucket",
+		"s3://bucket?access-key=&secret-access-key=",
+		"s3://bucket?access-key=ak",
+		"s3://bucket?secret-access-key=sk",
+		"s3://bucket?profile=dev",
+		"oss://bucket",
+		"oss://bucket?role-arn=",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 }
 

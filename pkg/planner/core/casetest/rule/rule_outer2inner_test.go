@@ -21,65 +21,120 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
-func TestOuter2Inner(t *testing.T) {
+func TestOuter2InnerSuite(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t1(a1 int, b1 int, c1 int)")
-		tk.MustExec("create table t2(a2 int, b2 int, c2 int)")
-		tk.MustExec("create table t3(a3 int, b3 int, c3 int)")
-		tk.MustExec("create table t4(a4 int, b4 int, c4 int)")
-		tk.MustExec("create table ti(i int)")
-		tk.MustExec("CREATE TABLE lineitem (L_PARTKEY INTEGER ,L_QUANTITY DECIMAL(15,2),L_EXTENDEDPRICE  DECIMAL(15,2))")
-		tk.MustExec("CREATE TABLE part(P_PARTKEY INTEGER,P_BRAND CHAR(10),P_CONTAINER CHAR(10))")
-		tk.MustExec("CREATE TABLE d (pk int, col_blob blob, col_blob_key blob, col_varchar_key varchar(1) , col_date date, col_int_key int)")
-		tk.MustExec("CREATE TABLE dd (pk int, col_blob blob, col_blob_key blob, col_date date, col_int_key int)")
-		tk.MustExec("create table t0 (a0 int, b0 char, c0 char(2))")
-		tk.MustExec("create table t11 (a1 int, b1 char, c1 char)")
+		t.Run("TestOuter2Inner", func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t1(a1 int, b1 int, c1 int)")
+			tk.MustExec("create table t2(a2 int, b2 int, c2 int)")
+			tk.MustExec("create table t3(a3 int, b3 int, c3 int)")
+			tk.MustExec("create table t4(a4 int, b4 int, c4 int)")
+			tk.MustExec("create table ti(i int)")
+			tk.MustExec("CREATE TABLE lineitem (L_PARTKEY INTEGER ,L_QUANTITY DECIMAL(15,2),L_EXTENDEDPRICE  DECIMAL(15,2))")
+			tk.MustExec("CREATE TABLE part(P_PARTKEY INTEGER,P_BRAND CHAR(10),P_CONTAINER CHAR(10))")
+			tk.MustExec("CREATE TABLE d (pk int, col_blob blob, col_blob_key blob, col_varchar_key varchar(1) , col_date date, col_int_key int)")
+			tk.MustExec("CREATE TABLE dd (pk int, col_blob blob, col_blob_key blob, col_date date, col_int_key int)")
+			tk.MustExec("create table t0 (a0 int, b0 char, c0 char(2))")
+			tk.MustExec("create table t11 (a1 int, b1 char, c1 char)")
 
-		var input Input
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		suiteData := GetOuter2InnerSuiteData()
-		suiteData.LoadTestCasesByName("TestOuter2Inner", t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			})
-			plan.Check(testkit.Rows(output[i].Plan...))
-		}
+			var input Input
+			var output []struct {
+				SQL  string
+				Plan []string
+			}
+			suiteData := GetOuter2InnerSuiteData()
+			suiteData.LoadTestCasesByName("TestOuter2Inner", t, &input, &output, cascades, "TestOuter2Inner")
+			for i, sql := range input {
+				plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
+				testdata.OnRecord(func() {
+					output[i].SQL = sql
+					output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+				})
+				plan.Check(testkit.Rows(output[i].Plan...))
+			}
 
-		tk.MustExec("drop table if exists t1, t2")
-		tk.MustExec("create table t1 (k int, a int)")
-		tk.MustExec("create table t2 (k int, b int, key(k))")
-		tk.MustHavePlan(`select /* issue:49616 */ /*+ tidb_inlj(t2, t1) */ *
+			tk.MustExec("drop table if exists t1, t2")
+			tk.MustExec("create table t1 (k int, a int)")
+			tk.MustExec("create table t2 (k int, b int, key(k))")
+			tk.MustHavePlan(`select /* issue:49616 */ /*+ tidb_inlj(t2, t1) */ *
   from t2 left join t1 on t1.k=t2.k
   where a>0 or (a=0 and b>0)`, "IndexJoin")
+			// Structural null-reject proof smoke tests.
+			tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where length(trim(cast(t2.k as char))) > 0`).CheckContain("inner join")
+			tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where length(trim(cast(t2.k as char))) > 0`).CheckNotContain("left outer join")
+			tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where coalesce(t2.k, 1) > 0`).CheckContain("left outer join")
+			tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where 1 in (t2.k, t2.b)`).CheckContain("inner join")
+			tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where 1 in (t2.k, 1)`).CheckContain("left outer join")
 
-		tk.MustExec("drop table if exists t_outer, t")
-		tk.MustExec(`CREATE TABLE t_outer (
+			// Issue #66825: IN lists containing NULL can still evaluate TRUE on null-extended rows.
+			tk.MustExec("drop table if exists t0, t1")
+			tk.MustExec("create table t0(c0 int)")
+			tk.MustExec("create table t1(c0 int)")
+			tk.MustExec("insert into t1 values (1)")
+			tk.MustQuery(`explain format = 'plan_tree' select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where (t1.c0 = 2) in (null, t0.c0 is false)`).CheckContain("left outer join")
+			tk.MustQuery(`select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where (t1.c0 = 2) in (null, t0.c0 is false)`).Check(testkit.Rows("1 <nil>"))
+
+			// Issue #58793: NULL-safe equality with IS NOT NULL is not null-rejected.
+			tk.MustExec("drop table if exists t0, t1")
+			tk.MustExec("create table t0(c0 text(227))")
+			tk.MustExec("create table t1 like t0")
+			tk.MustExec("insert into t1 values ('')")
+			tk.MustQuery(`explain format = 'plan_tree' select count(*)
+  from t1 left join t0 on t0.c0 <> t1.c0
+  where (null and t1.c0) <=> (t0.c0 is not null)`).CheckContain("left outer join")
+			tk.MustQuery(`select count(*)
+  from t1 left join t0 on t0.c0 <> t1.c0
+  where (null and t1.c0) <=> (t0.c0 is not null)`).Check(testkit.Rows("1"))
+
+			// Issue #66833: outer-join constant propagation must not turn a WHERE predicate
+			// into an inner-side join filter and remove the matched row before null extension.
+			tk.MustExec("drop table if exists t0, t1")
+			tk.MustExec("create table t0(c0 int)")
+			tk.MustExec("create table t1 like t0")
+			tk.MustExec("insert into t0 values (1)")
+			tk.MustExec("insert into t1 values (1)")
+			tk.MustQuery(`explain format = 'plan_tree' select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where coalesce(t0.c0 < t1.c0, t1.c0)`).CheckContain("left outer join")
+			tk.MustQuery(`select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where coalesce(t0.c0 < t1.c0, t1.c0)`).Check(testkit.Rows())
+
+			tk.MustExec("drop table if exists t_outer, t")
+			tk.MustExec(`CREATE TABLE t_outer (
 			id bigint(20) NOT NULL,
 			scode varchar(64) NOT NULL,
 			username varchar(60) NOT NULL,
 			real_name varchar(100) NOT NULL DEFAULT '',
 			KEY idx1 ((lower(real_name))),
 			UNIQUE KEY idx2 (username,scode))`)
-		tk.MustExec(`CREATE TABLE t (
+			tk.MustExec(`CREATE TABLE t (
 			id int(11) unsigned NOT NULL,
 			scode varchar(64) NOT NULL DEFAULT '',
 			plat_id varchar(64) NOT NULL)`)
-		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT /* issue:65166 */ a.id FROM
+			tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT /* issue:65166 */ a.id FROM
 			t AS a LEFT JOIN t_outer b ON b.username = a.plat_id
 			AND b.scode = a.scode ORDER BY a.id`).CheckNotContain("Join")
 
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (id int primary key, name varchar(100));")
-		tk.MustExec("insert into t values (1, null), (2, 1);")
-		tk.MustQuery(`with tmp as (
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (id int primary key, name varchar(100));")
+			tk.MustExec("insert into t values (1, null), (2, 1);")
+			tk.MustQuery(`with tmp as (
 select
 row_number() over() as id,
 (select '1' from dual where id in (2)) as name
@@ -87,7 +142,7 @@ from t
 )
 select 'ok' from dual
 where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows())
-		tk.MustQuery(`explain format = 'plan_tree' with tmp as (
+			tk.MustQuery(`explain format = 'plan_tree' with tmp as (
 select
 row_number() over() as id,
 (select '1' from dual where id in (2)) as name
@@ -95,26 +150,26 @@ from t
 )
 select 'ok' from dual
 where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
-			`Projection root  ok->Column`,
-			`└─HashJoin root  CARTESIAN inner join`,
-			`  ├─TableDual(Build) root  rows:1`,
-			`  └─HashAgg(Probe) root  group by:Column, Column, funcs:firstrow(1)->Column`,
-			`    └─Selection root  eq(Column, "1"), eq(Column, 1)`,
-			`      └─Window root  row_number()->Column over(rows between current row and current row)`,
-			`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
-			`          ├─TableReader(Build) root  data:TableFullScan`,
-			`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
-			`          └─Projection(Probe) root  1->Column`,
-			`            └─Selection root  eq(test.t.id, 2)`,
-			`              └─TableDual root  rows:1`))
-		// issue:58836
-		tk.MustExec("drop table if exists t0, t2, t3")
-		tk.MustExec(`CREATE TABLE t0(c0 INT);`)
-		tk.MustExec(`CREATE TABLE t2(c0 INT);`)
-		tk.MustExec(`CREATE TABLE t3(c0 INT);`)
-		tk.MustExec(`INSERT INTO t0 VALUES(0);`)
-		tk.MustExec(`INSERT INTO t3 VALUES(3);`)
-		tk.MustQuery(`explain format = 'plan_tree' SELECT *
+				`Projection root  ok->Column`,
+				`└─HashJoin root  CARTESIAN inner join`,
+				`  ├─TableDual(Build) root  rows:1`,
+				`  └─HashAgg(Probe) root  group by:Column, Column, funcs:firstrow(1)->Column`,
+				`    └─Selection root  eq(Column, "1"), eq(Column, 1)`,
+				`      └─Window root  row_number()->Column over(rows between current row and current row)`,
+				`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
+				`          ├─TableReader(Build) root  data:TableFullScan`,
+				`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
+				`          └─Projection(Probe) root  1->Column`,
+				`            └─Selection root  eq(test.t.id, 2)`,
+				`              └─TableDual root  rows:1`))
+			// issue:58836
+			tk.MustExec("drop table if exists t0, t2, t3")
+			tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+			tk.MustExec(`CREATE TABLE t2(c0 INT);`)
+			tk.MustExec(`CREATE TABLE t3(c0 INT);`)
+			tk.MustExec(`INSERT INTO t0 VALUES(0);`)
+			tk.MustExec(`INSERT INTO t3 VALUES(3);`)
+			tk.MustQuery(`explain format = 'plan_tree' SELECT *
 FROM t0
          LEFT JOIN (SELECT NULL AS col_2
                     FROM t2) as subQuery1
@@ -122,17 +177,17 @@ FROM t0
          INNER JOIN t3 ON (((((CASE 1
                                    WHEN subQuery1.col_2 THEN t3.c0
                                    ELSE NULL END)) AND (((t0.c0))))) < 1);`).
-			Check(testkit.Rows(`Projection root  test.t0.c0, Column, test.t3.c0`,
-				`└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
-				`  ├─TableReader(Build) root  data:TableFullScan`,
-				`  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
-				`  └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader`,
-				`    ├─TableReader(Build) root  data:TableFullScan`,
-				`    │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`,
-				`    └─Projection(Probe) root  <nil>->Column`,
-				`      └─TableReader root  data:TableFullScan`,
-				`        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
-		tk.MustQuery(`SELECT *
+				Check(testkit.Rows(`Projection root  test.t0.c0, Column, test.t3.c0`,
+					`└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
+					`  ├─TableReader(Build) root  data:TableFullScan`,
+					`  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
+					`  └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader`,
+					`    ├─TableReader(Build) root  data:TableFullScan`,
+					`    │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`,
+					`    └─Projection(Probe) root  <nil>->Column`,
+					`      └─TableReader root  data:TableFullScan`,
+					`        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
+			tk.MustQuery(`SELECT *
 FROM t0
          LEFT JOIN (SELECT NULL AS col_2
                     FROM t2) as subQuery1
@@ -140,111 +195,110 @@ FROM t0
          INNER JOIN t3 ON (((((CASE 1
                                    WHEN subQuery1.col_2 THEN t3.c0
                                    ELSE NULL END)) AND (((t0.c0))))) < 1);`).Check(testkit.Rows("0 <nil> 3"))
-		tk.MustExec("create table chqin(id int, f1 date);")
-		tk.MustExec("insert into chqin values (1,null);")
-		tk.MustExec("insert into chqin values (2,null);")
-		tk.MustExec("insert into chqin values (3,null);")
-		tk.MustExec("create table chqin2(id int, f1 date);")
-		tk.MustExec("insert into chqin2 values (1,'1990-11-27');")
-		tk.MustExec("insert into chqin2 values (2,'1990-11-27');")
-		tk.MustExec("insert into chqin2 values (3,'1990-11-27');")
-		tk.MustQuery(`explain format='plan_tree' select 1 from chqin where  '2008-05-28' NOT IN
+			tk.MustExec("create table chqin(id int, f1 date);")
+			tk.MustExec("insert into chqin values (1,null);")
+			tk.MustExec("insert into chqin values (2,null);")
+			tk.MustExec("insert into chqin values (3,null);")
+			tk.MustExec("create table chqin2(id int, f1 date);")
+			tk.MustExec("insert into chqin2 values (1,'1990-11-27');")
+			tk.MustExec("insert into chqin2 values (2,'1990-11-27');")
+			tk.MustExec("insert into chqin2 values (3,'1990-11-27');")
+			tk.MustQuery(`explain format='plan_tree' select 1 from chqin where  '2008-05-28' NOT IN
 		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
-			Check(testkit.Rows(
-				`Projection root  1->Column`,
-				`└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column, Column)]`,
-				`  ├─HashAgg(Build) root  group by:Column, funcs:firstrow(Column)->Column`,
-				`  │ └─Union root  `,
-				`  │   ├─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.chqin.id, test.chqin2.id) eq(test.chqin.f1, test.chqin2.f1)]`,
-				`  │   │ ├─TableReader(Build) root  data:Selection`,
-				`  │   │ │ └─Selection cop[tikv]  ge(test.chqin.f1, 1990-11-27 00:00:00.000000), not(isnull(test.chqin.f1)), not(isnull(test.chqin.id))`,
-				`  │   │ │   └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo`,
-				`  │   │ └─TableReader(Probe) root  data:Selection`,
-				`  │   │   └─Selection cop[tikv]  ge(test.chqin2.f1, 1990-11-27 00:00:00.000000)`,
-				`  │   │     └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo`,
-				`  │   └─TableReader root  data:Projection`,
-				`  │     └─Projection cop[tikv]  test.chqin.f1->Column`,
-				`  │       └─Selection cop[tikv]  eq(test.chqin.id, 5)`,
-				`  │         └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo`,
-				`  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column`,
-				`    └─TableReader root  data:TableFullScan`,
-				`      └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo`))
-		tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
+				Check(testkit.Rows(
+					`Projection root  1->Column`,
+					`└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column, Column)]`,
+					`  ├─HashAgg(Build) root  group by:Column, funcs:firstrow(Column)->Column`,
+					`  │ └─Union root  `,
+					`  │   ├─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.chqin.id, test.chqin2.id) eq(test.chqin.f1, test.chqin2.f1)]`,
+					`  │   │ ├─TableReader(Build) root  data:Selection`,
+					`  │   │ │ └─Selection cop[tikv]  ge(test.chqin.f1, 1990-11-27 00:00:00.000000), not(isnull(test.chqin.f1)), not(isnull(test.chqin.id))`,
+					`  │   │ │   └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo`,
+					`  │   │ └─TableReader(Probe) root  data:Selection`,
+					`  │   │   └─Selection cop[tikv]  ge(test.chqin2.f1, 1990-11-27 00:00:00.000000)`,
+					`  │   │     └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo`,
+					`  │   └─TableReader root  data:Projection`,
+					`  │     └─Projection cop[tikv]  test.chqin.f1->Column`,
+					`  │       └─Selection cop[tikv]  eq(test.chqin.id, 5)`,
+					`  │         └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo`,
+					`  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column`,
+					`    └─TableReader root  data:TableFullScan`,
+					`      └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo`))
+			tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
 		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
-			Check(testkit.Rows())
+				Check(testkit.Rows())
 
-		// issue:66047
-		tk.MustExec("drop table if exists t0, t1")
-		tk.MustExec("CREATE TABLE t0(c0 NUMERIC UNSIGNED ZEROFILL, c1 BLOB(18), c2 NUMERIC UNSIGNED)")
-		tk.MustExec("CREATE TABLE t1 LIKE t0")
-		tk.MustExec("INSERT INTO t0 VALUES (0, 'wj', NULL)")
-		tk.MustQuery("SELECT TRUE FROM t1 RIGHT OUTER JOIN t0 ON NULL WHERE FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT))").
-			Check(testkit.Rows("1"))
-		tk.MustQuery("SELECT FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT)) FROM t1 RIGHT OUTER JOIN t0 ON NULL").
-			Check(testkit.Rows("1"))
-	})
-}
+			// issue:66047
+			tk.MustExec("drop table if exists t0, t1")
+			tk.MustExec("CREATE TABLE t0(c0 NUMERIC UNSIGNED ZEROFILL, c1 BLOB(18), c2 NUMERIC UNSIGNED)")
+			tk.MustExec("CREATE TABLE t1 LIKE t0")
+			tk.MustExec("INSERT INTO t0 VALUES (0, 'wj', NULL)")
+			tk.MustQuery("SELECT TRUE FROM t1 RIGHT OUTER JOIN t0 ON NULL WHERE FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT))").
+				Check(testkit.Rows("1"))
+			tk.MustQuery("SELECT FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT)) FROM t1 RIGHT OUTER JOIN t0 ON NULL").
+				Check(testkit.Rows("1"))
+		})
 
-// TestOuter2InnerLateralSelection verifies LATERAL join decorrelation behavior:
-//
-//   - Cases 1–2 (simple correlated Selection): DecorrelateSolver pulls the
-//     correlated predicate (e.g. t2.b2 = t1.a1) up as a join condition, which
-//     empties CorCols and converts Apply→HashJoin. This is semantically correct
-//     and is NOT the outer2inner rule — the outer2inner IsLateral guard is a
-//     separate code path (pruneRedundantApply).
-//
-//   - Case 3 (aggregate): after the Selection is pulled up, correlated columns
-//     remain inside the aggregate, so DecorrelateSolver cannot proceed and the
-//     Apply is preserved.
-func TestOuter2InnerLateralSelection(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2")
-		tk.MustExec("create table t1(a1 int, b1 int)")
-		tk.MustExec("create table t2(a2 int, b2 int)")
+		// TestOuter2InnerLateralSelection verifies LATERAL join decorrelation behavior:
+		//
+		//   - Cases 1–2 (simple correlated Selection): DecorrelateSolver pulls the
+		//     correlated predicate (e.g. t2.b2 = t1.a1) up as a join condition, which
+		//     empties CorCols and converts Apply→HashJoin. This is semantically correct
+		//     and is NOT the outer2inner rule — the outer2inner IsLateral guard is a
+		//     separate code path (pruneRedundantApply).
+		//
+		//   - Case 3 (aggregate): after the Selection is pulled up, correlated columns
+		//     remain inside the aggregate, so DecorrelateSolver cannot proceed and the
+		//     Apply is preserved.
+		t.Run("TestOuter2InnerLateralSelection", func(t *testing.T) {
+			tk.MustExec("drop table if exists t1, t2")
+			tk.MustExec("create table t1(a1 int, b1 int)")
+			tk.MustExec("create table t2(a2 int, b2 int)")
 
-		var input Input
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		suiteData := GetOuter2InnerSuiteData()
-		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			})
-			plan.Check(testkit.Rows(output[i].Plan...))
-		}
-	})
-}
+			var input Input
+			var output []struct {
+				SQL  string
+				Plan []string
+			}
+			suiteData := GetOuter2InnerSuiteData()
+			suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, "TestOuter2InnerLateralSelection")
+			for i, sql := range input {
+				plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
+				testdata.OnRecord(func() {
+					output[i].SQL = sql
+					output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+				})
+				plan.Check(testkit.Rows(output[i].Plan...))
+			}
+		})
 
-// can not add this test case to TestOuter2Inner because the collation_connection is different
-func TestOuter2InnerIssue55886(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop table if exists t2")
-		tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null)")
-		tk.MustExec("create table t2(c_g7eofzlxn int)")
-		tk.MustExec("set collation_connection = 'latin1_bin'")
+		// This case needs a different collation_connection, so restore it explicitly
+		// instead of keeping a separate RunTestUnderCascades wrapper.
+		t.Run("TestOuter2InnerIssue55886", func(t *testing.T) {
+			originCollation := tk.MustQuery("select @@collation_connection").Rows()[0][0].(string)
+			defer tk.MustExec("set collation_connection = ?", originCollation)
 
-		var input Input
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		suiteData := GetOuter2InnerSuiteData()
-		suiteData.LoadTestCasesByName("TestOuter2InnerIssue55886", t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			})
-			plan.Check(testkit.Rows(output[i].Plan...))
-		}
+			tk.MustExec("drop table if exists t1")
+			tk.MustExec("drop table if exists t2")
+			tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null)")
+			tk.MustExec("create table t2(c_g7eofzlxn int)")
+			tk.MustExec("set collation_connection = 'latin1_bin'")
+
+			var input Input
+			var output []struct {
+				SQL  string
+				Plan []string
+			}
+			suiteData := GetOuter2InnerSuiteData()
+			suiteData.LoadTestCasesByName("TestOuter2InnerIssue55886", t, &input, &output, cascades, "TestOuter2InnerIssue55886")
+			for i, sql := range input {
+				plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
+				testdata.OnRecord(func() {
+					output[i].SQL = sql
+					output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+				})
+				plan.Check(testkit.Rows(output[i].Plan...))
+			}
+		})
 	})
 }

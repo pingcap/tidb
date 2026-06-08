@@ -16,12 +16,14 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -227,6 +229,30 @@ func TestRelevantOptVarsAndFixes(t *testing.T) {
 		})
 		require.Equalf(t, fmt.Sprintf("%v", vars), output[i].Vars, "sql: %s", sql)
 		require.Equalf(t, fmt.Sprintf("%v", fixes), output[i].Fixes, "sql: %s", sql)
+	}
+}
+
+func TestRelevantOptVarsCorrelateSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, key(a))`)
+	tk.MustExec(`create table t2 (a int, b int, key(a))`)
+
+	p := parser.New()
+	sql := "select * from t1 where a in (select a from t2)"
+
+	// The alternative logical plans variable is recorded as relevant because the
+	// code path where it affects plan choice (correlate-to-Apply) was reached.
+	for _, enabled := range []string{"OFF", "ON"} {
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + enabled)
+		p.Reset()
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		vars, _, err := bindinfo.RecordRelevantOptVarsAndFixes(tk.Session(), stmt)
+		require.NoError(t, err)
+		require.True(t, slices.Contains(vars, vardef.TiDBOptEnableAlternativeLogicalPlans),
+			"enabled=%s: expected %s in recorded vars %v", enabled, vardef.TiDBOptEnableAlternativeLogicalPlans, vars)
 	}
 }
 

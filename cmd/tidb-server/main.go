@@ -19,20 +19,24 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -61,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/tidbmanager"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cgmon"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -90,6 +95,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -125,6 +131,12 @@ const (
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
+	nmClusterCa        = "cluster-ca"
+	nmClusterCert      = "cluster-cert"
+	nmClusterKey       = "cluster-key"
+	nmSQLCA            = "sql-ca"
+	nmSQLCert          = "sql-cert"
+	nmSQLKey           = "sql-key"
 
 	nmRedact = "redact"
 
@@ -143,6 +155,14 @@ const (
 	nmStandby           = "standby"
 	nmActivationTimeout = "activation-timeout"
 	nmMaxIdleSeconds    = "max-idle-seconds"
+	nmKeyspaceActivate  = "keyspace-activate"
+	nmStarterParams     = "starter-additional-params"
+)
+
+const (
+	exitCodeOK  = 0
+	exitCodeErr = 1
+	exitCodeInt = 128 + int(syscall.SIGINT)
 )
 
 var (
@@ -169,6 +189,12 @@ var (
 	repairMode       *bool
 	repairList       *string
 	tempDir          *string
+	clusterCA        *string
+	clusterCert      *string
+	clusterKey       *string
+	sqlCA            *string
+	sqlCert          *string
+	sqlKey           *string
 
 	// Log
 	logLevel     *string
@@ -204,6 +230,10 @@ var (
 	standbyMode       *bool
 	activationTimeout *uint
 	maxIdleSeconds    *uint
+	// Keyspace activate
+	keyspaceActivateMode *bool
+	// Starter additional params
+	starterAdditionalParams *string
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -230,6 +260,12 @@ func initFlagSet() *flag.FlagSet {
 	repairMode = flagBoolean(fset, nmRepairMode, false, "enable admin repair mode")
 	repairList = fset.String(nmRepairList, "", "admin repair table list")
 	tempDir = fset.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+	clusterCA = fset.String(nmClusterCa, "", "cluster CA file path")
+	clusterCert = fset.String(nmClusterCert, "", "cluster cert file path")
+	clusterKey = fset.String(nmClusterKey, "", "cluster key file path")
+	sqlCA = fset.String(nmSQLCA, "", "SQL CA file path")
+	sqlCert = fset.String(nmSQLCert, "", "SQL cert file path")
+	sqlKey = fset.String(nmSQLKey, "", "SQL key file path")
 
 	// Log
 	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -265,6 +301,8 @@ func initFlagSet() *flag.FlagSet {
 	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
 	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
 	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
+	keyspaceActivateMode = flagBoolean(fset, nmKeyspaceActivate, false, "exit after activating the keyspace")
+	starterAdditionalParams = fset.String(nmStarterParams, "", "starter additional params in k=v,k=v format")
 
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
@@ -275,6 +313,10 @@ func initFlagSet() *flag.FlagSet {
 		os.Exit(0)
 	}
 	return fset
+}
+
+func initDeployMode(cfg *config.Config) error {
+	return deploymode.Set(cfg.DeployMode)
 }
 
 func main() {
@@ -290,6 +332,9 @@ func main() {
 		}
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
+	if kerneltype.IsNextGen() {
+		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
+	}
 	if *version {
 		mustInitVersions()
 		fmt.Println(printer.GetTiDBInfo())
@@ -300,14 +345,19 @@ func main() {
 	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().Standby.StandByMode {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
 		os.Exit(0)
-	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode) {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
+	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode || config.GetGlobalConfig().KeyspaceActivateMode) {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name, standby mode or keyspace-activate mode is not supported for classic TiDB")
 		os.Exit(0)
 	}
 
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
+
 	var standbyController server.StandbyController
+	var activationMetadata map[string]string
 	if config.GetGlobalConfig().Standby.StandByMode {
-		standbyController = standby.NewLoadKeyspaceController()
+		mgrCli, err := createMgrClientForStarter()
+		terror.MustNil(err)
+		standbyController = standby.NewLoadKeyspaceController(mgrCli)
 	}
 
 	var err error
@@ -322,11 +372,18 @@ func main() {
 		defer standbyController.EndStandby(err)
 		// need to validate config again in case of config change via standby
 		terror.MustNil(config.GetGlobalConfig().Valid())
+		if c, ok := standbyController.(*standby.LoadKeyspaceController); ok {
+			activationMetadata = c.ActivationMetadata()
+		}
 	}
 
 	signal.SetupUSR1Handler()
 	err = registerStores()
 	terror.MustNil(err)
+	if deploymode.IsStarter() {
+		err = prepareKeyspaceObservabilityForStarter(activationMetadata)
+		terror.MustNil(err)
+	}
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
@@ -401,33 +458,69 @@ func main() {
 		svr.StandbyController = standbyController
 		svr.StandbyController.OnServerCreated(svr)
 	}
+	if deploymode.IsStarter() && config.GetGlobalConfig().KeyspaceActivateMode {
+		exitAfterKeyspaceActivate(svr, storage, dom)
+	}
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func() {
+	exitCode := exitCodeOK
+	signal.SetupSignalHandler(func(sig os.Signal) {
 		svr.Close()
 		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		executor.Stop()
+		exitCode = exitCodeForSignal(sig)
 		close(exited)
 	})
 	topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr, dom)
 	terror.MustNil(svr.Run(dom))
 	<-exited
-	syncLog()
+	if err := syncLog(); err != nil {
+		// Log sync failure means shutdown did not finish cleanly, so keep
+		// reporting it as a generic non-zero exit instead of a successful exit.
+		exitCode = exitCodeErr
+	}
+	if exitCode != exitCodeOK {
+		os.Exit(exitCode)
+	}
 }
 
-func syncLog() {
+func exitCodeForSignal(sig os.Signal) int {
+	// Standby force shutdown uses SIGINT. Return 128+SIGINT so deployment scripts
+	// can identify this force-shutdown path.
+	if sig == syscall.SIGINT {
+		return exitCodeInt
+	}
+	return exitCodeOK
+}
+
+func exitAfterKeyspaceActivate(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
+	logutil.BgLogger().Info("keyspace activation completed, exiting")
+	exitCode := exitCodeOK
+	svr.Close()
+	resourcemanager.InstanceResourceManager.Stop()
+	cleanup(svr, storage, dom)
+	cpuprofile.StopCPUProfiler()
+	executor.Stop()
+	if err := syncLog(); err != nil {
+		exitCode = exitCodeErr
+	}
+	os.Exit(exitCode)
+}
+
+func syncLog() error {
 	if err := log.Sync(); err != nil {
 		// Don't complain about /dev/stdout as Fsync will return EINVAL.
 		if pathErr, ok := err.(*fs.PathError); ok {
 			if pathErr.Path == "/dev/stdout" {
-				os.Exit(0)
+				return nil
 			}
 		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
 func checkTempStorageQuota() error {
@@ -649,6 +742,49 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	if actualFlags[nmTempDir] {
 		cfg.TempDir = *tempDir
 	}
+	if cfg.DeployMode == deploymode.Starter {
+		clusterTLSOverridden := actualFlags[nmClusterCa] || actualFlags[nmClusterCert] || actualFlags[nmClusterKey]
+		if actualFlags[nmClusterCa] {
+			cfg.Security.ClusterSSLCA = *clusterCA
+		}
+		if actualFlags[nmClusterCert] {
+			cfg.Security.ClusterSSLCert = *clusterCert
+		}
+		if actualFlags[nmClusterKey] {
+			cfg.Security.ClusterSSLKey = *clusterKey
+		}
+		if clusterTLSOverridden {
+			if actualFlags[nmClusterCert] != actualFlags[nmClusterKey] {
+				err = fmt.Errorf("cluster-cert and cluster-key must be set together")
+				terror.MustNil(err)
+			}
+			if cfg.Security.ClusterSSLCA != "" && (cfg.Security.ClusterSSLCert == "" || cfg.Security.ClusterSSLKey == "") {
+				err = fmt.Errorf("cluster-ca requires both cluster-cert and cluster-key")
+				terror.MustNil(err)
+			}
+		}
+
+		sqlTLSOverridden := actualFlags[nmSQLCA] || actualFlags[nmSQLCert] || actualFlags[nmSQLKey]
+		if actualFlags[nmSQLCA] {
+			cfg.Security.SSLCA = *sqlCA
+		}
+		if actualFlags[nmSQLCert] {
+			cfg.Security.SSLCert = *sqlCert
+		}
+		if actualFlags[nmSQLKey] {
+			cfg.Security.SSLKey = *sqlKey
+		}
+		if sqlTLSOverridden {
+			if actualFlags[nmSQLCert] != actualFlags[nmSQLKey] {
+				err = fmt.Errorf("sql-cert and sql-key must be set together")
+				terror.MustNil(err)
+			}
+			if cfg.Security.SSLCA != "" && (cfg.Security.SSLCert == "" || cfg.Security.SSLKey == "") {
+				err = fmt.Errorf("sql-ca requires both sql-cert and sql-key")
+				terror.MustNil(err)
+			}
+		}
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -750,6 +886,10 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 
 	if actualFlags[nmMaxIdleSeconds] {
 		cfg.Standby.MaxIdleSeconds = *maxIdleSeconds
+	}
+
+	if actualFlags[nmKeyspaceActivate] {
+		cfg.KeyspaceActivateMode = *keyspaceActivateMode
 	}
 }
 
@@ -1088,6 +1228,9 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
 	drainClientWait := gracefulCloseConnectionsTimeout
+	if deploymode.IsStarter() && svr.GetForceShutdown() {
+		drainClientWait = 0
+	}
 
 	cancelClientWait := time.Second * 1
 	svr.DrainClients(drainClientWait, cancelClientWait)
@@ -1136,6 +1279,147 @@ func closeStmtSummary() {
 	if instanceCfg.StmtSummaryEnablePersistent {
 		stmtsummaryv2.Close()
 	}
+}
+
+const (
+	keyspaceNameMetricLabel = "keyspace_name"
+)
+
+func prepareKeyspaceObservabilityForStarter(metadata map[string]string) error {
+	cfg := config.GetGlobalConfig()
+
+	if cfg.Store != config.StoreTypeTiKV {
+		return nil
+	}
+
+	resolvedValues := config.KeyspaceObservabilityValues{
+		MetricLabels: map[string]string{
+			keyspaceNameMetricLabel: cfg.KeyspaceName,
+		},
+	}
+
+	copiedConfig := *config.GetGlobalConfig()
+	if err := copiedConfig.ResolveKeyspaceObservability(metadata); err != nil {
+		return err
+	}
+	configuredValues := copiedConfig.KeyspaceObservabilityValues.Clone()
+	maps.Copy(resolvedValues.MetricLabels, configuredValues.MetricLabels)
+	resolvedValues.SlowLogFields = configuredValues.SlowLogFields
+	resolvedValues.StmtLogFields = configuredValues.StmtLogFields
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservabilityValues = resolvedValues
+	})
+
+	return nil
+}
+
+type starterParams struct {
+	managerNamespace string
+	podName          string
+	podIP            string
+	podNamespace     string
+}
+
+func parseStarterAdditionalParams(raw string) (starterParams, error) {
+	var params starterParams
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return params, nil
+	}
+
+	seen := make(map[string]struct{})
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return params, fmt.Errorf("starter additional params contains an empty item")
+		}
+
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			return params, fmt.Errorf("starter additional param %q must be in k=v format", item)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" {
+			return params, fmt.Errorf("starter additional param %q has an empty key", item)
+		}
+		if value == "" {
+			return params, fmt.Errorf("starter additional param %q has an empty value", key)
+		}
+		if _, ok := seen[key]; ok {
+			return params, fmt.Errorf("starter additional param %q is duplicated", key)
+		}
+		seen[key] = struct{}{}
+
+		switch key {
+		case "manager-namespace":
+			params.managerNamespace = value
+		case "pod-name":
+			params.podName = value
+		case "pod-ip":
+			params.podIP = value
+		case "pod-namespace":
+			params.podNamespace = value
+		default:
+			return params, fmt.Errorf("unknown starter additional param %q", key)
+		}
+	}
+	return params, nil
+}
+
+func getStarterAdditionalParams() string {
+	if starterAdditionalParams == nil {
+		return ""
+	}
+	return *starterAdditionalParams
+}
+
+func createMgrClientForStarter() (tidbmanager.Client, error) {
+	if !deploymode.IsStarter() {
+		return nil, nil
+	}
+
+	cfg := config.GetGlobalConfig()
+	if !cfg.StarterParams.EnableManagerNotifier {
+		return nil, nil
+	}
+
+	clusterSecurity := cfg.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	params, err := parseStarterAdditionalParams(getStarterAdditionalParams())
+	if err != nil {
+		return nil, err
+	}
+
+	managerAddr := cfg.StarterParams.ManagerAddr
+	if managerAddr == "" {
+		managerNs := params.managerNamespace
+		if managerNs == "" {
+			return nil, fmt.Errorf("manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
+		}
+		managerAddr = fmt.Sprintf("manager-server.%s.svc:8000", managerNs)
+	}
+
+	podName := params.podName
+	podIP := params.podIP
+	namespace := params.podNamespace
+	if podName == "" || podIP == "" || namespace == "" {
+		return nil, fmt.Errorf("manager notifier requires --starter-additional-params with pod-name, pod-ip and pod-namespace: pod-name=%q, pod-ip=%q, pod-namespace=%q",
+			podName, podIP, namespace)
+	}
+
+	return tidbmanager.NewClient(
+		managerAddr,
+		tlsConfig,
+		podName,
+		podIP,
+		namespace,
+	), nil
 }
 
 func enablePyroscope() {

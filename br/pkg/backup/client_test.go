@@ -247,6 +247,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 		err = proto.Unmarshal(metaBytes, mockMeta)
 		require.NoError(t, err)
 		// check the schema version
+		require.Equal(t, backuppb.BackupSchemaVersion, mockMeta.BackupSchemaVersion)
 		metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
 		allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 		require.NoError(t, err)
@@ -305,6 +306,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	err = proto.Unmarshal(metaBytes, mockMeta)
 	require.NoError(t, err)
 	// check the schema version
+	require.Equal(t, backuppb.BackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)

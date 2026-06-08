@@ -185,6 +185,8 @@ const (
 	// will create 52 physical tables.
 	// Note: DDL related tables are created separately, see DDLTableVersion.
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
+	// MaskingPolicyNextGenBootTableVersion adds mysql.tidb_masking_policy.
+	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
 )
 
 // DDLTableVersion is to display ddl related table versions

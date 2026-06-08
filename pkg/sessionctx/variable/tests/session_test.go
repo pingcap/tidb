@@ -385,6 +385,20 @@ func TestSlowLogFormat(t *testing.T) {
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				SlowLogField: "Keyspace_meta_slow_a",
+			}},
+		}
+		require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_a": "value_a"}))
+	})
+	logString = seVar.SlowLogFormat(logItems)
+	require.Equal(t, resultFields+"\n"+"# Keyspace_meta_slow_a: value_a\n"+sql, logString)
+
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
@@ -997,6 +1011,8 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	mock := variable.NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
+	// Prevent AWS SDK IMDS probing from creating background HTTP goroutines.
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
 	require.Len(t, vardef.CloudStorageURI.Load(), 0)
 	defer func() {

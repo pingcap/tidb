@@ -443,6 +443,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			endTime:   timestamp(t, "2019-10-11 10:10:10") - 1,
 		},
 		{
+			sql:       "select * from information_schema.cluster_log where '2019-10-10 10:10:10' < time and '2019-10-11 10:10:10' > time",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			startTime: timestamp(t, "2019-10-10 10:10:10") + 1,
+			endTime:   timestamp(t, "2019-10-11 10:10:10") - 1,
+		},
+		{
 			sql:         "select * from information_schema.cluster_log where time>='2019-10-12 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
@@ -631,6 +638,12 @@ func TestMetricTableExtractor(t *testing.T) {
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 			startTime: parseTime(t, "2019-10-10 10:10:10"),
 			endTime:   parseTime(t, "2019-10-10 10:20:10"),
+		},
+		{
+			sql:       "select * from metrics_schema.tidb_query_duration where '2019-10-10 10:10:10' < time and '2019-10-11 10:10:10' > time",
+			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
+			startTime: parseTime(t, "2019-10-10 10:10:10.001"),
+			endTime:   parseTime(t, "2019-10-11 10:10:09.999"),
 		},
 		{
 			sql:         "select * from metrics_schema.tidb_query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
@@ -1138,6 +1151,14 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
 			startTime:      timestamp(t, "2019-10-10 10:10:10"),
+			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where '2019-10-10 10:10:10' < update_time and '2019-10-11 10:10:10' > update_time",
+			startTime:      timestamp(t, "2019-10-10 10:10:10") + 1,
 			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},

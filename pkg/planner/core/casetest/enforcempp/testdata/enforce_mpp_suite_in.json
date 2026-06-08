@@ -188,8 +188,14 @@
       // Can work when there's global limit/topn
       "explain format = 'plan_tree' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b limit 10",
       "explain format = 'plan_tree' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b order by c1.a limit 10",
+      // Sequence can be pushed through scalar aggregation, while the aggregation keeps its schema and final task.
+      "explain format = 'plan_tree' with c1 as (select * from t) select sum(a + b) from (select c1.a, c2.b from c1, c1 c2 where c1.a=c2.b) x",
+      // Sequence can be pushed through scalar aggregation whose child is a UnionAll, like TPC-DS Q23.
+      "explain format = 'plan_tree' with c1 as (select * from t) select sum(a) from (select c1.a from c1, c1 c2 where c1.a=c2.b union all select c1.a from c1, c1 c2 where c1.b=c2.c) x",
       // The c2 references c1, c1 can mpp, and then c2 can mpp, so the main query can mpp.
       "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
+      // Sequence can be pushed through scalar aggregation even when one CTE producer references a previous producer.
+      "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select sum(c1.a + c2.b) from c2 c1, c2 where c1.a=c2.b",
       // The same SQL, c1 forces to read tikv. So c2 cannot MPP, then the whole SQL.
       "explain format = 'plan_tree' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
       // The two WITH satement can all be MPP.
@@ -201,7 +207,11 @@
       // A little change that the inner WITH statement references the outer's c1.
       "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from c1) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a",
       // The outer one will fail to use MPP. Since the inner one is references the outer one, the whole SQL cannot MPP.
-      "explain format = 'plan_tree' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from c1) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a"
+      "explain format = 'plan_tree' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from c1) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a",
+      // issue #61242: shared CTE with multiple join consumers should keep the CTE storage and consumers in MPP.
+      "explain format = 'plan_tree' with cte1 as (select p_partkey, substring(p_comment, 1, 20) as col0, substring(p_comment, 18, 10) as col1, substring(p_name, p_size % 10, 6) as col2 from part) select t3.col0, t3.col1 from (select t1.p_partkey as col0, t1.col0 as col1 from cte1 t1 join cte1 t2 on t1.col0 = t2.col1) as t3 join (select orders.o_orderkey as col0 from cte1 as t4 join orders on t4.col2 = substring(orders.o_comment, 1, 6)) as t5 on t3.col0 = t5.col0",
+      // issue #61682: shared CTE under top-level set operations should keep window and CTE consumers in MPP.
+      "explain format = 'plan_tree' with cte1 as (select a, row_number() over (partition by b order by c) as rn from t) select a, rn from cte1 union all select a, rn from cte1"
     ]
   },
   {

@@ -917,6 +917,32 @@ func TestDMLStmt(t *testing.T) {
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c:=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 
+		// for RETURNING clause
+		{"INSERT INTO t (a) VALUES (1) RETURNING *", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING *"},
+		{"INSERT INTO t (a) VALUES (1) RETURNING id", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING `id`"},
+		{"INSERT INTO t (a) VALUES (1) RETURNING id, name", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING `id`, `name`"},
+		{"INSERT INTO t2(id,animal) VALUES (1,'Dog'),(2,'Lion'),(3,'Tiger'),(4,'Leopard') RETURNING id,id+id,id&id,id||id", true, "INSERT INTO `t2` (`id`,`animal`) VALUES (1,_UTF8MB4'Dog'),(2,_UTF8MB4'Lion'),(3,_UTF8MB4'Tiger'),(4,_UTF8MB4'Leopard') RETURNING `id`, `id`+`id`, `id`&`id`, `id` OR `id`"},
+		{"INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a=2 RETURNING id", true, "INSERT INTO `t` (`a`) VALUES (1) ON DUPLICATE KEY UPDATE `a`=2 RETURNING `id`"},
+		{"UPDATE t SET a=1 RETURNING *", true, "UPDATE `t` SET `a`=1 RETURNING *"},
+		{"UPDATE t SET a=1 WHERE id=1 RETURNING id, a", true, "UPDATE `t` SET `a`=1 WHERE `id`=1 RETURNING `id`, `a`"},
+		{"UPDATE t SET a=1 LIMIT 1 RETURNING *", true, "UPDATE `t` SET `a`=1 LIMIT 1 RETURNING *"},
+		{"DELETE FROM t RETURNING *", true, "DELETE FROM `t` RETURNING *"},
+		{"DELETE FROM t WHERE id=1 RETURNING id", true, "DELETE FROM `t` WHERE `id`=1 RETURNING `id`"},
+		{"DELETE FROM t ORDER BY id LIMIT 1 RETURNING *", true, "DELETE FROM `t` ORDER BY `id` LIMIT 1 RETURNING *"},
+
+		// for row alias in INSERT ... ON DUPLICATE KEY UPDATE (MySQL 8.0.19+)
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3) AS new ON DUPLICATE KEY UPDATE c=new.a+new.b;", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3) AS `new` ON DUPLICATE KEY UPDATE `c`=`new`.`a`+`new`.`b`"},
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) AS new(m,n,p) ON DUPLICATE KEY UPDATE c=m+n;", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) AS `new`(`m`, `n`, `p`) ON DUPLICATE KEY UPDATE `c`=`m`+`n`"},
+		{"INSERT INTO t VALUES (1,2) AS new ON DUPLICATE KEY UPDATE b=new.b;", true, "INSERT INTO `t` VALUES (1,2) AS `new` ON DUPLICATE KEY UPDATE `b`=`new`.`b`"},
+		{"INSERT INTO t SET a=1,b=2 AS new ON DUPLICATE KEY UPDATE b=new.a+new.b;", true, "INSERT INTO `t` SET `a`=1,`b`=2 AS `new` ON DUPLICATE KEY UPDATE `b`=`new`.`a`+`new`.`b`"},
+		{"INSERT INTO t SET a=1,b=2 AS new(m,n) ON DUPLICATE KEY UPDATE b=m+n;", true, "INSERT INTO `t` SET `a`=1,`b`=2 AS `new`(`m`, `n`) ON DUPLICATE KEY UPDATE `b`=`m`+`n`"},
+		// row alias without ON DUPLICATE KEY UPDATE
+		{"INSERT INTO t VALUES (1,2) AS new;", true, "INSERT INTO `t` VALUES (1,2) AS `new`"},
+		{"INSERT INTO t VALUES (1,2) AS new(a,b);", true, "INSERT INTO `t` VALUES (1,2) AS `new`(`a`, `b`)"},
+		// row alias is not supported for REPLACE
+		{"REPLACE INTO t VALUES (1,2) AS new;", false, ""},
+		{"REPLACE INTO t SET a=1,b=2 AS new;", false, ""},
+
 		// for insert ... set
 		{"INSERT INTO t SET a=1,b=2", true, "INSERT INTO `t` SET `a`=1,`b`=2"},
 		{"INSERT INTO t (a) SET a=1", false, ""},
@@ -1465,8 +1491,18 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
-		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
-		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
+		{"flush stats_delta", false, ""},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA `cluster`"},
+		{"flush stats_delta cluster cluster", true, "FLUSH STATS_DELTA `cluster` CLUSTER"},
+		{"flush stats_delta *.*", true, "FLUSH STATS_DELTA *.*"},
+		{"flush stats_delta *.* cluster", true, "FLUSH STATS_DELTA *.* CLUSTER"},
+		{"flush stats_delta db1.*", true, "FLUSH STATS_DELTA `db1`.*"},
+		{"flush stats_delta db1.* cluster", true, "FLUSH STATS_DELTA `db1`.* CLUSTER"},
+		{"flush stats_delta t1", true, "FLUSH STATS_DELTA `t1`"},
+		{"flush stats_delta db1.t1", true, "FLUSH STATS_DELTA `db1`.`t1`"},
+		{"flush stats_delta db1.t1 cluster", true, "FLUSH STATS_DELTA `db1`.`t1` CLUSTER"},
+		{"flush stats_delta db1.t1, db2.*", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*"},
+		{"flush stats_delta db1.t1, db2.* cluster", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.* CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -4364,6 +4400,55 @@ func TestErrorMsg(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
 }
 
+func TestGroupConcatSeparatorCharsetCollation(t *testing.T) {
+	p := parser.New()
+	testCases := []struct {
+		sql     string
+		charset string
+		collate string
+		sep     string
+	}{
+		{
+			sql:     "select group_concat('x')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ",",
+		},
+		{
+			sql:     "select group_concat('x' separator ';')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ";",
+		},
+		{
+			sql:     "select group_concat('x')",
+			charset: mysql.DefaultCharset,
+			collate: mysql.DefaultCollationName,
+			sep:     ",",
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := p.ParseOneStmt(tc.sql, tc.charset, tc.collate)
+		require.NoError(t, err)
+
+		sel, ok := stmt.(*ast.SelectStmt)
+		require.True(t, ok)
+		require.Len(t, sel.Fields.Fields, 1)
+
+		agg, ok := sel.Fields.Fields[0].Expr.(*ast.AggregateFuncExpr)
+		require.True(t, ok)
+		require.Equal(t, ast.AggFuncGroupConcat, agg.F)
+		require.GreaterOrEqual(t, len(agg.Args), 2)
+
+		separator, ok := agg.Args[len(agg.Args)-1].(ast.ValueExpr)
+		require.True(t, ok)
+		require.Equal(t, tc.sep, separator.GetString())
+		require.Equal(t, tc.charset, separator.GetType().GetCharset())
+		require.Equal(t, tc.collate, separator.GetType().GetCollate())
+	}
+}
+
 func TestOptimizerHints(t *testing.T) {
 	p := parser.New()
 	// Test USE_INDEX
@@ -5247,6 +5332,37 @@ func TestPrivilege(t *testing.T) {
 		{"ALTER USER 'ttt' WITH MAX_CONNECTIONS_PER_HOUR 2;", true, "ALTER USER `ttt`@`%` WITH MAX_CONNECTIONS_PER_HOUR 2"},
 		{"ALTER USER 'ttt' WITH MAX_USER_CONNECTIONS 2;", true, "ALTER USER `ttt`@`%` WITH MAX_USER_CONNECTIONS 2"},
 		{"ALTER USER 'ttt'@'localhost' REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 1 MAX_UPDATES_PER_HOUR 10 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK;", true, "ALTER USER `ttt`@`localhost` REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 1 MAX_UPDATES_PER_HOUR 10 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"},
+		// Dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD).
+		// MySQL 8.0 allows RETAIN only after a BY-form auth-option that carries
+		// a cleartext password. DISCARD is its own clause and never coexists
+		// with a same-spec auth-option.
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD", true, "ALTER USER `u1`@`%` IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password' BY 'new' RETAIN CURRENT PASSWORD", true, "ALTER USER `u1`@`%` IDENTIFIED WITH 'mysql_native_password' BY 'new' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p2', 'u2'@'%' IDENTIFIED BY 'q2' RETAIN CURRENT PASSWORD", true, "ALTER USER `u1`@`%` IDENTIFIED BY 'p2', `u2`@`%` IDENTIFIED BY 'q2' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD, 'u2'@'%' IDENTIFIED BY 'q2'", true, "ALTER USER `u1`@`%` IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD, `u2`@`%` IDENTIFIED BY 'q2'"},
+		{"ALTER USER 'u1'@'%' DISCARD OLD PASSWORD", true, "ALTER USER `u1`@`%` DISCARD OLD PASSWORD"},
+		{"ALTER USER 'u1'@'%' DISCARD OLD PASSWORD, 'u2'@'%'", true, "ALTER USER `u1`@`%` DISCARD OLD PASSWORD, `u2`@`%`"},
+		{"SET PASSWORD = 'new' RETAIN CURRENT PASSWORD", true, "SET PASSWORD='new' RETAIN CURRENT PASSWORD"},
+		{"SET PASSWORD FOR 'u1'@'%' = 'new' RETAIN CURRENT PASSWORD", true, "SET PASSWORD FOR `u1`@`%`='new' RETAIN CURRENT PASSWORD"},
+		// Negative: RETAIN with the WITH plugin AS '<hash>' form is rejected
+		// (MySQL ER_NO_SUCH_USER would reject at runtime; we reject at parse).
+		{"ALTER USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*B50FBDB37F1256824274912F2A1CE648082C3F1F' RETAIN CURRENT PASSWORD", false, ""},
+		// Negative: RETAIN with no auth-option at all has no password to retain.
+		{"ALTER USER 'u1'@'%' RETAIN CURRENT PASSWORD", false, ""},
+		// Negative: bare IDENTIFIED WITH plugin (no BY ...) leaves no password
+		// to promote to the secondary slot, so RETAIN is rejected.
+		{"ALTER USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password' RETAIN CURRENT PASSWORD", false, ""},
+		// Negative: CREATE USER does not accept RETAIN or DISCARD per MySQL grammar.
+		{"CREATE USER 'u1'@'%' IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", false, ""},
+		{"CREATE USER 'u1'@'%' DISCARD OLD PASSWORD", false, ""},
+		// Negative: DISCARD coexisting with an auth-option is invalid.
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p1' DISCARD OLD PASSWORD", false, ""},
+		// MySQL 8.0 user_func_auth_option permits dual-password clauses on the
+		// current-user form. Parser accepts them; the executor stub returns
+		// ER_NOT_SUPPORTED_YET until the behavior PR lands.
+		{"ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER USER() DISCARD OLD PASSWORD", true, "ALTER USER USER() DISCARD OLD PASSWORD"},
+		{"ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
 		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true, "DROP USER `root`@`localhost`, `root1`@`localhost`"},
 		{`DROP USER IF EXISTS 'root'@'localhost'`, true, "DROP USER IF EXISTS `root`@`localhost`"},
 		{`RENAME USER 'root'@'localhost' TO 'root'@'%'`, true, "RENAME USER `root`@`localhost` TO `root`@`%`"},
@@ -5624,7 +5740,7 @@ func TestUnionOrderBy(t *testing.T) {
 func TestLikeEscape(t *testing.T) {
 	table := []testCase{
 		// for like escape
-		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
+		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_' ESCAPE ''"},
 		{`select "abc_" like "abc\\_" escape '\\'`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
 		{`select "abc_" like "abc\\_" escape '||'`, false, ""},
 		{`select "abc" like "escape" escape '+'`, true, "SELECT _UTF8MB4'abc' LIKE _UTF8MB4'escape' ESCAPE '+'"},
@@ -6318,6 +6434,8 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t index a predicate columns", false, ""},
 		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
+		{"analyze table t with 0.05 ndvrate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE"},
+		{"analyze table t with 0.05 ndvrate 0.00001 samplerate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
@@ -7130,6 +7248,10 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	}
 
 	switch node := in.(type) {
+	case *ast.PatternLikeOrIlikeExpr:
+		if node.Escape == '\\' {
+			node.EscapeExplicit = false
+		}
 	case *ast.CreateTableStmt:
 		for _, opt := range node.Options {
 			switch opt.Tp {
@@ -8022,11 +8144,22 @@ func TestVector(t *testing.T) {
 func TestExplainExplore(t *testing.T) {
 	cases := []testCase{
 		{`explain explore 'digestxxx'`, true, `EXPLAIN EXPLORE 'digestxxx'`},
+		{`explain explore replayer '/tmp/replayer.zip'`, true, `EXPLAIN EXPLORE REPLAYER '/tmp/replayer.zip'`},
 		{`explain explore select 1 from t`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t`"},
 		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
 		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
 	}
 	RunTest(t, cases, false, false)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`explain explore replayer '/tmp/replayer.zip'`, "", "")
+	require.NoError(t, err)
+	explain, ok := stmt.(*ast.ExplainStmt)
+	require.True(t, ok)
+	require.True(t, explain.Explore)
+	require.Equal(t, "/tmp/replayer.zip", explain.ReplayerFile)
+	require.Empty(t, explain.SQLDigest)
+	require.Nil(t, explain.Stmt)
 }
 
 // TestCompatMariaDB is to test for MariaDB specific table options

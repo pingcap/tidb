@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -158,7 +159,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
-	onClose external.OnWriterCloseFunc,
+	onClose simplesst.OnWriterCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
@@ -532,6 +533,16 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
+	// Local ingest may trigger partial import/reset while the scan transaction is
+	// still open, so only the global-sort path can stream results immediately.
+	enableStreaming := w.reorgMeta.UseCloudStorage
+	sendResult := func(idxResult IndexRecordChunk) {
+		sender(idxResult)
+		if w.cpOp != nil {
+			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
+		}
+		w.totalCount.Add(idxResult.tableScanRowCount)
+	}
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
 		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
@@ -565,28 +576,35 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			failpoint.Inject("mockScanRecordPartialError", func(val failpoint.Value) {
+				if shouldFail, _ := val.(bool); shouldFail {
+					err = errors.New("mock partial scan error")
+				}
+			})
 			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
 			}
-			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
+			w.collector.Accepted(execdetails.LoadTiKVExecDetails(&execDetails).UnpackedBytesReceivedKVTotal)
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
+			if enableStreaming {
+				sendResult(idxResult)
+			} else {
+				idxResults = append(idxResults, idxResult)
+			}
 		}
 		return rs.Close()
 	})
 
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+	if !enableStreaming {
+		for _, idxResult := range idxResults {
+			sendResult(idxResult)
 		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
 	}
 
 	return err
@@ -629,7 +647,7 @@ func NewWriteExternalStoreOperator(
 	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
-	onClose external.OnWriterCloseFunc,
+	onClose simplesst.OnWriterCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
@@ -641,7 +659,7 @@ func NewWriteExternalStoreOperator(
 	})
 
 	totalCount := new(atomic.Int64)
-	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
+	blockSize := simplesst.GetAdjustedBlockSize(memoryQuota, simplesst.DefaultBlockSize)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -649,7 +667,7 @@ func NewWriteExternalStoreOperator(
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
-				builder := external.NewWriterBuilder().
+				builder := simplesst.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetMemorySizeLimit(memoryQuota).
 					SetTiKVCodec(tikvCodec).
@@ -861,7 +879,7 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	for i, writer := range w.writers {
-		ew, ok := writer.(*external.Writer)
+		ew, ok := writer.(*simplesst.Writer)
 		if !ok {
 			break
 		}

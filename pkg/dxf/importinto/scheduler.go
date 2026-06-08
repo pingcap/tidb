@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -288,6 +289,95 @@ func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta 
 	})
 }
 
+func (*importScheduler) writePreparedChunkMap(
+	ctx context.Context,
+	taskID int64,
+	cloudStorageURI string,
+	chunkMap map[int32][]importer.Chunk,
+) (string, error) {
+	store, err := importer.GetSortStore(ctx, cloudStorageURI)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	preparedMeta := PreparedMeta{
+		BaseExternalMeta: globalsort.BaseExternalMeta{
+			ExternalPath: globalsort.PreparedMetaPath(taskID),
+		},
+		ChunkMap: chunkMap,
+	}
+	if err = preparedMeta.WriteJSONToExternalStorage(ctx, store, preparedMeta); err != nil {
+		return "", err
+	}
+	return preparedMeta.ExternalPath, nil
+}
+
+// OnPrepare implements scheduler.Extension.
+func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
+	taskMeta := &TaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+	if err := sch.startJob(ctx, sch.GetLogger(), taskMeta, importer.JobStepPreparing); err != nil {
+		return err
+	}
+
+	logicalPlan := &LogicalPlan{
+		Plan:   taskMeta.Plan,
+		Stmt:   taskMeta.Stmt,
+		Logger: sch.GetLogger(),
+	}
+	controller, err := buildControllerForPlan(logicalPlan)
+	if err != nil {
+		return err
+	}
+	defer controller.Close()
+	isAutoDetectingFormat := controller.Format == importer.DataFormatAuto
+	if err = controller.InitDataFiles(ctx); err != nil {
+		return err
+	}
+	if err = controller.CheckImportDataSize(); err != nil {
+		return err
+	}
+	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
+		return err
+	}
+	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta.JobID, controller.Plan); err != nil {
+		return err
+	}
+	// following the old behavior, but seems fine to remove this check, those
+	// specified options are not used anyway when the format is auto-detected as
+	// non-CSV. maybe remove them later, as we prepare in async way, if user
+	// use detached mode, user might get an invalid options after job submitted
+	// while from common sense, options should be validated before job submission.
+	if isAutoDetectingFormat && controller.Format != importer.DataFormatCSV {
+		if err = controller.CheckNonCSVFormatOptions(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	controller.SetExecuteNodeCnt(controller.MaxNodeCnt)
+	chunkMap, err := controller.PopulateChunks(ctx)
+	if err != nil {
+		return err
+	}
+	chunkMapPath, err := sch.writePreparedChunkMap(ctx, task.ID, controller.Plan.CloudStorageURI, chunkMap)
+	if err != nil {
+		return err
+	}
+
+	taskMeta.Plan = *controller.Plan
+	taskMeta.PreparedMetaExternalPath = chunkMapPath
+	metaBytes, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.Meta = metaBytes
+	task.RequiredSlots = controller.ThreadCnt
+	task.MaxNodeCount = controller.MaxNodeCnt
+	failpoint.InjectCall("afterPrepare", task)
+	return nil
+}
+
 // OnNextSubtasksBatch generate batch of next stage's plan.
 func (sch *importScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
@@ -333,8 +423,14 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if sch.GlobalSort {
 			jobStep = importer.JobStepGlobalSorting
 		}
-		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
-			return nil, err
+		if task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+			if err = sch.job2Step(ctx, logger, taskMeta, jobStep); err != nil {
+				return nil, err
+			}
+		} else {
+			if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
+				return nil, err
+			}
 		}
 		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
@@ -516,7 +612,7 @@ func (*importScheduler) IsRetryableErr(err error) bool {
 // GetNextStep implements scheduler.Extension interface.
 func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
-	case proto.StepInit:
+	case proto.StepInit, proto.StepPrepared:
 		if sch.GlobalSort {
 			return proto.ImportStepEncodeAndSort
 		}
@@ -614,6 +710,10 @@ func updateTaskSummary(
 		taskMeta.Summary.MergeSummary = p.summary
 	case proto.ImportStepWriteAndIngest:
 		taskMeta.Summary.IngestSummary = p.summary
+	case proto.ImportStepCollectConflicts:
+		taskMeta.Summary.CollectConflictsSummary = p.summary
+	case proto.ImportStepConflictResolution:
+		taskMeta.Summary.ResolveConflictsSummary = p.summary
 	case proto.ImportStepPostProcess:
 		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
 		if err != nil {
@@ -688,6 +788,28 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
+			})
+		},
+	)
+}
+
+func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *zap.Logger, jobID int64, plan *importer.Plan) error {
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.GetSQLExecutor()
+				return importer.UpdateJobPreparedInfo(
+					ctx,
+					exec,
+					jobID,
+					plan.TotalFileSize,
+					plan.Format,
+				)
 			})
 		},
 	)
