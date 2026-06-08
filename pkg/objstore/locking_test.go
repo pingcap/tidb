@@ -183,6 +183,14 @@ func (s *failWriteAfterStorage) WriteFile(ctx context.Context, name string, data
 	return s.Storage.WriteFile(ctx, name, data)
 }
 
+func retryBackoffTail(baseBackoff time.Duration, retries int) time.Duration {
+	var total time.Duration
+	for i := 0; i < retries; i++ {
+		total += baseBackoff * time.Duration(1<<i)
+	}
+	return total
+}
+
 func TestTryLockRemoteTruncate(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
@@ -335,7 +343,7 @@ func TestTryLockRemoteAppendWriteUsesClockForMetaAndGeneration(t *testing.T) {
 	require.Equal(t, leaseNow.Add(objstore.LeaseTTL), meta.ExpireAt)
 }
 
-func TestTryLockRemoteExactRejectsNilClock(t *testing.T) {
+func TestTryLockRemoteExactClockBehavior(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
 
@@ -353,6 +361,29 @@ func TestTryLockRemoteExactRejectsNilClock(t *testing.T) {
 		})
 		assertLockError(t, lock, err)
 		require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT.nilclock"))
+	})
+
+	t.Run("exact helper uses lease clock for meta", func(t *testing.T) {
+		leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+		clock := &sequenceLeaseClock{
+			times: []time.Time{
+				leaseNow,
+				leaseNow.Add(time.Millisecond),
+			},
+		}
+		lock, err := objstore.TESTTryLockRemoteExact(ctx, strg, "v1/LOCK.WRIT.exactclock", "clocked exact", clock)
+		require.NoError(t, err)
+		require.NotNil(t, lock)
+		t.Cleanup(func() {
+			require.NoError(t, lock.Unlock(ctx))
+		})
+
+		data, err := strg.ReadFile(ctx, "v1/LOCK.WRIT.exactclock")
+		require.NoError(t, err)
+		var meta objstore.LockMeta
+		require.NoError(t, json.Unmarshal(data, &meta))
+		require.Equal(t, leaseNow, meta.LockedAt)
+		require.Equal(t, leaseNow.Add(objstore.LeaseTTL), meta.ExpireAt)
 	})
 
 	t.Run("write", func(t *testing.T) {
@@ -1332,6 +1363,9 @@ func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
 		scaled.BaseBackoff = 5 * time.Millisecond
 		objstore.TESTRestoreLeaseTimingConstants(scaled)
 		defer objstore.TESTRestoreLeaseTimingConstants(snapshot)
+		oldRetryTail := scaled.Interval + retryBackoffTail(scaled.BaseBackoff, 5)
+		notYetWindow := oldRetryTail + scaled.Interval + scaled.WriteTimeoutCap/2
+		eventuallyWindow := 2 * scaled.TTL
 
 		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
 		require.NoError(t, err)
@@ -1350,13 +1384,13 @@ func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
 		select {
 		case <-lostCh:
 			t.Fatal("default renewal retry budget should tolerate fast failures longer than the old 5-retry tail")
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(notYetWindow):
 		}
 
 		select {
 		case <-lostCh:
 			// expected eventually when the shortened lease window is no longer safe.
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventuallyWindow):
 			t.Fatal("onLeaseLost was not invoked after the retry budget exhausted the safe lease window")
 		}
 	})
@@ -1401,8 +1435,14 @@ func TestStartRenewalChecksRetrySafetyBeforeEachAttempt(t *testing.T) {
 			failAfter: 0,
 			failed:    make(chan struct{}),
 		}
-		defer objstore.TESTSetLeaseConstants(120*time.Millisecond, 40*time.Millisecond, 5, 50*time.Millisecond)()
-		defer objstore.TESTSetRenewalProofConstants(10*time.Millisecond, 10*time.Millisecond)()
+		ttl := 120 * time.Millisecond
+		interval := 40 * time.Millisecond
+		baseBackoff := 50 * time.Millisecond
+		writeTimeoutCap := 10 * time.Millisecond
+		defer objstore.TESTSetLeaseConstants(ttl, interval, 5, baseBackoff)()
+		defer objstore.TESTSetRenewalProofConstants(writeTimeoutCap, 10*time.Millisecond)()
+		notYetWindow := baseBackoff / 2
+		eventuallyWindow := ttl + interval
 
 		lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", localLeaseClock())
 		require.NoError(t, err)
@@ -1420,13 +1460,13 @@ func TestStartRenewalChecksRetrySafetyBeforeEachAttempt(t *testing.T) {
 		select {
 		case <-lostCh:
 			t.Fatal("onLeaseLost should wait until the next renewal attempt observes a low retry-safety window")
-		case <-time.After(25 * time.Millisecond):
+		case <-time.After(notYetWindow):
 		}
 		select {
 		case <-lostCh:
 			// expected: the retry woke up and checked the remaining lease before
 			// starting another renewal attempt.
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(eventuallyWindow):
 			t.Fatal("onLeaseLost was not invoked when the next attempt had too little retry-safety window")
 		}
 	})

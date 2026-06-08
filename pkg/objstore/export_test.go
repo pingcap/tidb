@@ -54,7 +54,14 @@ func TESTClearLeaseClock(l *RemoteLock) {
 // lease clock for tests that exercise helper-level validation or
 // assertOnlyMyIntent without lock-family verification.
 func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physicalPath, hint string, clock LeaseClock) (*RemoteLock, error) {
-	return tryLockRemoteExactWithClock(ctx, storage, physicalPath, MakeLockMeta(hint), clock, nil)
+	if clock == nil {
+		return tryLockRemoteExactWithClock(ctx, storage, physicalPath, LockMeta{}, clock, nil)
+	}
+	leaseNow, err := clock.Now(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tryLockRemoteExactWithClock(ctx, storage, physicalPath, makeLockMetaAt(hint, leaseNow), clock, nil)
 }
 
 // TESTStartRenewal exposes the unexported renewal owner for direct testing.

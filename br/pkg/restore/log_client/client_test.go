@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2523,6 +2524,58 @@ type loadPausingStorage struct {
 	loadStarted chan struct{}
 	releaseLoad chan struct{}
 	once        sync.Once
+
+	failReadLockRenewal bool
+	renewalFailed       chan struct{}
+	failOnce            sync.Once
+	writeMu             sync.Mutex
+	readLockWrites      int
+}
+
+type cancelAwareUnlockStorage struct {
+	storeapi.Storage
+}
+
+type contextAwareLeaseClock struct{}
+
+func (contextAwareLeaseClock) Now(ctx context.Context) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+	return time.Now(), nil
+}
+
+func (s cancelAwareUnlockStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Storage.ReadFile(ctx, name)
+}
+
+func (s cancelAwareUnlockStorage) DeleteFile(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
+func (s *loadPausingStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if s.failReadLockRenewal &&
+		strings.HasPrefix(name, "v1/LOCK.READ.") &&
+		!strings.Contains(name, ".INTENT.") {
+		s.writeMu.Lock()
+		s.readLockWrites++
+		shouldFail := s.readLockWrites > 1
+		s.writeMu.Unlock()
+
+		if shouldFail {
+			s.failOnce.Do(func() {
+				close(s.renewalFailed)
+			})
+			return errors.New("simulated read lock renewal failure")
+		}
+	}
+	return s.Storage.WriteFile(ctx, name, data)
 }
 
 func (s *loadPausingStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
@@ -2560,83 +2613,217 @@ func requireSingleReadLockMeta(t *testing.T, ctx context.Context, stg storeapi.S
 	return paths[0], meta
 }
 
+const leaseLockTestConstantsFailpoint = "github.com/pingcap/tidb/pkg/objstore/lease-lock-test-constants"
+
+func useLeaseLockTestConstants(t *testing.T, spec string) {
+	t.Helper()
+	require.NoError(t, failpoint.Enable(leaseLockTestConstantsFailpoint, fmt.Sprintf("return(%q)", spec)))
+	t.Cleanup(func() {
+		defer func() {
+			require.NoError(t, failpoint.Disable(leaseLockTestConstantsFailpoint))
+		}()
+		require.NoError(t, failpoint.Enable(leaseLockTestConstantsFailpoint, fmt.Sprintf("return(%q)",
+			"ttl=1h,interval=20m,write-timeout-cap=10m,min-remaining=1m,stale-reclaim-grace=30m,base-backoff=5s")))
+		cleanupCtx := context.Background()
+		restoreStorage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		lock, err := objstore.LockWithRetry(cleanupCtx, objstore.TryLockRemoteRead, restoreStorage, "v1/LOCK", "restore lease constants", func() {}, objstore.NewLocalLeaseClock())
+		require.NoError(t, err)
+		require.NoError(t, lock.Unlock(cleanupCtx))
+	})
+}
+
 func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
-	ctx := context.Background()
-	stg, err := objstore.NewLocalStorage(t.TempDir())
-	require.NoError(t, err)
+	t.Run("nil onLeaseLost is rejected", func(t *testing.T) {
+		ctx := context.Background()
+		stg, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
 
-	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
-	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
-	// is not parseable, so Load() returns an error and exercises the error path
-	// in GetLockedMigrations.
-	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+		client := logclient.TEST_NewLogClientWithStorage(stg)
+		migs, err := client.GetLockedMigrations(ctx, nil)
+		if migs != nil {
+			require.NoError(t, migs.Unlock(ctx))
+		}
+		require.ErrorContains(t, err, "onLeaseLost callback is required for lease lock renewal")
+	})
 
-	client := logclient.TEST_NewLogClientWithStorage(stg)
-	_, err = client.GetLockedMigrations(ctx, func() {})
-	require.Error(t, err, "expected Load() to fail on malformed migration file")
+	t.Run("load error", func(t *testing.T) {
+		ctx := context.Background()
+		stg, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
 
-	var lingering []string
-	require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
-		SubDir:    "v1",
-		ObjPrefix: "LOCK",
-	}, func(p string, _ int64) error {
-		lingering = append(lingering, p)
-		return nil
-	}))
-	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
+		// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+		// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+		// is not parseable, so Load() returns an error and exercises the error path
+		// in GetLockedMigrations.
+		require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+		client := logclient.TEST_NewLogClientWithStorage(stg)
+		_, err = client.GetLockedMigrations(ctx, func() {})
+		require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+		var lingering []string
+		require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+			SubDir:    "v1",
+			ObjPrefix: "LOCK",
+		}, func(p string, _ int64) error {
+			lingering = append(lingering, p)
+			return nil
+		}))
+		require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
+	})
+
+	t.Run("explicit unlock with canceled context", func(t *testing.T) {
+		ctx := context.Background()
+		baseStorage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		stg := cancelAwareUnlockStorage{Storage: baseStorage}
+
+		client := logclient.TEST_NewLogClientWithStorage(stg)
+		migs, err := client.GetLockedMigrations(ctx, func() {})
+		require.NoError(t, err)
+
+		canceledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		require.NoError(t, migs.Unlock(canceledCtx))
+
+		var lingering []string
+		require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+			SubDir:    "v1",
+			ObjPrefix: "LOCK",
+		}, func(p string, _ int64) error {
+			lingering = append(lingering, p)
+			return nil
+		}))
+		require.Emptyf(t, lingering, "readLock was not released with canceled context; lingering files: %v", lingering)
+	})
 }
 
 func TestGetLockedMigrationsRenewsReadLockWhileLoadingMigrations(t *testing.T) {
-	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(90*time.Millisecond, 10*time.Millisecond, 3, 5*time.Millisecond)
-	t.Cleanup(restoreLeaseConstants)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	baseStorage, err := objstore.NewLocalStorage(t.TempDir())
-	require.NoError(t, err)
-	stg := &loadPausingStorage{
-		Storage:     baseStorage,
-		loadStarted: make(chan struct{}),
-		releaseLoad: make(chan struct{}),
-	}
-
-	client := logclient.TEST_NewLogClientWithStorage(stg)
 	type getLockedMigrationsResult struct {
 		migs *logclient.LockedMigrations
 		err  error
 	}
-	done := make(chan getLockedMigrationsResult, 1)
-	go func() {
-		migs, err := client.GetLockedMigrations(ctx, func() {})
-		done <- getLockedMigrationsResult{migs: migs, err: err}
-	}()
 
-	require.Eventually(t, func() bool {
-		select {
-		case <-stg.loadStarted:
-			return true
-		default:
-			return false
+	t.Run("renews while loading", func(t *testing.T) {
+		useLeaseLockTestConstants(t, "ttl=300ms,interval=20ms,write-timeout-cap=20ms,min-remaining=10ms,stale-reclaim-grace=50ms,base-backoff=5ms")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		baseStorage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		stg := &loadPausingStorage{
+			Storage:     baseStorage,
+			loadStarted: make(chan struct{}),
+			releaseLoad: make(chan struct{}),
 		}
-	}, time.Second, 10*time.Millisecond)
 
-	lockPath, initialMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
-	require.Eventually(t, func() bool {
-		currentPath, currentMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
-		return currentPath == lockPath && currentMeta.ExpireAt.After(initialMeta.ExpireAt)
-	}, time.Second, 10*time.Millisecond)
+		client := logclient.TEST_NewLogClientWithStorageAndClock(stg, contextAwareLeaseClock{})
+		done := make(chan getLockedMigrationsResult, 1)
+		go func() {
+			migs, err := client.GetLockedMigrations(ctx, func() {})
+			done <- getLockedMigrationsResult{migs: migs, err: err}
+		}()
 
-	close(stg.releaseLoad)
-	require.Eventually(t, func() bool {
+		require.Eventually(t, func() bool {
+			select {
+			case <-stg.loadStarted:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 10*time.Millisecond)
+
+		lockPath, initialMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+		require.Eventually(t, func() bool {
+			currentPath, currentMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+			return currentPath == lockPath && currentMeta.ExpireAt.After(initialMeta.ExpireAt)
+		}, time.Second, 10*time.Millisecond)
+
+		close(stg.releaseLoad)
+		var res getLockedMigrationsResult
 		select {
-		case res := <-done:
+		case res = <-done:
 			require.NoError(t, res.err)
 			require.NotNil(t, res.migs)
-			require.NoError(t, res.migs.Unlock(ctx))
-			return true
-		default:
-			return false
+		case <-time.After(time.Second):
+			t.Fatal("GetLockedMigrations did not return after Load was released")
 		}
-	}, time.Second, 10*time.Millisecond)
+		t.Cleanup(func() {
+			require.NoError(t, res.migs.Unlock(ctx))
+		})
+
+		_, returnedMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+		require.Eventually(t, func() bool {
+			currentPath, currentMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+			return currentPath == lockPath && currentMeta.ExpireAt.After(returnedMeta.ExpireAt)
+		}, time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("cancels load when lease is lost", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		useLeaseLockTestConstants(t, "ttl=300ms,interval=20ms,write-timeout-cap=20ms,min-remaining=10ms,stale-reclaim-grace=50ms,base-backoff=5ms")
+
+		baseStorage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		stg := &loadPausingStorage{
+			Storage:             baseStorage,
+			loadStarted:         make(chan struct{}),
+			releaseLoad:         make(chan struct{}),
+			failReadLockRenewal: true,
+			renewalFailed:       make(chan struct{}),
+		}
+		t.Cleanup(func() {
+			close(stg.releaseLoad)
+		})
+
+		leaseLost := make(chan struct{})
+		client := logclient.TEST_NewLogClientWithStorage(stg)
+		done := make(chan getLockedMigrationsResult, 1)
+		go func() {
+			migs, err := client.GetLockedMigrations(ctx, func() {
+				close(leaseLost)
+			})
+			done <- getLockedMigrationsResult{migs: migs, err: err}
+		}()
+
+		require.Eventually(t, func() bool {
+			select {
+			case <-stg.loadStarted:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 10*time.Millisecond)
+
+		require.Eventually(t, func() bool {
+			select {
+			case <-stg.renewalFailed:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 10*time.Millisecond)
+
+		require.Eventually(t, func() bool {
+			select {
+			case <-leaseLost:
+				return true
+			default:
+				return false
+			}
+		}, time.Second, 10*time.Millisecond)
+
+		select {
+		case res := <-done:
+			require.ErrorIs(t, res.err, context.Canceled)
+			require.Nil(t, res.migs)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("GetLockedMigrations did not cancel Load after read lease was lost")
+		}
+
+	})
 }

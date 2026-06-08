@@ -90,6 +90,10 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 
 	console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
 
+	// FIXME: unsafe-migrate-to participates in the same migration lock family
+	// as the main BR/PiTR paths, but it still uses a local lease clock because
+	// this operator command currently has no PD client. Wire this path to
+	// PDLeaseClock before treating it as a primary lease-lock participant.
 	est := stream.MigrationExtension(st, objstore.NewLocalLeaseClock())
 	est.Hooks = stream.NewProgressBarHooks(console)
 	migs, err := est.Load(ctx)

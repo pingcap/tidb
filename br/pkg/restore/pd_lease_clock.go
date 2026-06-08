@@ -52,14 +52,14 @@ func (c PDLeaseClock) Now(ctx context.Context) (time.Time, error) {
 	failpoint.Inject("lease-clock-pd-now-signal", func(v failpoint.Value) {
 		raw, ok := v.(string)
 		if !ok {
-			failpoint.Return(now, errors.Errorf("invalid lease-clock-pd-now-signal value %T", v))
+			failpoint.Return(time.Time{}, errors.Errorf("invalid lease-clock-pd-now-signal value %T", v))
 		}
 		dir, err := parsePDLeaseClockNowSignalDir(raw)
 		if err != nil {
-			failpoint.Return(now, err)
+			failpoint.Return(time.Time{}, err)
 		}
 		if err := createPDLeaseClockNowSignalMarker(dir); err != nil {
-			failpoint.Return(now, err)
+			failpoint.Return(time.Time{}, err)
 		}
 	})
 	return now, nil

@@ -114,9 +114,13 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 // storage-level behavior (lock acquisition, migration loading) and do
 // not need the full domain / session / checkpoint wiring.
 func TEST_NewLogClientWithStorage(s storeapi.Storage) *LogClient {
+	return TEST_NewLogClientWithStorageAndClock(s, objstore.NewLocalLeaseClock())
+}
+
+func TEST_NewLogClientWithStorageAndClock(s storeapi.Storage, clock objstore.LeaseClock) *LogClient {
 	return &LogClient{
 		storage:    s,
-		leaseClock: objstore.NewLocalLeaseClock(),
+		leaseClock: clock,
 	}
 }
 

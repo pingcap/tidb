@@ -685,12 +685,30 @@ func (m *LockedMigrations) Unlock(ctx context.Context) error {
 	if m == nil || m.readLock == nil {
 		return nil
 	}
-	return m.readLock.Unlock(ctx)
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+	}
+	err := m.readLock.Unlock(ctx)
+	if err == nil {
+		m.readLock = nil
+	}
+	return err
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context, onLeaseLost func()) (ret *LockedMigrations, retErr error) {
+	if onLeaseLost == nil {
+		return nil, errors.New("onLeaseLost callback is required for lease lock renewal")
+	}
+
 	ext := stream.MigrationExtension(rc.storage, rc.leaseClock)
-	readLock, err := ext.GetReadLock(ctx, "restore stream", onLeaseLost)
+	loadCtx, cancelLoad := context.WithCancel(ctx)
+	defer cancelLoad()
+	readLock, err := ext.GetReadLock(ctx, "restore stream", func() {
+		cancelLoad()
+		onLeaseLost()
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -709,12 +727,12 @@ func (rc *LogClient) GetLockedMigrations(ctx context.Context, onLeaseLost func()
 		if err != nil {
 			failpoint.Return(nil, err)
 		}
-		if err := utils.WaitLeaseLockFailpoint(ctx, spec); err != nil {
+		if err := utils.WaitLeaseLockFailpoint(loadCtx, spec); err != nil {
 			failpoint.Return(nil, err)
 		}
 	})
 
-	migs, err := ext.Load(ctx)
+	migs, err := ext.Load(loadCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
