@@ -781,8 +781,7 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), sctx)
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{
-			"test.base_deny", "test.$mlog$deny", "test.mv_deny",
-			"test.base_keep", "test.$mlog$keep", "test.mv_keep",
+			"test.base_deny", "test.$mlog$deny", "test.base_keep",
 		}, pm.calls)
 		require.Len(t, mt.rows, 2)
 
@@ -883,8 +882,10 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		require.Equal(t, types.NewStringDatum("base_with_hidden_mv"), visibleRow[3])
 		require.Equal(t, types.NewStringDatum("$mlog$visible"), visibleRow[5])
 		require.Equal(t, types.NewStringDatum("mv_visible"), visibleRow[9])
-		require.Contains(t, pm.calls, "test.mv_hidden_by_mlog")
-		require.Contains(t, pm.calls, "test.mv_no_priv")
+		require.ElementsMatch(t, []string{
+			"test.base_with_hidden_mlog", "test.base_with_hidden_mv",
+			"test.base_no_priv", "test.$mlog$no_priv", "test.mv_no_priv",
+		}, pm.calls)
 	})
 
 	t.Run("uses table predicates only", func(t *testing.T) {

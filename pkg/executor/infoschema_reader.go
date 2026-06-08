@@ -1749,15 +1749,17 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		if mlogInfo == nil {
 			continue
 		}
-		hasMLogPriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.SelectPriv)
+		needOutput := false
+		if checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.SelectPriv) {
+			needOutput = true
+		}
 
 		baseInfo := baseInfos[i]
-		hasBasePriv := hasMLogPriv
-		if !hasBasePriv && baseInfo.name != "" {
-			hasBasePriv = checker == nil ||
-				checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.SelectPriv)
+		if !needOutput && baseInfo.name != "" &&
+			(checker == nil || checker.RequestVerification(activeRoles, strings.ToLower(baseInfo.schema), strings.ToLower(baseInfo.name), "", mysql.SelectPriv)) {
+			needOutput = true
 		}
-		if !hasMLogPriv && !hasBasePriv {
+		if !needOutput {
 			continue
 		}
 
@@ -1943,24 +1945,29 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 		if tbl.MaterializedViewBase == nil {
 			continue
 		}
-		hasBasePriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.SelectPriv)
+		needOutput := false
+		if checker == nil || checker.RequestVerification(activeRoles, schema.L, tbl.Name.L, "", mysql.SelectPriv) {
+			needOutput = true
+		}
 
 		mlogInfo := e.getBaseTableMLogInfo(ctx, tbl)
 		if mlogInfo.id == 0 || mlogInfo.name == "" {
 			continue
 		}
-		hasMLogPriv := checker == nil || checker.RequestVerification(activeRoles, schema.L, strings.ToLower(mlogInfo.name), "", mysql.SelectPriv)
+		if !needOutput && (checker == nil || checker.RequestVerification(activeRoles, schema.L, strings.ToLower(mlogInfo.name), "", mysql.SelectPriv)) {
+			needOutput = true
+		}
 		if hasMLogPredicates && filterMViewDependencyByMLogPredicates(ex, mlogInfo) {
 			continue
 		}
 
 		deps := e.getBaseTableMViewDependencies(ctx, tbl)
 		for _, dep := range deps {
-			hasMViewPriv := checker == nil || checker.RequestVerification(activeRoles, dep.schema.L, strings.ToLower(dep.name), "", mysql.SelectPriv)
-			if hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep) {
-				continue
+			needOutputForDep := needOutput
+			if !needOutputForDep && (checker == nil || checker.RequestVerification(activeRoles, dep.schema.L, strings.ToLower(dep.name), "", mysql.SelectPriv)) {
+				needOutputForDep = true
 			}
-			if !hasBasePriv && !hasMLogPriv && !hasMViewPriv {
+			if !needOutputForDep || (hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep)) {
 				continue
 			}
 			record := types.MakeDatums(
