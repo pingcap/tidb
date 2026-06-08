@@ -81,3 +81,7 @@ ALTER TABLE test2.pairs18_child ADD CONSTRAINT fk_0 FOREIGN KEY (pid) REFERENCES
 
 -- test global index
 alter table test.pairs19 add unique index i1(pid) global;
+
+-- test patial index
+ALTER TABLE test.pairs20 ADD INDEX i1(pid1) WHERE id > 5;
+ALTER TABLE test.pairs20 ADD UNIQUE INDEX i2(pid2) WHERE id > 5;
