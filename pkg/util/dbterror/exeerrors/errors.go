@@ -83,6 +83,7 @@ var (
 	ErrUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	ErrTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
+	ErrUserNameNeedPrefix           = dbterror.ClassDDL.NewStdErr(mysql.ErrUsername, parser_mysql.Message("User name must start with `%s.` (use `%s.%s` instead)", nil))
 
 	ErrWarnTooFewRecords              = dbterror.ClassExecutor.NewStd(mysql.ErrWarnTooFewRecords)
 	ErrWarnTooManyRecords             = dbterror.ClassExecutor.NewStd(mysql.ErrWarnTooManyRecords)

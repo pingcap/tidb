@@ -26,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -115,7 +116,7 @@ func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
 var BackendCounterForTest = atomic.Int64{}
 
 // Build builds a BackendCtx.
-func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (BackendCtx, error) {
+func (b *BackendCtxBuilder) Build(cfg *ingestctrl.BackendConfig, bd *ingestctrl.Backend) (BackendCtx, error) {
 	ctx, store, job := b.ctx, b.store, b.job
 	jobSortPath, err := genJobSortPath(job.ID, b.checkDup)
 	if err != nil {
@@ -133,7 +134,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	})
 
 	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent(caller.Ddl)
 	var cpOp CheckpointOperator
 
 	// Create checkpoint manager based on the configuration
@@ -198,7 +199,7 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool, adjustedWorkerConcurrency int) (*ingestctrl.BackendConfig, *ingestctrl.Backend, error) {
 	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
@@ -241,7 +242,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 
 	//nolint: forcetypeassert
 	pdCli := store.(kv.StorageWithPD).GetPDClient().(*tikv.CodecPDClient)
-	be, err := local.NewBackend(ctx, tls, *cfg, pdCli)
+	be, err := ingestctrl.NewBackend(ctx, tls, *cfg, pdCli)
 	return cfg, be, err
 }
 
@@ -250,8 +251,8 @@ const checkpointUpdateInterval = 10 * time.Minute
 func newBackendContext(
 	ctx context.Context,
 	jobID int64,
-	be *local.Backend,
-	cfg *local.BackendConfig,
+	be *ingestctrl.Backend,
+	cfg *ingestctrl.BackendConfig,
 	vars map[string]string,
 	memRoot MemRoot,
 	etcdClient *clientv3.Client,

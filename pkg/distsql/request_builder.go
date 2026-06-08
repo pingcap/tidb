@@ -390,6 +390,12 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	return builder
 }
 
+// SetCoprRequestRateLimit sets a shared in-flight cop request limiter for this request.
+func (builder *RequestBuilder) SetCoprRequestRateLimit(rateLimit *util.RateLimit) *RequestBuilder {
+	builder.Request.CoprRequestRateLimit = rateLimit
+	return builder
+}
+
 // SetTiDBServerID sets "TiDBServerID" for "kv.Request"
 //
 //	ServerID is a unique id of TiDB instance among the cluster.

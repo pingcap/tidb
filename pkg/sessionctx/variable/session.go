@@ -1139,6 +1139,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	IndexJoinMaxScanRowsRatio  float64
 	SelectivityFactor          float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
@@ -2413,6 +2414,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
+		IndexJoinMaxScanRowsRatio:        vardef.DefOptIndexJoinMaxScanRowsRatio,
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
@@ -3235,7 +3237,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
-	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return

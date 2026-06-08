@@ -416,14 +416,14 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ForcePartitionRegionThreshold", func(threshold *int) {
 		*threshold = 0
 	})
 	var addCnt, removeCnt atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/AddPartitionRangeForTable", func() {
 		addCnt.Add(1)
 	})
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest", func() {
 		removeCnt.Add(1)
 	})
 	dom, err := session.GetDomain(s.store)

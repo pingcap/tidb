@@ -34,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -86,7 +86,7 @@ func TestVerifyChecksum(t *testing.T) {
 	tk.MustExec("create table db.tb(id int)")
 	tk.MustExec("insert into db.tb values(1)")
 
-	getRemoteChecksumFn := func() (*local.RemoteChecksum, error) {
+	getRemoteChecksumFn := func() (*ingestctrl.RemoteChecksum, error) {
 		return importer.RemoteChecksumTableBySQL(ctx, tk.Session(), plan, logutil.BgLogger())
 	}
 
@@ -133,7 +133,7 @@ func TestVerifyChecksum(t *testing.T) {
 
 	ctx2, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, logutil.BgLogger(), func() (*local.RemoteChecksum, error) {
+	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, logutil.BgLogger(), func() (*ingestctrl.RemoteChecksum, error) {
 		return importer.RemoteChecksumTableBySQL(ctx2, tk.Session(), plan2, logutil.BgLogger())
 	})
 	require.ErrorContains(t, err, "Query execution was interrupted")
@@ -457,7 +457,7 @@ func TestCalResourceParams(t *testing.T) {
 		t.Skip("we only cal resource related params in nextgen")
 	}
 	_, tm, ctx := testutil.InitTableTest(t)
-
+	testutil.MockNodeResource(t, 8)
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", handle.GetTargetScope()))
 	c := &importer.LoadDataController{TotalRealSize: 200 * units.TiB, Plan: &importer.Plan{TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)

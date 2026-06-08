@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -66,9 +66,9 @@ type BackendCtx interface {
 
 	CheckpointOperator
 
-	// GetLocalBackend exposes local.Backend. It's only used in global sort based
+	// GetLocalBackend exposes ingestctrl.Backend. It's only used in global sort based
 	// ingest.
-	GetLocalBackend() *local.Backend
+	GetLocalBackend() *ingestctrl.Backend
 	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
 	// the supplement of Ingest.
 	//
@@ -100,9 +100,9 @@ type litBackendCtx struct {
 	jobID   int64
 	tbl     table.Table
 	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
-	backend *local.Backend
+	backend *ingestctrl.Backend
 	ctx     context.Context
-	cfg     *local.BackendConfig
+	cfg     *ingestctrl.BackendConfig
 	sysVars map[string]string
 
 	flushing        atomic.Bool
@@ -341,13 +341,13 @@ func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 }
 
 // GetLocalBackend returns the local backend.
-func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
+func (bc *litBackendCtx) GetLocalBackend() *ingestctrl.Backend {
 	return bc.backend
 }
 
 // GetDiskUsage returns current disk usage of underlying backend.
 func (bc *litBackendCtx) GetDiskUsage() uint64 {
-	_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
+	_, _, bcDiskUsed, _ := ingestctrl.CheckDiskQuota(bc.backend, math.MaxInt64)
 	return uint64(bcDiskUsed)
 }
 
