@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -403,7 +404,7 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 }
 
 func validateMaterializedViewCommentLength(viewName pmodel.CIStr, comment string) error {
-	if len(comment) <= maxMaterializedViewCommentLength {
+	if utf8.RuneCountInString(comment) <= maxMaterializedViewCommentLength {
 		return nil
 	}
 	return dbterror.ErrTooLongTableComment.GenWithStackByArgs(viewName.L, maxMaterializedViewCommentLength)
