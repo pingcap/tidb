@@ -381,6 +381,9 @@ type RemoteLock struct {
 	storage    storeapi.Storage
 	path       string
 	leaseClock LeaseClock
+	// provedRemainingLease is measured by the lease clock after acquire
+	// commits. Renewal scheduling must not assume a fresh local LeaseTTL.
+	provedRemainingLease time.Duration
 
 	mu            sync.Mutex
 	renewalState  renewalState
@@ -520,6 +523,10 @@ func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 	if remaining < minRenewRemainingLease {
 		return 0, errRenewRemainingLeaseTooSmall
 	}
+	return renewDelayFromRemaining(remaining), nil
+}
+
+func renewDelayFromRemaining(remaining time.Duration) time.Duration {
 	delay := remaining / 3
 	if delay > renewInterval {
 		delay = renewInterval
@@ -527,7 +534,7 @@ func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 	if delay < 0 {
 		delay = 0
 	}
-	return delay, nil
+	return delay
 }
 
 type renewalResult struct {
@@ -757,8 +764,18 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		}
 	}
 
-	nextDelay := renewInterval
-	leaseDeadline := time.Now().Add(LeaseTTL)
+	initialRemainingLease := l.provedRemainingLease
+	minRetryRemaining := minRenewRetryRemainingLease()
+	if initialRemainingLease <= minRetryRemaining {
+		log.Warn("Lock renewal initial proven lease window fell below retry threshold; calling onLeaseLost.",
+			zap.Stringer("lock", l),
+			zap.Duration("remaining", initialRemainingLease),
+			zap.Duration("retry-threshold", minRetryRemaining))
+		invokeLost()
+		return
+	}
+	nextDelay := renewDelayFromRemaining(initialRemainingLease)
+	leaseDeadline := time.Now().Add(initialRemainingLease)
 	for {
 		timer := time.NewTimer(nextDelay)
 		select {

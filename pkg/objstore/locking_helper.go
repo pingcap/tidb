@@ -166,23 +166,31 @@ func tryLockRemoteExactWithClock(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to acquire lock on '%s'", physicalPath)
 	}
-	if err := proveAcquiredLeaseIsValid(ctx, storage, physicalPath, meta, clock); err != nil {
+	provedRemainingLease, err := proveAcquiredLeaseIsValid(ctx, storage, physicalPath, meta, clock)
+	if err != nil {
 		return nil, errors.Annotatef(err, "failed to acquire lock on '%s'", physicalPath)
 	}
-	return &RemoteLock{txnID: txnID, storage: storage, path: physicalPath, leaseClock: clock}, nil
+	return &RemoteLock{
+		txnID:                txnID,
+		storage:              storage,
+		path:                 physicalPath,
+		leaseClock:           clock,
+		provedRemainingLease: provedRemainingLease,
+	}, nil
 }
 
-func proveAcquiredLeaseIsValid(ctx context.Context, storage storeapi.Storage, physicalPath string, meta LockMeta, clock LeaseClock) error {
+func proveAcquiredLeaseIsValid(ctx context.Context, storage storeapi.Storage, physicalPath string, meta LockMeta, clock LeaseClock) (time.Duration, error) {
 	nowAfterAcquire, err := clock.Now(ctx)
 	if err != nil {
 		deleteErr := deleteAcquiredLockAfterProofFailure(ctx, storage, physicalPath)
-		return multierr.Append(errors.Annotate(err, "prove acquired lease is still valid"), deleteErr)
+		return 0, multierr.Append(errors.Annotate(err, "prove acquired lease is still valid"), deleteErr)
 	}
-	if nowAfterAcquire.After(meta.ExpireAt) {
+	provedRemainingLease := meta.ExpireAt.Sub(nowAfterAcquire)
+	if provedRemainingLease <= 0 {
 		deleteErr := deleteAcquiredLockAfterProofFailure(ctx, storage, physicalPath)
-		return multierr.Append(errors.Errorf("lease expired before acquire returned: now=%s expire_at=%s", nowAfterAcquire, meta.ExpireAt), deleteErr)
+		return 0, multierr.Append(errors.Errorf("lease expired before acquire returned: now=%s expire_at=%s", nowAfterAcquire, meta.ExpireAt), deleteErr)
 	}
-	return nil
+	return provedRemainingLease, nil
 }
 
 func deleteAcquiredLockAfterProofFailure(ctx context.Context, storage storeapi.Storage, physicalPath string) error {

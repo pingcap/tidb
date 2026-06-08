@@ -1167,33 +1167,70 @@ func TestRenewalWriteErrorFailpoint(t *testing.T) {
 }
 
 func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
-	ctx := context.Background()
-	strg, _ := createMockStorage(t)
-	defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
-	defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
+	t.Run("refreshes lease periodically", func(t *testing.T) {
+		ctx := context.Background()
+		strg, _ := createMockStorage(t)
+		defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
 
-	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
-	require.NoError(t, err)
-	defer objstore.TESTStopRenewal(lock)
-	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
-
-	// Capture original ExpireAt.
-	getExpireAt := func() time.Time {
-		data, err := strg.ReadFile(ctx, physicalPath)
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
 		require.NoError(t, err)
-		var meta objstore.LockMeta
-		require.NoError(t, json.Unmarshal(data, &meta))
-		return meta.ExpireAt
-	}
-	orig := getExpireAt()
+		defer objstore.TESTStopRenewal(lock)
+		physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 
-	objstore.TESTStartRenewal(ctx, lock, nil)
+		// Capture original ExpireAt.
+		getExpireAt := func() time.Time {
+			data, err := strg.ReadFile(ctx, physicalPath)
+			require.NoError(t, err)
+			var meta objstore.LockMeta
+			require.NoError(t, json.Unmarshal(data, &meta))
+			return meta.ExpireAt
+		}
+		orig := getExpireAt()
 
-	// Wait for renewal to advance the captured lock file.
-	require.Eventually(t, func() bool {
-		return getExpireAt().After(orig)
-	}, 500*time.Millisecond, 10*time.Millisecond,
-		"ExpireAt should advance past the original within a few renewal ticks")
+		objstore.TESTStartRenewal(ctx, lock, nil)
+
+		// Wait for renewal to advance the captured lock file.
+		require.Eventually(t, func() bool {
+			return getExpireAt().After(orig)
+		}, 500*time.Millisecond, 10*time.Millisecond,
+			"ExpireAt should advance past the original within a few renewal ticks")
+	})
+
+	t.Run("uses post acquire proof remaining lease", func(t *testing.T) {
+		ctx := context.Background()
+		base, _ := createMockStorage(t)
+		storage := &failWriteAfterStorage{
+			Storage:   base,
+			failAfter: 0,
+			failed:    make(chan struct{}),
+		}
+		defer objstore.TESTSetLeaseConstants(450*time.Millisecond, 150*time.Millisecond, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(10*time.Millisecond, time.Millisecond)()
+
+		leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+		clock := &sequenceLeaseClock{
+			times: []time.Time{
+				leaseNow,                             // acquire timestamp
+				leaseNow.Add(150 * time.Millisecond), // post-acquire proof
+				leaseNow.Add(200 * time.Millisecond), // renewal pre-write proof
+			},
+		}
+		lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", clock)
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
+		storage.path = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
+
+		objstore.TESTStartRenewal(ctx, lock, nil)
+
+		select {
+		case <-storage.failed:
+			// expected: the first renewal is scheduled from the 300ms proven
+			// remaining lease, not from a fresh 450ms TTL.
+		case <-time.After(130 * time.Millisecond):
+			t.Fatal("renewal did not use the post-acquire proven remaining lease")
+		}
+	})
 }
 
 func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
@@ -1225,6 +1262,35 @@ func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
 }
 
 func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
+	t.Run("low initial proven remaining lease loses immediately", func(t *testing.T) {
+		ctx := context.Background()
+		strg, _ := createMockStorage(t)
+		defer objstore.TESTSetLeaseConstants(300*time.Millisecond, 100*time.Millisecond, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
+
+		leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+		clock := &sequenceLeaseClock{
+			times: []time.Time{
+				leaseNow,
+				leaseNow.Add(210 * time.Millisecond), // leaves 90ms, below TTL/3 retry threshold.
+			},
+		}
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", clock)
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
+
+		lostCh := make(chan struct{}, 1)
+		objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
+
+		select {
+		case <-lostCh:
+			// expected: startup does not wait for the first renewal timer when
+			// the proven lease window is already below the retry-safety floor.
+		case <-time.After(15 * time.Millisecond):
+			t.Fatal("onLeaseLost was not invoked immediately for low initial proven remaining lease")
+		}
+	})
+
 	t.Run("persistent fast failures eventually lose lease", func(t *testing.T) {
 		ctx := context.Background()
 		strg, _ := createMockStorage(t)
@@ -1783,6 +1849,7 @@ func TestLockRemoteTruncateStartsRenewal(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
 	defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
 
 	lock, err := objstore.LockRemoteTruncate(ctx, strg, "truncate", func() {}, localLeaseClock())
 	require.NoError(t, err)
