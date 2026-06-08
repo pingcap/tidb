@@ -881,6 +881,10 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 	))
 }
 
+// TestMLogOnlineDDLAddTrackedColumn verifies mlog writes while ADD COLUMN is in
+// progress: before the new mlog column is public, writes still use the old
+// tracked-column set; after it is public, the new tracked column participates in
+// update logging.
 func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

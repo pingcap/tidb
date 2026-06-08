@@ -135,6 +135,9 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
 }
 
+// TestAlterMaterializedViewLogAddColumnBasic verifies that ADD COLUMN updates
+// mlog metadata, backfills old log rows with mlog defaults, and records future
+// changes only when newly tracked columns are touched.
 func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -191,6 +194,9 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 		))
 }
 
+// TestAlterMaterializedViewLogAddColumnDefaultSemantics verifies the default
+// values used for existing mlog rows when ADD COLUMN tracks nullable columns,
+// enum/set columns, and not-null string columns.
 func TestAlterMaterializedViewLogAddColumnDefaultSemantics(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -227,6 +233,9 @@ func TestAlterMaterializedViewLogAddColumnDefaultSemantics(t *testing.T) {
 		Check(testkit.Rows("1 1 a  1 1 20 20 I 1"))
 }
 
+// TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns verifies that ADD
+// COLUMN rejects duplicate tracked columns, duplicate names in one statement,
+// missing base columns, and reserved mlog metadata columns.
 func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -240,6 +249,9 @@ func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
 	tk.MustGetErrCode("alter materialized view log on t_add_mlog_invalid add column (`_MLOG$_DML_TYPE`)", errno.ErrDupFieldName)
 }
 
+// TestAlterMaterializedViewLogAddColumnPrivilege verifies that ADD COLUMN
+// requires ALTER privilege on the mlog table and SELECT privilege on the base
+// table.
 func TestAlterMaterializedViewLogAddColumnPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -264,6 +276,9 @@ func TestAlterMaterializedViewLogAddColumnPrivilege(t *testing.T) {
 	tkOK.MustExec("alter materialized view log on test.t_add_mlog_priv add column (b)")
 }
 
+// TestAlterMaterializedViewLogAddColumnSupportsNewMaterializedView verifies
+// that a fast-refresh materialized view can be created and refreshed after its
+// referenced base column is added to the materialized view log.
 func TestAlterMaterializedViewLogAddColumnSupportsNewMaterializedView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
