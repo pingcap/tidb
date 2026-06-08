@@ -156,18 +156,35 @@ func setMLogAddedColumnOriginDefault(colInfo *model.ColumnInfo) error {
 	if colInfo == nil {
 		return nil
 	}
-	if field_types.HasCharset(&colInfo.FieldType) && colInfo.GetCharset() != charset.CharsetBin {
+	if !mysql.HasNotNullFlag(colInfo.GetFlag()) {
+		return nil
+	}
+
+	if useSingleSpaceDefaultForMLogStringColumn(colInfo) {
 		return colInfo.SetOriginDefaultValue(" ")
 	}
 	if colInfo.GetOriginDefaultValue() != nil {
 		return nil
 	}
-	zeroVal := table.GetZeroValue(colInfo)
-	originDefault, err := zeroVal.ToString()
+	originDefault, err := generateOriginDefaultValue(colInfo, nil, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	return colInfo.SetOriginDefaultValue(originDefault)
+}
+
+func useSingleSpaceDefaultForMLogStringColumn(colInfo *model.ColumnInfo) bool {
+	if colInfo.GetCharset() == charset.CharsetBin {
+		return false
+	}
+	switch colInfo.GetType() {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	default:
+		return false
+	}
 }
 
 func syncMLogColumnsAfterAddColumn(tblInfo *model.TableInfo) {

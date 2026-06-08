@@ -191,6 +191,35 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 		))
 }
 
+func TestAlterMaterializedViewLogAddColumnDefaultSemantics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_add_mlog_defaults (" +
+		"id int," +
+		"nullable_varchar varchar(10)," +
+		"nullable_text text," +
+		"nn_enum enum('a','b') not null," +
+		"nn_set set('x','y') not null," +
+		"nullable_enum enum('a','b')," +
+		"nullable_set set('x','y')," +
+		"nn_varchar varchar(10) not null," +
+		"nn_text text not null)")
+	tk.MustExec("create materialized view log on t_add_mlog_defaults (id)")
+	tk.MustExec("insert into t_add_mlog_defaults values (1, null, null, 'b', 'x', null, null, 'old', 'memo')")
+
+	tk.MustExec("alter materialized view log on t_add_mlog_defaults add column (" +
+		"nullable_varchar, nullable_text, nn_enum, nn_set, nullable_enum, nullable_set, nn_varchar, nn_text)")
+
+	tk.MustQuery("select " +
+		"nullable_varchar is null, nullable_text is null, " +
+		"cast(nn_enum as char), cast(nn_set as char), " +
+		"nullable_enum is null, nullable_set is null, " +
+		"hex(nn_varchar), hex(nn_text), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` " +
+		"from `$mlog$t_add_mlog_defaults`").
+		Check(testkit.Rows("1 1 a  1 1 20 20 I 1"))
+}
+
 func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
