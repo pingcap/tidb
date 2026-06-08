@@ -241,8 +241,12 @@ func TestBasic(t *testing.T) {
 	for _, colName := range []string{
 		"table_catalog", "table_schema", "mlog_id", "mlog_name", "mlog_columns",
 		"base_table_catalog", "base_table_schema", "base_table_id", "base_table_name",
-		"purge_method", "purge_start", "purge_next",
 	} {
+		col = tb.Meta().FindPublicColumnByName(colName)
+		require.NotNil(t, col)
+		require.True(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+	}
+	for _, colName := range []string{"purge_method", "purge_start", "purge_next"} {
 		col = tb.Meta().FindPublicColumnByName(colName)
 		require.NotNil(t, col)
 		require.False(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
@@ -259,7 +263,7 @@ func TestBasic(t *testing.T) {
 	} {
 		col = tb.Meta().FindPublicColumnByName(colName)
 		require.NotNil(t, col)
-		require.False(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+		require.True(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
 	}
 
 	require.NoError(t, err)

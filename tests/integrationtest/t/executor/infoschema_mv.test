@@ -42,13 +42,19 @@ select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mvi
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA != "test" order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME = "mv_t1" order by 1, 2, 3;
-select TABLE_SCHEMA, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%" order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME not in ("mv", "mv_t1") order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVIEW_NAME like "%mvv%" order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where REFRESH_METHOD = "FAST" order by 1, 2, 3;
 select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where REFRESH_METHOD != "FAST" order by 1, 2, 3;
-select TABLE_SCHEMA, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST" order by 1, 2, 3;
+
+drop materialized view mv_t;
+drop materialized view mv_t1;
+drop materialized view mvv_t1;
+
+drop materialized view log on t;
 
 # Start to test tidb_mlogs
 

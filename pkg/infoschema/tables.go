@@ -750,31 +750,31 @@ var tableTiDBMViewsCols = []columnInfo{
 }
 
 var tableTiDBMLogsCols = []columnInfo{
-	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
-	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
-	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "MLOG_COLUMNS", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: "BASE_TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
-	{name: "BASE_TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
-	{name: "BASE_TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "BASE_TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_COLUMNS", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32},
 	{name: "PURGE_START", tp: mysql.TypeVarchar, size: 128},
 	{name: "PURGE_NEXT", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableTiDBTableMViewDependenciesCols = []columnInfo{
-	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
-	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "MVIEW_CATALOG", tp: mysql.TypeVarchar, size: 512},
-	{name: "MVIEW_SCHEMA", tp: mysql.TypeVarchar, size: 64},
-	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "MVIEW_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
 var tableRoutinesCols = []columnInfo{
