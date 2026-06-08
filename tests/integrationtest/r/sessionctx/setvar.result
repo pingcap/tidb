@@ -1377,9 +1377,9 @@ set @@tidb_index_join_double_read_penalty_cost_rate=default;
 select @@tidb_index_join_double_read_penalty_cost_rate;
 @@tidb_index_join_double_read_penalty_cost_rate
 0
-select /*+ set_var(tidb_default_string_match_selectivity=0) */ @@tidb_default_string_match_selectivity;
+select /*+ set_var(tidb_default_string_match_selectivity=0.5) */ @@tidb_default_string_match_selectivity;
 @@tidb_default_string_match_selectivity
-0
+0.5
 select @@tidb_default_string_match_selectivity;
 @@tidb_default_string_match_selectivity
 0
