@@ -171,7 +171,7 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	issueDigestAfter := getBindingSQLDigest(t, seCurVer, "idx_issue_b")
 	require.Equal(t, simpleDigestBefore, simpleDigestAfter)
 	require.NotEqual(t, issueDigestBefore, issueDigestAfter)
-	requireBindingDigestPairCleared(t, seCurVer, invalidBindSQL)
+	requireBindingDeletedAndDigestPairCleared(t, seCurVer, invalidBindSQL)
 
 	MustExec(t, seCurVer, "admin reload bindings")
 	MustExec(t, seCurVer, "use test")
@@ -214,13 +214,14 @@ func getBindingDigestPair(t *testing.T, se sessionapi.Session, indexName string)
 	return sqlDigest, planDigest
 }
 
-func requireBindingDigestPairCleared(t *testing.T, se sessionapi.Session, bindSQL string) {
-	rs := MustExecToRecodeSet(t, se, "select sql_digest, plan_digest from mysql.bind_info where bind_sql = ?", bindSQL)
+func requireBindingDeletedAndDigestPairCleared(t *testing.T, se sessionapi.Session, bindSQL string) {
+	rs := MustExecToRecodeSet(t, se, "select status, sql_digest, plan_digest from mysql.bind_info where bind_sql = ?", bindSQL)
 	req := rs.NewChunk(nil)
 	require.NoError(t, rs.Next(context.Background(), req))
 	require.Equal(t, 1, req.NumRows())
-	require.True(t, req.GetRow(0).IsNull(0))
+	require.Equal(t, "deleted", req.GetRow(0).GetString(0))
 	require.True(t, req.GetRow(0).IsNull(1))
+	require.True(t, req.GetRow(0).IsNull(2))
 	require.NoError(t, rs.Close())
 }
 
