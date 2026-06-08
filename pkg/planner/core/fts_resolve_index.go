@@ -80,7 +80,7 @@ func (v *FullTextIndexPlanVisitor) visit(plan base.LogicalPlan) (bool, error) {
 type FullTextIndexResolverWhere struct{}
 
 // Name returns the name of this optimization rule.
-func (_ *FullTextIndexResolverWhere) Name() string {
+func (*FullTextIndexResolverWhere) Name() string {
 	return "fts_resolve_index_where"
 }
 
@@ -94,7 +94,7 @@ func (o *FullTextIndexResolverWhere) Optimize(_ context.Context, plan base.Logic
 	return plan, isChanged, err
 }
 
-func (_ *FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
+func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
 	parent0 := v.getParent(0)
 	if parent0 == nil {
 		return false, nil
@@ -192,7 +192,7 @@ func removeSelectionNode(v *FullTextIndexPlanVisitor, planSelection *logicalop.L
 type FullTextIndexResolverTopN struct{}
 
 // Name returns the name of this optimization rule.
-func (_ *FullTextIndexResolverTopN) Name() string {
+func (*FullTextIndexResolverTopN) Name() string {
 	return "fts_resolve_index_topn"
 }
 
@@ -206,7 +206,7 @@ func (o *FullTextIndexResolverTopN) Optimize(_ context.Context, plan base.Logica
 	return plan, isChanged, err
 }
 
-func (_ *FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
+func (*FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
 	if ds.FtsPushDown == nil {
 		return false, nil
 	}
@@ -268,7 +268,7 @@ func (_ *FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisito
 type FullTextIndexResolverProjection struct{}
 
 // Name returns the name of this optimization rule.
-func (_ *FullTextIndexResolverProjection) Name() string {
+func (*FullTextIndexResolverProjection) Name() string {
 	return "fts_resolve_index_projection"
 }
 
@@ -282,7 +282,7 @@ func (o *FullTextIndexResolverProjection) Optimize(_ context.Context, plan base.
 	return plan, isChanged, err
 }
 
-func (_ *FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
+func (*FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
 	if ds.FtsPushDown == nil {
 		return false, nil
 	}
@@ -353,7 +353,7 @@ func (_ *FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlan
 type FullTextIndexResolverRejectRemaining struct{}
 
 // Name returns the name of this optimization rule.
-func (_ *FullTextIndexResolverRejectRemaining) Name() string {
+func (*FullTextIndexResolverRejectRemaining) Name() string {
 	return "fts_resolve_reject_remaining"
 }
 
