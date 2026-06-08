@@ -103,27 +103,28 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	ver260 := version260
-	seV260 := CreateSessionAndSetID(t, store)
+	ver250 := version250
+	seV250 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver260))
+	err = m.FinishBootstrap(int64(ver250))
 	require.NoError(t, err)
-	RevertVersionAndVariables(t, seV260, ver260)
+	RevertVersionAndVariables(t, seV250, ver250)
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
 
-	// Start from bootstrap version 260 so the next bootstrap runs upgradeToVer261.
+	// Start from bootstrap version 250 so the next bootstrap runs through the
+	// later upgrade chain, including upgradeToVer261.
 	// The test still executes on current code, so rows created below need their
 	// persisted digest fields rewritten to the pre-v261 algorithm explicitly.
-	ver, err := GetBootstrapVersion(seV260)
+	ver, err := GetBootstrapVersion(seV250)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver260), ver)
+	require.Equal(t, int64(ver250), ver)
 
-	MustExec(t, seV260, "use test")
-	MustExec(t, seV260, "create table t_simple(a int, b int, key idx_simple_a(a), key idx_simple_b(b))")
-	MustExec(t, seV260, "create table t_issue(a int, b int, key idx_issue_a(a), key idx_issue_b(b))")
+	MustExec(t, seV250, "use test")
+	MustExec(t, seV250, "create table t_simple(a int, b int, key idx_simple_a(a), key idx_simple_b(b))")
+	MustExec(t, seV250, "create table t_issue(a int, b int, key idx_issue_a(a), key idx_issue_b(b))")
 
 	simpleBindSQL := "select /*+ use_index(t_simple, idx_simple_b) */ * from t_simple where a = 1"
 	issueBindSQL := "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where ((a = 1) and (b = 1))"
@@ -151,22 +152,22 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 			updateTime: "2000-01-02 00:00:00.000000",
 		},
 	}
-	MustExec(t, seV260, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
-	MustExec(t, seV260, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
+	MustExec(t, seV250, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
+	MustExec(t, seV250, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
 
-	issueDigestV261 := getEnabledBindingSQLDigest(t, seV260, "idx_issue_b")
+	issueDigestV261 := getEnabledBindingSQLDigest(t, seV250, "idx_issue_b")
 	issuePlanDigest := "issue-plan-digest-v261"
 	require.NotEmpty(t, issueDigestV261)
-	simpleOriginalV260, simpleDigestV260 := normalizeBindingDigestBeforeVer261(t, simpleBindSQL, "test")
-	issueOriginalV260, issueDigestV260 := normalizeBindingDigestBeforeVer261(t, issueBindSQL, "test")
+	simpleOriginalPreV261, simpleDigestPreV261 := normalizeBindingDigestBeforeVer261(t, simpleBindSQL, "test")
+	issueOriginalPreV261, issueDigestPreV261 := normalizeBindingDigestBeforeVer261(t, issueBindSQL, "test")
 	// Simulate bindings that were persisted before version 261. The simple
 	// binding should normalize to the same digest after upgrade, while the issue
 	// binding should move from the old parenthesized digest to issueDigestV261.
-	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalV260, simpleDigestV260, "%idx_simple_b%")
-	MustExec(t, seV260, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalV260, issueDigestV260, issuePlanDigest, "%idx_issue_b%")
-	oldIssueDigests := map[string]struct{}{issueDigestV260: {}}
+	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalPreV261, simpleDigestPreV261, "%idx_simple_b%")
+	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalPreV261, issueDigestPreV261, issuePlanDigest, "%idx_issue_b%")
+	oldIssueDigests := map[string]struct{}{issueDigestPreV261: {}}
 	for _, duplicate := range duplicateIssueBindings {
-		duplicateDigest := insertBindingWithOldDigest(t, seV260, duplicate.bindSQL, duplicate.createTime, duplicate.updateTime, issuePlanDigest)
+		duplicateDigest := insertBindingWithOldDigest(t, seV250, duplicate.bindSQL, duplicate.createTime, duplicate.updateTime, issuePlanDigest)
 		require.NotContains(t, oldIssueDigests, duplicateDigest)
 		oldIssueDigests[duplicateDigest] = struct{}{}
 	}
@@ -174,7 +175,7 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	// be refreshed, it must still participate in duplicate detection; otherwise
 	// updating a valid row to issueDigestV261 could hit digest_index.
 	invalidBindSQL := "invalid binding"
-	MustExec(t, seV260, `insert into mysql.bind_info
+	MustExec(t, seV250, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
 		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"select * from `test` . `t_issue` where `a` = ? and `b` = ?",
@@ -190,13 +191,13 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 		issuePlanDigest,
 	)
 
-	simpleDigestBefore := getBindingSQLDigest(t, seV260, "idx_simple_b")
-	issueDigestBefore := issueDigestV260
+	simpleDigestBefore := getBindingSQLDigest(t, seV250, "idx_simple_b")
+	issueDigestBefore := issueDigestPreV261
 
 	// Reboot the store into the current bootstrap version. This is the point
 	// where upgradeToVer261 scans mysql.bind_info and refreshes binding digests.
 	store.SetOption(StoreBootstrappedKey, nil)
-	seV260.Close()
+	seV250.Close()
 	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
@@ -234,6 +235,8 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	MustExec(t, seCurVer, "select * from t_issue where a = 1 and b = 1")
 	requireLastPlanFromBinding(t, seCurVer)
 	MustExec(t, seCurVer, "select * from t_issue where ((a = 1) and (b = 1))")
+	requireLastPlanFromBinding(t, seCurVer)
+	MustExec(t, seCurVer, "select * from t_issue where (((a = 1) and (b = 1)))")
 	requireLastPlanFromBinding(t, seCurVer)
 	for _, duplicate := range duplicateIssueBindings {
 		MustExec(t, seCurVer, duplicate.querySQL)
