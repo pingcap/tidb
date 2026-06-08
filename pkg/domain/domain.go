@@ -848,6 +848,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	// user keyspace is only allowed to access SYSTEM ks, we can keep it alive.
 	if kv.IsSystemKS(do.store) {
 		do.wg.Run(func() {
 			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
@@ -857,13 +858,10 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	return nil
 }
 
-// TODO: we should sync the system keyspace info schema, not just load it,
-// currently, we assume there is no upgrade, so we only load the info schema of
-// system keyspace once, and it will not change during the lifetime of the domain,
-// it's not right, but it's enough to push subtasks which depends on it forward,
-// we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
+	// it will trigger the creation of system keyspace session manager,
+	// which will load the info schema cache.
 	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
@@ -873,7 +871,7 @@ func (do *Domain) loadSysKSInfoSchema() error {
 // use AcquireKSRuntime to manage their lifecycle.
 // but Session dependents on Domain, to create a session pool we need to access the
 // GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
-// it makes add restriction check here harder.
+// and trying to refactor that part can cause import cycle easily.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
