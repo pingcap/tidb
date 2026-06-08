@@ -1042,7 +1042,7 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.Len(t, mvccKVs.defaultKVs[0].value, tikvMVCCShortValueMaxBytes+1)
 	})
 
-	t.Run("block sample prediction estimates next-gen CSE data blocks", func(t *testing.T) {
+	t.Run("block sample prediction estimates next-gen CSE data blocks and filter", func(t *testing.T) {
 		ts := uint64(404411537129996288)
 		key := []byte("t_index_prefix_000001")
 		value := []byte("index-value")
@@ -1074,9 +1074,18 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 			})
 		}
 		sortedKVs := sortedKVsForTest(prefixKVs)
+		dataBlockBytes, entryCount, err := estimateSortedSampledIndexKVCSEDataBlockPhysicalBytes(sortedKVs, ts)
+		require.NoError(t, err)
+		require.Equal(t, len(sortedKVs), entryCount)
+		require.Positive(t, dataBlockBytes)
+		filterBytes := estimateNextGenCSEBinaryFuse8FilterBytes(entryCount)
+		require.Equal(t, int64(0), estimateNextGenCSEBinaryFuse8FilterBytes(0))
+		require.Equal(t, int64(2), estimateNextGenCSEBinaryFuse8FilterBytes(1))
+		require.Equal(t, int64(9), estimateNextGenCSEBinaryFuse8FilterBytes(8))
+		require.Equal(t, int64(11), estimateNextGenCSEBinaryFuse8FilterBytes(9))
 		nextGenBytes, err := estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs, ts)
 		require.NoError(t, err)
-		require.Positive(t, nextGenBytes)
+		require.Equal(t, dataBlockBytes+filterBytes, nextGenBytes)
 		require.Less(t, nextGenBytes, sampledIndexKVLogicalBytes(sortedKVs))
 		splitNextGenBytes, err := estimateSortedSampledIndexKVCSEPhysicalBytesWithSplit(sortedKVs, 8, ts)
 		require.NoError(t, err)
