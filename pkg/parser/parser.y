@@ -10565,7 +10565,7 @@ LimitClause:
 	}
 |	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(ast.ValueExpr)}
+		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
 	}
 
 LimitOption:

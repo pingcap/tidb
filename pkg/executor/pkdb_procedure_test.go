@@ -3616,6 +3616,34 @@ func TestProcedurePreparedPlanCacheLimitFallback(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestProcedureLimitParamInUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table sp_limit_update_t (id int primary key, v int)")
+
+	createAndCall := func(substitute string) {
+		tk.MustExec("set tidb_enable_sp_param_substitute=" + substitute)
+		tk.MustExec("truncate table sp_limit_update_t")
+		tk.MustExec("insert into sp_limit_update_t values (1, 10), (2, 20), (3, 30)")
+		tk.MustExec(`create procedure sp_limit_update(in batch_size int)
+			begin
+				update sp_limit_update_t
+				set v = v + 100
+				where v < 30
+				order by id
+				limit batch_size;
+			end`)
+		tk.MustExec("call sp_limit_update(1)")
+		tk.MustQuery("select * from sp_limit_update_t order by id").Check(testkit.Rows("1 110", "2 20", "3 30"))
+		tk.MustExec("drop procedure sp_limit_update")
+	}
+
+	createAndCall("0")
+	createAndCall("1")
+}
+
 func TestProcedurePreparedPlanCacheLimitOffsetCountParamOrder(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

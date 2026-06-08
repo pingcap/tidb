@@ -417,9 +417,17 @@ func TestProcedureRestoreLimit(t *testing.T) {
 			"SELECT * FROM `t1` LIMIT a,b",
 			"SELECT * FROM `t1` LIMIT a,b",
 		},
+		{
+			"UPDATE `t1` SET `a` = 1 LIMIT a",
+			"UPDATE `t1` SET `a`=1 LIMIT a",
+		},
+		{
+			"DELETE FROM `t1` WHERE `a` = 1 LIMIT a",
+			"DELETE FROM `t1` WHERE `a`=1 LIMIT a",
+		},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
-		return node.(*ast.SelectStmt)
+		return node
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

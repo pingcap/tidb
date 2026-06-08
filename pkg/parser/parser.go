@@ -21735,7 +21735,7 @@ yynewstate:
 		}
 	case 1933:
 		{
-			parser.yyVAL.item = &ast.Limit{Count: yyS[yypt-0].item.(ast.ValueExpr)}
+			parser.yyVAL.item = &ast.Limit{Count: yyS[yypt-0].item.(ast.ExprNode)}
 		}
 	case 1934:
 		{
