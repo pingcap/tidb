@@ -195,6 +195,10 @@ func TestAlterMaterializedViewLogAddColumnDefaultSemantics(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	// This table covers the mlog backfill defaults that differ from normal AddColumn:
+	// nullable columns should keep NULL for old mlog rows, enum/set should use the
+	// regular TiDB default semantics, and not-null string columns should use a
+	// single-space placeholder required by materialized view log history rows.
 	tk.MustExec("create table t_add_mlog_defaults (" +
 		"id int," +
 		"nullable_varchar varchar(10)," +
@@ -211,6 +215,9 @@ func TestAlterMaterializedViewLogAddColumnDefaultSemantics(t *testing.T) {
 	tk.MustExec("alter materialized view log on t_add_mlog_defaults add column (" +
 		"nullable_varchar, nullable_text, nn_enum, nn_set, nullable_enum, nullable_set, nn_varchar, nn_text)")
 
+	// The existing INSERT log row is historical data. It should not read current
+	// base-table values for newly tracked columns; it should only expose the
+	// metadata default chosen for old mlog rows.
 	tk.MustQuery("select " +
 		"nullable_varchar is null, nullable_text is null, " +
 		"cast(nn_enum as char), cast(nn_set as char), " +
