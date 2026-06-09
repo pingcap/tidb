@@ -147,6 +147,39 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("select * from v")
 	}
 
+	// issue-68164-dotted-schema-table-keys
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("drop database if exists `a`")
+		tk.MustExec("drop database if exists `a.b`")
+		tk.MustExec("drop database if exists `v`")
+		tk.MustExec("drop database if exists `v.b`")
+		tk.MustExec("create database `a`")
+		tk.MustExec("create database `a.b`")
+		tk.MustExec("create table `a`.`b.c` (id int primary key)")
+		tk.MustExec("create table `a.b`.`c` (id int primary key)")
+		tk.MustExec("insert into `a`.`b.c` values (1)")
+		tk.MustExec("insert into `a.b`.`c` values (2)")
+		tk.MustQuery("select * from `a`.`b.c`, `a.b`.`c` for update of `a.b`.`c`").
+			Check(testkit.Rows("1 2"))
+		tk.MustQuery("select t2.id from `a`.`b.c` as t1, `a.b`.`c` as t2 for update of `a.b`.`c`").
+			Check(testkit.Rows("2"))
+		tk.MustQuery("show warnings").CheckContain("Use the alias 't2'")
+		tk.MustContainErrMsg("select * from `a`.`b.c`, `A`.`B.C`",
+			"[planner:1066]Not unique table/alias: 'B.C'")
+
+		tk.MustExec("create database `v`")
+		tk.MustExec("create database `v.b`")
+		tk.MustExec("create view `v`.`b.c` as select 1 as id")
+		tk.MustExec("create view `v.b`.`c` as select * from `v`.`b.c`")
+		tk.MustQuery("select * from `v.b`.`c`").Check(testkit.Rows("1"))
+
+		tk.MustExec("drop database `a`")
+		tk.MustExec("drop database `a.b`")
+		tk.MustExec("drop database `v`")
+		tk.MustExec("drop database `v.b`")
+	}
+
 	// index-merge-with-generated-column
 	{
 		tk := prepareSharedTestKit(t)
@@ -872,6 +905,18 @@ ORDER BY field1`).Check(testkit.Rows())
 		tk.MustExec("rollback")
 	}
 
+	// issue-64854-in-subquery-inside-not-in-list
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t0(c1 float8, c2 double, unique(c2, c1))")
+
+		tk.MustQuery(`select /* issue:64854 */ t0.c1 as ca1, t0.c1 as ca2, t0.c2 as ca3
+			from t0
+			where ((t0.c2) in (select t0.c1 as ca4 from t0)) not in
+				(((t0.c1 is false)),
+				((((binary (null ^ true)) not regexp ((binary bit_length((default(t0.c2))) >> 17))) is not true)))`).Check(testkit.Rows())
+	})
+
 	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		resetTestDB(t, tk)
@@ -905,6 +950,35 @@ ORDER BY t1.a, t2.a, t3.a, var`
 			"9 <nil> <nil> 6",
 			"10 <nil> <nil> 6",
 		))
+	})
+
+	// constant-left-nulleq-partition-pruning
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t_range(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+		tk.MustExec("insert into t_range values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range where null <=> a").Check(testkit.Rows("<nil>"))
+
+		tk.MustExec("create table t_range_cols(a int) partition by range columns(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+		tk.MustExec("insert into t_range_cols values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where null <=> a").Check(testkit.Rows("<nil>"))
+	})
+
+	// issue-66706-decimal-scale-leak-through-sign-view-predicate
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC)")
+		tk.MustExec("CREATE TABLE t1 LIKE t0")
+		tk.MustExec("REPLACE INTO t0 VALUES (-1780864408)")
+		tk.MustExec("INSERT INTO t1 VALUES (1448472626)")
+		tk.MustExec("CREATE OR REPLACE VIEW v0(c0) AS SELECT 0.99 FROM t1, t0")
+
+		tk.MustQuery("SELECT /* issue:66706 */ v0.c0 FROM v0 WHERE SIGN(v0.c0)").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
 }
 

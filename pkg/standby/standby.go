@@ -22,34 +22,51 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/tidbmanager"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/signal"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
-	standbyState   = "standby"
-	activatedState = "activated"
+	standbyState     = "standby"
+	activatedState   = "activated"
+	terminatingState = "terminating"
 
 	connNormalClosed         = "normal closed"
 	tidbNormalRestartLogPath = "/tmp/tidb-normal-restart.log"
 
 	httpPathPrefix = "/tidb-pool/"
+
+	defaultCloseConnWait = 8 * time.Hour
+	maxCloseConnWait     = 24 * time.Hour
+
+	managerFreeMaxAttempts   = 3
+	managerFreeRetryInterval = 200 * time.Millisecond
 )
+
+var tidbExit = signal.TiDBExit
 
 // ActivateRequest is the request body for activating the tidb server.
 type ActivateRequest struct {
 	KeyspaceName   string `json:"keyspace_name"`
+	ExportID       string `json:"export_id"`
 	MaxIdleSeconds uint   `json:"max_idle_seconds"`
+	// Metadata is keyspace metadata sent by the manager during activation, such as tenant, project, and cluster identifiers.
+	Metadata map[string]string `json:"metadata,omitempty"`
 
 	// analyze table
 	RunAutoAnalyze bool `json:"run_auto_analyze"`
@@ -63,14 +80,18 @@ type LoadKeyspaceController struct {
 	serverStartCh  chan struct{}
 	startServerErr error
 	endOnce        sync.Once
+	mgrCli         tidbmanager.Client
+	closeConnWait  atomic.Duration
 
 	lastActive int64
 }
 
 // NewLoadKeyspaceController creates a new StandbyController.
-func NewLoadKeyspaceController() *LoadKeyspaceController {
+// mgrCli can be nil when manager notification is disabled.
+func NewLoadKeyspaceController(mgrCli tidbmanager.Client) *LoadKeyspaceController {
 	return &LoadKeyspaceController{
 		serverStartCh: make(chan struct{}),
+		mgrCli:        mgrCli,
 	}
 }
 
@@ -92,6 +113,27 @@ var activateCh = make(chan struct{}, 1)
 type KeyspaceMismatch struct {
 	Remote string `json:"remote"`
 	Local  string `json:"local"`
+}
+
+type statusResponse struct {
+	State        string `json:"state"`
+	KeyspaceName string `json:"keyspace_name"`
+	ExportID     string `json:"export_id,omitempty"`
+}
+
+type exitOptions struct {
+	graceful        bool
+	wait            time.Duration
+	skipAutoIDOwner bool
+	needMgrFree     bool
+}
+
+type invalidExitOptionError struct {
+	option string
+}
+
+func (e invalidExitOptionError) Error() string {
+	return "invalid " + e.option
 }
 
 func keyspaceValidateMiddleware(next http.Handler) http.HandlerFunc {
@@ -145,6 +187,10 @@ func loadTiDBNormalRestartInfoAndRemove() {
 	}
 }
 
+func loadTiDBNormalRestartLog() ([]byte, error) {
+	return os.ReadFile(tidbNormalRestartLogPath)
+}
+
 // SaveTidbNormalRestartInfo saves tidb normal restart info to file.
 func SaveTidbNormalRestartInfo(msg string) {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
@@ -164,6 +210,20 @@ func IsPreTidbNormalRestart(keyspaceName string) (bool, string) {
 	}
 
 	return true, preTidbNormalRestartMsg
+}
+
+// ActivationMetadata returns a copy of metadata carried by the activate request.
+func (c *LoadKeyspaceController) ActivationMetadata() map[string]string {
+	mu.RLock()
+	defer mu.RUnlock()
+	if len(activateRequest.Metadata) == 0 {
+		return nil
+	}
+	metadata := make(map[string]string, len(activateRequest.Metadata))
+	for k, v := range activateRequest.Metadata {
+		metadata[k] = v
+	}
+	return metadata
 }
 
 // Handler returns a handler to query tidb pool status or activate or exit the tidb server.
@@ -187,6 +247,14 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 			state = activatedState
 			activateRequest = req
 			activateCh <- struct{}{}
+		case deploymode.IsStarter() && state == terminatingState:
+			mu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, err := w.Write([]byte("server is going to shutdown"))
+			if err != nil {
+				logutil.BgLogger().Warn("failed to write response", zap.Error(err))
+			}
+			return
 		case svr != nil && !svr.Health():
 			mu.Unlock()
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -216,7 +284,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		case <-r.Context().Done(): // client closed connection.
 			go func() {
 				c.EndStandby(errors.New("client closed connection"))
-				signal.TiDBExit(syscall.SIGTERM)
+				tidbExit(syscall.SIGTERM)
 			}()
 		case <-timeout: // reach hardlimit timeout from config.
 			logutil.BgLogger().Warn("timeout waiting for activation")
@@ -227,7 +295,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 			}
 			go func() {
 				c.EndStandby(errors.New("timeout waiting for activation"))
-				signal.TiDBExit(syscall.SIGTERM)
+				tidbExit(syscall.SIGTERM)
 			}()
 		case <-c.serverStartCh:
 			if c.startServerErr != nil {
@@ -243,13 +311,57 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 	})
 	// Terminate the tidb server by sending a request. For example, in a cloud environment, we may need to delete pod to free up resources.
 	mux.HandleFunc(httpPathPrefix+"exit", keyspaceValidateMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logutil.BgLogger().Info("receiving exit request")
+		options, err := parseExitOptions(r.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		logutil.BgLogger().Info("receiving exit request",
+			zap.Bool("graceful", options.graceful),
+			zap.Duration("wait", options.wait),
+			zap.Bool("skip_auto_id_owner", options.skipAutoIDOwner),
+			zap.Bool("need_mgr_free", options.needMgrFree),
+		)
 		if svr != nil {
+			if deploymode.IsStarter() {
+				if options.needMgrFree && c.mgrCli == nil {
+					http.Error(w, "manager notifier is unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				if options.skipAutoIDOwner && svr.IsAutoIDOwner() {
+					logutil.BgLogger().Info("auto id service is owner, skip exit")
+					w.WriteHeader(http.StatusNotModified)
+					_, err := w.Write([]byte("auto id service is owner"))
+					if err != nil {
+						logutil.BgLogger().Warn("failed to write response", zap.Error(err))
+					}
+					return
+				}
+				if !options.graceful {
+					svr.SetForceShutdown()
+					SaveTidbNormalRestartInfo("received force exit request")
+					w.WriteHeader(http.StatusOK)
+					// Consider the server is going to force shutdown, send a high priority signal to kill tidb.
+					tidbExit(syscall.SIGINT)
+					return
+				}
+				if options.wait <= 0 {
+					options.wait = defaultCloseConnWait
+				}
+				c.setCloseConnWait(options.wait)
+				if options.needMgrFree {
+					svr.SetNeedRequestMgrFree()
+				}
+			}
 			SaveTidbNormalRestartInfo("received exit request")
 		}
 		w.WriteHeader(http.StatusOK)
-		// Consider the server is going to fore shutdown, send a high priority signal to kill tidb.
-		signal.TiDBExit(syscall.SIGINT)
+		if deploymode.IsStarter() {
+			tidbExit(syscall.SIGTERM)
+			return
+		}
+		// Consider the server is going to force shutdown, send a high priority signal to kill tidb.
+		tidbExit(syscall.SIGINT)
 	})))
 	mux.HandleFunc(httpPathPrefix+"checkconn", func(w http.ResponseWriter, r *http.Request) {
 		keyspaceName, connID := r.URL.Query().Get("keyspace_name"), r.URL.Query().Get("conn_id")
@@ -290,15 +402,84 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 	return httpPathPrefix, mux
 }
 
+func parseExitOptions(query url.Values) (exitOptions, error) {
+	graceful, err := parseExitBool(query.Get("graceful"), "graceful")
+	if err != nil {
+		return exitOptions{}, err
+	}
+	skipAutoIDOwner, err := parseExitBool(query.Get("skip_auto_id_owner"), "skip_auto_id_owner")
+	if err != nil {
+		return exitOptions{}, err
+	}
+	needMgrFree, err := parseExitBool(query.Get("need_mgr_free"), "need_mgr_free")
+	if err != nil {
+		return exitOptions{}, err
+	}
+	wait, err := parseExitWait(query.Get("wait"))
+	if err != nil {
+		return exitOptions{}, err
+	}
+	return exitOptions{
+		graceful:        graceful,
+		wait:            wait,
+		skipAutoIDOwner: skipAutoIDOwner,
+		needMgrFree:     needMgrFree,
+	}, nil
+}
+
+func parseExitBool(value, name string) (bool, error) {
+	if value == "" {
+		return false, nil
+	}
+	ret, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, invalidExitOptionError{option: name}
+	}
+	return ret, nil
+}
+
+func parseExitWait(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	wait, err := time.ParseDuration(value)
+	if err != nil {
+		waitSeconds, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil || waitSeconds < 0 || waitSeconds > int64(maxCloseConnWait/time.Second) {
+			return 0, invalidExitOptionError{option: "wait"}
+		}
+		wait = time.Duration(waitSeconds) * time.Second
+	}
+	if wait < 0 || wait > maxCloseConnWait {
+		return 0, invalidExitOptionError{option: "wait"}
+	}
+	return wait, nil
+}
+
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	mu.RLock()
 	defer mu.RUnlock()
-	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	_, err := fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s"}`, state, activateRequest.KeyspaceName)
+	resp := statusResponse{
+		State:        state,
+		KeyspaceName: activateRequest.KeyspaceName,
+	}
+	if deploymode.IsStarter() && activateRequest.ExportID != "" {
+		resp.ExportID = activateRequest.ExportID
+	}
+	w.WriteHeader(http.StatusOK)
+	err := json.NewEncoder(w).Encode(resp)
 	if err != nil {
 		logutil.BgLogger().Error("failed to write response", zap.Error(err))
 	}
+}
+
+func (c *LoadKeyspaceController) setCloseConnWait(wait time.Duration) {
+	c.closeConnWait.Store(wait)
+}
+
+func (c *LoadKeyspaceController) getCloseConnWait() time.Duration {
+	return c.closeConnWait.Load()
 }
 
 var httpServer *http.Server
@@ -349,10 +530,18 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 	<-activateCh
 
-	logutil.BgLogger().Info("standby receive activate request", zap.Any("activate-request", activateRequest))
+	logutil.BgLogger().Info("standby receive activate request",
+		zap.String("keyspace-name", activateRequest.KeyspaceName),
+		zap.Uint("max-idle-seconds", activateRequest.MaxIdleSeconds),
+		zap.Bool("run-auto-analyze", activateRequest.RunAutoAnalyze),
+		zap.Bool("tidb-enable-ddl", activateRequest.TiDBEnableDDL),
+		zap.Int("metadata-count", len(activateRequest.Metadata)))
 
 	config.UpdateGlobal(func(c *config.Config) {
 		c.KeyspaceName = activateRequest.KeyspaceName
+		if deploymode.IsStarter() && activateRequest.ExportID != "" {
+			c.StarterParams.ExportID = activateRequest.ExportID
+		}
 		if activateRequest.MaxIdleSeconds > 0 {
 			c.Standby.MaxIdleSeconds = activateRequest.MaxIdleSeconds
 		}
@@ -386,5 +575,88 @@ func (c *LoadKeyspaceController) EndStandby(err error) {
 }
 
 // OnServerShutdown is called when the server is going to shut down.
-func (c *LoadKeyspaceController) OnServerShutdown(svr *server.Server) {
+func (c *LoadKeyspaceController) OnServerShutdown(svr server.StandbyShutdownServer) {
+	if !deploymode.IsStarter() {
+		return
+	}
+
+	mu.Lock()
+	state = terminatingState
+	mu.Unlock()
+
+	// Give up auto ID ownership before waiting for TiProxy to migrate traffic.
+	svr.AutoIDServiceClose()
+
+	if svr.GetForceShutdown() {
+		return
+	}
+
+	if !c.waitZeroConn(svr) {
+		return
+	}
+
+	if svr.GetNeedRequestMgrFree() {
+		exitReason, err := loadTiDBNormalRestartLog()
+		if err != nil && !os.IsNotExist(err) {
+			exitReason = []byte(fmt.Sprintf("failed to load normal restart log: %v", err))
+			logutil.BgLogger().Warn("failed to load tidb normal restart log", zap.ByteString("exitReason", exitReason))
+		}
+		c.reportManagerFree(string(exitReason))
+	}
+}
+
+func (c *LoadKeyspaceController) waitZeroConn(svr server.StandbyShutdownServer) bool {
+	maxWaitTime := c.getCloseConnWait()
+	if maxWaitTime <= 0 {
+		return true
+	}
+
+	logutil.BgLogger().Info("waiting for tiproxy to migrate and close all connections", zap.Duration("maxWaitTime", maxWaitTime))
+	done := make(chan struct{}, 1)
+	go func() {
+		svr.WaitZeroConn()
+		done <- struct{}{}
+	}()
+	select {
+	case <-time.After(maxWaitTime):
+		logutil.BgLogger().Info("tiproxy connection close timed out")
+		return false
+	case <-done:
+		logutil.BgLogger().Info("tiproxy has closed all connections")
+		return true
+	}
+}
+
+func (c *LoadKeyspaceController) reportManagerFree(exitReason string) bool {
+	if c.mgrCli == nil {
+		logutil.BgLogger().Warn("manager notifier is unavailable")
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), tidbmanager.DefaultTimeout)
+	defer cancel()
+	var lastErr error
+	for attempt := 1; attempt <= managerFreeMaxAttempts; attempt++ {
+		if err := c.mgrCli.Free(ctx, exitReason); err != nil {
+			lastErr = err
+			logutil.BgLogger().Warn("failed to report free",
+				zap.Int("attempt", attempt),
+				zap.Int("maxAttempts", managerFreeMaxAttempts),
+				zap.Error(err))
+			if attempt < managerFreeMaxAttempts {
+				select {
+				case <-ctx.Done():
+					logutil.BgLogger().Warn("manager free report timed out", zap.Error(ctx.Err()))
+					return false
+				case <-time.After(managerFreeRetryInterval):
+				}
+			}
+			continue
+		}
+		if attempt > 1 {
+			logutil.BgLogger().Info("reported free after retry", zap.Int("attempt", attempt))
+		}
+		return true
+	}
+	logutil.BgLogger().Warn("failed to report free after retries", zap.Error(lastErr))
+	return false
 }

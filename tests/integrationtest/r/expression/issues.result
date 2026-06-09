@@ -3426,3 +3426,38 @@ set @@tidb_enable_no_backslash_escapes_in_like = default;
 drop view v_nbe_like;
 drop view v_nbe_like_escape;
 drop table t_no_backslash_escapes;
+drop table if exists t_gc;
+create table t_gc (
+id int primary key,
+first_name varchar(20) collate utf8mb4_0900_ai_ci,
+last_name varchar(20) collate utf8mb4_0900_ai_ci,
+marker varchar(20) collate utf8mb4_0900_ai_ci
+) collate = utf8mb4_0900_ai_ci;
+insert into t_gc values
+(1, 'Billy', 'Alpha', 'm1'),
+(2, 'billy', 'Beta', 'm2'),
+(3, 'Human', 'Gamma', 'm3');
+select count(*) from t_gc where first_name like 'billy';
+count(*)
+2
+select count(*) from (
+select id from t_gc
+group by id
+having concat(' ', min(first_name), ' ', min(last_name), ' ', min(marker)) like '%billy%'
+) s;
+count(*)
+2
+select count(*) from (
+select id from t_gc
+group by id
+having group_concat(' ', first_name, ' ', last_name, ' ', marker) like '%billy%'
+) s;
+count(*)
+2
+select
+collation(concat(' ', min(first_name), ' ', min(last_name), ' ', min(marker))) as concat_collation,
+collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
+from t_gc;
+concat_collation	group_concat_collation
+utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
+drop table if exists t_gc;

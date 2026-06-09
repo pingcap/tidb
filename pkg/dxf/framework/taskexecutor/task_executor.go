@@ -74,7 +74,10 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	Store  kv.Storage
+	// TaskStore is the store for task.Keyspace. It equals the instance store in
+	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
+	// it from the task keyspace.
+	TaskStore kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
@@ -84,7 +87,7 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.No
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-		Store:     store,
+		TaskStore: store,
 	}
 }
 
@@ -171,7 +174,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
-			e.logger.Error("get subtasks failed", zap.Error(err))
+			e.logger.Warn("get subtasks failed", zap.Error(err))
 			continue
 		}
 		if len(subtasks) == 0 {
@@ -255,7 +258,13 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 }
 
 // Init implements the TaskExecutor interface.
-func (*BaseTaskExecutor) Init(_ context.Context) error {
+func (e *BaseTaskExecutor) Init(_ context.Context) error {
+	if e.TaskStore.GetKeyspace() != e.GetTaskBase().Keyspace {
+		// shouldn't happen normally, but since keyspace mismatch might cause
+		// correctness error, we check it at runtime too.
+		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
+			e.TaskStore.GetKeyspace(), e.GetTaskBase().Keyspace))
+	}
 	return nil
 }
 
@@ -308,7 +317,7 @@ func (e *BaseTaskExecutor) Run() {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
-			e.sampleLogger.Error("refresh task failed", zap.Error(err))
+			e.sampleLogger.Warn("refresh task failed", zap.Error(err))
 			continue
 		}
 

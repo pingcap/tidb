@@ -288,6 +288,7 @@ func (rs *KS3Storage) WriteFile(ctx context.Context, file string, data []byte) e
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
+	s3like.RecordAPICall(s3like.BackendKS3, s3like.APICallPutObject)
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	rs.accessRec.RecWrite(len(data))
 	return errors.Trace(err)
@@ -366,6 +367,7 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	s3like.RecordAPICall(s3like.BackendKS3, s3like.APICallHeadObjects)
 	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
@@ -414,6 +416,7 @@ func (rs *KS3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn 
 	}
 
 	for {
+		s3like.RecordAPICall(s3like.BackendKS3, s3like.APICallListObjects)
 		res, err := rs.svc.ListObjectsWithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)

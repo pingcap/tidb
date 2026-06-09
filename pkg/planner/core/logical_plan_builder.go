@@ -2106,12 +2106,14 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (base.LogicalPlan, error) {
+	var currentLayerCTEs []*cteInfo
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		_, err := b.buildWith(ctx, setOpr.With)
+		var err error
+		currentLayerCTEs, err = b.buildWith(ctx, setOpr.With)
 		if err != nil {
 			return nil, err
 		}
@@ -2191,9 +2193,9 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return proj, nil
+		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
-	return setOprPlan, nil
+	return b.tryToBuildSequence(currentLayerCTEs, setOprPlan), nil
 }
 
 func (b *PlanBuilder) buildSemiJoinForSetOperator(
@@ -5480,20 +5482,20 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 
 // checkRecursiveView checks whether this view is recursively defined.
 func (b *PlanBuilder) checkRecursiveView(dbName ast.CIStr, tableName ast.CIStr) (func(), error) {
-	viewFullName := dbName.L + "." + tableName.L
+	viewFullName := newSchemaTableKey(dbName, tableName)
 	if b.buildingViewStack == nil {
-		b.buildingViewStack = set.NewStringSet()
+		b.buildingViewStack = make(map[schemaTableKey]struct{})
 	}
 	// If this view has already been on the building stack, it means
 	// this view contains a recursive definition.
-	if b.buildingViewStack.Exist(viewFullName) {
+	if _, ok := b.buildingViewStack[viewFullName]; ok {
 		return nil, plannererrors.ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
 	}
 	// If the view is being renamed, we return the mysql compatible error message.
 	if b.capFlag&renameView != 0 && viewFullName == b.renamingViewName {
 		return nil, plannererrors.ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
 	}
-	b.buildingViewStack.Insert(viewFullName)
+	b.buildingViewStack[viewFullName] = struct{}{}
 	return func() { delete(b.buildingViewStack, viewFullName) }, nil
 }
 

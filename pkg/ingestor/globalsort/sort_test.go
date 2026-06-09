@@ -1,0 +1,356 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package globalsort
+
+import (
+	"bytes"
+	"context"
+	"slices"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/rand"
+)
+
+func changePropDist(t *testing.T, sizeDist, keysDist uint64) {
+	sizeDistBak := simplesst.DefaultPropSizeDist
+	keysDistBak := simplesst.DefaultPropKeysDist
+	t.Cleanup(func() {
+		simplesst.DefaultPropSizeDist = sizeDistBak
+		simplesst.DefaultPropKeysDist = keysDistBak
+	})
+	simplesst.DefaultPropSizeDist = sizeDist
+	simplesst.DefaultPropKeysDist = keysDist
+}
+
+func TestGlobalSortLocalBasic(t *testing.T) {
+	// 1. write data step
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 400
+	lastStepDatas := make([]string, 0, 10)
+	lastStepStats := make([]string, 0, 10)
+	var startKey, endKey dbkv.Key
+
+	onWriterClose := func(s *simplesst.WriterSummary) {
+		for _, stat := range s.MultipleFilesStats {
+			for i := range stat.Filenames {
+				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
+				lastStepStats = append(lastStepStats, stat.Filenames[i][1])
+			}
+		}
+		if len(startKey) == 0 && len(endKey) == 0 {
+			startKey = s.Min.Clone()
+			endKey = s.Max.Clone().Next()
+		}
+		startKey = BytesMin(startKey, s.Min.Clone())
+		endKey = BytesMax(endKey, s.Max.Clone().Next())
+	}
+
+	w := simplesst.NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		SetOnCloseFunc(onWriterClose).
+		Build(memStore, "/test", "0")
+
+	writer := simplesst.NewEngineWriter(w)
+	kvCnt := rand.Intn(10) + 10000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := range kvCnt {
+		kvs[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
+	}
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
+	require.NoError(t, err)
+
+	// 2. read and sort step
+	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
+}
+
+func TestGlobalSortLocalWithMerge(t *testing.T) {
+	changePropDist(t, 100, 2)
+	// 1. write data step
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 400
+
+	w := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		Build(memStore, "/test", "0")
+
+	writer := simplesst.NewEngineWriter(w)
+	kvCnt := rand.Intn(10) + 10000
+	kvSize := 0
+	kvs := make([]common.KvPair, kvCnt)
+	for i := range kvCnt {
+		key := []byte(uuid.New().String())
+		val := []byte("56789")
+		kvSize += len(key) + len(val)
+		kvs[i] = common.KvPair{
+			Key: key,
+			Val: val,
+		}
+	}
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
+	require.NoError(t, err)
+
+	// 2. merge step
+	datas, stats, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	require.NoError(t, err)
+
+	dataGroup, _ := splitDataAndStatFiles(datas, stats)
+
+	lastStepDatas := make([]string, 0, 10)
+	lastStepStats := make([]string, 0, 10)
+	var startKey, endKey dbkv.Key
+
+	collector := &execute.TestCollector{}
+
+	onWriterClose := func(s *simplesst.WriterSummary) {
+		for _, stat := range s.MultipleFilesStats {
+			for i := range stat.Filenames {
+				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
+				lastStepStats = append(lastStepStats, stat.Filenames[i][1])
+			}
+		}
+		if len(startKey) == 0 && len(endKey) == 0 {
+			startKey = s.Min.Clone()
+			endKey = s.Max.Clone().Next()
+		}
+		startKey = BytesMin(startKey, s.Min.Clone())
+		endKey = BytesMax(endKey, s.Max.Clone().Next())
+	}
+	mergeMemSize := (rand.Intn(10) + 1) * 100
+	// use random mergeMemSize to test different memLimit of writer.
+	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
+	bufSizeBak := simplesst.DefaultReadBufferSize
+	memLimitBak := simplesst.DefaultOneWriterMemSizeLimit
+	t.Cleanup(func() {
+		simplesst.DefaultReadBufferSize = bufSizeBak
+		simplesst.DefaultOneWriterMemSizeLimit = memLimitBak
+	})
+	simplesst.DefaultReadBufferSize = 100
+	simplesst.DefaultOneWriterMemSizeLimit = uint64(mergeMemSize)
+
+	for _, group := range dataGroup {
+		wctx := workerpool.NewContext(ctx)
+		op := NewMergeOperator(
+			wctx,
+			memStore,
+			int64(5*size.MB),
+			"/test2",
+			mergeMemSize,
+			onWriterClose,
+			collector,
+			1,
+			true,
+			engineapi.OnDuplicateKeyIgnore,
+		)
+
+		require.NoError(t, MergeOverlappingFiles(
+			wctx,
+			group,
+			1,
+			op,
+		))
+	}
+
+	require.EqualValues(t, kvCnt, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.ProcessedCnt.Load())
+
+	// 3. read and sort step
+	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
+}
+
+func TestGlobalSortLocalWithMergeV2(t *testing.T) {
+	// 1. write data step
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 400
+	multiStats := make([]simplesst.MultipleFilesStat, 0, 100)
+	randomSize := (rand.Intn(500) + 1) * 1000
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/globalsort/mockRangesGroupSize",
+		"return("+strconv.Itoa(randomSize)+")")
+	t.Cleanup(func() {
+		failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/globalsort/mockRangesGroupSize")
+	})
+	datas := make([]string, 0, 100)
+	stats := make([]string, 0, 100)
+	// prepare meta for merge step.
+	closeFn := func(s *simplesst.WriterSummary) {
+		multiStats = append(multiStats, s.MultipleFilesStats...)
+		for _, stat := range s.MultipleFilesStats {
+			for i := range stat.Filenames {
+				datas = append(datas, stat.Filenames[i][0])
+				stats = append(stats, stat.Filenames[i][1])
+			}
+		}
+	}
+
+	w := simplesst.NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		SetOnCloseFunc(closeFn).
+		Build(memStore, "/test", "0")
+
+	writer := simplesst.NewEngineWriter(w)
+	kvCnt := rand.Intn(10) + 10000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := range kvCnt {
+		kvs[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
+	}
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
+	require.NoError(t, err)
+
+	// 2. merge step
+	dataGroup, statGroup, startKeys, endKeys := splitDataStatAndKeys(datas, stats, multiStats)
+	lastStepDatas := make([]string, 0, 10)
+	lastStepStats := make([]string, 0, 10)
+	var startKey, endKey dbkv.Key
+
+	// prepare meta for last step.
+	closeFn1 := func(s *simplesst.WriterSummary) {
+		for _, stat := range s.MultipleFilesStats {
+			for i := range stat.Filenames {
+				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
+				lastStepStats = append(lastStepStats, stat.Filenames[i][1])
+			}
+		}
+		if len(startKey) == 0 && len(endKey) == 0 {
+			startKey = s.Min.Clone()
+			endKey = s.Max.Clone().Next()
+		}
+		startKey = BytesMin(startKey, s.Min.Clone())
+		endKey = BytesMax(endKey, s.Max.Clone().Next())
+	}
+
+	for i, group := range dataGroup {
+		require.NoError(t, MergeOverlappingFilesV2(
+			ctx,
+			mockOneMultiFileStat(group, statGroup[i]),
+			memStore,
+			startKeys[i],
+			endKeys[i],
+			int64(5*size.MB),
+			"/test2",
+			uuid.NewString(),
+			100,
+			8*1024,
+			100,
+			2,
+			closeFn1,
+			1,
+			true))
+	}
+
+	// 3. read and sort step
+	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
+}
+
+// split data and stat files into groups for merge step.
+// like scheduler code for merge sort step in add index and import into.
+func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]string) {
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 10
+	for start < len(datas) {
+		end := min(start+step, len(datas))
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup
+}
+
+// split data&stat files, startKeys and endKeys into groups for new merge step.
+func splitDataStatAndKeys(datas []string, stats []string, multiStats []simplesst.MultipleFilesStat) ([][]string, [][]string, []dbkv.Key, []dbkv.Key) {
+	startKeys := make([]dbkv.Key, 0, 10)
+	endKeys := make([]dbkv.Key, 0, 10)
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
+		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
+		endKey = dbkv.Key(endKey).Next().Clone()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	if i == len(multiStats)-1 {
+		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
+		endKeys = append(endKeys, multiStats[i].MaxKey.Next().Clone())
+	}
+
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 2 * simplesst.MultiFileStatNum
+	for start < len(datas) {
+		end := min(start+step, len(datas))
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup, startKeys, endKeys
+}

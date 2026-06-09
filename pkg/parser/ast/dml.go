@@ -871,6 +871,18 @@ func (n *FieldList) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+func restoreReturningFields(ctx *format.RestoreCtx, fields []*SelectField) error {
+	for i, field := range fields {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := field.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore Returning[%d]", i)
+		}
+	}
+	return nil
+}
+
 // Accept implements Node Accept interface.
 func (n *FieldList) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -2401,6 +2413,14 @@ type InsertStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
 	PartitionNames []CIStr
+	// Returning represents the RETURNING select_expr list for INSERT statement.
+	Returning []*SelectField
+	// RowAlias is the optional row alias for VALUES/SET clause (MySQL 8.0.19+).
+	// e.g. INSERT INTO t VALUES (1,2) AS new ON DUPLICATE KEY UPDATE b = new.b
+	RowAlias CIStr
+	// ColumnAliases is the optional column alias list for the row alias.
+	// e.g. INSERT INTO t VALUES (1,2) AS new(m, n) ON DUPLICATE KEY UPDATE b = m
+	ColumnAliases []CIStr
 }
 
 // Restore implements Node interface.
@@ -2515,6 +2535,20 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Errorf("Incorrect type for InsertStmt.Select: %T", v)
 		}
 	}
+	if asName := n.RowAlias.String(); asName != "" {
+		ctx.WriteKeyWord(" AS ")
+		ctx.WriteName(asName)
+		if len(n.ColumnAliases) > 0 {
+			ctx.WritePlain("(")
+			for i, col := range n.ColumnAliases {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(col.String())
+			}
+			ctx.WritePlain(")")
+		}
+	}
 	if n.OnDuplicate != nil {
 		ctx.WriteKeyWord(" ON DUPLICATE KEY UPDATE ")
 		for i, v := range n.OnDuplicate {
@@ -2524,6 +2558,12 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			if err := v.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore InsertStmt.OnDuplicate[%d]", i)
 			}
+		}
+	}
+	if len(n.Returning) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := restoreReturningFields(ctx, n.Returning); err != nil {
+			return errors.Annotate(err, "An error occurred while restore InsertStmt.Returning")
 		}
 	}
 
@@ -2574,6 +2614,13 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.OnDuplicate[i] = node.(*Assignment)
+	}
+	for i, field := range n.Returning {
+		node, ok := field.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning[i] = node.(*SelectField)
 	}
 	return v.Leave(n)
 }
@@ -2634,6 +2681,8 @@ type DeleteStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
 	With       *WithClause
+	// Returning represents the RETURNING select_expr list for DELETE statement.
+	Returning []*SelectField
 }
 
 // Restore implements Node interface.
@@ -2723,6 +2772,12 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore DeleteStmt.Limit")
 		}
 	}
+	if len(n.Returning) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := restoreReturningFields(ctx, n.Returning); err != nil {
+			return errors.Annotate(err, "An error occurred while restore DeleteStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2776,6 +2831,13 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	for i, field := range n.Returning {
+		node, ok = field.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning[i] = node.(*SelectField)
 	}
 	return v.Leave(n)
 }
@@ -2886,6 +2948,8 @@ type UpdateStmt struct {
 	MultipleTable bool
 	TableHints    []*TableOptimizerHint
 	With          *WithClause
+	// Returning represents the RETURNING select_expr list for UPDATE statement.
+	Returning []*SelectField
 }
 
 // Restore implements Node interface.
@@ -2964,6 +3028,12 @@ func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occur while restore UpdateStmt.Limit")
 		}
 	}
+	if len(n.Returning) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := restoreReturningFields(ctx, n.Returning); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UpdateStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -3014,6 +3084,13 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	for i, field := range n.Returning {
+		node, ok = field.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning[i] = node.(*SelectField)
 	}
 	return v.Leave(n)
 }

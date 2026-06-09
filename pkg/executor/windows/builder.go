@@ -15,6 +15,7 @@
 package windows
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
@@ -25,6 +26,20 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
+
+// BuildOrdered constructs the executor for a window plan whose child already
+// provides the required partition/order property.
+func BuildOrdered(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec.Executor) (exec.Executor, error) {
+	windowExec, err := Build(sctx, v, childExec, true)
+	if err != nil {
+		return nil, err
+	}
+	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
+	if !ok {
+		return nil, errors.New("ordered window must be built with pipelined window executor")
+	}
+	return &OrderedWindowExec{PipelinedWindowExec: pipelinedExec}, nil
+}
 
 // Build constructs the concrete executor for a window physical plan.
 func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec.Executor, forcePipelined bool) (exec.Executor, error) {
