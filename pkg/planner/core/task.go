@@ -1060,6 +1060,23 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		}
 	}
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+		// Handle IndexMerge with advisory sort items when some (but not all)
+		// partial paths satisfy the sort order. When all paths satisfy, the
+		// existing Limit pushdown path gives a better plan.
+		if len(copTask.idxMergePartPlans) > 0 && !copTask.indexPlanFinished && !copTask.idxMergeIsIntersection &&
+			copTask.idxMergeMatchWithAdvisorySortItems &&
+			len(copTask.idxMergePartPlans) == len(copTask.idxMergePartPlansMatchResults) {
+			allSatisfy := true
+			for _, result := range copTask.idxMergePartPlansMatchResults {
+				if !result.Matched() {
+					allSatisfy = false
+					break
+				}
+			}
+			if !allSatisfy {
+				return handleAdvisorySortItemsForIndexMerge(p, copTask)
+			}
+		}
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1130,6 +1147,53 @@ func handlePartialOrderTopN(p *PhysicalTopN, copTask *CopTask) base.Task {
 // estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
 func estimateMaxXForPartialOrder(_ base.PlanContext, _ *CopTask) uint64 {
 	return 0
+}
+
+// handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
+// has advisory sort item matching info. It pushes Limit to partial paths that
+// satisfy the sort order and TopN to those that do not, then keeps a root TopN
+// for the final merge.
+func handleAdvisorySortItemsForIndexMerge(p *PhysicalTopN, copTask *CopTask) base.Task {
+	newCount := p.Offset + p.Count
+
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
+	for i, partialPlan := range copTask.idxMergePartPlans {
+		if copTask.idxMergePartPlansMatchResults[i].Matched() {
+			// This partial path satisfies the sort order, push Limit.
+			childProfile := partialPlan.StatsInfo()
+			stats := util.DeriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := PhysicalLimit{
+				Count:       newCount,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit.SetChildren(partialPlan)
+			pushedDownLimit.SetSchema(partialPlan.Schema())
+			copTask.idxMergePartPlans[i] = pushedDownLimit
+		} else if p.canPushToIndexPlan(partialPlan, cols) {
+			// This partial path does not satisfy the sort order, push TopN.
+			copTask.idxMergePartPlans[i] = p.getPushedDownTopN(partialPlan)
+		}
+	}
+
+	// Push TopN to the table plan side if it exists.
+	if copTask.tablePlan != nil {
+		copTask.tablePlan = p.getPushedDownTopN(copTask.tablePlan)
+	}
+
+	// Keep the root TopN as the final merge layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	if len(p.GetPartitionBy()) > 0 {
+		return rootTask
+	}
+	return attachPlan2Task(p, rootTask)
 }
 
 // Attach2Task implements the PhysicalPlan interface.
