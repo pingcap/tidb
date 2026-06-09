@@ -62,22 +62,22 @@ func newCheckRuntimeMockRuntime(
 	return runtime
 }
 
-type taskRuntimeSessionProvider struct {
+type taskSessionProvider struct {
 	se  sessionctx.Context
 	err error
 }
 
-func (p *taskRuntimeSessionProvider) WithNewSession(fn func(se sessionctx.Context) error) error {
+func (p *taskSessionProvider) WithNewSession(fn func(se sessionctx.Context) error) error {
 	if p.err != nil {
 		return p.err
 	}
 	return fn(p.se)
 }
 
-func newTaskRuntimeSessionProvider(server *sqlsvrapimock.MockServer) *taskRuntimeSessionProvider {
+func newTaskSessionProvider(server *sqlsvrapimock.MockServer) *taskSessionProvider {
 	se := utilmock.NewContext()
 	se.BindDomainAndSchValidator(server, nil)
-	return &taskRuntimeSessionProvider{se: se}
+	return &taskSessionProvider{se: se}
 }
 
 func TestAcquireTaskRuntime(t *testing.T) {
@@ -91,7 +91,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		server.EXPECT().GetRuntime().Return(runtime)
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			newTaskRuntimeSessionProvider(server),
+			newTaskSessionProvider(server),
 			"task_ks",
 			"task_ks",
 			"holder",
@@ -112,7 +112,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(runtimeHandle, nil)
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			newTaskRuntimeSessionProvider(server),
+			newTaskSessionProvider(server),
 			"current_ks",
 			"task_ks",
 			"holder",
@@ -132,7 +132,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(nil, runtimeErr)
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			newTaskRuntimeSessionProvider(server),
+			newTaskSessionProvider(server),
 			"current_ks",
 			"task_ks",
 			"holder",
@@ -146,7 +146,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		sessionErr := goerrors.New("session error")
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			&taskRuntimeSessionProvider{err: sessionErr},
+			&taskSessionProvider{err: sessionErr},
 			"current_ks",
 			"task_ks",
 			"holder",

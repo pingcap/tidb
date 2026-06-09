@@ -23,15 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// RuntimeSessionProvider provides a session used to access the SQL server runtime.
-type RuntimeSessionProvider interface {
+// SessionProvider provides a session used to access the SQL server runtime.
+type SessionProvider interface {
 	WithNewSession(func(se sessionctx.Context) error) error
 }
 
 // AcquireTaskRuntime returns a runtime view for the task keyspace and a release function.
 // Callers must call the release function when the returned runtime is no longer used.
 func AcquireTaskRuntime(
-	sessionProvider RuntimeSessionProvider,
+	sessionProvider SessionProvider,
 	currentKS string,
 	taskKS string,
 	holderID string,
