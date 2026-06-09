@@ -98,6 +98,52 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	}
 }
 
+// TestMysqlTablesWithoutClusteredPK pins the `mysql` base tables without a clustered
+// PRIMARY KEY. A diff flags a regression or a new table whose PK type was not
+// considered; the list also serves as a reference for future clustered-PK work.
+func TestMysqlTablesWithoutClusteredPK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	expected := []string{
+		"advisory_locks",
+		"bind_info",
+		"columns_priv",
+		"db",
+		"default_roles",
+		"dist_framework_meta",
+		"expr_pushdown_blacklist",
+		"gc_delete_range",
+		"gc_delete_range_done",
+		"global_grants",
+		"global_priv",
+		"global_variables",
+		"opt_rule_blacklist",
+		"password_history",
+		"plan_replayer_status",
+		"plan_replayer_task",
+		"request_unit_by_group",
+		"role_edges",
+		"stats_extended",
+		"stats_feedback",
+		"stats_top_n",
+		"tables_priv",
+		"tidb",
+		"tidb_ddl_reorg",
+		"tidb_kernel_options",
+		"tidb_pitr_id_map",
+		"tidb_runaway_queries",
+		"tidb_ttl_job_history",
+		"tidb_ttl_task",
+		"user",
+	}
+	tk.MustQuery(
+		"SELECT LOWER(table_name) FROM information_schema.tables " +
+			"WHERE table_schema = 'mysql' AND table_type = 'BASE TABLE' " +
+			"AND tidb_pk_type <> 'CLUSTERED' ORDER BY LOWER(table_name)",
+	).Check(testkit.Rows(expected...))
+}
+
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	session.MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= 195 {
@@ -1058,6 +1104,55 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.Equal(t, "PREDICATE", row.GetString(0))
 		domCurrent.Close()
 	})
+}
+
+func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 7.5.0 to 8.5+ or above.
+	ver750 := 180
+	seV7 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver750))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV7, ver750)
+	session.MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeDistSQLScanConcurrency))
+	session.MustExec(t, seV7, "commit")
+	session.UnsetStoreBootstrapped(store.UUID())
+
+	// We are now in 7.5.0, check tidb_analyze_distsql_scan_concurrency should not exist.
+	res := session.MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeDistSQLScanConcurrency))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+
+	// Change the global variable tidb_distsql_scan_concurrency to 32.
+	session.MustExec(t, seV7, "set @@global.tidb_distsql_scan_concurrency = 32")
+
+	seV7.Close()
+	dom.Close()
+	domCurVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := session.CreateSessionAndSetID(t, store)
+	defer seCurVer.Close()
+	// We are now in version no lower than 8.5, tidb_analyze_distsql_scan_concurrency should be 32.
+	res = session.MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_analyze_distsql_scan_concurrency")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(32), row.GetInt64(0))
 }
 
 func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {

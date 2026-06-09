@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -147,10 +148,13 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 				tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 			}
 			for _, table := range tables {
-				tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+				err := tk.ExecToErr(fmt.Sprintf("alter table %s nocache", table))
+				if err != nil && !infoschema.ErrTableNotExists.Equal(err) {
+					require.NoError(t, err)
+				}
 			}
 			if len(tables) > 0 {
-				tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+				tk.MustExec(fmt.Sprintf("drop table if exists %s", strings.Join(tables, ",")))
 			}
 		}
 	} else {
