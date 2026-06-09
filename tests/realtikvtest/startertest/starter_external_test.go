@@ -329,8 +329,10 @@ func TestExternalStarterExitWaitAndManagerNotifierContracts(t *testing.T) {
 		})
 	}
 
-	db := openStarterDB(t)
-	require.NoError(t, db.PingContext(ctx))
+	if os.Getenv(envStarterRunExitWaitTest) != "1" {
+		db := openStarterDB(t)
+		require.NoError(t, db.PingContext(ctx))
+	}
 
 	t.Run("graceful_exit_waits_for_open_connection", func(t *testing.T) {
 		requireStarterExitWaitTestEnabled(t)
@@ -737,8 +739,13 @@ func runExternalStarterGracefulExitWaitsForOpenConnection(t *testing.T, statusUR
 	}, 3*time.Second, 100*time.Millisecond, "tidb-server exited before the held connection was closed")
 	require.Less(t, time.Since(exitStart), 10*time.Second)
 
+	closeStart := time.Now()
 	require.NoError(t, conn.Close())
-	require.NoError(t, waitForStarterStatusUnavailable(ctx, statusURL))
+	require.NoError(t, db.Close())
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	require.NoError(t, waitForStarterStatusUnavailable(shutdownCtx, statusURL))
+	require.Less(t, time.Since(closeStart), 3*time.Second)
 }
 
 func waitForStarterStatusCode(ctx context.Context, statusURL string, want int) error {
