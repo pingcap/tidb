@@ -40,6 +40,9 @@ go_test(
     embed = [":sem"],
     flaky = True,
     deps = [
+        "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",

@@ -17,6 +17,9 @@ package sem
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -43,6 +46,21 @@ func TestRestrictedHint(t *testing.T) {
 }
 
 func TestRestrictedUserStmt(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter username policy is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "ks"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
 	sem := buildSEMFromConfig(&Config{
 		RestrictedUsers: []string{"root", "cloud_admin"},
 		RestrictedRoles: []string{"cloud_admin"},
@@ -57,14 +75,14 @@ func TestRestrictedUserStmt(t *testing.T) {
 	}
 
 	restrictedSQL := []string{
-		"DROP USER 'root'@'%'",
-		"RENAME USER 'cloud_admin'@'%' TO 'cloud_admin2'@'%'",
-		"GRANT 'app_role'@'%' TO 'root'@'%'",
-		"REVOKE 'app_role'@'%' FROM 'cloud_admin'@'%'",
-		"SET DEFAULT ROLE 'app_role'@'%' TO 'root'@'%'",
-		"GRANT 'cloud_admin'@'%' TO 'app_user'@'%'",
-		"REVOKE 'cloud_admin'@'%' FROM 'app_user'@'%'",
-		"SET ROLE 'cloud_admin'@'%'",
+		"DROP USER 'ks.root'@'%'",
+		"RENAME USER 'ks.cloud_admin'@'%' TO 'ks.cloud_admin2'@'%'",
+		"GRANT 'ks.app_role'@'%' TO 'ks.root'@'%'",
+		"REVOKE 'ks.app_role'@'%' FROM 'ks.cloud_admin'@'%'",
+		"SET DEFAULT ROLE 'ks.app_role'@'%' TO 'ks.root'@'%'",
+		"GRANT 'ks.cloud_admin'@'%' TO 'ks.app_user'@'%'",
+		"REVOKE 'ks.cloud_admin'@'%' FROM 'ks.app_user'@'%'",
+		"SET ROLE 'ks.cloud_admin'@'%'",
 	}
 	for _, sql := range restrictedSQL {
 		require.Error(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
@@ -80,11 +98,11 @@ func TestRestrictedUserStmt(t *testing.T) {
 	allowedSQL := []string{
 		"SELECT 1",
 		"SET ROLE NONE",
-		"DROP USER 'app_user'@'%'",
-		"RENAME USER 'app_user'@'%' TO 'app_user2'@'%'",
-		"GRANT 'app_role'@'%' TO 'app_user'@'%'",
-		"REVOKE 'app_role'@'%' FROM 'app_user'@'%'",
-		"SET DEFAULT ROLE 'app_role'@'%' TO 'app_user'@'%'",
+		"DROP USER 'ks.app_user'@'%'",
+		"RENAME USER 'ks.app_user'@'%' TO 'ks.app_user2'@'%'",
+		"GRANT 'ks.app_role'@'%' TO 'ks.app_user'@'%'",
+		"REVOKE 'ks.app_role'@'%' FROM 'ks.app_user'@'%'",
+		"SET DEFAULT ROLE 'ks.app_role'@'%' TO 'ks.app_user'@'%'",
 	}
 	for _, sql := range allowedSQL {
 		require.NoError(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
