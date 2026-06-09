@@ -76,15 +76,35 @@ const colEstimateCacheRangesKeyLimit = 16 * 1024
 // omitted: getColumnRowCount uses the collation embedded in each Datum value,
 // not the Range.Collators slice, so it does not affect the estimate result.
 //
+// For string/bytes datums we also append Datum.Collation() because Range.Redact
+// formats only the raw value, while getColumnRowCount transforms string bounds
+// via collate.GetCollator(datum.Collation()).Key(...). Two ranges with the same
+// literal value but different effective collations must therefore land at
+// different cache keys. Range construction normally routes string types through
+// convertStringFTToBinaryCollate (forcing bin collation), so this is defensive
+// rather than load-bearing today — but it removes a future-fragility footgun
+// and the few extra bytes per string range are negligible.
+//
 // Returns ok=false when the serialized rangesKey would exceed
 // colEstimateCacheRangesKeyLimit; the caller must then skip the cache.
 func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, ranges []*ranger.Range, realtimeCount, modifyCount int64) (colEstimateCacheKey, bool) {
 	var b strings.Builder
+	appendDatumCollations := func(vals []types.Datum) {
+		for i := range vals {
+			k := vals[i].Kind()
+			if k == types.KindString || k == types.KindBytes {
+				b.WriteByte('|')
+				b.WriteString(vals[i].Collation())
+			}
+		}
+	}
 	for i, r := range ranges {
 		if i > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteString(r.Redact(errors.RedactLogDisable))
+		appendDatumCollations(r.LowVal)
+		appendDatumCollations(r.HighVal)
 		if b.Len() > colEstimateCacheRangesKeyLimit {
 			return colEstimateCacheKey{}, false
 		}
