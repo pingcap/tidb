@@ -137,15 +137,6 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
-<<<<<<< HEAD:pkg/util/processinfo.go
-	if pi.StmtCtx != nil {
-		if pi.MemTracker != nil {
-			bytesConsumed = pi.MemTracker.BytesConsumed()
-		}
-		if pi.DiskTracker != nil {
-			diskConsumed = pi.DiskTracker.BytesConsumed()
-=======
-	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
 	var affectedRows any
 	if pi.RefCountOfStmtCtx != nil && pi.RefCountOfStmtCtx.TryIncrease() {
 		defer pi.RefCountOfStmtCtx.Decrease()
@@ -153,18 +144,10 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 			if pi.MemTracker != nil {
 				bytesConsumed = pi.MemTracker.BytesConsumed()
 			}
-			if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
-				memArbitration = dur.Seconds()
-			}
-			if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
-				memWaitArbitrateStartTime = ts.In(tz).Format("2006-01-02 15:04:05.999")
-				memWaitArbitrateBytes = sz
-			}
 			if pi.DiskTracker != nil {
 				diskConsumed = pi.DiskTracker.BytesConsumed()
 			}
 			affectedRows = pi.StmtCtx.AffectedRows()
->>>>>>> 032f5ac5b32 (session: guard process info StmtCtx reads (#68949)):pkg/session/sessmgr/processinfo.go
 		}
 	}
 

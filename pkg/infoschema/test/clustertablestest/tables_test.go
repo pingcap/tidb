@@ -138,24 +138,14 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-<<<<<<< HEAD
 	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-=======
-	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "root",
 		Host:              "127.0.0.1",
 		Command:           mysql.ComQuery,
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
->>>>>>> 032f5ac5b32 (session: guard process info StmtCtx reads (#68949))
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -247,7 +237,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg3",
 		SessionAlias:      "中文alias",
-		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
@@ -294,12 +284,8 @@ func TestSomeTables(t *testing.T) {
 		CurTxnStartTS:     410090409861578752,
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
-<<<<<<< HEAD
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
-=======
-		StmtCtx:           se2.GetSessionVars().StmtCtx,
-		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
->>>>>>> 032f5ac5b32 (session: guard process info StmtCtx reads (#68949))
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
