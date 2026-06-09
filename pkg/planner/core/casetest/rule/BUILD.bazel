@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "rule_cdc_join_reorder_test.go",
         "rule_derive_topn_from_window_test.go",
         "rule_eliminate_projection_test.go",
         "rule_inject_extra_projection_test.go",
@@ -27,6 +28,7 @@ go_test(
         "//pkg/planner/util/coreusage",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/types",
