@@ -1595,7 +1595,9 @@ func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName
 	}
 	dbName := name.DBName
 	if dbName.L == "" {
-		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		// Cannot determine source database (e.g., derived table aliasing clears DBName).
+		// Skip masking rather than risk applying the wrong policy via CurrentDB fallback.
+		return nil, nil, nil
 	}
 	tbl, err := b.is.TableByName(context.Background(), dbName, tblName)
 	if err != nil {
@@ -2291,7 +2293,13 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
-		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
+		firstChildNames := u.Children()[0].OutputNames()
+		names = append(names, &types.FieldName{
+			DBName:      firstChildNames[i].DBName,
+			OrigTblName: firstChildNames[i].OrigTblName,
+			OrigColName: firstChildNames[i].OrigColName,
+			ColName:     firstChildNames[i].ColName,
+		})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -8213,7 +8221,12 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 		}
 		for i, n := range def.ColNameList {
 			clonedNames[i].ColName = n
-			clonedNames[i].OrigColName = n
+			// Preserve OrigColName for masking policy lookup — it points to the
+			// real source column name, which is needed for policy resolution.
+			// Only set OrigColName when it wasn't already set by the CTE merge path.
+			if clonedNames[i].OrigColName.L == "" {
+				clonedNames[i].OrigColName = n
+			}
 		}
 	}
 	p.SetOutputNames(clonedNames)

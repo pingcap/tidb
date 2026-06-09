@@ -95,7 +95,6 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 	e.SetInitCap(1)
 	e.SetMaxChunkSize(1)
 	e.Init(p)
-	e.MaskingExprs = p.MaskingExprs
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -218,6 +217,7 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
+	e.MaskingExprs = p.MaskingExprs
 	e.buildVirtualColumnInfo()
 
 	sessVars := e.Ctx().GetSessionVars()
@@ -465,6 +465,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 // applyMaskingExprs evaluates masking expressions for each row in the chunk and
 // replaces the original column values with masked values.
 func applyMaskingExprs(sctx sessionctx.Context, schema *expression.Schema, maskingExprs []expression.Expression, req *chunk.Chunk) error {
+	if len(maskingExprs) != len(schema.Columns) {
+		return errors.Errorf("masking expr count mismatch: got %d, schema has %d columns", len(maskingExprs), len(schema.Columns))
+	}
 	fieldTypes := make([]*types.FieldType, len(schema.Columns))
 	for i, col := range schema.Columns {
 		fieldTypes[i] = col.RetType
