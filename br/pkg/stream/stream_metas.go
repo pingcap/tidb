@@ -654,7 +654,9 @@ type Migrations struct {
 	Layers []*OrderedMigration `json:"layers"`
 }
 
-// GetReadLock locks the storage and make sure there won't be other one modify this backup.
+// GetReadLock locks the storage and makes sure no other writer can modify this backup.
+// onLeaseLost is called when the returned lock loses its lease; callers must
+// provide it and stop any work protected by the lock when it fires.
 func (m *MigrationExt) GetReadLock(ctx context.Context, hint string, onLeaseLost func()) (*objstore.RemoteLock, error) {
 	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint, onLeaseLost, m.clock)
 }

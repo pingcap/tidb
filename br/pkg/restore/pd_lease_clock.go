@@ -73,8 +73,8 @@ func parsePDLeaseClockNowSignalDir(raw string) (string, error) {
 		}
 		return raw, nil
 	}
-	key, value, ok := strings.Cut(strings.TrimSpace(raw), "=")
-	if !ok || key != "dir" || value == "" {
+	key, value, _ := strings.Cut(strings.TrimSpace(raw), "=")
+	if key != "dir" || value == "" {
 		return "", errors.New("lease-clock-pd-now-signal requires dir=<dir>")
 	}
 	return value, nil
