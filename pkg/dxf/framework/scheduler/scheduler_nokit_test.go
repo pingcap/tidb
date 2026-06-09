@@ -39,7 +39,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func newSchedulerRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+func newSessionPoolForStore(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
 	t.Helper()
 
 	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
@@ -51,7 +51,7 @@ func newSchedulerRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) tidbu
 	return sePool
 }
 
-func newSchedulerMockRuntime(
+func newMockRuntime(
 	ctrl *gomock.Controller,
 	store kv.Storage,
 	sePool tidbutil.DestroyableSessionPool,
@@ -90,20 +90,20 @@ func TestBaseSchedulerInitChecksTaskRuntime(t *testing.T) {
 
 	taskStore := &storeWithKS{ks: task.Keyspace}
 	sch := NewBaseScheduler(context.Background(), task, Param{
-		TaskRuntime: newSchedulerMockRuntime(ctrl, taskStore, newSchedulerRuntimeSessionPool(t, taskStore)),
+		TaskRuntime: newMockRuntime(ctrl, taskStore, newSessionPoolForStore(t, taskStore)),
 	})
 	require.NoError(t, sch.Init())
 
 	sch = NewBaseScheduler(context.Background(), task, Param{
-		TaskRuntime: newSchedulerMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
+		TaskRuntime: newMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
 	})
 	require.ErrorContains(t, sch.Init(), "store keyspace mismatch with task")
 
 	sch = NewBaseScheduler(context.Background(), task, Param{
-		TaskRuntime: newSchedulerMockRuntime(
+		TaskRuntime: newMockRuntime(
 			ctrl,
 			taskStore,
-			newSchedulerRuntimeSessionPool(t, &storeWithKS{ks: "session_ks"}),
+			newSessionPoolForStore(t, &storeWithKS{ks: "session_ks"}),
 		),
 	})
 	require.ErrorContains(t, sch.Init(), "invalid task runtime with mismatched keyspace")

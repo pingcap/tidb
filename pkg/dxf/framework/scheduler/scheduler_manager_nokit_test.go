@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,36 +46,33 @@ func (s *storeWithKS) GetKeyspace() string {
 	return s.ks
 }
 
-type schedulerTestSession struct {
+type sessionWithSQLServer struct {
 	*utilmock.Context
 	server sqlsvrapi.Server
 }
 
-func (s *schedulerTestSession) GetSQLServer() sqlsvrapi.Server {
+func (s *sessionWithSQLServer) GetSQLServer() sqlsvrapi.Server {
 	return s.server
 }
 
-func newSchedulerTestRuntime(t *testing.T, ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockRuntime {
+func newRuntimeWithStore(t *testing.T, ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockRuntime {
 	t.Helper()
 
-	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
-	runtime.EXPECT().Store().Return(store).AnyTimes()
-	runtime.EXPECT().SysSessionPool().Return(newSchedulerRuntimeSessionPool(t, store)).AnyTimes()
-	return runtime
+	return newMockRuntime(ctrl, store, newSessionPoolForStore(t, store))
 }
 
-func newSchedulerTestRuntimeHandle(ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockKSRuntimeHandle {
+func newRuntimeHandle(ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockKSRuntimeHandle {
 	runtimeHandle := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
 	runtimeHandle.EXPECT().Store().Return(store).AnyTimes()
 	runtimeHandle.EXPECT().SysSessionPool().Return(nil).AnyTimes()
 	return runtimeHandle
 }
 
-func expectSchedulerRuntimeSession(ctrl *gomock.Controller, taskMgr *mock.MockTaskManager, runtime sqlsvrapi.Runtime) {
+func expectRuntimeFromNewSession(ctrl *gomock.Controller, taskMgr *mock.MockTaskManager, runtime sqlsvrapi.Runtime) {
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	server.EXPECT().GetRuntime().Return(runtime).AnyTimes()
 	taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&schedulerTestSession{
+		return fn(&sessionWithSQLServer{
 			Context: utilmock.NewContext(),
 			server:  server,
 		})
@@ -197,7 +195,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	mgr := NewManager(context.Background(), &storeWithKS{}, taskMgr, "1", proto.NodeResourceForTest)
-	expectSchedulerRuntimeSession(ctrl, taskMgr, newSchedulerTestRuntime(t, ctrl, mgr.store))
+	expectRuntimeFromNewSession(ctrl, taskMgr, newRuntimeWithStore(t, ctrl, mgr.store))
 	RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param Param) Scheduler {
 			mockScheduler := NewBaseScheduler(ctx, task, param)
@@ -241,47 +239,77 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler"))
 }
 
+type crossKeyspaceStartCase struct {
+	ctrl      *gomock.Controller
+	taskMgr   *mock.MockTaskManager
+	manager   *Manager
+	task      *proto.Task
+	taskStore *storeWithKS
+	server    *sqlsvrapimock.MockServer
+}
+
+func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *crossKeyspaceStartCase {
+	t.Helper()
+	ClearSchedulerFactory()
+	t.Cleanup(ClearSchedulerFactory)
+
+	ctrl := gomock.NewController(t)
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	manager := NewManager(context.Background(), &storeWithKS{ks: "SYSTEM"}, taskMgr, "1", proto.NodeResourceForTest)
+	task := &proto.Task{TaskBase: proto.TaskBase{
+		ID:       taskID,
+		Key:      taskKey,
+		Type:     proto.TaskTypeExample,
+		Keyspace: "user_ks",
+	}}
+	server := sqlsvrapimock.NewMockServer(ctrl)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
+	taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
+		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
+	})
+
+	return &crossKeyspaceStartCase{
+		ctrl:      ctrl,
+		taskMgr:   taskMgr,
+		manager:   manager,
+		task:      task,
+		taskStore: &storeWithKS{ks: task.Keyspace},
+		server:    server,
+	}
+}
+
+func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
+	runtimeHandle := newRuntimeHandle(tc.ctrl, tc.taskStore)
+	runtimeHandle.EXPECT().Release()
+	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(runtimeHandle, nil)
+	return runtimeHandle
+}
+
+func (tc *crossKeyspaceStartCase) bookkeeper() string {
+	return fmt.Sprintf("DXF/scheduler/%d", tc.task.ID)
+}
+
 func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
 	t.Run("acquires cross-keyspace runtime and releases it on exit", func(t *testing.T) {
-		ClearSchedulerFactory()
-		t.Cleanup(ClearSchedulerFactory)
-
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-
-		taskMgr := mock.NewMockTaskManager(ctrl)
-		mgr := NewManager(context.Background(), &storeWithKS{ks: "SYSTEM"}, taskMgr, "1", proto.NodeResourceForTest)
-		task := &proto.Task{TaskBase: proto.TaskBase{
-			ID:       101,
-			Key:      "cross-ks-scheduler",
-			Type:     proto.TaskTypeExample,
-			Keyspace: "user_ks",
-		}}
-		taskStore := &storeWithKS{ks: task.Keyspace}
-		runtimeHandle := newSchedulerTestRuntimeHandle(ctrl, taskStore)
-		runtimeHandle.EXPECT().Release()
-		server := sqlsvrapimock.NewMockServer(ctrl)
-		server.EXPECT().AcquireKSRuntime(task.Keyspace, "DXF/scheduler/101").Return(runtimeHandle, nil)
-		taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-		taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-			return fn(&schedulerTestSession{Context: utilmock.NewContext(), server: server})
-		})
+		tc := newCrossKeyspaceStartCase(t, 101, "cross-ks-scheduler")
+		runtimeHandle := tc.expectRuntimeAcquiredAndReleased()
 		runCh := make(chan struct{})
-		RegisterSchedulerFactory(proto.TaskTypeExample, func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
-			require.Same(t, task, gotTask)
-			require.Same(t, runtimeHandle, param.TaskRuntime)
-			require.Same(t, taskStore, param.TaskRuntime.Store())
-			scheduler := mock.NewMockScheduler(ctrl)
-			scheduler.EXPECT().Init().Return(nil)
-			scheduler.EXPECT().ScheduleTask().Do(func() {
-				close(runCh)
+		RegisterSchedulerFactory(proto.TaskTypeExample,
+			func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
+				require.Same(t, tc.task, gotTask)
+				require.Same(t, runtimeHandle, param.TaskRuntime)
+				require.Same(t, tc.taskStore, param.TaskRuntime.Store())
+				scheduler := mock.NewMockScheduler(tc.ctrl)
+				scheduler.EXPECT().Init().Return(nil)
+				scheduler.EXPECT().ScheduleTask().Do(func() {
+					close(runCh)
+				})
+				scheduler.EXPECT().Close()
+				scheduler.EXPECT().GetTask().Return(gotTask).AnyTimes()
+				return scheduler
 			})
-			scheduler.EXPECT().Close()
-			scheduler.EXPECT().GetTask().Return(gotTask).AnyTimes()
-			return scheduler
-		})
 
-		mgr.startScheduler(&task.TaskBase, false, "")
+		tc.manager.startScheduler(&tc.task.TaskBase, false, "")
 		require.Eventually(t, func() bool {
 			select {
 			case <-runCh:
@@ -290,79 +318,42 @@ func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
 				return false
 			}
 		}, 5*time.Second, 100*time.Millisecond)
-		mgr.schedulerWG.Wait()
+		tc.manager.schedulerWG.Wait()
 	})
 
 	t.Run("releases cross-keyspace runtime when scheduler init fails", func(t *testing.T) {
-		ClearSchedulerFactory()
-		t.Cleanup(ClearSchedulerFactory)
+		tc := newCrossKeyspaceStartCase(t, 102, "cross-ks-scheduler-init-fail")
+		tc.task.State = proto.TaskStatePending
+		runtimeHandle := tc.expectRuntimeAcquiredAndReleased()
+		tc.taskMgr.EXPECT().FailTask(gomock.Any(), tc.task.ID, tc.task.State, gomock.Any()).Return(nil)
+		RegisterSchedulerFactory(proto.TaskTypeExample,
+			func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
+				require.Same(t, runtimeHandle, param.TaskRuntime)
+				require.Same(t, tc.taskStore, param.TaskRuntime.Store())
+				scheduler := mock.NewMockScheduler(tc.ctrl)
+				scheduler.EXPECT().Init().Return(errors.New("init failed"))
+				return scheduler
+			})
 
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-
-		taskMgr := mock.NewMockTaskManager(ctrl)
-		mgr := NewManager(context.Background(), &storeWithKS{ks: "SYSTEM"}, taskMgr, "1", proto.NodeResourceForTest)
-		task := &proto.Task{TaskBase: proto.TaskBase{
-			ID:       102,
-			Key:      "cross-ks-scheduler-init-fail",
-			Type:     proto.TaskTypeExample,
-			State:    proto.TaskStatePending,
-			Keyspace: "user_ks",
-		}}
-		taskStore := &storeWithKS{ks: task.Keyspace}
-		runtimeHandle := newSchedulerTestRuntimeHandle(ctrl, taskStore)
-		runtimeHandle.EXPECT().Release()
-		server := sqlsvrapimock.NewMockServer(ctrl)
-		server.EXPECT().AcquireKSRuntime(task.Keyspace, "DXF/scheduler/102").Return(runtimeHandle, nil)
-		taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-		taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-			return fn(&schedulerTestSession{Context: utilmock.NewContext(), server: server})
-		})
-		taskMgr.EXPECT().FailTask(gomock.Any(), task.ID, task.State, gomock.Any()).Return(nil)
-		RegisterSchedulerFactory(proto.TaskTypeExample, func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
-			require.Same(t, runtimeHandle, param.TaskRuntime)
-			require.Same(t, taskStore, param.TaskRuntime.Store())
-			scheduler := mock.NewMockScheduler(ctrl)
-			scheduler.EXPECT().Init().Return(errors.New("init failed"))
-			return scheduler
-		})
-
-		mgr.startScheduler(&task.TaskBase, false, "")
+		tc.manager.startScheduler(&tc.task.TaskBase, false, "")
 	})
 
 	t.Run("does not start scheduler when cross-keyspace runtime acquisition fails", func(t *testing.T) {
-		ClearSchedulerFactory()
-		t.Cleanup(ClearSchedulerFactory)
-
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-
-		taskMgr := mock.NewMockTaskManager(ctrl)
-		mgr := NewManager(context.Background(), &storeWithKS{ks: "SYSTEM"}, taskMgr, "1", proto.NodeResourceForTest)
-		task := &proto.Task{TaskBase: proto.TaskBase{
-			ID:       104,
-			Key:      "cross-ks-scheduler-acquire-fail",
-			Type:     proto.TaskTypeExample,
-			State:    proto.TaskStatePending,
-			Keyspace: "user_ks",
-		}}
+		tc := newCrossKeyspaceStartCase(t, 104, "cross-ks-scheduler-acquire-fail")
+		tc.task.State = proto.TaskStatePending
 		acquireErr := errors.New("acquire failed")
-		server := sqlsvrapimock.NewMockServer(ctrl)
-		server.EXPECT().AcquireKSRuntime(task.Keyspace, "DXF/scheduler/104").Return(nil, acquireErr)
-		taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-		taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-			return fn(&schedulerTestSession{Context: utilmock.NewContext(), server: server})
-		})
+		tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(nil, acquireErr)
 		var factoryCalled atomic.Bool
-		RegisterSchedulerFactory(proto.TaskTypeExample, func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
-			factoryCalled.Store(true)
-			return mock.NewMockScheduler(ctrl)
-		})
+		RegisterSchedulerFactory(proto.TaskTypeExample,
+			func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
+				factoryCalled.Store(true)
+				return mock.NewMockScheduler(tc.ctrl)
+			})
 
-		mgr.startScheduler(&task.TaskBase, false, "")
+		tc.manager.startScheduler(&tc.task.TaskBase, false, "")
 
 		require.False(t, factoryCalled.Load())
-		require.False(t, mgr.hasScheduler(task.ID))
+		require.False(t, tc.manager.hasScheduler(tc.task.ID))
 	})
 }
 
@@ -378,7 +369,7 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	mgr := NewManager(context.Background(), &storeWithKS{}, taskMgr, "1", proto.NodeResourceForTest)
-	expectSchedulerRuntimeSession(ctrl, taskMgr, newSchedulerTestRuntime(t, ctrl, mgr.store))
+	expectRuntimeFromNewSession(ctrl, taskMgr, newRuntimeWithStore(t, ctrl, mgr.store))
 	taskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{CPUCount: 8}}, nil)
 	mgr.nodeMgr.refreshNodes(mgr.ctx, mgr.taskMgr, mgr.slotMgr)
 	RegisterSchedulerFactory(proto.TaskTypeExample,
