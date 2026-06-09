@@ -127,9 +127,12 @@ func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, rang
 func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range, pkIsHandle bool) (result statistics.RowEstimate, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c := coll.GetCol(colUniqueID)
+	// Two-value lookup: a non-empty UniqueID2colInfoID that happens to be
+	// missing this UniqueID would otherwise silently zero out colInfoID and
+	// cause collisions on cache keys and wrong-column async-load enqueues.
 	colInfoID := colUniqueID
-	if len(coll.UniqueID2colInfoID) > 0 {
-		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
+	if id, ok := coll.UniqueID2colInfoID[colUniqueID]; ok {
+		colInfoID = id
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	// Pass colInfoID (metadata column ID), not colUniqueID. ColumnStatsIsInvalid
