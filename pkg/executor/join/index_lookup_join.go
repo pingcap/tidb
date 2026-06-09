@@ -451,9 +451,9 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			requiredRows = parentRequired
 		}
 	}
-	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
+	initCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
 	for requiredRows > task.outerResult.Len() {
-		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, maxChunkSize, maxChunkSize)
+		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, initCap, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
