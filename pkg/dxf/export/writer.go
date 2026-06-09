@@ -31,10 +31,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const (
-	csvNullToken   = "\\N"
-	writerPartSize = 8 * 1024 * 1024
-	writerPartConc = 4
+const csvNullToken = "\\N"
+
+// Multipart-upload knobs, env-overridable for benchmarking the cross-region
+// write path: covering the bandwidth-delay product needs high part concurrency.
+var (
+	writerPartSize = int64(envInt("TIDB_EXPORT_PART_SIZE_MB", 8)) * 1024 * 1024
+	writerPartConc = envInt("TIDB_EXPORT_PART_CONC", 4)
 )
 
 // fileName mirrors dumpling's naming: <db>.<table>.<ordinal><writer><file>.csv

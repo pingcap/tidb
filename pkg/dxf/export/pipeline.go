@@ -16,8 +16,11 @@ package export
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"go.uber.org/zap"
@@ -69,6 +72,9 @@ func recvCtx[T any](ctx context.Context, ch <-chan T) (v T, ok bool, err error) 
 // The m readers of one encoder share a single channel into it, and the
 // encoder routes encoded buffers to the m writer channels.
 func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, ordinal int, bounds []kv.Key) error {
+	if exportReaderPool > 0 {
+		return e.runPipelineDecoupled(ctx, physicalID, ordinal, exportReaderPool, bounds)
+	}
 	writerCnt := len(bounds) - 1
 	eg, egCtx := errgroup.WithContext(ctx)
 	m := e.taskMeta.effectiveWritersPerEncoder()
@@ -91,7 +97,7 @@ func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, or
 				return e.runReader(egCtx, physicalID, w, workCh)
 			})
 			eg.Go(func() error {
-				return e.runWriter(egCtx, ordinal, w)
+				return e.runFileWriter(egCtx, ordinal, w.id, w.encCh)
 			})
 		}
 		eg.Go(func() error {
@@ -164,12 +170,13 @@ func (e *dumpStepExecutor) runEncoder(ctx context.Context, writers []*writerChan
 	return nil
 }
 
-// runWriter uploads the writer's encoded buffers to the object store, cutting
-// files at FileSize on chunk (row) boundaries.
-func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writerChan) error {
-	fw := newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, w.id, e.filesCounter)
+// runFileWriter uploads one file's encoded buffers to the object store, cutting
+// files at FileSize on chunk (row) boundaries. Both pipelines use it: buffers
+// arrive on encCh in key order, so the output files stay in handle order.
+func (e *dumpStepExecutor) runFileWriter(ctx context.Context, ordinal, id int, encCh <-chan []byte) error {
+	fw := newFileWriter(ctx, e.objStore, e.taskMeta, ordinal, id, e.filesCounter)
 	for {
-		buf, ok, err := recvCtx(ctx, w.encCh)
+		buf, ok, err := recvCtx(ctx, encCh)
 		if err != nil {
 			return err
 		}
@@ -185,4 +192,142 @@ func (e *dumpStepExecutor) runWriter(ctx context.Context, ordinal int, w *writer
 		e.bytesCounter.Add(float64(len(buf)))
 		e.bufPool.Put(buf) //nolint:staticcheck
 	}
+}
+
+// fileCursor is one ordered output file in the decoupled pipeline. Its key
+// range is pre-split into region-sized pages; the shared reader pool advances
+// it one page at a time. A cursor lives in the work queue at most once, so only
+// one reader holds it at a time and its pages reach encCh in key order, where a
+// dedicated writer drains them. This decouples the reader count (concurrent cop
+// reads) from the file/writer count.
+type fileCursor struct {
+	id int
+	// pages are region boundaries: page i covers [pages[i], pages[i+1]).
+	pages   []kv.Key
+	pageIdx int
+	encCh   chan []byte
+}
+
+// runPipelineDecoupled runs the export with a fixed-size reader pool feeding m
+// ordered per-file buffers (m = len(bounds)-1). Readers round-robin region
+// pages across all files, so at most readerCnt cop reads are in flight at once
+// regardless of how many files/writers there are.
+func (e *dumpStepExecutor) runPipelineDecoupled(ctx context.Context, physicalID int64, ordinal, readerCnt int, bounds []kv.Key) error {
+	fileCnt := len(bounds) - 1
+	files := make([]*fileCursor, 0, fileCnt)
+	for i := range fileCnt {
+		pages, err := loadRegionBoundaries(ctx, e.store, bounds[i], bounds[i+1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		files = append(files, &fileCursor{
+			id:    i,
+			pages: pages,
+			encCh: make(chan []byte, exportEncBufSize),
+		})
+	}
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	// Cap at fileCnt so the channel never blocks on re-queue (at most fileCnt
+	// cursors ever exist) and we do not spawn readers that can never get work.
+	queue := make(chan *fileCursor, fileCnt)
+	for _, f := range files {
+		queue <- f
+		eg.Go(func() error {
+			return e.runFileWriter(egCtx, ordinal, f.id, f.encCh)
+		})
+	}
+	var remaining atomic.Int64
+	remaining.Store(int64(fileCnt))
+	readerCnt = min(readerCnt, fileCnt)
+	for range readerCnt {
+		eg.Go(func() error {
+			return e.runReaderPool(egCtx, physicalID, queue, &remaining)
+		})
+	}
+	e.logger.Info("export decoupled pipeline", zap.Int("files", fileCnt), zap.Int("readers", readerCnt))
+	return eg.Wait()
+}
+
+// runReaderPool is one reader of the shared pool: it pulls a file cursor, reads
+// its next region page, encodes it to the file's writer, then re-queues the
+// cursor (or closes the file when its last page is done).
+func (e *dumpStepExecutor) runReaderPool(ctx context.Context, physicalID int64, queue chan *fileCursor, remaining *atomic.Int64) error {
+	exprCtx := newExportExprCtx()
+	distCtx := newExportDistSQLCtx(e.store.GetClient())
+	enc := newCSVEncoder(e.taskMeta.TableInfo.Name.O, e.colInfos)
+	for {
+		f, ok, err := recvCtx(ctx, queue)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := e.readPage(ctx, exprCtx, distCtx, enc, physicalID, f); err != nil {
+			return err
+		}
+		f.pageIdx++
+		if f.pageIdx < len(f.pages)-1 {
+			if err := sendCtx(ctx, queue, f); err != nil {
+				return err
+			}
+			continue
+		}
+		// last page done: close the file and, when this was the last file,
+		// close the queue so the other readers exit. remaining only reaches 0
+		// once every cursor is done, so no re-queue can race this close.
+		close(f.encCh)
+		if remaining.Add(-1) == 0 {
+			close(queue)
+		}
+	}
+}
+
+// readPage cop-scans the cursor's current page in handle order, encoding rows
+// to CSV and flushing to the file's writer at part-size boundaries (between
+// chunks, so a flush never splits a row).
+func (e *dumpStepExecutor) readPage(ctx context.Context, exprCtx *exprstatic.ExprContext,
+	distCtx *distsqlctx.DistSQLContext, enc *csvEncoder, physicalID int64, f *fileCursor) error {
+	start, end := f.pages[f.pageIdx], f.pages[f.pageIdx+1]
+	rs, err := buildScan(ctx, exprCtx, distCtx, e.taskMeta.TableInfo, physicalID,
+		e.colInfos, e.fieldTps, e.taskMeta.SnapshotTS, start, end)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rs.Close()
+	buf, _ := e.bufPool.Get().([]byte)
+	buf = buf[:0]
+	rows := 0
+	for {
+		chk := e.getChunk()
+		if err := rs.Next(ctx, chk); err != nil {
+			e.chunkPool.Put(chk)
+			return errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			e.chunkPool.Put(chk)
+			break
+		}
+		rows += chk.NumRows()
+		buf, err = enc.encodeChunk(chk, buf)
+		e.chunkPool.Put(chk)
+		if err != nil {
+			return err
+		}
+		if int64(len(buf)) >= writerPartSize {
+			if err := sendCtx(ctx, f.encCh, buf); err != nil {
+				return err
+			}
+			buf, _ = e.bufPool.Get().([]byte)
+			buf = buf[:0]
+		}
+	}
+	e.summary.RowCnt.Add(int64(rows))
+	e.rowsCounter.Add(float64(rows))
+	if len(buf) > 0 {
+		return sendCtx(ctx, f.encCh, buf)
+	}
+	e.bufPool.Put(buf) //nolint:staticcheck
+	return nil
 }
