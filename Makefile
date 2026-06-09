@@ -579,6 +579,9 @@ gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3like PrefixClient > pkg/objstore/s3like/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Server > pkg/domain/sqlsvrapi/mock/server_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Runtime > pkg/domain/sqlsvrapi/mock/runtime_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi KSRuntimeHandle > pkg/domain/sqlsvrapi/mock/ksruntime_mock.go
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have

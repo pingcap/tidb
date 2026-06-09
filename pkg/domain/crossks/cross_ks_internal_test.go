@@ -125,7 +125,7 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		first, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
 		require.NoError(t, err)
 		require.Same(t, targetStore, first.Store())
-		require.Same(t, sessPool, first.SessPool())
+		require.Same(t, sessPool, first.SysSessionPool())
 		require.Contains(t, entry.activeHolders, "holder-1")
 
 		duplicate, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)

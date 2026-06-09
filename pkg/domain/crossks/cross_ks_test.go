@@ -331,5 +331,5 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	sessMgr, ok := crossKSMgr.Get(targetKS)
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
-	require.Same(t, sessMgr.SessPool(), handle.SessPool())
+	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
 }
