@@ -215,7 +215,17 @@ func tryColumnEstimateForSingleColRanges(
 	colID := colIDs[0]
 	// Check column stats validity — do not use pseudo estimates here.
 	c := coll.GetCol(colID)
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colID) {
+	// Derive metadata column ID for the async-load path inside
+	// ColumnStatsIsInvalid (the loader keys TableItemID.ID by metadata ID,
+	// not by plan UniqueID). When UniqueID2colInfoID is empty (e.g. mock
+	// HistColls), the IDs coincide.
+	colInfoID := colID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		if id, ok := coll.UniqueID2colInfoID[colID]; ok {
+			colInfoID = id
+		}
+	}
+	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colInfoID) {
 		return statistics.RowEstimate{}, false
 	}
 	// For a single-column unique index where all ranges are non-null point
