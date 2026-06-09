@@ -123,9 +123,6 @@ type DataSource struct {
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
 
-	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
-	AskedColumnGroup [][]*expression.Column
-
 	// InterestingColumns stores columns from this DataSource that are used in the query.
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
