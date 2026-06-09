@@ -43,15 +43,19 @@ func (s *semImpl) isRestrictedRole(roleName, hostname string) bool {
 	return isProtectedName(s.restrictedRoles, roleName, hostname)
 }
 
-// isProtectedName matches a user/role against a protected set. The keyspace
-// username policy strips the tenant prefix first, and only host '%' identities
-// are matched, mirroring how the protected accounts are provisioned.
+// isProtectedName matches a user/role against a protected set. The configured
+// name matches directly, and Starter keyspace-prefixed names also match after
+// the username policy strips the tenant prefix.
 func isProtectedName(set map[string]struct{}, name, hostname string) bool {
-	if len(set) == 0 {
+	if len(set) == 0 || hostname != "%" {
 		return false
 	}
+	if _, ok := set[name]; ok {
+		return true
+	}
+
 	originalName := keyspace.GetUsernamePolicy().GetOriginalUsername(name)
-	if originalName == "" || hostname != "%" {
+	if originalName == "" {
 		return false
 	}
 	_, ok := set[originalName]

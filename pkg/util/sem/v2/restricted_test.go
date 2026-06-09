@@ -46,6 +46,58 @@ func TestRestrictedHint(t *testing.T) {
 }
 
 func TestRestrictedUserStmt(t *testing.T) {
+	sem := buildSEMFromConfig(&Config{
+		RestrictedUsers: []string{"root", "cloud_admin"},
+		RestrictedRoles: []string{"cloud_admin"},
+	})
+
+	p := parser.New()
+	cs, collate := charset.GetDefaultCharsetAndCollate()
+	mustParse := func(sql string) ast.StmtNode {
+		stmt, err := p.ParseOneStmt(sql, cs, collate)
+		require.NoError(t, err, sql)
+		return stmt
+	}
+
+	restrictedSQL := []string{
+		"DROP USER 'root'@'%'",
+		"RENAME USER 'cloud_admin'@'%' TO 'cloud_admin2'@'%'",
+		"GRANT 'app_role'@'%' TO 'root'@'%'",
+		"REVOKE 'app_role'@'%' FROM 'cloud_admin'@'%'",
+		"SET DEFAULT ROLE 'app_role'@'%' TO 'root'@'%'",
+		"GRANT 'cloud_admin'@'%' TO 'app_user'@'%'",
+		"REVOKE 'cloud_admin'@'%' FROM 'app_user'@'%'",
+		"SET ROLE 'cloud_admin'@'%'",
+	}
+	for _, sql := range restrictedSQL {
+		require.Error(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
+	}
+
+	// Wildcard role activation is blocked outright because the expansion may
+	// include a protected role.
+	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET ROLE ALL")))
+	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET ROLE DEFAULT")))
+	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET DEFAULT ROLE ALL TO u")))
+
+	// Unrelated statements are unaffected.
+	allowedSQL := []string{
+		"SELECT 1",
+		"SET ROLE NONE",
+		"DROP USER 'app_user'@'%'",
+		"RENAME USER 'app_user'@'%' TO 'app_user2'@'%'",
+		"GRANT 'app_role'@'%' TO 'app_user'@'%'",
+		"REVOKE 'app_role'@'%' FROM 'app_user'@'%'",
+		"SET DEFAULT ROLE 'app_role'@'%' TO 'app_user'@'%'",
+	}
+	for _, sql := range allowedSQL {
+		require.NoError(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
+	}
+
+	// With nothing configured, the check is a no-op.
+	require.NoError(t, buildSEMFromConfig(&Config{}).checkRestrictedUserStmt(mustParse("SET ROLE ALL")))
+}
+
+func TestRestrictedUserStmtWithStarterUsernamePrefix(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("starter username policy is nextgen-only")
 	}
@@ -62,7 +114,7 @@ func TestRestrictedUserStmt(t *testing.T) {
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 
 	sem := buildSEMFromConfig(&Config{
-		RestrictedUsers: []string{"root", "cloud_admin"},
+		RestrictedUsers: []string{"root"},
 		RestrictedRoles: []string{"cloud_admin"},
 	})
 
@@ -74,40 +126,7 @@ func TestRestrictedUserStmt(t *testing.T) {
 		return stmt
 	}
 
-	restrictedSQL := []string{
-		"DROP USER 'ks.root'@'%'",
-		"RENAME USER 'ks.cloud_admin'@'%' TO 'ks.cloud_admin2'@'%'",
-		"GRANT 'ks.app_role'@'%' TO 'ks.root'@'%'",
-		"REVOKE 'ks.app_role'@'%' FROM 'ks.cloud_admin'@'%'",
-		"SET DEFAULT ROLE 'ks.app_role'@'%' TO 'ks.root'@'%'",
-		"GRANT 'ks.cloud_admin'@'%' TO 'ks.app_user'@'%'",
-		"REVOKE 'ks.cloud_admin'@'%' FROM 'ks.app_user'@'%'",
-		"SET ROLE 'ks.cloud_admin'@'%'",
-	}
-	for _, sql := range restrictedSQL {
-		require.Error(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
-	}
-
-	// Wildcard role activation is blocked outright because the expansion may
-	// include a protected role.
-	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET ROLE ALL")))
-	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET ROLE DEFAULT")))
-	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET DEFAULT ROLE ALL TO u")))
-
-	// Unrelated statements are unaffected.
-	allowedSQL := []string{
-		"SELECT 1",
-		"SET ROLE NONE",
-		"DROP USER 'ks.app_user'@'%'",
-		"RENAME USER 'ks.app_user'@'%' TO 'ks.app_user2'@'%'",
-		"GRANT 'ks.app_role'@'%' TO 'ks.app_user'@'%'",
-		"REVOKE 'ks.app_role'@'%' FROM 'ks.app_user'@'%'",
-		"SET DEFAULT ROLE 'ks.app_role'@'%' TO 'ks.app_user'@'%'",
-	}
-	for _, sql := range allowedSQL {
-		require.NoError(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
-	}
-
-	// With nothing configured, the check is a no-op.
-	require.NoError(t, buildSEMFromConfig(&Config{}).checkRestrictedUserStmt(mustParse("SET ROLE ALL")))
+	require.Error(t, sem.checkRestrictedUserStmt(mustParse("DROP USER 'ks.root'@'%'")))
+	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET ROLE 'ks.cloud_admin'@'%'")))
+	require.NoError(t, sem.checkRestrictedUserStmt(mustParse("DROP USER 'ks.app_user'@'%'")))
 }
