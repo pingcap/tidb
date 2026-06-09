@@ -1694,7 +1694,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefTiDBEnableDDLAnalyze                           = false
 	DefEnableTiDBGCAwareMemoryTrack                   = false
-	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBDefaultStrMatchSelectivity                 = 0
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false
