@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -472,6 +474,43 @@ func TestDebugRoutes(t *testing.T) {
 	}
 }
 
+func TestAutoIDOwnerRouteRegistration(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		defer func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		}()
+	}
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	resp, err := ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	ts.stopServer(t)
+
+	// Starter deploy mode only exists for NextGen. In classic builds, deploymode.IsStarter()
+	// is always false, so only the non-Starter route-registration case applies.
+	if !kerneltype.IsNextGen() {
+		return
+	}
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	ts = createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	resp, err = ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.JSONEq(t, `{"is_owner": false}`, string(body))
+}
+
 func TestFailpointHandler(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 
@@ -552,31 +591,54 @@ func TestTestHandler(t *testing.T) {
 }
 
 func TestServerInfo(t *testing.T) {
+	originalCfg := *config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ForceInitStats = false
+	})
+	defer config.StoreGlobalConfig(&originalCfg)
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
-	resp, err := ts.FetchStatus("/info")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	decoder := json.NewDecoder(resp.Body)
-
-	info := tikvhandler.ServerInfo{}
-	err = decoder.Decode(&info)
-	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
-	require.True(t, info.IsOwner)
+	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	d := do.DDL()
+
+	fetchInfo := func() (tikvhandler.ServerInfo, error) {
+		resp, err := ts.FetchStatus("/info")
+		if err != nil {
+			return tikvhandler.ServerInfo{}, err
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+		if resp.StatusCode != http.StatusOK {
+			return tikvhandler.ServerInfo{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		info := tikvhandler.ServerInfo{}
+		err = json.NewDecoder(resp.Body).Decode(&info)
+		return info, err
+	}
+
+	var info tikvhandler.ServerInfo
+	require.Eventually(t, func() bool {
+		current, err := fetchInfo()
+		if err != nil {
+			return false
+		}
+		info = current
+		return info.IsOwner
+	}, 3*time.Second, 50*time.Millisecond)
+
 	require.Equal(t, cfg.AdvertiseAddress, info.IP)
 	require.Equal(t, cfg.Status.StatusPort, info.StatusPort)
 	require.Equal(t, cfg.Lease, info.Lease)
 	require.Equal(t, mysql.ServerVersion, info.Version)
 	require.Equal(t, versioninfo.TiDBGitHash, info.GitHash)
-
-	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	d := do.DDL()
 	require.Equal(t, d.GetID(), info.ID)
 }
 

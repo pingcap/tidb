@@ -194,6 +194,10 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
+	// Later single-scan/index-covering checks should use columns required by
+	// the DataSource output, not all columns in ds.Schema(). ds.Schema() may
+	// also include columns kept only because ds.AllConds references them, so
+	// build ColsRequiringFullLen from `used` here.
 	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
 		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {

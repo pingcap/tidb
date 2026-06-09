@@ -114,8 +114,11 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 
 	sum = p.PhysicalSchemaProducer.MemoryUsage() +
 		size.SizeOfUint64*2 + // Offset, Count
-		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfPointer + // PrefixCol
 		size.SizeOfInt // PrefixLen
+	if p.PrefixCol != nil {
+		sum += p.PrefixCol.MemoryUsage()
+	}
 	return
 }
 
@@ -160,6 +163,16 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 	executorID := ""
 	for _, item := range p.PartitionBy {
 		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
+	}
+	// init partial order params
+	if p.PrefixCol != nil {
+		truncateKeyExprs := make([]expression.Expression, 0, 1)
+		truncateKeyExprs = append(truncateKeyExprs, p.PrefixCol)
+		truncateKeyExprsPB, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), truncateKeyExprs, client)
+		if err != nil {
+			return nil, err
+		}
+		limitExec.TruncateKeyExpr = truncateKeyExprsPB
 	}
 	if storeType == kv.TiFlash {
 		var err error

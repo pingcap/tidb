@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -374,6 +375,10 @@ func (fmc *fakeMetaClient) ScanRegions(ctx context.Context, key, endKey []byte, 
 		endI = len(fmc.regions)
 	}
 	return fmc.regions[i:endI], nil
+}
+
+func (*fakeMetaClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 func NewFakeMetaClient(t *testing.T, keys [][]byte) *fakeMetaClient {

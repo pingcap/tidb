@@ -53,6 +53,10 @@ type joinGroup struct {
 
 	// All leading hints for this join group.
 	leadingHints []*hint.PlanHints
+	// Whether this join group contains any user-provided LEADING hint. Internal
+	// ordered-leading preferences reuse the same builder path but should not emit
+	// user-facing hint warnings.
+	hasUserLeadingHint bool
 	// Join method hints for each vertex in this join group.
 	// Key is the planID of the vertex.
 	// This is for restore join method hints after join reorder.
@@ -70,6 +74,7 @@ type joinGroup struct {
 func (g *joinGroup) merge(other *joinGroup) {
 	g.vertexes = append(g.vertexes, other.vertexes...)
 	g.leadingHints = append(g.leadingHints, other.leadingHints...)
+	g.hasUserLeadingHint = g.hasUserLeadingHint || other.hasUserLeadingHint
 	if len(other.vertexHints) > 0 {
 		if g.vertexHints == nil {
 			g.vertexHints = make(map[int]*JoinMethodHint, len(other.vertexHints))
@@ -113,12 +118,17 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 
 	var curLeadingHint *hint.PlanHints
+	var curLeadingHintFromUser bool
 	if join.PreferJoinOrder {
 		curLeadingHint = join.HintInfo
+		curLeadingHintFromUser = true
+	} else if join.InternalPreferJoinOrder {
+		curLeadingHint = join.InternalHintInfo
 	}
 	defer func() {
 		if curLeadingHint != nil {
 			resJoinGroup.leadingHints = append(resJoinGroup.leadingHints, curLeadingHint)
+			resJoinGroup.hasUserLeadingHint = resJoinGroup.hasUserLeadingHint || curLeadingHintFromUser
 		}
 	}()
 
@@ -250,7 +260,7 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 		}
 		p.SetChildren(newChildren...)
 
-		if len(joinGroup.leadingHints) > 0 {
+		if joinGroup.hasUserLeadingHint && len(joinGroup.leadingHints) > 0 {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 		}
 		return p, nil
@@ -481,7 +491,7 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	}
 
 	leadingHint, hasDifferent := CheckAndGenerateLeadingHint(j.group.leadingHints)
-	if hasDifferent {
+	if hasDifferent && j.group.hasUserLeadingHint {
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 	}
@@ -506,7 +516,9 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return newNode, true, nil
 	}
 	warn := func() {
-		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+		if j.group.hasUserLeadingHint {
+			j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+		}
 	}
 
 	// BuildLeadingTreeFromList may modify nodes slice, so we need to clone it first.
@@ -517,7 +529,9 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return nil, nil, err
 	}
 	if !ok {
-		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		if j.group.hasUserLeadingHint {
+			j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		}
 		return nil, nodes, nil
 	}
 	return nodeWithHint, nodesAfterHint, nil
@@ -572,6 +586,97 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
+	var startResult *Node
+	if nodeWithHint != nil || len(nodes) < 2 {
+		startResult, err = j.optimizeWithStart(detector, nodes, 0, cartesianFactor, allowNoEQ)
+		if err != nil {
+			return nil, err
+		}
+		if startResult == nil {
+			return group.root, nil
+		}
+		return startResult.p, nil
+	}
+
+	bestStartIdx := 0
+	startResult, bestStartIdx, err = chooseBestGreedyStart(2, func(startIdx int) (*Node, error) {
+		return j.optimizeWithStart(detector, nodes, startIdx, cartesianFactor, allowNoEQ)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if startResult == nil {
+		return group.root, nil
+	}
+	logutil.BgLogger().Debug("greedy join reorder picked multi-start candidate",
+		zap.Int("rootID", group.root.ID()),
+		zap.Int("startIdx", bestStartIdx),
+		zap.Float64("cumCost", startResult.cumCost),
+		zap.Int("nodeCount", len(nodes)))
+	return startResult.p, nil
+}
+
+func cloneNodeForGreedyStart(node *Node) *Node {
+	if node == nil {
+		return nil
+	}
+	cloned := &Node{
+		bitSet:  node.bitSet.Copy(),
+		p:       node.p,
+		cumCost: node.cumCost,
+	}
+	if node.usedEdges != nil {
+		cloned.usedEdges = maps.Clone(node.usedEdges)
+	}
+	return cloned
+}
+
+func cloneNodesForGreedyStart(nodes []*Node) []*Node {
+	cloned := make([]*Node, len(nodes))
+	for i, node := range nodes {
+		cloned[i] = cloneNodeForGreedyStart(node)
+	}
+	return cloned
+}
+
+func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*Node, error)) (*Node, int, error) {
+	var best *Node
+	bestStartIdx := -1
+	for startIdx := range startCount {
+		candidate, err := runner(startIdx)
+		if err != nil {
+			return nil, -1, err
+		}
+		if candidate != nil && (best == nil || cumCostSignificantlyLess(candidate.cumCost, best.cumCost)) {
+			best = candidate
+			bestStartIdx = startIdx
+		}
+	}
+	return best, bestStartIdx, nil
+}
+
+func cumCostSignificantlyLess(cost, bestCost float64) bool {
+	if cost >= bestCost {
+		return false
+	}
+	scale := math.Max(1, math.Max(math.Abs(cost), math.Abs(bestCost)))
+	return bestCost-cost > scale*1e-12
+}
+
+func moveGreedyStartToFront(nodes []*Node, startIdx int) []*Node {
+	if startIdx <= 0 || startIdx >= len(nodes) {
+		return nodes
+	}
+	reordered := make([]*Node, 0, len(nodes))
+	reordered = append(reordered, nodes[startIdx])
+	reordered = append(reordered, nodes[:startIdx]...)
+	reordered = append(reordered, nodes[startIdx+1:]...)
+	return reordered
+}
+
+func (j *joinOrderGreedy) optimizeWithStart(detector *ConflictDetector, nodes []*Node, startIdx int, cartesianFactor float64, allowNoEQ bool) (*Node, error) {
+	nodes = moveGreedyStartToFront(cloneNodesForGreedyStart(nodes), startIdx)
+	var err error
 	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
 		return nil, err
 	}
@@ -599,29 +704,30 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	if detector.HasRemainingEdges(usedEdges) {
 		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
 		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
-			zap.Int("rootID", group.root.ID()),
+			zap.Int("rootID", j.group.root.ID()),
+			zap.Int("startIdx", startIdx),
 			zap.Int("nodes", len(nodes)),
 			zap.Int("totalEdges", totalEdges),
 			zap.Int("usedEdges", usedEdgeCount),
 			zap.Int("missingEdges", missingEdges),
 			zap.String("missingDetail", missingDetail),
 			zap.String("nodeSets", nodeSets),
-			zap.Bool("allInnerJoin", group.allInnerJoin))
+			zap.Bool("allInnerJoin", j.group.allInnerJoin))
 		if intest.InTest {
 			return nil, errors.New("got remaining edges during join reorder")
 		}
-		return group.root, nil
+		return nil, nil
 	}
 	if len(nodes) <= 0 {
 		return nil, errors.New("internal error: bushy join tree nodes is empty")
 	}
-	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins,
-	// It handles situations where there is no edges between different subgraphs,
-	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, true)
+	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins.
+	// We need the returned Node metadata to compare start alternatives by cumCost.
+	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, false)
 	if err != nil {
 		return nil, err
 	}
-	return root.p, nil
+	return root, nil
 }
 
 func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {

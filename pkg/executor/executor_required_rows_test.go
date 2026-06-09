@@ -741,7 +741,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType base.JoinType, innerSrc
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	return b.build(j)
 }
 

@@ -10,12 +10,15 @@ aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
     - terry1purcell
+    - likidu
   sig-critical-approvers-tidb-lightning:
     - yudongusa
     - terry1purcell
+    - likidu
   sig-critical-approvers-parser:
     - yudongusa
     - terry1purcell
+    - likidu
   sig-critical-approvers-dep:
     - bb7133
     - cfzjywxk
@@ -37,61 +40,96 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
+    - joechenrh
   sig-approvers-expression:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-lightning:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
     - OliverS929
+    - joechenrh
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-ddl:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
     - fzzf678
-  sig-approvers-disttask:
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
+  sig-approvers-dxf:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - joechenrh
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
     - D3Hunter
+    - joechenrh
   sig-approvers-infoschema:
     - wjhuang2016
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-owner:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-parser:
     - bb7133
     - Benjamin2037
     - BornChanger
     - D3Hunter
+    - winoros
+    - time-and-fate
+    - AilinKid
+    - qw4990
   sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
@@ -103,6 +141,11 @@ aliases:
     - gmhdbjd
     - wjhuang2016
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-lock:
     - Benjamin2037
     - wjhuang2016
@@ -144,6 +187,7 @@ aliases:
     - fengou1
     - fzzf678
     - gengliqi
+    - ghazalfamilyusa
     - henrybw
     - iamxy
     - js00070
@@ -158,6 +202,7 @@ aliases:
     - spongedu
     - tangwz
     - tsthght
+    - wddevries
     - xzhangxian1008
     - yibin87
     - zhangjinpeng1987
@@ -216,6 +261,7 @@ aliases:
     - ekexium
     - elsa0520
     - eurekaka
+    - fixdb
     - francis0407
     - fzhedu
     - glorv

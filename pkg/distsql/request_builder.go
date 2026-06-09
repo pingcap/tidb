@@ -373,6 +373,8 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 	builder.Request.RunawayChecker = dctx.RunawayChecker
 	builder.Request.TiKVClientReadTimeout = dctx.TiKVClientReadTimeout
 	builder.Request.MaxExecutionTime = dctx.MaxExecutionTime
+	builder.Request.MaxKeysRead = dctx.MaxKeysRead
+	builder.Request.MaxKeysReadCounter = dctx.MaxKeysReadCounter
 	return builder
 }
 
@@ -385,6 +387,12 @@ func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency
+	return builder
+}
+
+// SetCoprRequestRateLimit sets a shared in-flight cop request limiter for this request.
+func (builder *RequestBuilder) SetCoprRequestRateLimit(rateLimit *util.RateLimit) *RequestBuilder {
+	builder.Request.CoprRequestRateLimit = rateLimit
 	return builder
 }
 

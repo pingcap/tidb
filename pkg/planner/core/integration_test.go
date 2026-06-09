@@ -1941,6 +1941,30 @@ func TestVirtualExprPushDown(t *testing.T) {
 		require.NotEmpty(t, plan)
 		tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
 
+		tk.MustExec("drop table if exists t_bug")
+		tk.MustExec(`create table t_bug (
+			id bigint primary key auto_increment,
+			s varchar(20),
+			g varchar(20) generated always as (lower(s)) virtual,
+			key(g),
+			key idx_exp_lower ((lower(s)))
+		)`)
+		tk.MustExec("insert into t_bug(s) values ('B'),('a')")
+		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
+			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
+			"└─TopN root  test.t_bug.g, offset:0, count:1",
+			"  └─IndexLookUp root  ",
+			"    ├─IndexRangeScan(Build) cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:false, stats:pseudo",
+			"    └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
+		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
+			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
+			"└─IndexLookUp root  limit embedded(offset:0, count:1)",
+			"  ├─Limit(Build) cop[tikv]  offset:0, count:1",
+			"  │ └─IndexRangeScan cop[tikv] table:t_bug, index:g(g) range:[\"a\",+inf], keep order:true, stats:pseudo",
+			"  └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
+
 		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 		is := dom.InfoSchema()
@@ -2102,7 +2126,7 @@ func TestIssue48257(t *testing.T) {
 		tk.MustExec("create table t(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t all columns")
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
@@ -2110,7 +2134,7 @@ func TestIssue48257(t *testing.T) {
 			"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
 		))
 		tk.MustExec("insert into t value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
@@ -2128,7 +2152,7 @@ func TestIssue48257(t *testing.T) {
 		tk.MustExec("create table t1(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t1 value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t1 all columns")
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
@@ -2136,7 +2160,7 @@ func TestIssue48257(t *testing.T) {
 			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		))
 		tk.MustExec("insert into t1 value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
