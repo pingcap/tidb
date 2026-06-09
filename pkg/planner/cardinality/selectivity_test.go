@@ -145,8 +145,8 @@ func BenchmarkSelectivity(b *testing.B) {
 // Two sub-benchmarks compare cached vs uncached behavior in a single binary by
 // toggling StmtCtx.ColEstimateCache directly:
 //
-//   - cached:   reset once per outer iteration (mirrors per-statement lifecycle),
-//               so the inner sweep across N indexes shares cache entries.
+//   - cached: reset once per outer iteration (mirrors per-statement lifecycle),
+//     so the inner sweep across N indexes shares cache entries.
 //   - uncached: reset before each per-index call, so no entries are ever reused.
 func BenchmarkColEstimateCacheManyIndexes(b *testing.B) {
 	store, dom := testkit.CreateMockStoreAndDomain(b)
