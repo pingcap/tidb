@@ -183,6 +183,21 @@ func (s *failWriteAfterStorage) WriteFile(ctx context.Context, name string, data
 	return s.Storage.WriteFile(ctx, name, data)
 }
 
+type failDeletePathStorage struct {
+	storeapi.Storage
+	path    string
+	err     error
+	deletes atomic.Int64
+}
+
+func (s *failDeletePathStorage) DeleteFile(ctx context.Context, name string) error {
+	if name == s.path {
+		s.deletes.Add(1)
+		return s.err
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
 func retryBackoffTail(baseBackoff time.Duration, retries int) time.Duration {
 	var total time.Duration
 	for i := 0; i < retries; i++ {
@@ -1883,6 +1898,45 @@ func TestLockWithRetryReclaimsUsingLeaseClock(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, lock)
 	requireFileNotExists(t, filepath.Join(pth, instancePath))
+}
+
+func TestLockWithRetryDeleteFailureDuringStaleCleanupBlocksAcquire(t *testing.T) {
+	ctx := context.Background()
+	base, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetStaleReclaimGrace(30 * time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	stalePath := "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, base, stalePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-delete-failure",
+	})
+
+	deleteErr := errors.New("simulated stale cleanup delete failure")
+	storage := &failDeletePathStorage{
+		Storage: base,
+		path:    stalePath,
+		err:     deleteErr,
+	}
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow, // first acquire attempt chooses a new physical path
+			leaseNow, // stale cleanup decides stalePath is reclaimable
+		},
+	}
+
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, storage, "v1/LOCK", "new writer", func() {}, clock)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, lock)
+	require.Equal(t, int64(1), storage.deletes.Load())
+
+	requireFileExists(t, filepath.Join(pth, stalePath))
+	require.Equal(t, []string{stalePath}, requireListedPathsWithPrefix(t, base, "v1/LOCK.WRIT."))
 }
 
 func TestLockWithRetryRejectsNilOnLeaseLost(t *testing.T) {

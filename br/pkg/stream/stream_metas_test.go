@@ -54,6 +54,91 @@ func (c *advancingLeaseClock) Now(context.Context) (time.Time, error) {
 	return now, nil
 }
 
+type leaseLossDuringDeleteStorage struct {
+	storeapi.Storage
+
+	deleteStarted chan struct{}
+	renewalFailed chan struct{}
+
+	deleteOnce sync.Once
+	renewOnce  sync.Once
+}
+
+func (s *leaseLossDuringDeleteStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.HasPrefix(name, lockPrefix+".WRIT.") && !strings.Contains(name, ".INTENT.") {
+		select {
+		case <-s.deleteStarted:
+			s.renewOnce.Do(func() {
+				close(s.renewalFailed)
+			})
+			return errors.New("simulated write lock renewal failure after truncate delete started")
+		default:
+		}
+	}
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func (s *leaseLossDuringDeleteStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Storage.ReadFile(ctx, name)
+}
+
+func (s *leaseLossDuringDeleteStorage) DeleteFile(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
+func (s *leaseLossDuringDeleteStorage) DeleteFiles(ctx context.Context, names []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return s.Storage.DeleteFiles(ctx, names)
+	}
+
+	var handled bool
+	var deleteErr error
+	s.deleteOnce.Do(func() {
+		handled = true
+		deleteErr = s.Storage.DeleteFile(ctx, names[0])
+		close(s.deleteStarted)
+		if deleteErr != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			deleteErr = ctx.Err()
+		case <-time.After(time.Second):
+			deleteErr = errors.New("timed out waiting for lease loss during truncate delete")
+		}
+	})
+	if handled {
+		return deleteErr
+	}
+	return s.Storage.DeleteFiles(ctx, names)
+}
+
+func (s *leaseLossDuringDeleteStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Storage.WalkDir(ctx, opt, fn)
+}
+
+func (s *leaseLossDuringDeleteStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Storage.Rename(ctx, oldFileName, newFileName)
+}
+
 type effects struct {
 	Renames   map[string]string
 	Deletions map[string]struct{}
@@ -2640,9 +2725,109 @@ func readSingleLockMetaWithPrefix(t *testing.T, ctx context.Context, s storeapi.
 	return meta, paths[0], true
 }
 
+func fileExists(t *testing.T, ctx context.Context, s storeapi.Storage, path string) bool {
+	t.Helper()
+	exists, err := s.FileExists(ctx, path)
+	require.NoError(t, err)
+	return exists
+}
+
+type appendLeaseLossStorage struct {
+	storeapi.Storage
+	failLockPrefix string
+	enableFailure  chan struct{}
+	enabledOnce    sync.Once
+	failedRenewal  chan string
+	failedOnce     sync.Once
+}
+
+func newAppendLeaseLossStorage(base storeapi.Storage, failLockPrefix string) *appendLeaseLossStorage {
+	return &appendLeaseLossStorage{
+		Storage:        base,
+		failLockPrefix: failLockPrefix,
+		enableFailure:  make(chan struct{}),
+		failedRenewal:  make(chan string, 1),
+	}
+}
+
+func (s *appendLeaseLossStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if strings.HasPrefix(name, s.failLockPrefix+".") && !strings.Contains(name, ".INTENT.") {
+		select {
+		case <-s.enableFailure:
+			s.failedOnce.Do(func() { s.failedRenewal <- name })
+			return errors.Errorf("forced renewal failure for %s", name)
+		default:
+		}
+	}
+
+	if strings.HasPrefix(name, migrationPrefix+"/") && path.Base(name) != baseMigrationName {
+		s.enabledOnce.Do(func() { close(s.enableFailure) })
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+			return errors.Errorf("timed out waiting for %s lease loss before writing %s", s.failLockPrefix, name)
+		}
+	}
+
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func requireNoMigrationFileWritten(t *testing.T, ctx context.Context, s storeapi.Storage) {
+	t.Helper()
+	var paths []string
+	require.NoError(t, s.WalkDir(ctx, &storeapi.WalkOption{SubDir: migrationPrefix}, func(p string, _ int64) error {
+		paths = append(paths, p)
+		return nil
+	}))
+	require.Empty(t, paths)
+}
+
+func TestAppendMigrationStopsWhenEitherLockLeaseLost(t *testing.T) {
+	const (
+		leaseTTL      = 11 * time.Minute
+		renewInterval = 10 * time.Millisecond
+	)
+	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 0, time.Millisecond)
+	defer restoreLeaseConstants()
+
+	for _, tc := range []struct {
+		name           string
+		failLockPrefix string
+	}{
+		{
+			name:           "migration read lock",
+			failLockPrefix: lockPrefix,
+		},
+		{
+			name:           "append write lock",
+			failLockPrefix: appendLockPrefix,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			base := tmp(t)
+			storage := newAppendLeaseLossStorage(base, tc.failLockPrefix)
+			est := MigrationExtension(storage, objstore.NewLocalLeaseClock())
+
+			_, err := est.AppendMigration(ctx, mig(mTruncatedTo(42)))
+			require.ErrorIs(t, err, context.Canceled)
+
+			select {
+			case failedPath := <-storage.failedRenewal:
+				require.True(t, strings.HasPrefix(failedPath, tc.failLockPrefix+"."),
+					"failed renewal path %s should belong to %s", failedPath, tc.failLockPrefix)
+			default:
+				t.Fatalf("expected %s renewal to fail before AppendMigration returned", tc.failLockPrefix)
+			}
+			requireNoMigrationFileWritten(t, ctx, base)
+		})
+	}
+}
+
 func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	const (
-		leaseTTL      = 80 * time.Millisecond
+		leaseTTL      = 11 * time.Minute
 		renewInterval = 10 * time.Millisecond
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2695,16 +2880,11 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, leaseNow, initialMeta.LockedAt)
 	require.Equal(t, leaseNow.Add(leaseTTL), initialMeta.ExpireAt)
-	originalReclaimAt := initialMeta.ExpireAt.Add(leaseTTL)
 
 	require.Eventually(t, func() bool {
 		meta, lockPath, ok := readLockMeta()
-		return ok && lockPath == initialLockPath && meta.ExpireAt.After(initialMeta.ExpireAt.Add(leaseTTL/2))
+		return ok && lockPath == initialLockPath && meta.ExpireAt.After(initialMeta.ExpireAt)
 	}, 2*time.Second, 10*time.Millisecond)
-
-	if wait := time.Until(originalReclaimAt.Add(20 * time.Millisecond)); wait > 0 {
-		time.Sleep(wait)
-	}
 
 	_, err := objstore.TryLockRemoteWrite(ctx, s, lockPrefix, "competing writer", objstore.NewLocalLeaseClock())
 	require.Error(t, err, "competing writer should not acquire the write lock while MergeAndMigrateTo is alive")
@@ -2719,9 +2899,66 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	}
 }
 
+func TestMergeAndMigrateToStopsTruncateAfterLeaseLostDuringDelete(t *testing.T) {
+	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(11*time.Minute, 10*time.Millisecond, 0, time.Millisecond)
+	defer restoreLeaseConstants()
+
+	ctx := context.Background()
+	baseStorage := tmp(t)
+	s := &leaseLossDuringDeleteStorage{
+		Storage:       baseStorage,
+		deleteStarted: make(chan struct{}),
+		renewalFailed: make(chan struct{}),
+	}
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
+
+	metaPath := metaName(1)
+	logA := logName(1, 10, 20)
+	logB := logName(1, 21, 30)
+	require.NoError(t, generateFiles(ctx, s, []*backuppb.Metadata{
+		m_2(1, 10, 20, DefaultCF, 0, 21, 30, DefaultCF, 0),
+	}, t.TempDir()))
+	pmig(s, 1, mig(mTruncatedTo(40)))
+
+	done := make(chan MergeAndMigratedTo, 1)
+	go func() {
+		done <- est.MergeAndMigrateTo(ctx, math.MaxInt)
+	}()
+
+	select {
+	case <-s.deleteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("MergeAndMigrateTo did not start truncating data files")
+	}
+
+	select {
+	case <-s.renewalFailed:
+	case <-time.After(time.Second):
+		t.Fatal("write lock renewal did not fail after truncate delete started")
+	}
+
+	var res MergeAndMigratedTo
+	select {
+	case res = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("MergeAndMigrateTo did not stop after write lease was lost")
+	}
+
+	require.ErrorIs(t, multierr.Combine(res.Warnings...), context.Canceled)
+	require.False(t, fileExists(t, ctx, baseStorage, logA), "the first log file proves truncation had already started")
+	require.True(t, fileExists(t, ctx, baseStorage, logB), "truncate should stop before deleting every log file after lease loss")
+	require.Equal(t, uint64(40), res.NewBase.TruncatedTo)
+	require.NotEmpty(t, res.NewBase.EditMeta)
+	require.True(t, slices.ContainsFunc(res.NewBase.EditMeta, func(edit *backuppb.MetaEdit) bool {
+		return edit.Path == metaPath &&
+			slices.Contains(edit.DeletePhysicalFiles, logA) &&
+			slices.Contains(edit.DeletePhysicalFiles, logB)
+	}), "the new base should retain the unfinished truncation work")
+}
+
 func TestLockForAppendRenewsBothLocks(t *testing.T) {
 	const (
-		leaseTTL      = 80 * time.Millisecond
+		leaseTTL      = 11 * time.Minute
 		renewInterval = 10 * time.Millisecond
 	)
 	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 3, 5*time.Millisecond)

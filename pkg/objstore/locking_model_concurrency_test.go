@@ -1241,6 +1241,7 @@ func TestLeaseLockProtectedWorkDeathAndHangSemantics(t *testing.T) {
 		defer cancel()
 		defer objstore.TESTSetStaleReclaimGrace(30 * time.Millisecond)()
 		defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(30*time.Millisecond, time.Millisecond)()
 
 		base, pth := createMockStorage(t)
 		leaseStart := time.Date(2030, 6, 4, 15, 0, 0, 0, time.UTC)
