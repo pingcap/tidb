@@ -1039,6 +1039,49 @@ func TestTryColumnEstimateGuards(t *testing.T) {
 	require.NoError(t, err)
 	// Column path was taken: cache now has an entry for the column.
 	require.NotNil(t, sctx.GetSessionVars().StmtCtx.ColEstimateCache)
+
+	// Asymmetric bounds: range intersection (fix control 54337) can produce index
+	// ranges whose LowVal and HighVal have different lengths, e.g. intersecting
+	// a >= 2 with an (a, b) range gives LowVal=[2], HighVal=[5 3]. Such a range is
+	// not a single-column range — HighVal[1] constrains the second index column —
+	// so the guard must bail out to index-based estimation. Reading only HighVal[0]
+	// on the column path would silently drop the second-column bound.
+	testKit.MustExec("create table t2(a int not null, b int not null, key idx2(a, b))")
+	is = dom.InfoSchema()
+	tb2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2Info := tb2.Meta()
+	idx2Values := make([]types.Datum, 10)
+	for i := range 10 {
+		enc, encErr := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i+1)), types.NewIntDatum(int64(i+1)))
+		require.NoError(t, encErr)
+		idx2Values[i].SetBytes(enc)
+	}
+	statsTbl2 := mockStatsTable(tbl2Info, 10)
+	statsTbl2.SetCol(tbl2Info.Columns[0].ID, &statistics.Column{
+		Histogram:         *mockStatsHistogram(tbl2Info.Columns[0].ID, colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tbl2Info.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+	statsTbl2.SetIdx(tbl2Info.Indices[0].ID, &statistics.Index{
+		Histogram: *mockStatsHistogram(tbl2Info.Indices[0].ID, idx2Values, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:      tbl2Info.Indices[0],
+		StatsVer:  2,
+	})
+	// Key Idx2ColUniqueIDs by the real column info ID so the column stats set
+	// above are resolvable and the guard's bail-out is what is actually tested.
+	statsTbl2.Idx2ColUniqueIDs = map[int64][]int64{tbl2Info.Indices[0].ID: {tbl2Info.Columns[0].ID, tbl2Info.Columns[1].ID}}
+	asymRanges := []*ranger.Range{{
+		LowVal:    []types.Datum{types.NewIntDatum(2)},
+		HighVal:   []types.Datum{types.NewIntDatum(5), types.NewIntDatum(3)},
+		Collators: []collate.Collator{collate.GetBinaryCollator(), collate.GetBinaryCollator()},
+	}}
+	asymSctx := mock.NewContext()
+	_, err = cardinality.GetRowCountByIndexRanges(asymSctx, &statsTbl2.HistColl, tbl2Info.Indices[0].ID, asymRanges, nil)
+	require.NoError(t, err)
+	// Guard fired: index-based estimation was used and no column estimate was cached.
+	require.Nil(t, asymSctx.GetSessionVars().StmtCtx.ColEstimateCache)
 }
 
 // TestColEstimateCacheSharingAcrossDataSources verifies that ColEstimateCache is keyed

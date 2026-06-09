@@ -212,9 +212,12 @@ func tryColumnEstimateForSingleColRanges(
 	if coll == nil || len(indexRanges) == 0 {
 		return statistics.RowEstimate{}, false
 	}
-	// All ranges must be single-column.
+	// All ranges must be single-column on both bounds. Range intersection
+	// (fix control 54337) can produce ranges whose LowVal and HighVal have
+	// different lengths; a longer bound constrains later index columns, so
+	// reading only its first value would silently drop that constraint.
 	for _, r := range indexRanges {
-		if len(r.LowVal) != 1 {
+		if len(r.LowVal) != 1 || len(r.HighVal) != 1 {
 			return statistics.RowEstimate{}, false
 		}
 	}
