@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -30,7 +28,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -40,8 +37,6 @@ import (
 )
 
 const logReplStateCf = "lr-state"
-
-const replicaClusterIDLabelKey = "replica_cluster_id"
 
 var (
 	// tidbWaitJobWatchRetryInterval is used when the etcd watch needs to be
@@ -112,105 +107,6 @@ type tidbWaitJob interface {
 		store kv.Storage,
 		etcdCli *clientv3.Client,
 	) (version uint64, err error)
-}
-
-// waitRegionsInit implements tidbWaitJob for waiting all regions to be initialized.
-type waitRegionsInit struct{}
-
-var _ tidbWaitJob = waitRegionsInit{}
-
-func (j waitRegionsInit) reqKey() string {
-	return constants.PkdbWaitAllRegionInitReq
-}
-
-func (j waitRegionsInit) respKey() string {
-	return constants.PkdbWaitAllRegionInitResp
-}
-
-func (j waitRegionsInit) getVersion(bs []byte) uint64 {
-	tmp := &pdpb.ReplicaWaitRegionsInit{}
-	if err := tmp.Unmarshal(bs); err != nil {
-		logutil.BgLogger().Error("waitRegionsInit failed to unmarshal request to get version", zap.Error(err))
-		return 0
-	}
-	return tmp.GetVersion()
-}
-
-func (j waitRegionsInit) checkAndWait(
-	ctx context.Context,
-	newJobBytes []byte,
-	lastFinishedVersion uint64,
-	store kv.Storage,
-	etcdCli *clientv3.Client,
-) (version uint64, err error) {
-	curr := &pdpb.ReplicaWaitRegionsInit{}
-	if err = curr.Unmarshal(newJobBytes); err != nil {
-		return 0, errors.Errorf("waitRegionsInit failed to unmarshal request: %v", err)
-	}
-	version = curr.GetVersion()
-	if version <= lastFinishedVersion {
-		return version, nil
-	}
-
-	if !curr.GetNeedWait() {
-		return version, nil
-	}
-	storeWithPD, ok := store.(kv.StorageWithPD)
-	if !ok {
-		return 0, errors.Errorf("waitRegionsInit requires kv.StorageWithPD, got %T", store)
-	}
-	pdCli := storeWithPD.GetPDClient()
-	if pdCli == nil {
-		return 0, errors.New("waitRegionsInit got nil pd client")
-	}
-	err = j.wait(ctx, curr.GetSourcePdAddrs(), etcdCli, pdCli.GetClusterID(ctx))
-	if err != nil {
-		return 0, err
-	}
-	return version, nil
-}
-
-func (j waitRegionsInit) wait(
-	runCtx context.Context,
-	sourcePDAddrs []string,
-	etcdCli *clientv3.Client,
-	clusterID uint64,
-) error {
-	cfg := config.GetGlobalConfig()
-	kvCli, err := rawkv.NewClient(
-		runCtx,
-		strings.Split(cfg.Path, ","),
-		cfg.Security.ClusterSecurity(),
-	)
-	if err != nil {
-		return err
-	}
-	defer kvCli.Close()
-
-	sourcePDCli, err := pd.NewClientWithContext(runCtx, sourcePDAddrs, pkdbPDSecurityOption())
-	if err != nil {
-		return err
-	}
-	defer sourcePDCli.Close()
-	tlsCfg, err := pkdbTLSConfig()
-	if err != nil {
-		return err
-	}
-	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
-		"log replication",
-		sourcePDCli.GetServiceDiscovery(),
-		pdhttp.WithTLSConfig(tlsCfg),
-	)
-	defer pdHTTPCli.Close()
-
-	progressTracker := newStandbyInitProgressTracker(pdHTTPCli, etcdCli, clusterID)
-	estRegionCnt, err := progressTracker.estimateTotalRegionCnt(runCtx)
-	if err != nil {
-		return err
-	}
-	return backoffWait(runCtx, func() (bool, error) {
-		return progressTracker.checkInitedAndUpdateProgress(runCtx, kvCli, estRegionCnt)
-	})
 }
 
 type waitDataSync struct{}
@@ -1180,7 +1076,6 @@ func newTiDBWaitJobManager(
 ) *tidbWaitJobManager {
 	return newTiDBWaitJobMgrWithJobs(
 		ctx, store, etcdCli,
-		&waitRegionsInit{},
 		&waitDataSync{},
 		&waitCleanupTiKV{},
 		&waitFlashback{},
@@ -1366,206 +1261,6 @@ func backoffWait(ctx context.Context, f func() (bool, error)) error {
 		err = context.Cause(ctx)
 	}
 	return err
-}
-
-func checkInited(
-	ctx context.Context,
-	cli rawKVScanClient,
-	resumeKey []byte,
-) (allDone bool, nextResumeKey []byte, err error) {
-	// resumeKey is also the end key of the last continuous state prefix obtained
-	// from the last call of this function.
-	currResumeKey := resumeKey
-
-	advanceWithState := func(state *logreplicationpb.LogReplicationState) (allDone bool, gap bool) {
-		if bytes.Compare(state.StartKey, currResumeKey) > 0 {
-			logutil.BgLogger().Info(
-				"range gap found during wait for standby init",
-				zap.String("from", redact.Key(currResumeKey)),
-				zap.String("to", redact.Key(state.StartKey)),
-			)
-			return false, true
-		}
-		if len(state.EndKey) == 0 {
-			return true, false
-		}
-		if bytes.Compare(state.EndKey, currResumeKey) > 0 {
-			currResumeKey = state.EndKey
-		}
-		return false, false
-	}
-
-	for {
-		keys, values, err := cli.Scan(ctx, currResumeKey, nil, pkdbDefaultScanPageSize, rawkv.SetColumnFamily(logReplStateCf))
-		if err != nil {
-			return false, nil, err
-		}
-
-		if len(keys) == 0 || !bytes.Equal(keys[0], currResumeKey) {
-			if len(currResumeKey) == 0 {
-				gapEnd := "infinity"
-				if len(keys) > 0 {
-					gapEnd = redact.Key(keys[0])
-				}
-				logutil.BgLogger().Info(
-					"range gap found during wait for standby init",
-					zap.String("from", "min-key"),
-					zap.String("to", gapEnd),
-				)
-				return false, bytes.Clone(currResumeKey), nil
-			}
-
-			// Between two scans, the state whose start key equals scanKey may have been
-			// removed due to region merge. Reverse-scan one KV to see if a previous state
-			// now covers scanKey.
-			_, prevValues, err := cli.ReverseScan(ctx, currResumeKey, nil, 1, rawkv.SetColumnFamily(logReplStateCf))
-			if err != nil {
-				return false, nil, err
-			}
-			if len(prevValues) == 0 {
-				logutil.BgLogger().Info(
-					"range gap found during wait for standby init",
-					zap.String("from", "(unknown prev key)"),
-					zap.String("to", redact.Key(currResumeKey)),
-				)
-				return false, bytes.Clone(currResumeKey), nil
-			}
-
-			prev := &logreplicationpb.LogReplicationState{}
-			if err := prev.Unmarshal(prevValues[0]); err != nil {
-				return false, nil, err
-			}
-			allDone, gap := advanceWithState(prev)
-			if gap {
-				return false, bytes.Clone(currResumeKey), nil
-			}
-			if allDone {
-				return true, nil, nil
-			}
-		}
-
-		for _, v := range values {
-			state := &logreplicationpb.LogReplicationState{}
-			if err := state.Unmarshal(v); err != nil {
-				return false, nil, err
-			}
-			allDone, gap := advanceWithState(state)
-			if gap {
-				return false, bytes.Clone(currResumeKey), nil
-			}
-			if allDone {
-				return true, nil, nil
-			}
-		}
-
-		// continue next scan if we have some progress
-		if len(keys) == pkdbDefaultScanPageSize {
-			continue
-		}
-		logutil.BgLogger().Info(
-			"range gap found during wait for standby init",
-			zap.String("from", redact.Key(currResumeKey)),
-			zap.String("to", "infinity"),
-		)
-		return false, bytes.Clone(currResumeKey), nil
-	}
-}
-
-type standbyInitProgressTracker struct {
-	pdHTTPCli pdhttp.Client
-	etcdCli   clientv3.KV
-	clusterID uint64
-
-	resumeKey []byte
-}
-
-// newStandbyInitProgressTracker does not take ownership of given clients.
-func newStandbyInitProgressTracker(
-	pdHTTPCli pdhttp.Client,
-	etcdCli clientv3.KV,
-	clusterID uint64,
-) *standbyInitProgressTracker {
-	return &standbyInitProgressTracker{
-		pdHTTPCli: pdHTTPCli,
-		etcdCli:   etcdCli,
-		clusterID: clusterID,
-	}
-}
-
-func (t *standbyInitProgressTracker) estimateTotalRegionCnt(ctx context.Context) (int, error) {
-	stats, err := t.pdHTTPCli.GetRegionStatusByKeyRange(ctx, pdhttp.NewKeyRange(nil, nil), true)
-	if err != nil {
-		return 0, err
-	}
-	if stats == nil || stats.Count <= 0 {
-		return 0, errors.New("get region count returned non-positive count")
-	}
-	return stats.Count, nil
-}
-
-func (t *standbyInitProgressTracker) checkInitedAndUpdateProgress(
-	ctx context.Context,
-	cli rawKVScanClient,
-	estRegionCnt int,
-) (bool, error) {
-	allDone, resumeKey, err := checkInited(ctx, cli, t.resumeKey)
-	if err != nil {
-		return false, err
-	}
-	t.resumeKey = resumeKey
-	if allDone {
-		_, err = t.etcdCli.Put(ctx, constants.PkdbInitPercentage, "100")
-		if err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-
-	learnerCnt, err := t.learnerCnt(ctx)
-	if err != nil {
-		return false, err
-	}
-	percentage := t.percentage(learnerCnt, estRegionCnt)
-	_, err = t.etcdCli.Put(ctx, constants.PkdbInitPercentage, strconv.FormatFloat(percentage, 'f', -1, 32))
-	return false, err
-}
-
-func (t *standbyInitProgressTracker) learnerCnt(ctx context.Context) (int, error) {
-	stores, err := t.pdHTTPCli.GetStores(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	learnerCnt := 0
-	for _, store := range stores.Stores {
-		if !engine.IsReplicatorHTTPResp(&store.Store) || !t.matched(store.Store.Labels) {
-			continue
-		}
-		learnerCnt += int(store.Status.RegionCount)
-	}
-	return learnerCnt, nil
-}
-
-func (t *standbyInitProgressTracker) matched(labels []pdhttp.StoreLabel) bool {
-	clusterID := strconv.FormatUint(t.clusterID, 10)
-	for _, label := range labels {
-		if label.Key == replicaClusterIDLabelKey && label.Value == clusterID {
-			return true
-		}
-	}
-	return false
-}
-
-func (*standbyInitProgressTracker) percentage(learnerCnt, estRegionCnt int) float64 {
-	if estRegionCnt <= 0 {
-		return 0
-	}
-	percentage := float64(learnerCnt) / float64(estRegionCnt) * 100
-	// Only write 100% once standby is fully inited.
-	if percentage >= 100 {
-		return float64(estRegionCnt-1) / float64(estRegionCnt) * 100
-	}
-	return percentage
 }
 
 func scanReplStates(ctx context.Context, cli rawKVScanClient) ([]*logreplicationpb.LogReplicationState, error) {

@@ -125,10 +125,9 @@ func TestInitJobMapLoadsFinishedVersionFromEtcd(t *testing.T) {
 	_, err = etcdCli.Put(ctx, constants.PkdbWaitDataSyncResp, string(respBytes))
 	require.NoError(t, err)
 
-	jobMap := initJobMap(ctx, etcdCli, &waitDataSync{}, &waitRegionsInit{})
+	jobMap := initJobMap(ctx, etcdCli, &waitDataSync{})
 	require.NotNil(t, jobMap)
 	require.Equal(t, uint64(42), jobMap[constants.PkdbWaitDataSyncReq].lastFinishedVer)
-	require.Zero(t, jobMap[constants.PkdbWaitAllRegionInitReq].lastFinishedVer)
 }
 
 func TestInitJobMapStopsRetryOnContextDone(t *testing.T) {
