@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1654,8 +1655,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.BuildMigrations(migs.Migs)
-
 	skipCleanup := false
 	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
 		// Skip the cleanup - this keeps the read lock held
@@ -1663,10 +1662,15 @@ func restoreStream(
 		log.Info("Skipping migration read lock cleanup due to failpoint")
 		skipCleanup = true
 	})
-
 	if !skipCleanup {
 		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
 	}
+	if cfg.RetainLatestMVCCVersion {
+		if err := client.ValidateRetainLatestMVCCCompactionCoverage(migs.Migs); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	client.BuildMigrations(migs.Migs)
 
 	ddlFiles := cfg.ddlFiles
 	updateStats := func(kvCount uint64, size uint64) {
@@ -1731,17 +1735,17 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	type hasLogFilesResult struct {
-		hasFiles bool
-		err      error
+	type hasWriteCFLogFileResult struct {
+		file *logclient.LogDataFileInfo
+		err  error
 	}
-	var hasDMLFilesResultCh <-chan hasLogFilesResult
+	var hasWriteCFLogFileResultCh <-chan hasWriteCFLogFileResult
 	if cfg.RetainLatestMVCCVersion {
-		ch := make(chan hasLogFilesResult, 1)
-		hasDMLFilesResultCh = ch
+		ch := make(chan hasWriteCFLogFileResult, 1)
+		hasWriteCFLogFileResultCh = ch
 		go func() {
-			hasDMLFiles, err := hasAnyLogFiles(ctx, logFilesIter)
-			ch <- hasLogFilesResult{hasFiles: hasDMLFiles, err: err}
+			writeCFLogFile, err := hasAnyWriteCFLogFile(ctx, logFilesIter)
+			ch <- hasWriteCFLogFileResult{file: writeCFLogFile, err: err}
 		}()
 	}
 
@@ -1765,19 +1769,23 @@ func restoreStream(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if hasDMLFilesResultCh != nil {
-			result := <-hasDMLFilesResultCh
+
+		if hasWriteCFLogFileResultCh != nil {
+			result := <-hasWriteCFLogFileResultCh
 			if result.err != nil {
 				return errors.Trace(result.err)
 			}
-			if result.hasFiles {
-				return errors.Annotatef(
-					berrors.ErrInvalidArgument,
-					"%s requires no user DML log files during point restore (DDL files are allowed), but found log files in (%d, %d]",
-					FlagRetainLatestMVCCVersion,
-					cfg.StartTS,
-					cfg.RestoreTS,
-				)
+			if result.file != nil {
+				logutil.CL(ctx).Warn("found write CF log files when retain-latest-mvcc-version is enabled; skip log restore because compacted SST coverage has been validated",
+					zap.Uint64("start-ts", cfg.StartTS),
+					zap.Uint64("restore-ts", cfg.RestoreTS),
+					zap.String("path", result.file.GetPath()),
+					zap.String("cf", result.file.GetCf()),
+					zap.Uint64("min-ts", result.file.GetMinTs()),
+					zap.Uint64("max-ts", result.file.GetMaxTs()),
+					zap.String("metadata-group", result.file.MetaDataGroupName),
+					zap.Int("offset-in-meta-group", result.file.OffsetInMetaGroup),
+					zap.Int("offset-in-merged-group", result.file.OffsetInMergedGroup))
 			}
 			log.Info("enabled restoring compacted SSTs with newest MVCC versions only; skip user DML log restore",
 				zap.String("flag", FlagRetainLatestMVCCVersion))
@@ -2378,12 +2386,22 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 	return currentTS, nil
 }
 
-func hasAnyLogFiles(ctx context.Context, fileIter logclient.LogIter) (bool, error) {
-	r := fileIter.TryNext(ctx)
-	if r.Err != nil {
-		return false, errors.Trace(r.Err)
+func hasAnyWriteCFLogFile(ctx context.Context, fileIter logclient.LogIter) (*logclient.LogDataFileInfo, error) {
+	for {
+		r := fileIter.TryNext(ctx)
+		if r.Err != nil {
+			return nil, errors.Trace(r.Err)
+		}
+		if r.Finished {
+			return nil, nil
+		}
+		if r.Item == nil || r.Item.DataFileInfo == nil {
+			continue
+		}
+		if r.Item.GetCf() == consts.WriteCF {
+			return r.Item, nil
+		}
 	}
-	return !r.Finished, nil
 }
 
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
