@@ -430,8 +430,8 @@ func (h *runtimeHandle) Store() kv.Storage {
 	return h.entry.sessMgr.Store()
 }
 
-func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
-	return h.entry.sessMgr.SessPool()
+func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
+	return h.entry.sessMgr.SysSessionPool()
 }
 
 func (h *runtimeHandle) Release() {
@@ -467,8 +467,8 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
 }
 
-// SessPool returns the session pool used by the session manager.
-func (m *SessionManager) SessPool() util.DestroyableSessionPool {
+// SysSessionPool returns the session pool used by the session manager.
+func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 	return m.sessPool
 }
 

@@ -564,7 +564,7 @@ select /*+ set_var(tidb_index_join_double_read_penalty_cost_rate=1) */ @@tidb_in
 select @@tidb_index_join_double_read_penalty_cost_rate;
 set @@tidb_index_join_double_read_penalty_cost_rate=default;
 select @@tidb_index_join_double_read_penalty_cost_rate;
-select /*+ set_var(tidb_default_string_match_selectivity=0) */ @@tidb_default_string_match_selectivity;
+select /*+ set_var(tidb_default_string_match_selectivity=0.5) */ @@tidb_default_string_match_selectivity;
 select @@tidb_default_string_match_selectivity;
 set @@tidb_default_string_match_selectivity=default;
 select @@tidb_default_string_match_selectivity;
