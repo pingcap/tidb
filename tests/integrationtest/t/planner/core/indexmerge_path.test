@@ -589,3 +589,9 @@ explain format='plan_tree' select /*+ use_index_merge(t, idx_ac, idx_bc) */ * fr
 select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3;
 explain format='plan_tree' select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3 offset 1;
 select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = 1 or b > 5 order by c limit 3 offset 1;
+
+# TestIndexMergeINInORList
+drop table if exists t1;
+create table t1(a int, b int, c int, d int, e int, index iea(e,a), index ieb(e,b), index iec(e,c), index ied(e,d));
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5));
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5)) limit 3;
