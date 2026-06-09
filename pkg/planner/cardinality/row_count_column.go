@@ -160,7 +160,10 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 
 	if cacheable {
 		if cache == nil {
-			cache = make(colEstimateCacheMap)
+			// Pre-size for a typical multi-index sweep so a 15-ish-index
+			// access-path scan does not rehash. Small enough that simple
+			// queries with one or two entries waste only a few hundred bytes.
+			cache = make(colEstimateCacheMap, 16)
 			sc.ColEstimateCache = cache
 		}
 		cache[key] = result
