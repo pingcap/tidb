@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func prepareSimpleHashJoinEnv(fileNamePrefixForTest string) (*testutil.MockDataSource, *testutil.MockDataSource, *hashJoinInfo, *testutil.MockActionOnExceed) {
+func prepareSimpleHashJoinEnv(t *testing.T, fileNamePrefixForTest string) (*testutil.MockDataSource, *testutil.MockDataSource, *hashJoinInfo, *testutil.MockActionOnExceed) {
 	hardLimitBytesNum := int64(5000000)
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 
@@ -67,8 +67,7 @@ func prepareSimpleHashJoinEnv(fileNamePrefixForTest string) (*testutil.MockDataS
 
 	param := spillTestParam{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 1500000, 10000}, fileNamePrefixForTest}
 
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
+	setSpillTestConfig(t, 100, 100)
 	joinType := logicalop.InnerJoin
 
 	returnTypes := getReturnTypes(joinType, param)
@@ -184,8 +183,7 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
+	setSpillTestConfig(t, 100, 100)
 
 	joinTypes := make([]logicalop.JoinType, 0)
 	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
@@ -234,8 +232,7 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
+	setSpillTestConfig(t, 100, 100)
 
 	joinTypes := make([]logicalop.JoinType, 0)
 	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
@@ -292,8 +289,7 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
+	setSpillTestConfig(t, 100, 100)
 
 	joinTypes := make([]logicalop.JoinType, 0)
 	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
@@ -339,8 +335,7 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 		fileNamePrefixForTest: testFuncName,
 	}
 
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
+	setSpillTestConfig(t, 100, 100)
 
 	joinTypes := make([]logicalop.JoinType, 0)
 	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
@@ -357,7 +352,7 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 func TestFallBackAction(t *testing.T) {
 	testFuncName := util.GetFunctionName()
 
-	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv(testFuncName)
+	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv(t, testFuncName)
 
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
@@ -370,7 +365,7 @@ func TestFallBackAction(t *testing.T) {
 func TestIssue59377(t *testing.T) {
 	testFuncName := util.GetFunctionName()
 
-	leftDataSource, rightDataSource, info, _ := prepareSimpleHashJoinEnv(testFuncName)
+	leftDataSource, rightDataSource, info, _ := prepareSimpleHashJoinEnv(t, testFuncName)
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
@@ -385,8 +380,8 @@ func TestIssue59377(t *testing.T) {
 	require.NoError(t, err)
 	chk := exec.NewFirstChunk(hashJoinExec)
 	err = hashJoinExec.Next(tmpCtx, chk)
-	require.True(t, err != nil)
-	_ = hashJoinExec.Close()
+	require.Error(t, err)
+	require.NoError(t, hashJoinExec.Close())
 	util.CheckNoLeakFiles(t, testFuncName)
 }
 
@@ -429,8 +424,7 @@ func TestHashJoinRandomFail(t *testing.T) {
 	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/panicOrError")
 
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
+	setSpillTestConfig(t, 100, 100)
 
 	joinTypes := make([]logicalop.JoinType, 0)
 	joinTypes = append(joinTypes, logicalop.InnerJoin)
