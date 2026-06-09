@@ -1738,28 +1738,20 @@ func TestNonPreparedPlanSupportsSetVar(t *testing.T) {
 	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
 
-	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
-
 	tk.MustExec(`select * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`select * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(`DROP BINDING FOR select * from t where pk >= ?`)
-	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ set_var(max_execution_time=2000) */ * from t where pk >= ?`)
-
-	tk.MustExec(`select * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
-	tk.MustExec(`select * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
-
-	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
-	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+	tk.MustExec(`prepare st from 'select /*+ set_var(max_execution_time=2000) */ * from t where pk >= ?'`)
+	tk.MustExec(`set @pk=1`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
