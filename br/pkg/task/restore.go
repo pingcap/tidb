@@ -1527,17 +1527,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	// Protect restored user tables until PITR log restore releases them. System
-	// tables stay writable because snapshot system table restore updates them.
-	if cfg.ProtectTables && (!isPiTR || keepTableModeRestore) {
+	// Protect newly created user tables during snapshot restore. System tables
+	// stay writable because snapshot system table restore updates them. Incremental
+	// snapshot restore may reuse existing normal tables via CREATE TABLE IF NOT
+	// EXISTS, so it cannot request Restore mode there.
+	if cfg.ProtectTables && !client.IsIncremental() && (!isPiTR || keepTableModeRestore) {
 		for i, table := range tables {
 			if table.Info.IsSequence() || table.Info.IsView() {
 				continue
 			}
-			if keepTableModeRestore {
-				if _, ok := utils.GetSysDBCIStrName(table.DB.Name); ok {
-					continue
-				}
+			if _, ok := utils.GetSysDBCIStrName(table.DB.Name); ok {
+				continue
 			}
 			tableCopy := *table
 			tableCopy.Info = table.Info.Clone()
