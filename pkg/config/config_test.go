@@ -1902,6 +1902,69 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }
 
+func TestExternalWorkloadValid(t *testing.T) {
+	conf := NewConfig()
+	require.NoError(t, conf.Valid())
+
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload api-server must not be empty")
+
+	conf.ExternalWorkload.APIServerAddr = "http://127.0.0.1:1234"
+	conf.ExternalWorkload.TidbPool = ""
+	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
+
+	conf.ExternalWorkload.TidbPool = "pool-a"
+	conf.ExternalWorkload.Role = "unknown"
+	require.ErrorContains(t, conf.Valid(), `invalid external-workload role "unknown"`)
+
+	conf.ExternalWorkload.Role = " GCV2 "
+	require.NoError(t, conf.Valid())
+	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
+}
+
+func TestExternalWorkloadWorkerEnvOverride(t *testing.T) {
+	t.Setenv(EnvVarExecID, "exec-from-env")
+	t.Setenv(EnvVarTiDBPool, "pool-from-env")
+
+	for _, role := range []string{
+		RoleGCWorker,
+		RoleGCV2Worker,
+		RoleTTLTaskWorker,
+		RoleDDLWorker,
+		RoleBatchWorker,
+		RoleImportIntoWorker,
+		RoleSharedWorker,
+		RoleRemoteQueryWorker,
+		RoleAutoAnalyzeWorker,
+	} {
+		t.Run(role, func(t *testing.T) {
+			conf := NewConfig()
+			conf.ExternalWorkload = ExternalWorkload{
+				Enable:        true,
+				Role:          role,
+				TidbPool:      "pool-from-config",
+				APIServerAddr: "http://127.0.0.1:1234",
+				ExecID:        "exec-from-config",
+			}
+			require.NoError(t, conf.Valid())
+			require.Equal(t, "exec-from-env", conf.ExternalWorkload.ExecID)
+			require.Equal(t, "pool-from-env", conf.ExternalWorkload.TidbPool)
+		})
+	}
+
+	conf := NewConfig()
+	conf.ExternalWorkload = ExternalWorkload{
+		Enable:        true,
+		Role:          RoleMaster,
+		TidbPool:      "pool-from-config",
+		APIServerAddr: "http://127.0.0.1:1234",
+		ExecID:        "exec-from-config",
+	}
+	require.NoError(t, conf.Valid())
+	require.Equal(t, "exec-from-config", conf.ExternalWorkload.ExecID)
+	require.Equal(t, "pool-from-config", conf.ExternalWorkload.TidbPool)
+}
+
 func TestGetGlobalKeyspaceName(t *testing.T) {
 	conf := NewConfig()
 	require.Empty(t, conf.KeyspaceName)

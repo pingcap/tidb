@@ -35,9 +35,7 @@ const (
 	RoleAutoAnalyzeWorker = "auto-analyze"
 )
 
-// Environment variables consulted by Valid for worker roles. When a TiDB is
-// scheduled by the controller these are typically injected into the pod and
-// override the corresponding TOML fields.
+// Environment variables consulted by Valid for non-master roles.
 const (
 	EnvVarExecID   = "EXEC_ID"
 	EnvVarTiDBPool = "TIDB_POOL"
@@ -69,10 +67,21 @@ func (w *ExternalWorkload) Valid() error {
 	if !w.Enable {
 		return nil
 	}
-	w.Role = strings.ToLower(w.Role)
+	w.Role = strings.ToLower(strings.TrimSpace(w.Role))
+	w.APIServerAddr = strings.TrimSpace(w.APIServerAddr)
+	w.TidbPool = strings.TrimSpace(w.TidbPool)
+	if w.APIServerAddr == "" {
+		return fmt.Errorf("external-workload api-server must not be empty when enabled")
+	}
+	if w.TidbPool == "" {
+		return fmt.Errorf("external-workload tidb-pool must not be empty when enabled")
+	}
 	switch w.Role {
-	case RoleMaster, RoleGCWorker, RoleGCV2Worker, RoleTTLTaskWorker:
-	case RoleDDLWorker,
+	case RoleMaster:
+	case RoleGCWorker,
+		RoleGCV2Worker,
+		RoleTTLTaskWorker,
+		RoleDDLWorker,
 		RoleBatchWorker,
 		RoleImportIntoWorker,
 		RoleSharedWorker,

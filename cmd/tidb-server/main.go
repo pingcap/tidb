@@ -320,11 +320,8 @@ func initDeployMode(cfg *config.Config) error {
 	return deploymode.Set(cfg.DeployMode)
 }
 
-// initExternalWorkloadManager installs the external workload manager from the current
-// global config. It assumes the caller has already gated on Starter mode and
-// is a no-op when the [external-workload] section is disabled. Failure to dial the
-// controller is logged but does not abort startup; callers that need the
-// controller (worker roles) will fail later when they check IsEnabled.
+// initExternalWorkloadManager installs the external workload manager from the
+// current global config. Dial failures are logged and leave the manager disabled.
 func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) {
 	cfg := config.GetGlobalConfig().ExternalWorkload
 	if !cfg.Enable {
