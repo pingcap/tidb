@@ -57,6 +57,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
+const mockPDRPCTimeout = 3 * time.Second
+
 type mockCodec struct {
 	tikv.Codec
 }
@@ -354,11 +356,14 @@ func newMockPDStoreStatsClient(t *testing.T, store *metapb.Store, stats *pdpb.St
 	t.Cleanup(func() {
 		server.Stop()
 	})
-	conn, err := grpc.DialContext(context.Background(), "bufnet",
+	dialCtx, cancel := context.WithTimeout(context.Background(), mockPDRPCTimeout)
+	defer cancel()
+	conn, err := grpc.DialContext(dialCtx, "bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 			return listener.Dial()
 		}),
-		grpc.WithInsecure())
+		grpc.WithInsecure(),
+		grpc.WithBlock())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, conn.Close())
@@ -620,7 +625,9 @@ func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
 	}
 	pdCli := newMockPDStoreStatsClient(t, store, stats, nil)
 
-	got, err := collectTiKVStoreCapacityFromStoreStats(context.Background(), pdCli, store)
+	ctx, cancel := context.WithTimeout(context.Background(), mockPDRPCTimeout)
+	defer cancel()
+	got, err := collectTiKVStoreCapacityFromStoreStats(ctx, pdCli, store)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, got.StoreID)
 	require.EqualValues(t, 1024, got.TotalBytes)
