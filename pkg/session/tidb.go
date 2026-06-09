@@ -272,8 +272,27 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	return checkStmtLimit(ctx, se, true)
 }
 
+<<<<<<< HEAD
+=======
+// isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
+func isLoadDataLocal(sql sqlexec.Statement) bool {
+	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
+		return s.FileLocRef == ast.FileLocClient
+	}
+	return false
+}
+
+// Avoid probing the socket on fast OLTP DML. This matches SQLKiller's normal
+// connection-alive throttle, while still covering long statements that reach
+// the disconnect-before-commit race without hitting another checkpoint.
+const minConnectionAliveCheckBeforeCommitDuration = time.Second
+
+>>>>>>> 52ab330f545 (server: remove hot-path disconnect monitor (#68685))
 func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	if !sessVars.StartTime.IsZero() && time.Since(sessVars.StartTime) < minConnectionAliveCheckBeforeCommitDuration {
 		return false
 	}
 	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
