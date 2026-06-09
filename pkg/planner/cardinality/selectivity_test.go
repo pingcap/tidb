@@ -131,6 +131,131 @@ func BenchmarkSelectivity(b *testing.B) {
 	pprof.StopCPUProfile()
 }
 
+// BenchmarkColEstimateCacheManyIndexes measures the cost of estimating
+// single-column index range row counts across many indexes that all share a
+// common leading column referenced by the query predicate.
+//
+// Workload model: the optimizer evaluates each candidate access path for a
+// SELECT with a predicate on column `a`. With 15 indexes leading on `a`, every
+// candidate routes through tryColumnEstimateForSingleColRanges and calls
+// GetRowCountByColumnRanges with identical (column, range) arguments. With
+// ColEstimateCache the first index pays the histogram-lookup cost and the rest
+// reuse the cached result; without it every index pays in full.
+//
+// Two sub-benchmarks compare cached vs uncached behavior in a single binary by
+// toggling StmtCtx.ColEstimateCache directly:
+//
+//   - cached:   reset once per outer iteration (mirrors per-statement lifecycle),
+//               so the inner sweep across N indexes shares cache entries.
+//   - uncached: reset before each per-index call, so no entries are ever reused.
+func BenchmarkColEstimateCacheManyIndexes(b *testing.B) {
+	store, dom := testkit.CreateMockStoreAndDomain(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(
+		a int, b int, c int, d int, e int, f int, g int, h int,
+		index idx_a(a),
+		index idx_ab(a, b),
+		index idx_ac(a, c),
+		index idx_ad(a, d),
+		index idx_ae(a, e),
+		index idx_abc(a, b, c),
+		index idx_acd(a, c, d),
+		index idx_abd(a, b, d),
+		index idx_abe(a, b, e),
+		index idx_acf(a, c, f),
+		index idx_adg(a, d, g),
+		index idx_aeh(a, e, h),
+		index idx_abcd(a, b, c, d),
+		index idx_acdf(a, c, d, f),
+		index idx_adef(a, d, e, f)
+	)`)
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(b, err)
+	tblInfo := tb.Meta()
+
+	const rowCount int64 = 100000
+	statsTbl := mockStatsTable(tblInfo, rowCount)
+
+	colValues, err := generateIntDatum(1, 200)
+	require.NoError(b, err)
+	colRepeat := rowCount / int64(len(colValues))
+	for _, col := range tblInfo.Columns {
+		statsTbl.SetCol(col.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(col.ID, colValues, colRepeat, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              col,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+
+	idxValues, err := generateIntDatum(2, 14)
+	require.NoError(b, err)
+	idxRepeat := rowCount / int64(len(idxValues))
+	tp := types.NewFieldType(mysql.TypeBlob)
+	for _, idx := range tblInfo.Indices {
+		statsTbl.SetIdx(idx.ID, &statistics.Index{
+			Histogram: *mockStatsHistogram(idx.ID, idxValues, idxRepeat, tp),
+			Info:      idx,
+			StatsVer:  2,
+		})
+	}
+
+	// Build Idx2ColUniqueIDs keyed by the actual column IDs so coll.GetCol()
+	// finds the column histograms set above. The shared generateMapsForMockStatsTbl
+	// helper stores idxCol.Offset instead, which would miss the SetCol(col.ID,...)
+	// entries when column IDs are not contiguous from 0.
+	idx2Cols := make(map[int64][]int64, len(tblInfo.Indices))
+	col2Idxs := make(map[int64][]int64)
+	for _, idx := range tblInfo.Indices {
+		ids := make([]int64, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			ids = append(ids, tblInfo.Columns[idxCol.Offset].ID)
+		}
+		idx2Cols[idx.ID] = ids
+		col2Idxs[ids[0]] = append(col2Idxs[ids[0]], idx.ID)
+	}
+	statsTbl.Idx2ColUniqueIDs = idx2Cols
+	statsTbl.ColUniqueID2IdxIDs = col2Idxs
+
+	indexIDs := make([]int64, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		indexIDs = append(indexIDs, idx.ID)
+	}
+
+	sctx := tk.Session().GetPlanCtx()
+	sc := tk.Session().GetSessionVars().StmtCtx
+	ranges := getRange(10, 50)
+
+	b.Run("cached", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			sc.ColEstimateCache = nil
+			for _, idxID := range indexIDs {
+				_, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, ranges, nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+
+	b.Run("uncached", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for _, idxID := range indexIDs {
+				sc.ColEstimateCache = nil
+				_, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, ranges, nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+}
+
 func TestOutOfRangeEstimation(t *testing.T) {
 	// Create mock table info
 	tblInfo := &model.TableInfo{
