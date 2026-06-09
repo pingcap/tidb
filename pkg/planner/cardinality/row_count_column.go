@@ -62,18 +62,33 @@ type colEstimateCacheKey struct {
 // result, giving O(1) lookup and storage with no per-key linear scan.
 type colEstimateCacheMap map[colEstimateCacheKey]statistics.RowEstimate
 
+// colEstimateCacheRangesKeyLimit caps the serialized rangesKey length so a
+// single pathological statement (e.g. an enormous IN-list under
+// tidb_opt_range_max_size=0) cannot make the statement-scoped cache retain
+// arbitrary memory. Calls whose serialized ranges exceed this limit bypass the
+// cache entirely — the underlying histogram computation still runs, just
+// without memoization. 16 KiB comfortably fits typical predicates (tens of
+// ranges, each Redact()'d to a few dozen bytes).
+const colEstimateCacheRangesKeyLimit = 16 * 1024
+
 // buildColEstimateCacheKey constructs the cache key for a column estimate.
 // Ranges are serialized to a string so the key is comparable without storing or
 // scanning the range slice. The Collators field of each Range is intentionally
 // omitted: getColumnRowCount uses the collation embedded in each Datum value,
 // not the Range.Collators slice, so it does not affect the estimate result.
-func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, ranges []*ranger.Range, realtimeCount, modifyCount int64) colEstimateCacheKey {
+//
+// Returns ok=false when the serialized rangesKey would exceed
+// colEstimateCacheRangesKeyLimit; the caller must then skip the cache.
+func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, ranges []*ranger.Range, realtimeCount, modifyCount int64) (colEstimateCacheKey, bool) {
 	var b strings.Builder
 	for i, r := range ranges {
 		if i > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteString(r.Redact(errors.RedactLogDisable))
+		if b.Len() > colEstimateCacheRangesKeyLimit {
+			return colEstimateCacheKey{}, false
+		}
 	}
 	return colEstimateCacheKey{
 		physicalID:    physicalID,
@@ -82,7 +97,7 @@ func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, rang
 		realtimeCount: realtimeCount,
 		modifyCount:   modifyCount,
 		rangesKey:     b.String(),
-	}
+	}, true
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
@@ -98,7 +113,13 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
+	// Pass colInfoID (metadata column ID), not colUniqueID. ColumnStatsIsInvalid
+	// enqueues async histogram loads keyed by TableItemID.ID, which the loader
+	// interprets as a metadata column ID (GetColumnByID). When callers pass a
+	// plan-assigned UniqueID — e.g. the table-path PK case in
+	// deriveTablePathStats — the loader cannot resolve it and silently bails,
+	// leaving the column on pseudo estimates forever.
+	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colInfoID) {
 		// Do not cache pseudo/invalid results — they should not be reused
 		// by index estimation paths that require real column stats.
 		var pseudoResult float64
@@ -120,10 +141,13 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		return statistics.DefaultRowEst(pseudoResult), nil
 	}
 
-	// Check the statement-scoped cache before computing.
-	key := buildColEstimateCacheKey(coll.PhysicalID, colInfoID, pkIsHandle, colRanges, coll.RealtimeCount, coll.ModifyCount)
+	// Check the statement-scoped cache before computing. cacheable is false when
+	// the serialized rangesKey would exceed the size cap; in that case we skip
+	// both the lookup and the insert below, so a pathological caller cannot make
+	// the cache retain arbitrarily large keys.
+	key, cacheable := buildColEstimateCacheKey(coll.PhysicalID, colInfoID, pkIsHandle, colRanges, coll.RealtimeCount, coll.ModifyCount)
 	cache, _ := sc.ColEstimateCache.(colEstimateCacheMap)
-	if cache != nil {
+	if cacheable && cache != nil {
 		if cached, ok := cache[key]; ok {
 			return cached, nil
 		}
@@ -134,12 +158,13 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		return statistics.DefaultRowEst(0), errors.Trace(err)
 	}
 
-	// Store the result in the statement-scoped cache.
-	if cache == nil {
-		cache = make(colEstimateCacheMap)
-		sc.ColEstimateCache = cache
+	if cacheable {
+		if cache == nil {
+			cache = make(colEstimateCacheMap)
+			sc.ColEstimateCache = cache
+		}
+		cache[key] = result
 	}
-	cache[key] = result
 	return result, nil
 }
 
