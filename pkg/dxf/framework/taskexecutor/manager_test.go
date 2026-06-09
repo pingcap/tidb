@@ -49,6 +49,10 @@ type testSQLServer struct {
 	stores map[string]kv.Storage
 }
 
+func (*testSQLServer) GetRuntime() sqlsvrapi.Runtime {
+	panic("implement me")
+}
+
 var _ sqlsvrapi.Server = (*testSQLServer)(nil)
 
 func (*testSQLServer) AcquireKSRuntime(string, string) (sqlsvrapi.KSRuntimeHandle, error) {
