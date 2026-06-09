@@ -16,8 +16,11 @@ go_library(
 
 go_test(
     name = "client_test",
+    timeout = "short",
     srcs = ["client_test.go"],
     embed = [":client"],
+    flaky = True,
+    shard_count = 3,
     deps = [
         "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
         "@com_github_stretchr_testify//require",
