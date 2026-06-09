@@ -790,6 +790,10 @@ type SessionVars struct {
 	SysErrorCount uint16
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
+	// prepareStmtDedupCache caches PlanCacheStmt templates keyed by SQL text +
+	// charset + collation + currentDB to skip redundant Parse+Preprocess+Build
+	// on repeated COM_STMT_PREPARE for the same SQL within a session.
+	prepareStmtDedupCache *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
@@ -1103,6 +1107,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
@@ -1123,6 +1130,11 @@ type SessionVars struct {
 
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
+
+	// EnableAlternativeLogicalPlans enables building an extra non-decorrelate
+	// logical alternative when decorrelation does not produce an equivalent
+	// same-order index join candidate.
+	EnableAlternativeLogicalPlans bool
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
@@ -1170,6 +1182,12 @@ type SessionVars struct {
 	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
+
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder bool
+
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projections.
+	TiDBOptJoinReorderThroughProj bool
 
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
@@ -1591,6 +1609,9 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Valid values: "DISABLE" and "COST".
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -1753,6 +1774,9 @@ type SessionVars struct {
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -1932,6 +1956,11 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 	} else {
 		s.StmtCtx.AppendExtraWarning(errors.NewNoStackError(warning))
 	}
+}
+
+// IsPartialOrderedIndexForTopNEnabled indicates whether partial ordered index optimization for TopN is enabled.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -2182,8 +2211,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:        DefTiDBOptIndexPruneThreshold,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans: DefOptEnableAlternativeLogicalPlans,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,
@@ -2224,6 +2255,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughProj: DefTiDBOptJoinReorderThroughProj,
 		TiDBOptJoinReorderThroughSel:  DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
@@ -2289,7 +2321,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		EnableCachePrepareStmt:        DefEnableCachePrepareStmt,
 		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
+		OptPartialOrderedIndexForTopN: DefTiDBOptPartialOrderedIndexForTopN,
+
+		TiDBOptEnableAdvancedJoinReorder: DefTiDBOptEnableAdvancedJoinReorder,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2715,6 +2751,37 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	}
 	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
+}
+
+// PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
+// Including charset, collation, currentDB and sqlMode ensures that the cached
+// PlanCacheStmt is only reused when the session context that affects parsing,
+// name-resolution and cacheability decisions is identical. sqlMode is included
+// because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
+// IsASTCacheable (which computes StmtCacheable) runs on that AST.
+func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+	var modeBuf [8]byte
+	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+}
+
+// GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
+// or nil when the cache is empty or the key is not found.
+func (s *SessionVars) GetPrepareStmtDedupCache(key string) any {
+	if s.prepareStmtDedupCache == nil {
+		return nil
+	}
+	v, _ := s.prepareStmtDedupCache.Get(planCacheStmtKey(key))
+	return v
+}
+
+// SetPrepareStmtDedupCache stores a PrepareStmtCacheEntry under the given key.
+// The cache is lazily initialized and bounded by SessionPlanCacheSize (LRU eviction).
+func (s *SessionVars) SetPrepareStmtDedupCache(key string, val any) {
+	if s.prepareStmtDedupCache == nil {
+		s.prepareStmtDedupCache = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
+	}
+	s.prepareStmtDedupCache.Put(planCacheStmtKey(key), val)
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.

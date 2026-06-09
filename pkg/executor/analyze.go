@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -47,8 +48,10 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -86,6 +89,17 @@ const (
 	idxTask
 )
 
+// runningUnderGoTest reports whether the current process is a Go test binary
+// (`go test`, including `make bench-daily`) rather than a real tidb-server
+// produced by `go build` of cmd/tidb-server. Test binaries register in-process
+// TiDB domains without binding a TiDB RPC listener, so a FLUSH STATS_DELTA
+// CLUSTER broadcast would hit a mock ":10080" and burn the TiKV RPC backoff
+// budget before analyze starts. testing.Testing() is set by the linker only
+// for binaries built via `go test`, so the gate is a no-op in production.
+func runningUnderGoTest() bool {
+	return testing.Testing()
+}
+
 // flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
@@ -98,12 +112,8 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 		return err
 	}
 
-	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
-	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
-	// spend the TiKV RPC backoff budget before analyze really starts. When the test
-	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
-	// only viable approximation.
-	if intest.InTest {
+	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
+	if runningUnderGoTest() {
 		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
 		if err != nil {
 			return err
@@ -256,6 +266,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
+	ctx, stop := e.buildAnalyzeKillCtx(ctx)
+	defer stop()
 
 	// Filter the locked tables.
 	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
@@ -283,6 +295,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	buildStatsConcurrency = min(len(tasks), buildStatsConcurrency)
 
+	// Resolve once on the main goroutine before workers fan out;
+	// SessionVars.systems is not safe for concurrent lookup.
+	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.Ctx())
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if task.colExec != nil {
+			task.colExec.samplingStatsConcurrency = samplingStatsConcurrency
+		}
+	}
+
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
@@ -307,10 +331,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
 	})
+	sentTasks := 0
 TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
+			sentTasks++
 		case <-e.errExitCh:
 			break TASKLOOP
 		case <-gctx.Done():
@@ -328,6 +354,19 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		err = normalizeCtxErrWithCause(ctx, err)
+	} else if ctx.Err() != nil {
+		// Preserve the original cancellation cause before follow-up work (for example stats cache update)
+		// can degrade it into a plain context error.
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err != nil {
+		for task := range taskCh {
+			finishJobWithLog(statsHandle, task.job, err)
+		}
+		for i := sentTasks; i < len(tasks); i++ {
+			finishJobWithLog(statsHandle, tasks[i].job, err)
+		}
 		return err
 	}
 
@@ -635,6 +674,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
+		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)
@@ -658,6 +698,78 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
+// buildAnalyzeKillCtx creates the statement-scoped ANALYZE context.
+// Callers should pass this ctx through every analyze DistSQL path so parent
+// cancellation and SQLKiller share the same cancel cause.
+func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	killer := &e.Ctx().GetSessionVars().SQLKiller
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			status := killer.GetKillSignal()
+			if status == sqlkiller.UnspecifiedKillSignal {
+				continue
+			}
+			err := killer.HandleSignal()
+			if err == nil {
+				err = exeerrors.ErrQueryInterrupted
+			}
+			cancel(err)
+			return
+		}
+	}()
+	return ctx, func() {
+		cancel(context.Canceled)
+	}
+}
+
+// analyzeWorkerExitErr is checked after a task is dequeued but before starting a new
+// analyze request. It lets the worker stop immediately when the statement was already
+// canceled or another worker has aborted the whole analyze workflow.
+func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return normalizeCtxErrWithCause(ctx, ctxErr)
+	}
+	select {
+	case <-ctx.Done():
+		return normalizeCtxErrWithCause(ctx, ctx.Err())
+	case <-errExitCh:
+		return exeerrors.ErrQueryInterrupted
+	default:
+		return nil
+	}
+}
+
+// trySendAnalyzeResult may drop and destroy result when the statement is already
+// aborting, so callers should not reuse result after calling it.
+func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+	select {
+	case resultsCh <- result:
+		return
+	case <-ctx.Done():
+	case <-e.errExitCh:
+	}
+	// Keep the cancel cause consistent with the other analyze paths when a dropped
+	// result only carries a generic context error from lower layers.
+	err := normalizeCtxErrWithCause(ctx, result.Err)
+	if err == nil {
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err == nil {
+		err = exeerrors.ErrQueryInterrupted
+	}
+	finishJobWithLog(statsHandle, result.Job, err)
+	result.DestroyAndPutToPool()
+}
+
+// ctx must be from AnalyzeExec.buildAnalyzeKillCtx
 func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
@@ -681,23 +793,21 @@ func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeT
 		var ok bool
 		task, ok = <-taskCh
 		if !ok {
-			break
+			return
+		}
+		if err := analyzeWorkerExitErr(ctx, e.errExitCh); err != nil {
+			finishJobWithLog(statsHandle, task.job, err)
+			return
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeColumnsPushDownEntry(ctx, e.gp, task.colExec):
-			}
+			result := analyzeColumnsPushDownEntry(ctx, e.gp, task.colExec)
+			e.trySendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		case idxTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeIndexPushdown(task.idxExec):
-			}
+			result := analyzeIndexPushdown(ctx, task.idxExec)
+			e.trySendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		}
 	}
 }

@@ -94,7 +94,9 @@ func TestAdminRecoverIndex(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("c2")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(1), kv.IntHandle(1))
@@ -184,7 +186,8 @@ func TestAdminRecoverIndex(t *testing.T) {
 
 	tblInfo = tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("i1")
-	indexOpr = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	txn, err = store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(2), kv.IntHandle(1))
@@ -234,7 +237,9 @@ func TestAdminRecoverMVIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -279,7 +284,8 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -321,7 +327,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	// Some index entries are missed.
 	// Recover an index don't covered by clustered index.
@@ -342,7 +349,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 
 	// Recover an index covered by clustered index.
 	idx1Info := tblInfo.FindIndexByName("idx1")
-	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
+	indexOpr1, err := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
+	require.NoError(t, err)
 	txn, err = store.Begin()
 	require.NoError(t, err)
 	err = indexOpr1.Delete(ctx, txn, types.MakeDatums("3"), cHandle)
@@ -376,7 +384,8 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 
 	checkFunc := func(tbl table.Table, pid int64, idxValue int) {
 		idxInfo := tbl.Meta().FindIndexByName("c2")
-		indexOpr := tables.NewIndex(pid, tbl.Meta(), idxInfo)
+		indexOpr, err := tables.NewIndex(pid, tbl.Meta(), idxInfo)
+		require.NoError(t, err)
 		ctx := mock.NewContext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
@@ -454,7 +463,8 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("primary")
 	require.NotNil(t, idxInfo)
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -513,9 +523,11 @@ func TestAdminCleanupIndex(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo2 := tblInfo.FindIndexByName("c2")
-	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	indexOpr2, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	require.NoError(t, err)
 	idxInfo3 := tblInfo.FindIndexByName("c3")
-	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	indexOpr3, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -584,9 +596,11 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 
 	checkFunc := func(tbl table.Table, pid int64, idxValue, handle int) {
 		idxInfo2 := tbl.Meta().FindIndexByName("c2")
-		indexOpr2 := tables.NewIndex(pid, tbl.Meta(), idxInfo2)
+		indexOpr2, err := tables.NewIndex(pid, tbl.Meta(), idxInfo2)
+		require.NoError(t, err)
 		idxInfo3 := tbl.Meta().FindIndexByName("c3")
-		indexOpr3 := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
+		indexOpr3, err := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
+		require.NoError(t, err)
 
 		txn, err := store.Begin()
 		sctx := mock.NewContext()
@@ -673,7 +687,8 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("primary")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -724,9 +739,11 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo1 := tblInfo.FindIndexByName("c1")
-	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
+	indexOpr1, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
+	require.NoError(t, err)
 	idxInfo2 := tblInfo.FindIndexByName("c2")
-	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	indexOpr2, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -792,9 +809,11 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo2 := tblInfo.FindIndexByName("c2")
-	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	indexOpr2, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	require.NoError(t, err)
 	idxInfo3 := tblInfo.FindIndexByName("c3")
-	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	indexOpr3, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	require.NoError(t, err)
 
 	c2DanglingIdx := []struct {
 		handle kv.Handle
@@ -875,7 +894,8 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(0), kv.IntHandle(0))
@@ -932,7 +952,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	// Table count > index count.
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
@@ -961,7 +982,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	// Table count < index count.
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i+8), kv.IntHandle(i+8), nil)
@@ -984,7 +1006,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	// Table count = index count, but the index value was wrong.
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i+8), kv.IntHandle(i), nil)
@@ -1054,8 +1077,10 @@ func (tk *inconsistencyTestKit) rebuild() {
 	is := domain.GetDomain(testkit.TryRetrieveSession(tk.ctx)).InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
 	require.NoError(tk.t, err)
-	tk.uniqueIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[0])
-	tk.plainIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[1])
+	tk.uniqueIndex, err = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[0])
+	require.NoError(tk.t, err)
+	tk.plainIndex, err = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[1])
+	require.NoError(tk.t, err)
 }
 
 func TestCheckFailReport(t *testing.T) {
@@ -1311,7 +1336,8 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("a")
-	idxOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idxOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	_, err = idxOpr.Create(ctx, txn, types.MakeDatums(2), kv.IntHandle(100), nil)
@@ -1369,7 +1395,8 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[1]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
@@ -1536,7 +1563,8 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.Indices[0]
-		indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		return indexOpr
 	}
 
@@ -1702,7 +1730,8 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
@@ -1884,7 +1913,8 @@ func TestAdminRecoverGlobalIndex(t *testing.T) {
 	idx := tbl.Indices()[0]
 	require.NotNil(t, idx)
 
-	indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	// Reduce one row of index.
 	// Index count < table count, (-1, -10, 2) is deleted.
@@ -1946,7 +1976,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 		require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"handle: 4, values: [KindInt64 2")
 
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		// Remove corresponding index key/value.
 		// Admin check table will success.
 		txn, err = store.Begin()
@@ -1957,7 +1988,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("admin check table admin_test")
 
-		indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		indexOpr, err = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 
 		// Reduce one row of index.
 		// Index count < table count, (-1, -10, 2) is deleted.
@@ -2040,7 +2072,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 		require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 0, index-values:\"handle: 0, values: [KindInt64 2")
 
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		// Remove corresponding index key/value.
 		// Admin check table will success.
 		txn, err = store.Begin()
@@ -2051,7 +2084,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("admin check table admin_test")
 
-		indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		indexOpr, err = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		// Reduce one row of index.
 		// Index count < table count, (-1, -10, 2) is deleted.
 		txn, err = store.Begin()

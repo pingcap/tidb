@@ -1280,6 +1280,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		}
+		if idxInfo.ConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
+		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
