@@ -82,12 +82,10 @@ For the standard next-gen RealTiKV CI flow, use the Makefile wrapper through
 tests/realtikvtest/scripts/next-gen/run-tests.sh bazel_startertest
 ```
 
-The `tidb-server` binary must be built as a next-gen binary before running the
-script:
-
-```bash
-NEXT_GEN=1 make server
-```
+When `TIDB_SERVER_BIN` is not set, the script builds `bin/tidb-server` from the
+current checkout before starting the external server. The script exports
+`NEXT_GEN=1` internally, so the built binary and the Go tests both use the
+next-gen code paths.
 
 Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
 `bin/tikv-server`, and `bin/tikv-worker` must also be available.
@@ -112,7 +110,7 @@ tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh startertest
 
 Useful environment variables:
 - `TIDB_SERVER_BIN`: Path to the next-gen `tidb-server` binary
-  (default: `bin/tidb-server`)
+  (default: `bin/tidb-server`, built from the current checkout by the script)
 - `STARTER_MAX_ALLOWED_PACKET`: Starter `max-allowed-packet` config used by
   the external server (default: `65536`)
 - `STARTER_TIKV_WORKER_URL`: Starter `tikv-worker-url` config used by the

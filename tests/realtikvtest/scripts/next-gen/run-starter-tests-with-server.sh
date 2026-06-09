@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -euo pipefail
+export NEXT_GEN=1
 
 starter_data_dir=""
 starter_tidb_pid=""
@@ -154,6 +155,21 @@ function activate_starter_server() {
     return 1
 }
 
+function prepare_tidb_server_binary() {
+    local tidb_server_bin="$1"
+
+    if [[ -z "${TIDB_SERVER_BIN:-}" ]]; then
+        echo "Building next-gen tidb-server from current checkout"
+        make server
+    fi
+
+    if [[ ! -x "${tidb_server_bin}" ]]; then
+        echo "tidb-server binary '${tidb_server_bin}' does not exist or is not executable." >&2
+        echo "Build a next-gen TiDB server first, for example: make server" >&2
+        return 1
+    fi
+}
+
 function run_under_cluster() {
     local test_suite="${1:-startertest}"
     local suite_timeout="${2:-40m}"
@@ -168,11 +184,7 @@ function run_under_cluster() {
     cd "${repo_root}"
 
     local tidb_server_bin="${TIDB_SERVER_BIN:-bin/tidb-server}"
-    if [[ ! -x "${tidb_server_bin}" ]]; then
-        echo "tidb-server binary '${tidb_server_bin}' does not exist or is not executable." >&2
-        echo "Build a next-gen TiDB server first, for example: NEXT_GEN=1 make server" >&2
-        return 1
-    fi
+    prepare_tidb_server_binary "${tidb_server_bin}"
 
     local max_allowed_packet="${STARTER_MAX_ALLOWED_PACKET:-65536}"
     local keyspace_name="${STARTER_KEYSPACE_NAME:-SYSTEM}"
@@ -291,7 +303,7 @@ EOF
     fi
 
     echo "Running external starter tests: ./tests/realtikvtest/${test_suite}"
-    NEXT_GEN=1 go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen -timeout "${suite_timeout}" "${extra_go_test_args[@]}"
+    go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen -timeout "${suite_timeout}" "${extra_go_test_args[@]}"
 
     if [[ -z "${run_exit_wait_test}" ]]; then
         if [[ "${test_suite}" == "startertest" && "${#extra_go_test_args[@]}" -eq 0 ]]; then
@@ -303,7 +315,7 @@ EOF
     if is_true "${run_exit_wait_test}" && [[ "${test_suite}" == "startertest" ]]; then
         export TIDB_STARTER_RUN_EXIT_WAIT_TEST=1
         echo "Running destructive external starter exit-wait test"
-        NEXT_GEN=1 go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
+        go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
             -timeout "${STARTER_EXIT_WAIT_TEST_TIMEOUT:-2m}" \
             -run '^TestExternalStarterExitRequiresManagerNotifierForManagerFree/graceful_exit_waits_for_open_connection$' \
             -count=1
