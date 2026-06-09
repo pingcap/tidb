@@ -175,6 +175,20 @@ func (mr *MockSchedulerMockRecorder) OnNextSubtasksBatch(arg0, arg1, arg2, arg3,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnNextSubtasksBatch", reflect.TypeOf((*MockScheduler)(nil).OnNextSubtasksBatch), arg0, arg1, arg2, arg3, arg4)
 }
 
+// OnPrepare mocks base method.
+func (m *MockScheduler) OnPrepare(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OnPrepare", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// OnPrepare indicates an expected call of OnPrepare.
+func (mr *MockSchedulerMockRecorder) OnPrepare(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnPrepare", reflect.TypeOf((*MockScheduler)(nil).OnPrepare), arg0, arg1, arg2)
+}
+
 // OnTick mocks base method.
 func (m *MockScheduler) OnTick(arg0 context.Context, arg1 *proto.Task) {
 	m.ctrl.T.Helper()
@@ -665,6 +679,21 @@ func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 int64) error {
 func (mr *MockTaskManagerMockRecorder) SucceedTask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SucceedTask", reflect.TypeOf((*MockTaskManager)(nil).SucceedTask), arg0, arg1)
+}
+
+// SwitchTaskStepAfterPrepare mocks base method.
+func (m *MockTaskManager) SwitchTaskStepAfterPrepare(arg0 context.Context, arg1 *proto.Task) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStepAfterPrepare", arg0, arg1)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SwitchTaskStepAfterPrepare indicates an expected call of SwitchTaskStepAfterPrepare.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStepAfterPrepare(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepAfterPrepare", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepAfterPrepare), arg0, arg1)
 }
 
 // SwitchTaskStep mocks base method.

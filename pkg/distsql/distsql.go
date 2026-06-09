@@ -78,7 +78,6 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	}
 
 	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)
-	ctx = WithRUV2MetricsInterceptor(ctx, dctx.RUV2RPCInterceptor)
 	option := &kv.ClientSendOption{
 		SessionMemTracker:          dctx.SessionMemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
@@ -178,7 +177,6 @@ func SelectWithRuntimeStats(ctx context.Context, dctx *distsqlctx.DistSQLContext
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	isRestrict bool, dctx *distsqlctx.DistSQLContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)
-	ctx = WithRUV2MetricsInterceptor(ctx, dctx.RUV2RPCInterceptor)
 	failpoint.Inject("mockAnalyzeRequestWaitForCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			<-ctx.Done()
@@ -287,15 +285,6 @@ func WithSQLKvExecCounterInterceptor(ctx context.Context, counter *stmtstats.KvE
 		// face tikv Request. So we need to manually bind RPCInterceptor to ctx. Instead of
 		// calling SetRPCInterceptor on Transaction or Snapshot.
 		return interceptor.WithRPCInterceptor(ctx, counter.RPCInterceptor())
-	}
-	return ctx
-}
-
-// WithRUV2MetricsInterceptor binds an interceptor for client-go to collect
-// statement-level RUv2 request counters and TiKV ExecDetailsV2-based metrics.
-func WithRUV2MetricsInterceptor(ctx context.Context, ruv2Interceptor interceptor.RPCInterceptor) context.Context {
-	if ruv2Interceptor != nil {
-		return interceptor.WithRPCInterceptor(ctx, ruv2Interceptor)
 	}
 	return ctx
 }

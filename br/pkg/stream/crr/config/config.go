@@ -51,7 +51,7 @@ func DefineFlags(flags *pflag.FlagSet) {
 	flags.String(
 		flagStateStorageSubDir,
 		defaults.StateStorageSubDir,
-		"The relative subdirectory under upstream storage used to persist CRR resume state.",
+		"The relative subdirectory under the selected replication status storage used to persist CRR resume state.",
 	)
 	flags.Duration(
 		flagRetryInterval,

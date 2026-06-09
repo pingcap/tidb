@@ -632,8 +632,18 @@ func genRespWithMPPExec(chunks []tipb.Chunk, intermediateOutput []*tipb.Intermed
 	resp.ExecDetails = &kvrpcpb.ExecDetails{
 		TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: uint64(dur / time.Millisecond)},
 	}
+	var processedVersions uint64
+	for _, e := range mppExecs {
+		switch s := e.(type) {
+		case *tableScanExec:
+			processedVersions += uint64(s.rowCnt)
+		case *indexScanExec:
+			processedVersions += uint64(s.rowCnt)
+		}
+	}
 	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
-		TimeDetail: resp.ExecDetails.TimeDetail,
+		TimeDetail:   resp.ExecDetails.TimeDetail,
+		ScanDetailV2: &kvrpcpb.ScanDetailV2{ProcessedVersions: processedVersions},
 	}
 	data, mErr := proto.Marshal(selResp)
 	if mErr != nil {

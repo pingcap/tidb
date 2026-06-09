@@ -238,7 +238,11 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helpe
 			break
 		}
 		for _, r := range regionInfos.Regions {
-			totalSize += r.ApproximateSize * units.MiB
+			// ApproximateSize is SST/blob file size (can reflect compression), while
+			// ApproximateKvSize is KV data size and usually better tracks logical table size.
+			// Use max() because ApproximateKvSize can be zero when TiKV does not report it.
+			sizeInMiB := max(r.ApproximateSize, r.ApproximateKvSize)
+			totalSize += sizeInMiB * units.MiB
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
 		start, err = hex.DecodeString(lastKey)

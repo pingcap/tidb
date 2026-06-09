@@ -488,6 +488,20 @@ const (
 	// version257
 	// Add tidb_enable_no_backslash_escapes_in_like global variable.
 	version257 = 257
+
+	// version258
+	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
+	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
+	version258 = 258
+
+	// version259
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version259 = 259
+
+	// Add mysql.tidb_masking_policy table.
+	version260 = 260
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -501,7 +515,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version257
+var currentBootstrapVersion int64 = version260
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -683,6 +697,9 @@ var (
 		{version: version255, fn: upgradeToVer255},
 		{version: version256, fn: upgradeToVer256},
 		{version: version257, fn: upgradeToVer257},
+		{version: version258, fn: upgradeToVer258},
+		{version: version259, fn: upgradeToVer259},
+		{version: version260, fn: upgradeToVer260},
 	}
 )
 
@@ -2092,4 +2109,22 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 func upgradeToVer257(s sessionapi.Session, _ int64) {
 	// Keep old behavior for upgraded clusters.
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
+}
+
+func upgradeToVer258(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
+func upgradeToVer259(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
+}
+
+func upgradeToVer260(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
 }

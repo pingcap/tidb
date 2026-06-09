@@ -34,6 +34,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{}
 
 	svc, err := New(
 		Deps{
@@ -41,6 +42,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 			Watcher:  h.PDSim,
 			Upstream: h.Upstream,
 			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -63,13 +65,19 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
 	h.requireReplicateAllPending()
 
+	sawExpectedStats := false
 	require.Eventually(t, func() bool {
 		snapshot := svc.Status()
+		if snapshot.Statistic.UpstreamReadMetaFileCount >= 1 &&
+			snapshot.Statistic.EstimatedSyncLogFileCount >= 1 &&
+			snapshot.Statistic.DownstreamCheckFileCount >= 2 {
+			sawExpectedStats = true
+		}
+
 		return snapshot.SafeCheckpoint == upstreamCheckpoint &&
 			snapshot.SyncedTS > 0 &&
-			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
-			snapshot.Statistic.EstimatedSyncLogFileCount == 1 &&
-			snapshot.Statistic.DownstreamCheckFileCount >= 2 &&
+			stateStore.savedState().LastCheckpoint == upstreamCheckpoint &&
+			sawExpectedStats &&
 			snapshot.ConsecutiveFailures == 0 &&
 			!snapshot.LastSuccessTime.IsZero()
 	}, 5*time.Second, 20*time.Millisecond)
@@ -174,6 +182,7 @@ func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{}
 
 	svc, err := New(
 		Deps{
@@ -181,6 +190,7 @@ func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 			Watcher:  h.PDSim,
 			Upstream: h.Upstream,
 			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -229,6 +239,7 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{}
 
 	pd := &watchErrorPDSim{
 		PDSim:     h.PDSim,
@@ -241,6 +252,7 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 			Watcher:  pd,
 			Upstream: h.Upstream,
 			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -462,7 +474,6 @@ func TestServiceStatusEndpoints(t *testing.T) {
 		Type:               checkpoint.EventCheckpointAdvanced,
 		Time:               time.Now(),
 		UpstreamCheckpoint: 42,
-		SafeCheckpoint:     42,
 		SyncedTS:           42,
 		Statistic: &checkpoint.FileStatistic{
 			UpstreamReadMetaFileCount:       3,
@@ -471,6 +482,10 @@ func TestServiceStatusEndpoints(t *testing.T) {
 			PlannedFileSuffixCounts:         map[string]int{".log": 7, ".meta": 3},
 			DownstreamCheckFileSuffixCounts: map[string]int{".log": 8, ".meta": 3},
 		},
+	})
+	status.setPersistentState(PersistentState{
+		LastCheckpoint: 42,
+		SyncedTS:       42,
 	})
 
 	rec = httptest.NewRecorder()
@@ -602,12 +617,12 @@ func TestGetStatusFileName(t *testing.T) {
 		{
 			name:      "parent directory",
 			subDir:    "../state",
-			errSubstr: "must stay within upstream storage",
+			errSubstr: "must stay within selected storage",
 		},
 		{
 			name:      "clean to parent directory",
 			subDir:    "state/../../escape",
-			errSubstr: "must stay within upstream storage",
+			errSubstr: "must stay within selected storage",
 		},
 	}
 

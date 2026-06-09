@@ -54,6 +54,9 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 		{"single-quoted", "SELECT 'hello world'", "SELECT 'hello world'"},
 		{"double-quoted", "SELECT \"hello world\"", "SELECT \"hello world\""},
 		{"_binary prefix", "SELECT _binary 'hello world'", "SELECT _binary 'hello world'"},
+		{"_utf8 prefix", "SELECT _utf8'hello world'", "SELECT _utf8'hello world'"},
+		{"_utf8mb4 prefix", "SELECT _utf8mb4'hello world'", "SELECT _utf8mb4'hello world'"},
+		{"N prefix", "SELECT N'hello world'", "SELECT N'hello world'"},
 		{"escaped '' inside", "SELECT 'it''s here'", "SELECT 'it''s here'"},
 		{"escaped \\' inside", "SELECT 'it\\'s here'", "SELECT 'it\\'s here'"},
 		{"escaped \"\" inside", "SELECT \"say \"\"hi\"\"\"", "SELECT \"say \"\"hi\"\"\""},
@@ -75,6 +78,9 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 		{"single-quoted", "SELECT '\xd2\xe4\xa6\xb8'", "SELECT 0xd2e4a6b8"},
 		{"double-quoted", "SELECT \"\xd2\xe4\xa6\xb8\"", "SELECT 0xd2e4a6b8"},
 		{"_binary prefix preserved", "SELECT _binary '\xd2\xe4\xa6\xb8'", "SELECT _binary 0xd2e4a6b8"},
+		{"_binary prefix without space", "SELECT _binary'\x01'", "SELECT _binary 0x01"},
+		{"_utf8 prefix without space", "SELECT _utf8'\x01'", "SELECT _utf8 0x01"},
+		{"_utf8mb4 prefix without space", "SELECT _utf8mb4'\x01'", "SELECT _utf8mb4 0x01"},
 		{"escaped '' inside", "SELECT '\xd2''\xe4'", "SELECT 0xd227e4"},
 		{"escaped \\' inside", "SELECT '\xd2\\'\xe4'", "SELECT 0xd227e4"},
 		{"escaped \"\" inside", "SELECT \"\xd2\"\"\xe4\"", "SELECT 0xd222e4"},
@@ -91,6 +97,114 @@ func TestBinaryStringLiteralConversion(t *testing.T) {
 		{"multiple control chars", "SELECT '\x01\x02\x03\x04\x05'", "SELECT 0x0102030405"},
 	}
 	for _, tt := range binaryTests {
+		n.SetText(charset.EncodingUTF8Impl, tt.text)
+		require.Equal(t, tt.want, n.Text(), tt.name)
+	}
+}
+
+func TestBinaryStringLiteralSkipsComments(t *testing.T) {
+	n := &node{}
+
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		// -- line comments with quotes must not corrupt the SQL
+		{
+			"-- with apostrophe",
+			"-- don't do this\nSELECT 'hello' FROM t",
+			"-- don't do this\nSELECT 'hello' FROM t",
+		},
+		{
+			"-- with commented-out SQL (even quotes)",
+			"-- SELECT * FROM t WHERE name='John'\nSELECT 1",
+			"-- SELECT * FROM t WHERE name='John'\nSELECT 1",
+		},
+		{
+			"-- double-quote in comment",
+			"-- see table \"users\"\nSELECT \"bar\" FROM t",
+			"-- see table \"users\"\nSELECT \"bar\" FROM t",
+		},
+		{
+			"-- at end of input",
+			"SELECT 1 -- don't",
+			"SELECT 1 -- don't",
+		},
+		{
+			"-- quote at end of comment line",
+			"-- ending with '\nSELECT 'hello'",
+			"-- ending with '\nSELECT 'hello'",
+		},
+		{
+			"-- without space is NOT a comment",
+			"SELECT 1 --1",
+			"SELECT 1 --1",
+		},
+		// # line comments
+		{
+			"# with apostrophe",
+			"# user's config\nSELECT 'value' FROM t",
+			"# user's config\nSELECT 'value' FROM t",
+		},
+		// /* */ block comments
+		{
+			"block comment with apostrophe",
+			"/* it's a test */ SELECT 'value' FROM t",
+			"/* it's a test */ SELECT 'value' FROM t",
+		},
+		{
+			"multi-line block comment with quote",
+			"/*\n * don't modify\n */ SELECT 'value' FROM t",
+			"/*\n * don't modify\n */ SELECT 'value' FROM t",
+		},
+		// -- with form-feed and vertical-tab (unicode.IsSpace matches these)
+		{
+			"-- with form-feed after dashes",
+			"--\f don't\nSELECT 'hello' FROM t",
+			"--\f don't\nSELECT 'hello' FROM t",
+		},
+		{
+			"-- with vertical-tab after dashes",
+			"--\v don't\nSELECT 'hello' FROM t",
+			"--\v don't\nSELECT 'hello' FROM t",
+		},
+		// Executable comments must NOT be skipped (quotes inside are SQL)
+		{
+			"/*! executable - binary inside",
+			"/*!80000 SELECT '\xd2\xe4' */",
+			"/*!80000 SELECT 0xd2e4 */",
+		},
+		{
+			"/*+ hint - binary inside",
+			"/*+ SET_VAR(charset='\xd2\xe4') */ SELECT 1",
+			"/*+ SET_VAR(charset=0xd2e4) */ SELECT 1",
+		},
+		// /*T! and /*M! are skipped as comments (conservative: can't check feature gates from ast)
+		{
+			"/*T! skipped as comment",
+			"/*T![unsupported] don't */ SELECT 'hello' FROM t",
+			"/*T![unsupported] don't */ SELECT 'hello' FROM t",
+		},
+		{
+			"/*M! skipped as comment",
+			"/*M! don't */ SELECT 'hello' FROM t",
+			"/*M! don't */ SELECT 'hello' FROM t",
+		},
+		// Real-world CDC case
+		{
+			"CREATE VIEW with comment quote",
+			"-- (don't use parenthesis)\n\nCREATE OR REPLACE VIEW v AS SELECT 'Attribute' AS t FROM t1 UNION ALL SELECT 'Reference' AS t FROM t2",
+			"-- (don't use parenthesis)\n\nCREATE OR REPLACE VIEW v AS SELECT 'Attribute' AS t FROM t1 UNION ALL SELECT 'Reference' AS t FROM t2",
+		},
+		// Binary string after comment still gets hex-encoded
+		{
+			"comment + binary string",
+			"-- don't\nSELECT '\xd2\xe4' FROM t",
+			"-- don't\nSELECT 0xd2e4 FROM t",
+		},
+	}
+	for _, tt := range tests {
 		n.SetText(charset.EncodingUTF8Impl, tt.text)
 		require.Equal(t, tt.want, n.Text(), tt.name)
 	}

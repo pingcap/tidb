@@ -12,6 +12,8 @@ go_test(
     shard_count = 47,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/executor",
         "//pkg/kv",
         "//pkg/parser",
@@ -32,6 +34,7 @@ go_test(
         "//pkg/util/execdetails",
         "//pkg/util/memory",
         "//pkg/util/mock",
+        "//pkg/util/tls",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",

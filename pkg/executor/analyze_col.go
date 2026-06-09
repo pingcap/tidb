@@ -51,6 +51,10 @@ type AnalyzeColumnsExec struct {
 	baseCount               int64
 	baseModifyCnt           int64
 
+	// Resolved on the main goroutine; SessionVars.systems is not safe for
+	// concurrent lookup across partition workers.
+	samplingStatsConcurrency int
+
 	memTracker *memory.Tracker
 }
 

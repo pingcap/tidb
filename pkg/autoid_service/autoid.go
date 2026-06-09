@@ -312,7 +312,6 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		Endpoints:        etcdAddr,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
-		Source:           "autoid",
 		DialOptions: []grpc.DialOption{
 			grpc.WithBackoffMaxDelay(time.Second * 3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -387,6 +386,11 @@ func (s *Service) Close() {
 	if s.leaderShip != nil {
 		s.leaderShip.Close()
 	}
+}
+
+// IsOwner returns whether this service is the current auto ID owner.
+func (s *Service) IsOwner() bool {
+	return s.leaderShip != nil && s.leaderShip.IsOwner()
 }
 
 // seekToFirstAutoIDSigned seeks to the next valid signed position.

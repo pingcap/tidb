@@ -326,19 +326,17 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int, created_at datetime, index idx(id, created_at))")
 
-	// insert ten rows, the 2,3,4,6,9,10 of them are expired
-	for i := 1; i <= 10; i++ {
-		t := time.Now()
-		if i%2 == 0 || i%3 == 0 {
-			t = t.Add(-time.Hour * 48)
-		}
-
-		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
+	for i := 1; i <= 3; i++ {
+		tk.MustExec("insert into t values(?, ?)", i, time.Now().Format(time.RFC3339))
 	}
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("show stats_meta").Rows()
 	require.Equal(t, rows[0][4], "0")
-	require.Equal(t, rows[0][5], "10")
+	require.Equal(t, rows[0][5], "3")
+
+	for i := 4; i <= 10; i++ {
+		tk.MustExec("insert into t values(?, ?)", i, time.Now().Add(-time.Hour*48).Format(time.RFC3339))
+	}
 	tk.MustExec("alter table t ttl = `created_at` + interval 1 day")
 
 	retryTime := 300
@@ -359,7 +357,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
 }
@@ -851,8 +849,12 @@ func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 }
 
 func TestGCScanTasks(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// stop TTLJobManager to avoid background GC racing with local assertions
+	waitAndStopTTLManager(t, dom)
+
 	addTableStatusRecord := func(tableID, parentTableID, curJobID int64) {
 		tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", tableID, parentTableID)
 		if curJobID == 0 {
@@ -940,8 +942,12 @@ func TestGCTableStatus(t *testing.T) {
 }
 
 func TestGCTTLHistory(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// stop TTLJobManager to avoid background GC racing with local assertions
+	waitAndStopTTLManager(t, dom)
+
 	addHistory := func(jobID, createdBeforeDays int) {
 		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_ttl_job_history (
 				job_id,
@@ -1839,45 +1845,96 @@ func TestTimerJobAfterDropTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	require.True(t, job.Finished)
+
+	t.Run("leader startup triggers GC immediately", func(t *testing.T) {
+		tk.MustExec("create table t2 (created_at datetime) TTL = created_at + INTERVAL 1 HOUR")
+		tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+		require.NoError(t, err)
+		tk.MustExec("drop table t2")
+
+		// Simulate stale metadata left by a previous leader after the job state was already
+		// cleared. Startup as leader should GC it immediately instead of waiting for the
+		// default 10-minute gcTicker.
+		tk.MustExec("insert into mysql.tidb_ttl_table_status (table_id, parent_table_id) values (?, ?)", tbl2.Meta().ID, tbl2.Meta().ID)
+		tk.MustExec(`insert into mysql.tidb_ttl_task
+			(job_id, table_id, scan_id, expire_time, created_time)
+			values (?, ?, ?, now(), now())`, "stale-job", tbl2.Meta().ID, 1)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_table_status where table_id = ?", tbl2.Meta().ID).Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task where table_id = ?", tbl2.Meta().ID).Check(testkit.Rows("1"))
+
+		startupManager := ttlworker.NewJobManager("test-job-manager-startup-gc", pool, store, nil, func() bool { return true })
+		startupManager.Start()
+		defer func() {
+			startupManager.Stop()
+			require.NoError(t, startupManager.WaitStopped(context.Background(), time.Minute))
+		}()
+
+		require.Eventually(t, func() bool {
+			return tk.MustQuery("select count(*) from mysql.tidb_ttl_table_status where table_id = ?", tbl2.Meta().ID).Rows()[0][0].(string) == "0" &&
+				tk.MustQuery("select count(*) from mysql.tidb_ttl_task where table_id = ?", tbl2.Meta().ID).Rows()[0][0].(string) == "0"
+		}, 5*time.Second, 100*time.Millisecond)
+	})
 }
 
-func TestIterationOfRunningJob(t *testing.T) {
+func testIterationOfRunningJobWithTimeout(t *testing.T, sessionTimeout time.Duration, tableCount int64, sleepPerTable time.Duration) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
-	sessionFactory := sessionFactory(t, dom)
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 
 	m := ttlworker.NewJobManager("test-job-manager", dom.AdvancedSysSessionPool(), store, nil, func() bool { return true })
 
-	se, closeSe := sessionFactory()
-	defer closeSe()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
-	for tableID := int64(0); tableID < 100; tableID++ {
-		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
-		m.InfoSchemaCache().Tables[testTable.ID] = testTable
+	for tableID := int64(0); tableID < tableCount; tableID++ {
+		func() {
+			se, closeSe := sessionFactory()
+			defer closeSe()
 
-		jobID := uuid.NewString()
-		_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
-		require.NoError(t, err)
-		sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
-		rows, err := se.ExecuteSQL(ctx, sql, args...)
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		status, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
-		require.NoError(t, err)
-		require.Equal(t, jobID, status.CurrentJobID)
-		require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+			testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+			m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
-		// update the owner id
-		_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
-		require.NoError(t, err)
+			jobID := uuid.NewString()
+			_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+			require.NoError(t, err)
+			sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
+			rows, err := se.ExecuteSQL(ctx, sql, args...)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			status, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
+			require.NoError(t, err)
+			require.Equal(t, jobID, status.CurrentJobID)
+			require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+
+			// update the owner id
+			_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
+			require.NoError(t, err)
+
+			if sleepPerTable > 0 {
+				time.Sleep(sleepPerTable)
+			}
+		}()
 	}
-	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	func() {
+		se, closeSe := sessionFactory()
+		defer closeSe()
+		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	}()
 
-	require.Len(t, m.RunningJobs(), 100)
+	require.Len(t, m.RunningJobs(), int(tableCount))
 	m.CheckNotOwnJob()
 
 	// Now all the jobs should have been removed
 	require.Len(t, m.RunningJobs(), 0)
+}
+
+func TestIterationOfRunningJob(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		testIterationOfRunningJobWithTimeout(t, time.Minute, 100, 0)
+	})
+	t.Run("session-timeout", func(t *testing.T) {
+		// Keep the timeout short enough to catch accidental long-lived session reuse,
+		// but leave headroom for slower CI hosts.
+		testIterationOfRunningJobWithTimeout(t, 3*time.Second, 100, 40*time.Millisecond)
+	})
 }
 
 func TestTTLSummaryForTimeoutJob(t *testing.T) {

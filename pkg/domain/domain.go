@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	disthandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -63,9 +62,9 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -116,6 +115,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -298,6 +298,20 @@ func (do *Domain) DDLExecutor() ddl.Executor {
 // GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
 func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
+}
+
+// GetRuntime implements sqlsvrapi.Server.
+func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
+	return do
+}
+
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
 }
 
 // SetDDL sets DDL to domain, it's only used in tests.
@@ -557,8 +571,8 @@ func NewDomainWithEtcdClient(
 	do := &Domain{
 		store:             store,
 		exit:              make(chan struct{}),
-		sysSessionPool:    createInternelSessionPool(systemSessionPoolSize, factory),
-		dxfSessionPool:    createInternelSessionPool(dxfSessionPoolSize, factory),
+		sysSessionPool:    createInternalSessionPool(systemSessionPoolSize, factory),
+		dxfSessionPool:    createInternalSessionPool(dxfSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
@@ -603,7 +617,7 @@ func NewDomainWithEtcdClient(
 	return do
 }
 
-func createInternelSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
+func createInternalSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
 	return util.NewSessionPool(
 		capacity, factory,
 		func(r pools.Resource) {
@@ -642,17 +656,17 @@ func (do *Domain) Init(
 		return errors.Trace(err)
 	}
 	if len(addrs) > 0 {
-		// domain client: shared by domain watches and session keepalive traffic.
-		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "domain")
+		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
 		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+
 		do.etcdClient = cli
 
 		do.autoidClient = autoid.NewClientDiscover(cli)
 
-		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "domain-unprefixed")
+		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -728,7 +742,7 @@ func (do *Domain) Init(
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
-				if err := do.info.ServerInfoSyncer().StoreServerInfo(etcd.WithClientSource(context.Background(), "infosync")); err != nil {
+				if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
 					return errors.Trace(err)
 				}
 				do.isLostConnectionToPD.Store(0)
@@ -843,18 +857,20 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	return nil
 }
 
-// TODO: we should sync the system keyspace info schema, not just load it,
-// currently, we assume there is no upgrade, so we only load the info schema of
-// system keyspace once, and it will not change during the lifetime of the domain,
-// it's not right, but it's enough to push subtasks which depends on it forward,
-// we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
+	// it will trigger the creation of system keyspace session manager,
+	// which will load the info schema cache.
 	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
+// we should forbid direct access cross KS component through Domain. we should
+// use AcquireKSRuntime to manage their lifecycle.
+// but Session dependents on Domain, to create a session pool we need to access the
+// GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
+// and trying to refactor that part can cause import cycle easily.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -864,6 +880,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
+// see comments of GetKSStore too.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -878,13 +895,7 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return mgr.SessPool(), nil
-}
-
-// CloseKSSessMgr closes the session manager for the given keyspace.
-// it's exported for test only.
-func (do *Domain) CloseKSSessMgr(targetKS string) {
-	do.crossKSSessMgr.CloseKS(targetKS)
+	return mgr.SysSessionPool(), nil
 }
 
 // GetCrossKSMgr returns the cross keyspace session manager.
@@ -1127,7 +1138,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
-	disthandle.SetNodeResource(nodeRes)
+	storage.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1147,7 +1158,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		logger := logutil.BgLogger()
-		return local.InitializeRateLimiterParam(m, logger)
+		return ingestctrl.InitializeRateLimiterParam(m, logger)
 	}); err != nil {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
@@ -1175,11 +1186,16 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	} else {
 		totalDisk = sz.Capacity
 	}
+	nodeRes := proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk)
+	dxfNodeRes := nodeRes.LimitDXFResource(cfg.DXFResourceLimit)
 	logger.Info("initialize node resource",
 		zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))),
+		zap.Int("dxf-resource-limit", cfg.DXFResourceLimit),
+		zap.Int("dxf-usable-cpu", dxfNodeRes.TotalCPU),
+		zap.String("dxf-usable-mem", units.BytesSize(float64(dxfNodeRes.TotalMem))),
 		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
-	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
+	return dxfNodeRes, nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
@@ -1263,7 +1279,7 @@ func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 // GetPDClient returns the PD client.
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		return store.GetPDClient()
+		return store.GetPDClient().WithCallerComponent(caller.GetComponent(1))
 	}
 	return nil
 }
@@ -2022,10 +2038,13 @@ func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 // NewOwnerManager returns the owner manager for use outside of the domain.
 func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
+	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		return owner.NewMockManager(do.ctx, id, do.store, ownerKey)
+		statsOwner = owner.NewMockManager(do.ctx, id, do.store, ownerKey)
+	} else {
+		statsOwner = owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
 	}
-	return owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
+	return statsOwner
 }
 
 func (do *Domain) initStats(ctx context.Context) {
@@ -2501,7 +2520,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return
@@ -2599,15 +2618,12 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	if do.serverIDSession != nil {
 		return do.serverIDSession, nil
 	}
-	if do.etcdClient == nil {
-		return nil, errors.New("server-id etcd client is nil")
-	}
 
 	// `etcdClient.Grant` needs a shortterm timeout, to avoid blocking if connection to PD lost,
 	//   while `etcdClient.KeepAlive` should be longterm.
 	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
 	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
-	resp, err := do.etcdClient.Grant(etcd.WithClientSource(childCtx, "server-id"), int64(serverIDTTL.Seconds()))
+	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
 	cancel()
 	if err != nil {
 		logutil.BgLogger().Error("retrieveServerIDSession.Grant fail", zap.Error(err))
@@ -2616,8 +2632,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	leaseID := resp.ID
 
 	session, err := concurrency.NewSession(do.etcdClient,
-		concurrency.WithLease(leaseID),
-		concurrency.WithContext(etcd.WithClientSource(context.Background(), "server-id")))
+		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
 	if err != nil {
 		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
 		return nil, err
@@ -2628,9 +2643,6 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 
 func (do *Domain) acquireServerID(ctx context.Context) error {
 	atomic.StoreUint64(&do.serverID, 0)
-	if do.etcdClient == nil {
-		return errors.New("server-id etcd client is nil")
-	}
 
 	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
@@ -2655,7 +2667,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		value := "0"
 
 		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
-		txn := do.etcdClient.Txn(etcd.WithClientSource(childCtx, "server-id"))
+		txn := do.etcdClient.Txn(childCtx)
 		t := txn.If(cmp)
 		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(session.Lease()))).Commit()
 		cancel()
@@ -2683,7 +2695,7 @@ func (do *Domain) releaseServerID(context.Context) {
 	}
 	atomic.StoreUint64(&do.serverID, 0)
 
-	if do.etcdClient == nil || do.serverIDSession == nil {
+	if do.etcdClient == nil {
 		return
 	}
 
@@ -2742,9 +2754,6 @@ func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, er
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
-	if do.etcdClient == nil {
-		return errors.New("server-id etcd client is nil")
-	}
 	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
 		return err
@@ -2752,7 +2761,7 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
 	value := "0"
-	err = ddlutil.PutKVToEtcd(etcd.WithClientSource(ctx, "server-id"), do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
+	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
@@ -2796,7 +2805,7 @@ func (do *Domain) serverIDKeeper() {
 		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
-		if err := do.info.ServerInfoSyncer().StoreServerInfo(etcd.WithClientSource(context.Background(), "infosync")); err != nil {
+		if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
 			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
 		}
 	}

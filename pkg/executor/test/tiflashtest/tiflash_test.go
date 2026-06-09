@@ -2149,7 +2149,7 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 		{"select * from t t1 join t t2 on t1.b=t2.b", 1, 1},
 
 		// Cache miss
-		{"select * from t union all select * from t", 0, 2},                      // different mpp task root
+		{"select * from t union all select * from t", 0, 2},                      // different MPP task requests
 		{"select * from t where a <= 3 union select * from t where a > 3", 0, 2}, // different range
 
 		// Partition

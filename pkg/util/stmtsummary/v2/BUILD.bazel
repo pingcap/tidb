@@ -49,8 +49,9 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 18,
     deps = [
+        "//pkg/config",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/ast",
@@ -64,5 +65,7 @@ go_test(
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )

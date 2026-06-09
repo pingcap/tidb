@@ -49,6 +49,7 @@ func DefineRawBackupFlags(command *cobra.Command) {
 	command.Flags().StringP(flagTiKVColumnFamily, "", "default", "backup specify cf, correspond to tikv cf")
 	command.Flags().StringP(flagStartKey, "", "", "backup raw kv start key, key is inclusive")
 	command.Flags().StringP(flagEndKey, "", "", "backup raw kv end key, key is exclusive")
+	command.Flags().String(flagKeyspaceName, "", "keyspace name for backup")
 	command.Flags().String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	command.Flags().Bool(flagRemoveSchedulers, false,
@@ -99,6 +100,10 @@ func (cfg *RawKvConfig) ParseBackupConfigFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.KeyspaceName, err = flags.GetString(flagKeyspaceName)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	compressionCfg, err := parseCompressionFlags(flags)
 	if err != nil {
@@ -139,7 +144,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	}
 	// Backup raw does not need domain.
 	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}

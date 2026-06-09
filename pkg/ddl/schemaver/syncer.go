@@ -59,10 +59,6 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 )
 
-func withDDLSyncerSource(ctx context.Context) context.Context {
-	return etcd.WithClientSource(ctx, ddlPrompt)
-}
-
 // SyncSummary is used to summarize the result of schema version synchronization.
 type SyncSummary struct {
 	// ServerCount is the total number of servers that have been checked.
@@ -224,7 +220,6 @@ func NewEtcdSyncer(etcdCli *clientv3.Client, id string) Syncer {
 
 // Init implements Syncer.Init interface.
 func (s *etcdSyncer) Init(ctx context.Context) error {
-	ctx = withDDLSyncerSource(ctx)
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -274,7 +269,6 @@ func (s *etcdSyncer) Done() <-chan struct{} {
 
 // Restart implements Syncer.Restart interface.
 func (s *etcdSyncer) Restart(ctx context.Context) error {
-	ctx = withDDLSyncerSource(ctx)
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -304,12 +298,11 @@ func (s *etcdSyncer) GlobalVersionCh() clientv3.WatchChan {
 
 // WatchGlobalSchemaVer implements Syncer.WatchGlobalSchemaVer interface.
 func (s *etcdSyncer) WatchGlobalSchemaVer(ctx context.Context) {
-	s.globalVerWatcher.Rewatch(withDDLSyncerSource(ctx), s.etcdCli, util.DDLGlobalSchemaVersion)
+	s.globalVerWatcher.Rewatch(ctx, s.etcdCli, util.DDLGlobalSchemaVersion)
 }
 
 // UpdateSelfVersion implements Syncer.UpdateSelfVersion interface.
 func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
-	ctx = withDDLSyncerSource(ctx)
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
 	var err error
@@ -333,7 +326,6 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 
 // OwnerUpdateGlobalVersion implements Syncer.OwnerUpdateGlobalVersion interface.
 func (s *etcdSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
-	ctx = withDDLSyncerSource(ctx)
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
 	// TODO: If the version is larger than the original global version, we need set the version.
@@ -357,7 +349,6 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
 func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) (*SyncSummary, error) {
-	ctx = withDDLSyncerSource(ctx)
 	startTime := time.Now()
 	if !vardef.IsMDLEnabled() {
 		time.Sleep(CheckVersFirstWaitTime)
@@ -492,7 +483,6 @@ func (s *etcdSyncer) getServersForISSync(ctx context.Context, checkAssumedSvr bo
 
 // SyncJobSchemaVerLoop implements Syncer.SyncJobSchemaVerLoop interface.
 func (s *etcdSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
-	ctx = withDDLSyncerSource(ctx)
 	for {
 		s.syncJobSchemaVer(ctx)
 		logutil.DDLLogger().Info("schema version sync loop interrupted, retrying...")

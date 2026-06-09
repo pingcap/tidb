@@ -1025,10 +1025,26 @@ func TestTopRUPipelineInProcessIntegration(t *testing.T) {
 		},
 	}, rmclient.DefaultRUVersion)
 
+	hotKeyInBucket := makeKey(hotKey.SQLDigest, hotKey.PlanDigest)
 	require.Eventually(t, func() bool {
+		if len(tsr.collectRUIncrementsChan) != 0 {
+			return false
+		}
 		tsr.ruAggregator.mu.Lock()
 		defer tsr.ruAggregator.mu.Unlock()
-		return len(tsr.ruAggregator.buckets) > 0
+		bucket, ok := tsr.ruAggregator.buckets[0]
+		if !ok || bucket.collecting == nil {
+			return false
+		}
+		hotUserCollecting, ok := bucket.collecting.users[hotKey.User]
+		if !ok {
+			return false
+		}
+		hotRec, ok := hotUserCollecting.records[hotKeyInBucket]
+		if !ok || len(hotRec.items) == 0 {
+			return false
+		}
+		return hotRec.items[0].execCount == 3 && hotRec.items[0].totalRU == 17
 	}, time.Second, 10*time.Millisecond)
 
 	tsr.takeDataAndSendToReportChan(60)

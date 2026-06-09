@@ -448,6 +448,8 @@ func TestOuterJoinElimination(t *testing.T) {
 		tk.MustExec(`create table t2_uk (a int, b int, c int, unique key(a))`)
 		tk.MustExec(`create table t2_nnuk (a int not null, b int, c int, unique key(a))`)
 		tk.MustExec(`create table t2_pk (a int, b int, c int, primary key(a))`)
+		tk.MustExec(`create table t1_window (a int, b int, c int, key idx_a(a))`)
+		tk.MustExec(`create table t2_window (a int, b int, c int, key(a))`)
 
 		tk.MustNotHavePlan("select * from t1 left join t2 on false", "Join")
 		tk.MustNotHavePlan("select * from t1 right join t2 on false", "Join")
@@ -500,6 +502,19 @@ func TestOuterJoinElimination(t *testing.T) {
 		tk.MustNotHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t1a.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
 		// next query correlates on t2, so outer join elimination can't be applied
 		tk.MustHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t2.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
+
+		tk.MustExec("insert into t1_window values (1, 10, 100), (2, 20, 200)")
+		tk.MustExec("insert into t2_window values (1, 10, 1), (1, 10, 2), (2, 20, 3)")
+		sql := `select t1.a from t1_window t1 use index(idx_a) left join (
+			select a, row_number() over(partition by a order by c desc) as rn
+			from t2_window
+		) t2 on t1.a = t2.a and t2.rn = 1
+		where t1.a = 1`
+		tk.MustQuery(sql).Check(testkit.Rows("1"))
+		tk.MustQuery("explain format = 'plan_tree' " + sql).Check(testkit.Rows(
+			"IndexReader root  index:IndexRangeScan",
+			"└─IndexRangeScan cop[tikv] table:t1, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		))
 	})
 }
 

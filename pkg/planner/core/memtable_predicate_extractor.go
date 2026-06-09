@@ -183,7 +183,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	ctx base.PlanContext,
 	extractCols map[int64]*types.FieldName,
 	expr *expression.ScalarFunction,
-) (string, []types.Datum) {
+) (string, []types.Datum, bool) {
 	args := expr.GetArgs()
 	var col *expression.Column
 	var colIdx int
@@ -203,12 +203,12 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 		col, colIdx = innerCol, innerColIdx
 	}
 	if col == nil {
-		return "", nil
+		return "", nil, false
 	}
 
 	name, found := extractCols[col.UniqueID]
 	if !found {
-		return "", nil
+		return "", nil, false
 	}
 
 	// The `lhs/rhs` of EQ expression must be a constant
@@ -216,7 +216,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
 	if !ok || constant.DeferredExpr != nil {
-		return "", nil
+		return "", nil, false
 	}
 	v := constant.Value
 	if constant.ParamMarker != nil {
@@ -225,10 +225,10 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 		intest.AssertNoError(err, "fail to get param")
 		if err != nil {
 			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
-			return "", nil
+			return "", nil, false
 		}
 	}
-	return name.ColName.L, []types.Datum{v}
+	return name.ColName.L, []types.Datum{v}, colIdx == 0
 }
 
 // extract the OR expression, e.g:
@@ -247,7 +247,8 @@ func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols 
 	var extract = func(extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, []types.Datum) {
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			return helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums, _ := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			return colName, datums
 		case ast.LogicOr:
 			return helper.extractColOrExpr(ctx, extractCols, fn)
 		case ast.In:
@@ -319,7 +320,7 @@ func (helper *extractHelper) extractCol(
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			helper.enableScalarPushDown = true
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 			if colName == extractColName {
 				helper.setColumnPushedDownFn(colName, extractCols, fn)
 			}
@@ -449,7 +450,7 @@ func (helper extractHelper) extractLikePattern(
 	var datums []types.Datum
 	switch fn.FuncName.L {
 	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
 		return false, ""
@@ -551,13 +552,27 @@ func (helper extractHelper) extractTimeRange(
 
 		var colName string
 		var datums []types.Datum
+		var colOnLeft bool
 		fnName := helper.getTimeFunctionName(fn)
 		switch fnName {
 		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums, colOnLeft = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 		}
 
 		if colName == extractColName {
+			if !colOnLeft {
+				switch fnName {
+				case ast.GT:
+					fnName = ast.LT
+				case ast.GE:
+					fnName = ast.LE
+				case ast.LT:
+					fnName = ast.GT
+				case ast.LE:
+					fnName = ast.GE
+				}
+			}
+
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), timeType)
