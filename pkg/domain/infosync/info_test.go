@@ -310,6 +310,18 @@ func TestSetKeyspaceConfig(t *testing.T) {
 	}
 
 	require.NoError(t, SetKeyspaceConfig(context.Background(), "test-keyspace", input))
+
+	t.Run("typed nil pointer returns error", func(t *testing.T) {
+		restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
+			t:            t,
+			expectedName: "test-keyspace",
+		})
+		defer restore()
+
+		var params *pdhttp.UpdateKeyspaceConfigParams
+		err := SetKeyspaceConfig(context.Background(), "test-keyspace", params)
+		require.EqualError(t, err, "nil UpdateKeyspaceConfigParams")
+	})
 }
 
 func TestSetKeyspaceConfigWithoutPDHTTPClient(t *testing.T) {

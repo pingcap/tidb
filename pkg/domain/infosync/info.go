@@ -358,6 +358,9 @@ func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config any) err
 
 func toUpdateKeyspaceConfigParams(config any) (*pdhttp.UpdateKeyspaceConfigParams, error) {
 	if params, ok := config.(*pdhttp.UpdateKeyspaceConfigParams); ok {
+		if params == nil {
+			return nil, errors.New("nil UpdateKeyspaceConfigParams")
+		}
 		return params, nil
 	}
 	if params, ok := config.(pdhttp.UpdateKeyspaceConfigParams); ok {
