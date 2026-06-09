@@ -284,7 +284,8 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	setSpillTestConfig(t, 100, 100)
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
 
 	for _, param := range params {
 		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
@@ -335,7 +336,8 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	setSpillTestConfig(t, 100, 100)
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
 
 	for _, param := range params {
 		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
@@ -375,7 +377,8 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 		fileNamePrefixForTest: testFuncName,
 	}
 
-	setSpillTestConfig(t, 100, 100)
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
 
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
