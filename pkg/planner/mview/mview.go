@@ -115,11 +115,17 @@ type BuildResult struct {
 }
 
 // CompleteDiffBuildResult is the diff-source output for COMPLETE DELTA APPLY.
+// COMPLETE DELTA APPLY is a complete-refresh implementation that recomputes the MV definition
+// result, compares it with current MV rows, and applies only the row-level INSERT/DELETE/UPDATE
+// delta instead of replacing the whole MV table.
+//
+// In the generated diff-source SELECT, Q means the recomputed query result side and M means the
+// current materialized-view table side.
 // Row layout of DiffSourceSelect output is fixed:
 //  1. diff_op
 //  2. optional _tidb_rowid handle column when MV uses extra row-id handle
-//  3. old row image (M side, MV column order)
-//  4. new row image (Q side, MV column order)
+//  3. old row image (M/current MV side, MV column order)
+//  4. new row image (Q/recomputed query side, MV column order)
 //
 // MarkerMVOffset identifies which MV column is used as the side-missing marker.
 // The marker value is read from the old/new row image instead of being projected separately.
@@ -1390,12 +1396,24 @@ func buildMLogDeltaSelect(
 	if err != nil {
 		return nil, err
 	}
+	tableHints := []*ast.TableOptimizerHint{
+		{
+			HintName: pmodel.NewCIStr(utilhint.HintReadFromStorage),
+			HintData: pmodel.NewCIStr(utilhint.HintTiFlash),
+			Tables: []ast.HintTable{
+				{
+					DBName:    dbName,
+					TableName: mlogTable.Name,
+				},
+			},
+		},
+	}
 	return &ast.SelectStmt{
 		Fields:     &ast.FieldList{Fields: phase1Fields},
 		From:       mlogFrom,
 		Where:      phase1Where,
 		GroupBy:    groupBy,
-		TableHints: []*ast.TableOptimizerHint{buildReadFromStorageTiFlashHint(dbName, mlogTable.Name)},
+		TableHints: tableHints,
 	}, nil
 }
 
@@ -2027,6 +2045,27 @@ func ifExpr(cond, trueExpr, falseExpr ast.ExprNode) *ast.FuncCallExpr {
 
 // BuildCompleteDiffSource builds the diff-source SELECT statement and layout metadata for
 // COMPLETE DELTA APPLY refresh.
+//
+// COMPLETE DELTA APPLY uses a full outer join between the recomputed MV definition result and
+// current MV table rows to detect the final row-level delta.
+//
+// Final SQL shape:
+//
+//	SELECT
+//	  <diff op>,
+//	  [M._tidb_rowid AS <rowid handle>],
+//	  M.<all MV columns as old row image>,
+//	  Q.<all MV columns as new row image>
+//	FROM (<MV definition SQL>) AS Q
+//	FULL OUTER JOIN <mv table> AS M
+//	  ON Q.<group_key_1> [= | <=>] M.<group_key_1>
+//	 AND ...
+//	WHERE Q.<marker_col> IS NULL
+//	   OR M.<marker_col> IS NULL
+//	   OR NOT <old/new payload equality>
+//
+// The diff op classifies each row as INSERT, DELETE, or UPDATE. The executor consumes the fixed
+// output layout together with the M/Q offset metadata to apply the delta to the MV table.
 func BuildCompleteDiffSource(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
@@ -2275,6 +2314,10 @@ func buildCompleteDiffHandleCols(
 	}
 }
 
+// buildCompleteDiffOpExpr builds the diff-op expression consumed by MVCompleteDeltaApplyExec.
+// The marker column is a visible NOT NULL MV column. If the marker is NULL on one side after the
+// full outer join, that side is missing: M missing means INSERT, Q missing means DELETE. If both
+// sides exist but payload columns differ, the row is UPDATE.
 func buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr ast.ExprNode) ast.ExprNode {
 	return &ast.CaseExpr{
 		WhenClauses: []*ast.WhenClause{
@@ -2291,6 +2334,10 @@ func buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr ast.ExprNode) ast.ExprNode
 	}
 }
 
+// buildCompleteDiffPayloadEqExpr compares non-group-key payload columns between Q and M.
+// Group-key columns are excluded because they are already used by the full outer join condition.
+// Nullable columns use NULL-safe equality; NOT NULL columns use normal equality to keep the
+// generated expression simpler.
 func buildCompleteDiffPayloadEqExpr(
 	mv *model.TableInfo,
 	groupKeySet map[int]struct{},
