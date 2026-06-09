@@ -74,7 +74,7 @@ type BgTaskClient interface {
 	GetBgTaskConfig(ctx context.Context, workerType string) (workerCount int, autoScaleEnabled bool, err error)
 	RegisterBgTask(ctx context.Context, taskType, taskKey string, gTaskID, subTaskID int64, execID string) error
 	RecycleBgTask(ctx context.Context, gTaskID, subTaskID int64) error
-	UpdateBgTaskExecID(ctx context.Context, gTaskID int64, subtaskIDs []int64, execIDs []string) error
+	UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*pb.SubtaskExecIDAssignment) error
 }
 
 // RemoteQueryClient covers the remote-query RPC.
@@ -86,7 +86,7 @@ type RemoteQueryClient interface {
 type TTLClient interface {
 	RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error
 	DeleteTTLTableInfo(ctx context.Context, tableID int64) error
-	RecycleTTLTask(ctx context.Context, finishTime uint64) error
+	RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error
 	UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error
 }
 
@@ -240,12 +240,11 @@ func (c *grpcClient) RecycleBgTask(ctx context.Context, gTaskID, subTaskID int64
 	return mapResponse("RecycleBgTask", resp, err)
 }
 
-func (c *grpcClient) UpdateBgTaskExecID(ctx context.Context, gTaskID int64, subtaskIDs []int64, execIDs []string) error {
+func (c *grpcClient) UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*pb.SubtaskExecIDAssignment) error {
 	resp, err := c.stub.UpdateBgTaskExecID(ctx, &pb.UpdateBgTaskExecIDRequest{
 		Header:       c.header(),
 		GlobalTaskId: gTaskID,
-		SubTaskIds:   subtaskIDs,
-		ExecIds:      execIDs,
+		Assignments:  assignments,
 	})
 	return mapResponse("UpdateBgTaskExecID", resp, err)
 }
@@ -276,10 +275,10 @@ func (c *grpcClient) DeleteTTLTableInfo(ctx context.Context, tableID int64) erro
 	return mapResponse("DeleteTTLTableInfo", resp, err)
 }
 
-func (c *grpcClient) RecycleTTLTask(ctx context.Context, finishTime uint64) error {
+func (c *grpcClient) RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error {
 	resp, err := c.stub.RecycleTTLTask(ctx, &pb.RecycleTTLTaskRequest{
-		Header:     c.header(),
-		FinishTime: finishTime,
+		Header:                 c.header(),
+		CompletedJobCreateTime: completedJobCreateTime,
 	})
 	return mapResponse("RecycleTTLTask", resp, err)
 }

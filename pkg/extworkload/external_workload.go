@@ -23,6 +23,7 @@ package extworkload
 import (
 	"context"
 
+	externalworkloadpb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 )
 
@@ -70,7 +71,7 @@ type Manager interface {
 	RecycleBgTask(ctx context.Context, taskType string, gTaskID, subTaskID int64) error
 	// UpdateBgTaskExecID reports that the subtask-to-exec-ID assignment for a
 	// global task has changed.
-	UpdateBgTaskExecID(ctx context.Context, gTaskID int64, subtaskIDs []int64, execIDs []string) error
+	UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*externalworkloadpb.SubtaskExecIDAssignment) error
 
 	// Remote query ------------------------------------------------------------
 
@@ -85,7 +86,7 @@ type Manager interface {
 	// table was dropped.
 	DeleteTTLTableInfo(ctx context.Context, tableID int64) error
 	// RecycleTTLTask reports that a TTL job has completed.
-	RecycleTTLTask(ctx context.Context, finishTime uint64) error
+	RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error
 	// UpdateTTLJobEnable reports a change in the tidb_ttl_job_enable system variable.
 	UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error
 

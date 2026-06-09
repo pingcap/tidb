@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	externalworkloadpb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -179,8 +180,8 @@ func (m *manager) RecycleBgTask(ctx context.Context, taskType string, gTaskID, s
 	return m.cli.RecycleBgTask(ctx, gTaskID, subTaskID)
 }
 
-func (m *manager) UpdateBgTaskExecID(ctx context.Context, gTaskID int64, subtaskIDs []int64, execIDs []string) error {
-	return m.cli.UpdateBgTaskExecID(ctx, gTaskID, subtaskIDs, execIDs)
+func (m *manager) UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*externalworkloadpb.SubtaskExecIDAssignment) error {
+	return m.cli.UpdateBgTaskExecID(ctx, gTaskID, assignments)
 }
 
 // Remote query.
@@ -201,9 +202,9 @@ func (m *manager) DeleteTTLTableInfo(ctx context.Context, tableID int64) error {
 	return m.cli.DeleteTTLTableInfo(ctx, tableID)
 }
 
-func (m *manager) RecycleTTLTask(ctx context.Context, finishTime uint64) error {
+func (m *manager) RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error {
 	bumpCounter(WorkerTypeTTL, metrics.WorkerActionRecycle)
-	return m.cli.RecycleTTLTask(ctx, finishTime)
+	return m.cli.RecycleTTLTask(ctx, completedJobCreateTime)
 }
 
 func (m *manager) UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error {
