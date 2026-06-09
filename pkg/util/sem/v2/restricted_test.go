@@ -43,14 +43,31 @@ func TestRestrictedHint(t *testing.T) {
 }
 
 func TestRestrictedUserStmt(t *testing.T) {
-	sem := buildSEMFromConfig(&Config{RestrictedRoles: []string{"cloud_admin"}})
+	sem := buildSEMFromConfig(&Config{
+		RestrictedUsers: []string{"root", "cloud_admin"},
+		RestrictedRoles: []string{"cloud_admin"},
+	})
 
 	p := parser.New()
 	cs, collate := charset.GetDefaultCharsetAndCollate()
 	mustParse := func(sql string) ast.StmtNode {
 		stmt, err := p.ParseOneStmt(sql, cs, collate)
-		require.NoError(t, err)
+		require.NoError(t, err, sql)
 		return stmt
+	}
+
+	restrictedSQL := []string{
+		"DROP USER 'root'@'%'",
+		"RENAME USER 'cloud_admin'@'%' TO 'cloud_admin2'@'%'",
+		"GRANT 'app_role'@'%' TO 'root'@'%'",
+		"REVOKE 'app_role'@'%' FROM 'cloud_admin'@'%'",
+		"SET DEFAULT ROLE 'app_role'@'%' TO 'root'@'%'",
+		"GRANT 'cloud_admin'@'%' TO 'app_user'@'%'",
+		"REVOKE 'cloud_admin'@'%' FROM 'app_user'@'%'",
+		"SET ROLE 'cloud_admin'@'%'",
+	}
+	for _, sql := range restrictedSQL {
+		require.Error(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
 	}
 
 	// Wildcard role activation is blocked outright because the expansion may
@@ -60,8 +77,18 @@ func TestRestrictedUserStmt(t *testing.T) {
 	require.Error(t, sem.checkRestrictedUserStmt(mustParse("SET DEFAULT ROLE ALL TO u")))
 
 	// Unrelated statements are unaffected.
-	require.NoError(t, sem.checkRestrictedUserStmt(mustParse("SELECT 1")))
-	require.NoError(t, sem.checkRestrictedUserStmt(mustParse("SET ROLE NONE")))
+	allowedSQL := []string{
+		"SELECT 1",
+		"SET ROLE NONE",
+		"DROP USER 'app_user'@'%'",
+		"RENAME USER 'app_user'@'%' TO 'app_user2'@'%'",
+		"GRANT 'app_role'@'%' TO 'app_user'@'%'",
+		"REVOKE 'app_role'@'%' FROM 'app_user'@'%'",
+		"SET DEFAULT ROLE 'app_role'@'%' TO 'app_user'@'%'",
+	}
+	for _, sql := range allowedSQL {
+		require.NoError(t, sem.checkRestrictedUserStmt(mustParse(sql)), sql)
+	}
 
 	// With nothing configured, the check is a no-op.
 	require.NoError(t, buildSEMFromConfig(&Config{}).checkRestrictedUserStmt(mustParse("SET ROLE ALL")))

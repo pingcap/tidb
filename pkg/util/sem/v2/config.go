@@ -58,16 +58,16 @@ type Config struct {
 	// management (DROP USER, RENAME USER, and role changes). A name matches
 	// after the keyspace username policy strips its tenant prefix, and only for
 	// host '%'.
-	RestrictedUsers []string `json:"restricted_users"`
+	RestrictedUsers []string `json:"restricted_users,omitempty"`
 
 	// RestrictedRoles is the list of roles that cannot be granted, revoked, or
 	// activated. A name is matched the same way as RestrictedUsers.
-	RestrictedRoles []string `json:"restricted_roles"`
+	RestrictedRoles []string `json:"restricted_roles,omitempty"`
 
 	// RestrictedHints is the list of optimizer hints stripped from queries and
 	// bindings with a warning. A hint that overrides a system variable (see
 	// hintGuardVars) is only stripped while that variable is hidden or read-only.
-	RestrictedHints []string `json:"restricted_hints"`
+	RestrictedHints []string `json:"restricted_hints,omitempty"`
 }
 
 // TableRestriction defines the configuration for a restricted table

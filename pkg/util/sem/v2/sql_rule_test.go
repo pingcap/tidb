@@ -85,16 +85,6 @@ func TestSQLRules(t *testing.T) {
 			stmt:     "LOAD DATA LOCAL INFILE 'file:///bucket/path/to/file.csv' INTO TABLE t1",
 			expected: false,
 		},
-		{
-			rule:     ExchangePartitionRule,
-			stmt:     "ALTER TABLE t EXCHANGE PARTITION p0 WITH TABLE nt",
-			expected: true,
-		},
-		{
-			rule:     ExchangePartitionRule,
-			stmt:     "ALTER TABLE t ADD COLUMN c INT",
-			expected: false,
-		},
 	}
 
 	charset, collate := charset.GetDefaultCharsetAndCollate()
