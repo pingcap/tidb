@@ -2470,8 +2470,9 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	var pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls int
 	inputPDCli := &mockPdClient{}
 	tikvPDCli := &mockPdClient{}
-	newPDClient = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+	newPDClient = func(_ context.Context, apiContext pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		pdClientCalls++
+		require.Equal(t, pd.NewAPIContextV1(), apiContext)
 		return tikvPDCli, nil
 	}
 	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
@@ -2511,7 +2512,7 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
 		return tikv.NewMockSafePointKV(), nil
 	}
-	newPDClient = func(ctx context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+	newPDClient = func(ctx context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		pdClientCtx = ctx
 		cancel()
 		return nil, ctx.Err()

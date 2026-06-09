@@ -300,6 +300,15 @@ func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
 }
 
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
 func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d
@@ -843,18 +852,20 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	return nil
 }
 
-// TODO: we should sync the system keyspace info schema, not just load it,
-// currently, we assume there is no upgrade, so we only load the info schema of
-// system keyspace once, and it will not change during the lifetime of the domain,
-// it's not right, but it's enough to push subtasks which depends on it forward,
-// we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
+	// it will trigger the creation of system keyspace session manager,
+	// which will load the info schema cache.
 	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
+// we should forbid direct access cross KS component through Domain. we should
+// use AcquireKSRuntime to manage their lifecycle.
+// but Session dependents on Domain, to create a session pool we need to access the
+// GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
+// and trying to refactor that part can cause import cycle easily.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -864,6 +875,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
+// see comments of GetKSStore too.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -879,12 +891,6 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 		return nil, errors.Trace(err)
 	}
 	return mgr.SessPool(), nil
-}
-
-// CloseKSSessMgr closes the session manager for the given keyspace.
-// it's exported for test only.
-func (do *Domain) CloseKSSessMgr(targetKS string) {
-	do.crossKSSessMgr.CloseKS(targetKS)
 }
 
 // GetCrossKSMgr returns the cross keyspace session manager.

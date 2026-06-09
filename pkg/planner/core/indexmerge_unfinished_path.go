@@ -218,7 +218,7 @@ func initUnfinishedPathsFromExpr(
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
-					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
 					ret[i].idxColHasUsableFilter[j] = true
 					// Once we find one valid access filter for this column, we directly go to the next column without
