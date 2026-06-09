@@ -159,21 +159,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 	}
 
-	// handle the execute statement
-	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
-		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
-		return p, names, err
-	}
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
-		setVarHintChecker, hypoIndexChecker(ctx, is),
-		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
-	sessVars.StmtCtx.StmtHints = originStmtHints
-	for _, warn := range warns {
-		sessVars.StmtCtx.AppendWarning(warn)
-	}
-
 	defer func() {
 		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
@@ -204,7 +189,33 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.StmtCtx.AppendWarning(err)
 			}
 		}
+
+		if retErr == nil {
+			// Handle SetVars hints for cached plans.
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+			}
+		}
 	}()
+
+	// Handle the execute statement. This calls into the prepared plan cache.
+	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
+		return p, names, err
+	}
+
+	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(ctx, is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
+	sessVars.StmtCtx.StmtHints = originStmtHints
+	for _, warn := range warns {
+		sessVars.StmtCtx.AppendWarning(warn)
+	}
 
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -213,9 +224,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			sessVars.StmtCtx.AppendWarning(err)
 		}
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-	}
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
 
 	// This should be handled after `set_var`
