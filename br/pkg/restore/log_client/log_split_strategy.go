@@ -26,6 +26,7 @@ type LogSplitStrategy struct {
 	checkpointSkipMap        *LogFilesSkipMap
 	checkpointFileProgressFn func(uint64, uint64)
 	splitFileThreshold       uint64
+	splitDisabled            bool
 
 	lastMemUsageUpdate time.Time
 }
@@ -72,7 +73,16 @@ func NewLogSplitStrategy(
 	}, nil
 }
 
+// DisableSplit keeps checkpoint filtering active but prevents region split
+// accumulation and execution in the pipeline wrapper.
+func (ls *LogSplitStrategy) DisableSplit() {
+	ls.splitDisabled = true
+}
+
 func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
+	if ls.splitDisabled {
+		return
+	}
 	if file.Length <= ls.splitFileThreshold {
 		return
 	}
@@ -98,6 +108,9 @@ func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
 }
 
 func (ls *LogSplitStrategy) ShouldSplit() bool {
+	if ls.splitDisabled {
+		return false
+	}
 	return ls.AccumulateCount > 4096
 }
 

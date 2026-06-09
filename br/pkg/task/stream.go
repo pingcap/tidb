@@ -1707,9 +1707,9 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
-	// Pre-split regions based on total data volume across ALL files.
-	// On success the pipeline-level per-batch split is skipped to avoid
-	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
+	// Pre-split regions based on total data volume across log files. When it
+	// succeeds, the log restore pipeline below is still kept, but its per-batch
+	// split execution is disabled to avoid redundant split/scatter work.
 	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
 	if preSplitErr != nil {
 		log.Warn("pre-split regions failed, continuing with per-batch splitting",
@@ -1759,12 +1759,9 @@ func restoreStream(
 		}
 
 		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
-		// Skip per-batch splitting when pre-split already covered all files;
-		// doing both passes would produce redundant split+scatter calls.
-		// Checkpoint filtering must still be applied on the pre-split path.
 		var logFilesIterWithSplit logclient.LogIter
 		if preSplitDone {
-			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitDisabled(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -1529,6 +1529,32 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	return wrapper.WithSplit(ctx, logIter, strategy), nil
 }
 
+// WrapLogFilesIterWithSplitDisabled applies the same pipeline wrapper as
+// WrapLogFilesIterWithSplitHelper, but disables per-batch region splitting.
+// This is used after two-pass pre-split has already split the log key ranges:
+// checkpoint filtering and pipeline tracing still run through the same iterator
+// stage, while redundant split/scatter work is avoided.
+func (rc *LogClient) WrapLogFilesIterWithSplitDisabled(
+	ctx context.Context,
+	logIter LogIter,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+	splitSize uint64,
+	splitKeys int64,
+) (LogIter, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
+	}
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	strategy.DisableSplit()
+	return wrapper.WithSplit(ctx, logIter, strategy), nil
+}
+
 // WrapLogFilesIterWithCheckpointFilter applies only the checkpoint skip filter to
 // the log files iterator, without performing any region splitting. Used when
 // pre-split has already been done and per-batch splitting is skipped, but
@@ -1550,7 +1576,7 @@ func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
 	}), nil
 }
 
-// PreSplitRegions performs a full pre-scan over ALL DML files and issues region
+// PreSplitRegions performs a full pre-scan over DML files and issues region
 // splits based on the total cumulative data volume. This avoids the problem where
 // per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
 // boundary, producing insufficient splits for workloads that spread data across many
@@ -1583,6 +1609,9 @@ func (rc *LogClient) PreSplitRegions(
 		}
 		file := r.Item
 		if file.IsMeta {
+			continue
+		}
+		if file.Length <= SplitFileThresholdDefault {
 			continue
 		}
 		if _, exist := rules[file.TableId]; !exist {
