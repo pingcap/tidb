@@ -72,7 +72,22 @@ func TestNextIOAccAddInputCountsRowsWithZeroCols(t *testing.T) {
 
 func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 	cases := map[string]ruv2ExecutorMetric{
+		"*aggregate.HashAggExec":        {level: 2, label: "HashAggExec", useCells: false},
+		"*aggregate.StreamAggExec":      {level: 3, label: "StreamAggExec", useCells: false},
+		"*executor.BatchPointGetExec":   {level: 1, label: "BatchPointGetExec", useCells: true},
+		"*executor.ExpandExec":          {level: 2, label: "ExpandExec", useCells: false},
+		"*executor.IndexLookUpExecutor": {level: 2, label: "IndexLookUpExecutor", useCells: false},
+		"*executor.IndexReaderExecutor": {level: 2, label: "IndexReaderExecutor", useCells: false},
+		"*executor.LimitExec":           {level: 1, label: "LimitExec", useCells: true},
+		"*executor.MemTableReaderExec":  {level: 2, label: "MemTableReaderExec", useCells: false},
+		"*executor.PointGetExecutor":    {level: 1, label: "PointGetExecutor", useCells: true},
 		"*executor.ProjectionExec":      {level: 2, label: "ProjectionExec", useCells: true},
+		"*executor.SelectLockExec":      {level: 2, label: "SelectLockExec", useCells: true},
+		"*executor.SelectionExec":       {level: 2, label: "SelectionExec", useCells: false},
+		"*executor.TableDualExec":       {level: 2, label: "TableDualExec", useCells: false},
+		"*executor.TableReaderExecutor": {level: 2, label: "TableReaderExecutor", useCells: false},
+		"*executor.UnionScanExec":       {level: 2, label: "UnionScanExec", useCells: false},
+		"*executor.WindowExec":          {level: 2, label: "WindowExec", useCells: false},
 		"*join.HashJoinV1Exec":          {level: 2, label: "HashJoinV1Exec", useCells: false},
 		"*join.HashJoinV2Exec":          {level: 2, label: "HashJoinV2Exec", useCells: false},
 		"*join.IndexLookUpJoin":         {level: 2, label: "IndexLookUpJoin", useCells: true},

@@ -448,8 +448,8 @@ result-chunk-cells = 0.00010000
 executor-l1 = 0.00013278
 # executor-l2 covers general executors:
 # HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-# MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
-# UnionScanExec, and SelectLockExec.
+# MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
+# TableDualExec, TableReaderExecutor, TopN, UnionScanExec, Window, and Expand.
 executor-l2 = 0.00000383
 # executor-l3 covers heavier operators: Sort and StreamAgg.
 executor-l3 = 0.00141739

@@ -386,10 +386,10 @@ type RUV2Config struct {
 	// ExecutorL1 is the weight for fast-path executors that scale by cells:
 	// BatchPointGet, PointGet, and Limit.
 	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
-	// ExecutorL2 is the weight for general executors, including HashAgg,
+	// ExecutorL2 is the weight for general executors, including Expand, HashAgg,
 	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-	// MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
-	// UnionScanExec, and SelectLockExec.
+	// MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
+	// TableDualExec, TableReaderExecutor, TopN, UnionScanExec, and Window.
 	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
 	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
 	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`

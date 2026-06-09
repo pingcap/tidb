@@ -499,10 +499,16 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	}
 	ruDetails.AddRUV2(rawRUV2)
 	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
+	commitDetails := &util.CommitDetails{
+		WriteKeys: 3,
+		WriteSize: 66,
+	}
+	sessVars.StmtCtx.SyncExecDetails.MergeExecDetails(commitDetails)
 	// Build expected metrics by cloning the current state and manually adding
-	// the RUV2 counters (without draining ruDetails, since FinishExecuteStmt will drain).
+	// the pending counters (without draining ruDetails, since FinishExecuteStmt will drain).
 	expected := sessVars.RUV2Metrics.Clone()
 	execdetails.UpdateRUV2MetricsFromRUV2(expected, rawRUV2)
+	execdetails.UpdateRUV2MetricsFromCommitDetails(expected, commitDetails)
 
 	execStmt := &executor.ExecStmt{
 		Ctx:      ctx,
@@ -515,6 +521,8 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	require.Equal(t, int64(5), sessVars.RUV2Metrics.ResourceManagerReadCnt())
 	require.Equal(t, int64(7), sessVars.RUV2Metrics.ResourceManagerWriteCnt())
 	require.Equal(t, int64(11), sessVars.RUV2Metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(3), sessVars.RUV2Metrics.WriteKeys())
+	require.Equal(t, int64(66), sessVars.RUV2Metrics.WriteSize())
 	require.Equal(t, "rg1", reporter.group)
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
 	require.Equal(t, expected.CalculateRUValues(sessVars.RUV2Weights()), reporter.tidbRUV2)
