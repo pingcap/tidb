@@ -2643,7 +2643,7 @@ func (s *loadPausingStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOpti
 	return s.Storage.WalkDir(ctx, opt, fn)
 }
 
-func requireSingleReadLockMeta(t *testing.T, ctx context.Context, stg storeapi.Storage) (string, objstore.LockMeta) {
+func requireSingleReadLockMeta(ctx context.Context, t *testing.T, stg storeapi.Storage) (string, objstore.LockMeta) {
 	t.Helper()
 
 	var paths []string
@@ -2786,9 +2786,9 @@ func TestGetLockedMigrationsRenewsReadLockWhileLoadingMigrations(t *testing.T) {
 			}
 		}, time.Second, 10*time.Millisecond)
 
-		lockPath, initialMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+		lockPath, initialMeta := requireSingleReadLockMeta(ctx, t, baseStorage)
 		require.Eventually(t, func() bool {
-			currentPath, currentMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+			currentPath, currentMeta := requireSingleReadLockMeta(ctx, t, baseStorage)
 			return currentPath == lockPath && currentMeta.ExpireAt.After(initialMeta.ExpireAt)
 		}, time.Second, 10*time.Millisecond)
 
@@ -2805,9 +2805,9 @@ func TestGetLockedMigrationsRenewsReadLockWhileLoadingMigrations(t *testing.T) {
 			require.NoError(t, res.migs.Unlock(ctx))
 		})
 
-		_, returnedMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+		_, returnedMeta := requireSingleReadLockMeta(ctx, t, baseStorage)
 		require.Eventually(t, func() bool {
-			currentPath, currentMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+			currentPath, currentMeta := requireSingleReadLockMeta(ctx, t, baseStorage)
 			return currentPath == lockPath && currentMeta.ExpireAt.After(returnedMeta.ExpireAt)
 		}, time.Second, 10*time.Millisecond)
 	})

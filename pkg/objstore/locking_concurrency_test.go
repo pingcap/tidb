@@ -421,7 +421,7 @@ func testConcurrentAcquirePair(
 	t.Helper()
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	require.NoError(t, os.MkdirAll(filepath.Join(pth, "v1"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(pth, "v1"), 0o750))
 	audit := newCriticalSectionAudit(interleaving)
 
 	waitSignal := func(ch <-chan struct{}, name string) {

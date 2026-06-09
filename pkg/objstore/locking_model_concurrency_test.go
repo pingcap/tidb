@@ -136,8 +136,9 @@ func requireSinglePathWithPrefixExcept(t *testing.T, storage storeapi.Storage, p
 	for _, path := range excluded {
 		excludedSet[path] = struct{}{}
 	}
-	var matches []string
-	for _, path := range requireListedPathsWithPrefix(t, storage, prefix) {
+	paths := requireListedPathsWithPrefix(t, storage, prefix)
+	matches := make([]string, 0, len(paths))
+	for _, path := range paths {
 		if strings.Contains(path, ".INTENT.") {
 			continue
 		}

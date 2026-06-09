@@ -862,7 +862,7 @@ func generateFiles(ctx context.Context, s storeapi.Storage, metas []*backuppb.Me
 		return err
 	}
 	fname := path.Join(tmpDir, GetStreamBackupMetaPrefix())
-	os.MkdirAll(fname, 0777)
+	os.MkdirAll(fname, 0o750)
 	for _, meta := range metas {
 		data, err := meta.Marshal()
 		if err != nil {
@@ -2702,7 +2702,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{mN(1), lN(1), lN(4), mig3p})
 }
 
-func readSingleLockMetaWithPrefix(t *testing.T, ctx context.Context, s storeapi.Storage, prefix string) (objstore.LockMeta, string, bool) {
+func readSingleLockMetaWithPrefix(ctx context.Context, t *testing.T, s storeapi.Storage, prefix string) (objstore.LockMeta, string, bool) {
 	var paths []string
 	require.NoError(t, s.WalkDir(ctx, &storeapi.WalkOption{
 		SubDir:    path.Dir(prefix),
@@ -2735,7 +2735,7 @@ func useFastRenewalWithLongLease(t *testing.T, maxRetries int, baseBackoff time.
 	return leaseTTL
 }
 
-func fileExists(t *testing.T, ctx context.Context, s storeapi.Storage, path string) bool {
+func fileExists(ctx context.Context, t *testing.T, s storeapi.Storage, path string) bool {
 	t.Helper()
 	exists, err := s.FileExists(ctx, path)
 	require.NoError(t, err)
@@ -2783,7 +2783,7 @@ func (s *appendLeaseLossStorage) WriteFile(ctx context.Context, name string, dat
 	return s.Storage.WriteFile(ctx, name, data)
 }
 
-func requireNoMigrationFileWritten(t *testing.T, ctx context.Context, s storeapi.Storage) {
+func requireNoMigrationFileWritten(ctx context.Context, t *testing.T, s storeapi.Storage) {
 	t.Helper()
 	var paths []string
 	require.NoError(t, s.WalkDir(ctx, &storeapi.WalkOption{SubDir: migrationPrefix}, func(p string, _ int64) error {
@@ -2825,7 +2825,7 @@ func TestAppendMigrationStopsWhenEitherLockLeaseLost(t *testing.T) {
 			default:
 				t.Fatalf("expected %s renewal to fail before AppendMigration returned", tc.failLockPrefix)
 			}
-			requireNoMigrationFileWritten(t, ctx, base)
+			requireNoMigrationFileWritten(ctx, t, base)
 		})
 	}
 }
@@ -2873,13 +2873,13 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	}
 
 	readLockMeta := func() (objstore.LockMeta, string, bool) {
-		return readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".WRIT.")
+		return readSingleLockMetaWithPrefix(ctx, t, s, lockPrefix+".WRIT.")
 	}
 
 	initialMeta, initialLockPath, ok := readLockMeta()
 	require.True(t, ok)
-	require.Equal(t, leaseNow, initialMeta.LockedAt)
-	require.Equal(t, leaseNow.Add(leaseTTL), initialMeta.ExpireAt)
+	require.Equal(t, leaseNow.UTC(), initialMeta.LockedAt.UTC())
+	require.Equal(t, leaseNow.Add(leaseTTL).UTC(), initialMeta.ExpireAt.UTC())
 
 	require.Eventually(t, func() bool {
 		meta, lockPath, ok := readLockMeta()
@@ -2944,8 +2944,8 @@ func TestMergeAndMigrateToStopsTruncateAfterLeaseLostDuringDelete(t *testing.T) 
 	}
 
 	require.ErrorIs(t, multierr.Combine(res.Warnings...), context.Canceled)
-	require.False(t, fileExists(t, ctx, baseStorage, logA), "the first log file proves truncation had already started")
-	require.True(t, fileExists(t, ctx, baseStorage, logB), "truncate should stop before deleting every log file after lease loss")
+	require.False(t, fileExists(ctx, t, baseStorage, logA), "the first log file proves truncation had already started")
+	require.True(t, fileExists(ctx, t, baseStorage, logB), "truncate should stop before deleting every log file after lease loss")
 	require.Equal(t, uint64(40), res.NewBase.TruncatedTo)
 	require.NotEmpty(t, res.NewBase.EditMeta)
 	require.True(t, slices.ContainsFunc(res.NewBase.EditMeta, func(edit *backuppb.MetaEdit) bool {
@@ -2972,10 +2972,10 @@ func TestLockForAppendRenewsBothLocks(t *testing.T) {
 		require.NoError(t, err)
 		defer readLock.UnlockOnCleanUp(ctx)
 
-		readMeta, _, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+		readMeta, _, ok := readSingleLockMetaWithPrefix(ctx, t, s, lockPrefix+".READ.")
 		require.True(t, ok)
-		require.Equal(t, leaseNow, readMeta.LockedAt)
-		require.Equal(t, leaseNow.Add(leaseTTL), readMeta.ExpireAt)
+		require.Equal(t, leaseNow.UTC(), readMeta.LockedAt.UTC())
+		require.Equal(t, leaseNow.Add(leaseTTL).UTC(), readMeta.ExpireAt.UTC())
 	})
 
 	t.Run("append locks use supplied clock and renew", func(t *testing.T) {
@@ -2994,21 +2994,21 @@ func TestLockForAppendRenewsBothLocks(t *testing.T) {
 		defer readLock.UnlockOnCleanUp(ctx)
 		defer appendLock.UnlockOnCleanUp(ctx)
 
-		readMeta, readLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+		readMeta, readLockPath, ok := readSingleLockMetaWithPrefix(ctx, t, s, lockPrefix+".READ.")
 		require.True(t, ok)
-		require.Equal(t, leaseNow, readMeta.LockedAt)
-		require.Equal(t, leaseNow.Add(leaseTTL), readMeta.ExpireAt)
-		appendMeta, appendLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
+		require.Equal(t, leaseNow.UTC(), readMeta.LockedAt.UTC())
+		require.Equal(t, leaseNow.Add(leaseTTL).UTC(), readMeta.ExpireAt.UTC())
+		appendMeta, appendLockPath, ok := readSingleLockMetaWithPrefix(ctx, t, s, appendLockPrefix+".WRIT.")
 		require.True(t, ok)
-		require.Equal(t, leaseNow.Add(2*step), appendMeta.LockedAt)
-		require.Equal(t, leaseNow.Add(2*step).Add(leaseTTL), appendMeta.ExpireAt)
+		require.Equal(t, leaseNow.Add(2*step).UTC(), appendMeta.LockedAt.UTC())
+		require.Equal(t, leaseNow.Add(2*step).Add(leaseTTL).UTC(), appendMeta.ExpireAt.UTC())
 
 		require.Eventually(t, func() bool {
-			meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+			meta, lockPath, ok := readSingleLockMetaWithPrefix(ctx, t, s, lockPrefix+".READ.")
 			return ok && lockPath == readLockPath && meta.ExpireAt.After(readMeta.ExpireAt)
 		}, 2*time.Second, 10*time.Millisecond)
 		require.Eventually(t, func() bool {
-			meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
+			meta, lockPath, ok := readSingleLockMetaWithPrefix(ctx, t, s, appendLockPrefix+".WRIT.")
 			return ok && lockPath == appendLockPath && meta.ExpireAt.After(appendMeta.ExpireAt)
 		}, 2*time.Second, 10*time.Millisecond)
 	})

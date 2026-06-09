@@ -440,12 +440,13 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 	}
 	var markerErr error
 	failpoint.Inject("lease-lock-stale-reclaim-signal", func(v failpoint.Value) {
-		dir, parseErr := parseLeaseLockFailpointParam(v, "dir")
-		if parseErr != nil {
-			markerErr = parseErr
-			return
-		}
-		markerErr = writeLeaseLockFailpointMarker(filepath.Join(dir, pathBaseForLeaseLockMarker(path)))
+		markerErr = func() error {
+			dir, err := parseLeaseLockFailpointParam(v, "dir")
+			if err != nil {
+				return err
+			}
+			return writeLeaseLockFailpointMarker(filepath.Join(dir, pathBaseForLeaseLockMarker(path)))
+		}()
 	})
 	if markerErr != nil {
 		return false, markerErr

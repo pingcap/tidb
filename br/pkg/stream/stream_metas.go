@@ -788,14 +788,16 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 func (m MigrationExt) lockForAppend(ctx context.Context, hint string, onLeaseLost func()) (
 	readLock, appendLock *objstore.RemoteLock, err error) {
 	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
-	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)", onLeaseLost, m.clock)
+	readLock, err = objstore.LockWithRetry(
+		ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)", onLeaseLost, m.clock)
 	if err != nil {
 		return nil, nil, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
-	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)", onLeaseLost, m.clock)
+	appendLock, err = objstore.LockWithRetry(
+		ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)", onLeaseLost, m.clock)
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)

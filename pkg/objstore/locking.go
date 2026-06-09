@@ -682,7 +682,7 @@ func runLeaseLockRenewalWriteErrorFailpoint(v failpoint.Value) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(signalDir, 0o755); err != nil {
+	if err := os.MkdirAll(signalDir, 0o750); err != nil {
 		return errors.Annotatef(err, "failpoint: create renewal write error signal dir %s", signalDir)
 	}
 	entries, err := os.ReadDir(signalDir)
@@ -728,7 +728,7 @@ func parseLeaseLockFailpointParam(v failpoint.Value, expectedKey string) (string
 }
 
 func writeLeaseLockFailpointMarker(marker string) error {
-	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(marker), 0o750); err != nil {
 		return errors.Annotatef(err, "failpoint: create marker dir for %s", marker)
 	}
 	if err := os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339Nano)), 0o644); err != nil {

@@ -298,7 +298,7 @@ test_concurrent_restore_table_conflicts() {
         echo 'expecting conflicting table detected and restore abort but succeeded'
         exit 1
     fi
-    check_contains "table already covered by another restore task"
+    check_contains "cannot be restored concurrently by current task"
 
     # run first task again to finish
     run_br restore point --filter "$DB.*" --full-backup-storage "$BACKUP_DIR" -s "$LOG_BACKUP_DIR"

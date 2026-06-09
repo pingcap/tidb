@@ -62,6 +62,8 @@ func isTestFile(file *token.File) bool {
 
 func checkRule(pkg string) int {
 	switch pkg {
+	case "br/pkg/stream":
+		return 60
 	case "pkg/planner/core":
 		return 210
 	case "pkg/util/topsql/reporter":
