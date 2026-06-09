@@ -160,37 +160,37 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}
 
 	defer func() {
-		if retErr == nil {
-			// Override the resource group if the hint is set.
-			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-				if variable.EnableResourceControl.Load() {
-					hasPriv := true
-					// only check dynamic privilege when strict-mode is enabled.
-					if variable.EnableResourceControlStrictMode.Load() {
-						checker := privilege.GetPrivilegeManager(sctx)
-						if checker != nil {
-							hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
-							hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
-							hasPriv = hasRgAdminPriv || hasRgUserPriv
-						}
+		// Override the resource group if the hint is set.
+		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
+			if variable.EnableResourceControl.Load() {
+				hasPriv := true
+				// only check dynamic privilege when strict-mode is enabled.
+				if variable.EnableResourceControlStrictMode.Load() {
+					checker := privilege.GetPrivilegeManager(sctx)
+					if checker != nil {
+						hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+						hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
+						hasPriv = hasRgAdminPriv || hasRgUserPriv
 					}
-					if hasPriv {
-						sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
-						// if we are in a txn, should update the txn resource name to let the txn
-						// commit with the hint resource group.
-						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-							kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
-						}
-					} else {
-						err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
-						sessVars.StmtCtx.AppendWarning(err)
+				}
+				if hasPriv {
+					sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+					// if we are in a txn, should update the txn resource name to let the txn
+					// commit with the hint resource group.
+					if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+						kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
 					}
 				} else {
-					err := infoschema.ErrResourceGroupSupportDisabled
+					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
 					sessVars.StmtCtx.AppendWarning(err)
 				}
+			} else {
+				err := infoschema.ErrResourceGroupSupportDisabled
+				sessVars.StmtCtx.AppendWarning(err)
 			}
+		}
 
+		if retErr == nil {
 			// Handle SetVars hints for cached plans.
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
