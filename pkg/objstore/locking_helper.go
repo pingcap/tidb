@@ -108,6 +108,11 @@ func makeLockContent(path string, meta LockMeta) func(uuid.UUID) []byte {
 // SetLeaseConstantsForTest overrides the lease-related timing knobs for tests.
 // The returned restore function must be called so later tests see production
 // values again.
+//
+// For tests only: this mutates package-global state, is not concurrency-safe,
+// and must never be called from production paths. It lives outside
+// export_test.go because external BR tests need to override objstore package
+// globals.
 func SetLeaseConstantsForTest(ttl, interval time.Duration, maxRetries int, baseBackoff time.Duration) (restore func()) {
 	oldTTL, oldInterval := LeaseTTL, renewInterval
 	oldMax, oldBackoff := renewMaxRetries, renewBaseBackoff
@@ -387,7 +392,7 @@ type cleanupLeaseClockError struct {
 }
 
 func (e cleanupLeaseClockError) Error() string {
-	return fmt.Sprintf("CleanUpStaleLock: get lease time: %v", e.err)
+	return fmt.Sprintf("stale-lock cleanup: get lease time: %v", e.err)
 }
 
 func (e cleanupLeaseClockError) Unwrap() error {

@@ -294,7 +294,8 @@ func parseLeaseLockTestConstants(v failpoint.Value) (leaseLockTestConstants, err
 }
 
 // LeaseClock supplies the current lease time for lock metadata and lease
-// validity checks.
+// validity checks. Production cross-process BR/PiTR lock participants should
+// use a cluster-authoritative clock such as PD TSO.
 type LeaseClock interface {
 	Now(ctx context.Context) (time.Time, error)
 }
@@ -306,8 +307,9 @@ func (localLeaseClock) Now(context.Context) (time.Time, error) {
 }
 
 // NewLocalLeaseClock returns a lease clock backed by the local wall clock.
-// It is intended for tests, manual paths, and temporarily unmigrated callers
-// that explicitly keep local-time behavior.
+// It is intended for tests and callers that deliberately keep legacy local-time
+// behavior; production lock participants should prefer a cluster-authoritative
+// clock.
 func NewLocalLeaseClock() LeaseClock {
 	return localLeaseClock{}
 }
@@ -623,6 +625,10 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 		}
 		return renewalResult{}, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
 	}
+	return proveRenewalWriteSafe(oldExpireAt, newExpireAt, nowAfterWrite)
+}
+
+func proveRenewalWriteSafe(oldExpireAt, newExpireAt, nowAfterWrite time.Time) (renewalResult, error) {
 	if !oldExpireAt.IsZero() && nowAfterWrite.After(oldExpireAt) {
 		return renewalResult{}, errors.Annotatef(errRenewLeaseExpired,
 			"now=%s old_expire_at=%s", nowAfterWrite, oldExpireAt)

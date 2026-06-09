@@ -2725,6 +2725,16 @@ func readSingleLockMetaWithPrefix(t *testing.T, ctx context.Context, s storeapi.
 	return meta, paths[0], true
 }
 
+func useFastRenewalWithLongLease(t *testing.T, maxRetries int, baseBackoff time.Duration) time.Duration {
+	t.Helper()
+	const (
+		leaseTTL      = 11 * time.Minute
+		renewInterval = 10 * time.Millisecond
+	)
+	t.Cleanup(objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, maxRetries, baseBackoff))
+	return leaseTTL
+}
+
 func fileExists(t *testing.T, ctx context.Context, s storeapi.Storage, path string) bool {
 	t.Helper()
 	exists, err := s.FileExists(ctx, path)
@@ -2784,12 +2794,7 @@ func requireNoMigrationFileWritten(t *testing.T, ctx context.Context, s storeapi
 }
 
 func TestAppendMigrationStopsWhenEitherLockLeaseLost(t *testing.T) {
-	const (
-		leaseTTL      = 11 * time.Minute
-		renewInterval = 10 * time.Millisecond
-	)
-	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 0, time.Millisecond)
-	defer restoreLeaseConstants()
+	useFastRenewalWithLongLease(t, 0, time.Millisecond)
 
 	for _, tc := range []struct {
 		name           string
@@ -2826,10 +2831,7 @@ func TestAppendMigrationStopsWhenEitherLockLeaseLost(t *testing.T) {
 }
 
 func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
-	const (
-		leaseTTL      = 11 * time.Minute
-		renewInterval = 10 * time.Millisecond
-	)
+	leaseTTL := useFastRenewalWithLongLease(t, 3, 5*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	s := tmp(t)
 	leaseNow := time.Now().Round(0)
@@ -2847,14 +2849,12 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	release := func() { releaseOnce.Do(func() { close(releaseCheck) }) }
 	goroutineStarted := false
 	cleanupDone := false
-	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 3, 5*time.Millisecond)
 	defer func() {
 		cancel()
 		if goroutineStarted && !cleanupDone {
 			release()
 			<-done
 		}
-		restoreLeaseConstants()
 	}()
 
 	go func() {
@@ -2900,8 +2900,7 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 }
 
 func TestMergeAndMigrateToStopsTruncateAfterLeaseLostDuringDelete(t *testing.T) {
-	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(11*time.Minute, 10*time.Millisecond, 0, time.Millisecond)
-	defer restoreLeaseConstants()
+	useFastRenewalWithLongLease(t, 0, time.Millisecond)
 
 	ctx := context.Background()
 	baseStorage := tmp(t)
@@ -2957,12 +2956,7 @@ func TestMergeAndMigrateToStopsTruncateAfterLeaseLostDuringDelete(t *testing.T) 
 }
 
 func TestLockForAppendRenewsBothLocks(t *testing.T) {
-	const (
-		leaseTTL      = 11 * time.Minute
-		renewInterval = 10 * time.Millisecond
-	)
-	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 3, 5*time.Millisecond)
-	defer restoreLeaseConstants()
+	leaseTTL := useFastRenewalWithLongLease(t, 3, 5*time.Millisecond)
 
 	t.Run("get read lock uses supplied clock", func(t *testing.T) {
 		ctx := context.Background()
@@ -3089,6 +3083,9 @@ func TestRetry(t *testing.T) {
 
 	require.NoError(t,
 		failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err", `1*return("this disk remembers nothing")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
+	}()
 	ctx := context.Background()
 	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
@@ -3121,6 +3118,9 @@ func TestRetryRemoveCompaction(t *testing.T) {
 	)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_delete_file_err", `1*return("this disk will never forget")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_delete_file_err"))
+	}()
 	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)

@@ -207,6 +207,8 @@ func (hook updateFnHook) DeletedAFileForTruncating(count int) {
 // RemoveDataFilesAndUpdateMetadataInBatch concurrently remove datafilegroups and update metadata.
 // Only one metadata is processed in each thread, including deleting its datafilegroup and updating it.
 // Returns the not deleted datafilegroups.
+// The clock is carried because MigrationExt requires one; lease-loss
+// cancellation is controlled by the caller-held truncate lock and ctx.
 func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
@@ -596,7 +598,9 @@ func (NoHooks) StartHandlingMetaEdits([]*pb.MetaEdit)                           
 func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                      {}
 func (NoHooks) HandingMetaEditDone()                                               {}
 
-// MigrationExtension installs the extension methods to an `Storage`.
+// MigrationExtension installs the extension methods to an `Storage`. Production
+// BR/PiTR lock participants should pass a cluster-authoritative lease clock
+// such as PD TSO; local clocks are for tests and deliberately legacy callers.
 func MigrationExtension(s storeapi.Storage, clock objstore.LeaseClock) MigrationExt {
 	return MigrationExt{
 		s:      s,
@@ -803,6 +807,8 @@ func (m MigrationExt) lockForAppend(ctx context.Context, hint string, onLeaseLos
 
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
 	log.Info("appending migration, trying to acquire two-phase lock")
+	// workCtx is canceled when either lock loses its lease. All lock-protected
+	// storage work below must use workCtx; cleanup unlocks use the parent ctx.
 	workCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	readLock, appendLock, err := m.lockForAppend(workCtx, "AppendMigration", cancel)
@@ -912,6 +918,8 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	if !config.skipLockingInTest {
+		// workCtx is canceled when the write lock loses its lease. All protected
+		// mutation work below must use it; cleanup unlocks use the parent ctx.
 		workCtx, cancel := context.WithCancel(ctx)
 		lock, err := objstore.LockWithRetry(workCtx, objstore.TryLockRemoteWrite, m.s, lockPrefix,
 			"StreamTruncation: MergeMigration", cancel, m.clock)

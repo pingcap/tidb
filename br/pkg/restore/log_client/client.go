@@ -697,6 +697,10 @@ func (m *LockedMigrations) Unlock(ctx context.Context) error {
 	return err
 }
 
+// GetLockedMigrations loads migrations under a read lock. The returned
+// LockedMigrations must be unlocked by the caller; until then, onLeaseLost may
+// be invoked asynchronously by the lock renewal goroutine and must be
+// lightweight and safe to call at most once.
 func (rc *LogClient) GetLockedMigrations(ctx context.Context, onLeaseLost func()) (ret *LockedMigrations, retErr error) {
 	if onLeaseLost == nil {
 		return nil, errors.New("onLeaseLost callback is required for lease lock renewal")
