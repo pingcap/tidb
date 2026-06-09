@@ -917,6 +917,15 @@ func validateOnLeaseLost(onLeaseLost func()) error {
 	return nil
 }
 
+func startRenewalIfSafe(ctx context.Context, lock *RemoteLock, onLeaseLost func()) error {
+	if lock.provedRemainingLease <= minRenewRetryRemainingLease() {
+		unlockErr := lock.Unlock(ctx)
+		return multierr.Append(errRenewRemainingLeaseTooSmall, unlockErr)
+	}
+	lock.startRenewal(ctx, onLeaseLost)
+	return nil
+}
+
 // LockWithRetry lock with retry.
 //
 // On each conflict it opportunistically deletes any stale (ExpireAt-past +
@@ -941,11 +950,9 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	for {
 		lock, lockErr := locker(ctx, storage, lockPath, hint, clock)
 		if lockErr == nil {
-			if lock.provedRemainingLease <= minRenewRetryRemainingLease() {
-				unlockErr := lock.Unlock(ctx)
-				return nil, multierr.Append(errRenewRemainingLeaseTooSmall, unlockErr)
+			if err := startRenewalIfSafe(ctx, lock, onLeaseLost); err != nil {
+				return nil, err
 			}
-			lock.startRenewal(ctx, onLeaseLost)
 			return lock, nil
 		}
 		err = lockErr
@@ -1067,7 +1074,7 @@ func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint s
 }
 
 // LockRemoteTruncate acquires a truncate lock once with the provided lease
-// clock and starts lease renewal.
+// clock and starts lease renewal after proving enough remaining lease.
 func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
 		return nil, err
@@ -1083,6 +1090,8 @@ func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint stri
 	if err != nil {
 		return nil, err
 	}
-	lock.startRenewal(ctx, onLeaseLost)
+	if err := startRenewalIfSafe(ctx, lock, onLeaseLost); err != nil {
+		return nil, err
+	}
 	return lock, nil
 }

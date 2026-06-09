@@ -1986,6 +1986,38 @@ func TestLockRemoteTruncateRejectsNilOnLeaseLost(t *testing.T) {
 	require.Empty(t, requireListedPathsWithPrefix(t, strg, "truncating.lock."))
 }
 
+func TestLockRemoteTruncateRejectsAcquireWithUnsafeRemainingLease(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(30*time.Millisecond, 10*time.Millisecond, 1, time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(time.Millisecond, time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(25 * time.Millisecond),
+		},
+	}
+	leaseLost := make(chan struct{})
+
+	lock, err := objstore.LockRemoteTruncate(ctx, strg, "truncate", func() {
+		close(leaseLost)
+	}, clock)
+	if lock != nil {
+		require.NoError(t, lock.Unlock(ctx))
+	}
+	require.Nil(t, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewRemainingLeaseTooSmall)
+	require.Empty(t, requireListedPathsWithPrefix(t, strg, "truncating.lock."))
+
+	select {
+	case <-leaseLost:
+		t.Fatal("onLeaseLost should not run when LockRemoteTruncate rejects the lock before starting renewal")
+	default:
+	}
+}
+
 func TestLockRemoteTruncateStartsRenewal(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
