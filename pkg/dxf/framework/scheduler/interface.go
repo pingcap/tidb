@@ -190,13 +190,11 @@ type Param struct {
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskMgr TaskManager, stores ...kv.Storage) Param {
+func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
 	param := Param{
 		taskMgr: taskMgr,
 	}
-	if len(stores) > 0 {
-		param.TaskStore = stores[0]
-	}
+	param.TaskStore = store
 	return param
 }
 

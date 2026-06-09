@@ -81,58 +81,6 @@ func expectSchedulerRuntimeSession(ctrl *gomock.Controller, taskMgr *mock.MockTa
 	}).AnyTimes()
 }
 
-type boundaryTestScheduler struct {
-	task    *proto.Task
-	initErr error
-	runCh   chan struct{}
-}
-
-func (s *boundaryTestScheduler) Init() error {
-	return s.initErr
-}
-
-func (s *boundaryTestScheduler) ScheduleTask() {
-	if s.runCh != nil {
-		close(s.runCh)
-	}
-}
-
-func (*boundaryTestScheduler) Close() {}
-
-func (s *boundaryTestScheduler) GetTask() *proto.Task {
-	return s.task
-}
-
-func (*boundaryTestScheduler) OnTick(context.Context, *proto.Task) {}
-
-func (*boundaryTestScheduler) OnNextSubtasksBatch(context.Context, storage.TaskHandle, *proto.Task, []string, proto.Step) ([][]byte, error) {
-	return nil, nil
-}
-
-func (*boundaryTestScheduler) OnDone(context.Context, storage.TaskHandle, *proto.Task) error {
-	return nil
-}
-
-func (*boundaryTestScheduler) GetEligibleInstances(context.Context, *proto.Task) ([]string, error) {
-	return nil, nil
-}
-
-func (*boundaryTestScheduler) IsRetryableErr(error) bool {
-	return true
-}
-
-func (*boundaryTestScheduler) GetNextStep(*proto.TaskBase) proto.Step {
-	return proto.StepDone
-}
-
-func (*boundaryTestScheduler) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
-	return nil
-}
-
-func (*boundaryTestScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
-	return oldMeta, nil
-}
-
 // GetTestSchedulerExt return scheduler.Extension for testing.
 func GetTestSchedulerExt(ctrl *gomock.Controller) Extension {
 	mockScheduler := mockScheduler.NewMockExtension(ctrl)
@@ -322,7 +270,14 @@ func TestStartSchedulerAcquiresCrossKeyspaceRuntimeAndReleasesOnExit(t *testing.
 		require.Same(t, task, gotTask)
 		require.Same(t, runtimeHandle, param.TaskRuntime)
 		require.Same(t, taskStore, param.TaskRuntime.Store())
-		return &boundaryTestScheduler{task: gotTask, runCh: runCh}
+		scheduler := mock.NewMockScheduler(ctrl)
+		scheduler.EXPECT().Init().Return(nil)
+		scheduler.EXPECT().ScheduleTask().Do(func() {
+			close(runCh)
+		})
+		scheduler.EXPECT().Close()
+		scheduler.EXPECT().GetTask().Return(gotTask).AnyTimes()
+		return scheduler
 	})
 
 	mgr.startScheduler(&task.TaskBase, false, "")
@@ -366,7 +321,9 @@ func TestStartSchedulerReleasesCrossKeyspaceRuntimeOnInitFailure(t *testing.T) {
 	RegisterSchedulerFactory(proto.TaskTypeExample, func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
 		require.Same(t, runtimeHandle, param.TaskRuntime)
 		require.Same(t, taskStore, param.TaskRuntime.Store())
-		return &boundaryTestScheduler{task: gotTask, initErr: errors.New("init failed")}
+		scheduler := mock.NewMockScheduler(ctrl)
+		scheduler.EXPECT().Init().Return(errors.New("init failed"))
+		return scheduler
 	})
 
 	mgr.startScheduler(&task.TaskBase, false, "")
@@ -398,7 +355,7 @@ func TestStartSchedulerStopsWhenCrossKeyspaceRuntimeAcquireFails(t *testing.T) {
 	var factoryCalled atomic.Bool
 	RegisterSchedulerFactory(proto.TaskTypeExample, func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {
 		factoryCalled.Store(true)
-		return &boundaryTestScheduler{task: gotTask}
+		return mock.NewMockScheduler(ctrl)
 	})
 
 	mgr.startScheduler(&task.TaskBase, false, "")
