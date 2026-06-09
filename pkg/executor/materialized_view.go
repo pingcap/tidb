@@ -86,14 +86,14 @@ type PurgeMaterializedViewLogExec struct {
 }
 
 const (
-	mvCompleteDeltaDiffOpInsert = int64(1)
-	mvCompleteDeltaDiffOpDelete = int64(2)
-	mvCompleteDeltaDiffOpUpdate = int64(3)
+	mviewCompleteDeltaDiffOpInsert = int64(1)
+	mviewCompleteDeltaDiffOpDelete = int64(2)
+	mviewCompleteDeltaDiffOpUpdate = int64(3)
 )
 
-// MVCompleteDeltaApplyExec applies COMPLETE DELTA APPLY diff rows to the target MV table.
+// MViewCompleteDeltaApplyExec applies COMPLETE DELTA APPLY diff rows to the target MV table.
 // It keeps the runtime single-threaded and only batches the UPDATE old/new comparison at chunk granularity.
-type MVCompleteDeltaApplyExec struct {
+type MViewCompleteDeltaApplyExec struct {
 	exec.BaseExecutor
 
 	TargetTable      table.Table
@@ -108,7 +108,7 @@ type MVCompleteDeltaApplyExec struct {
 	QCompareInputColIDs  []int
 
 	writableFieldTypes []*types.FieldType
-	compareColumns     []mvCompleteDeltaCompareColumn
+	compareColumns     []mviewCompleteDeltaCompareColumn
 	oldRow             []types.Datum
 	newRow             []types.Datum
 	touched            []bool
@@ -122,10 +122,10 @@ type MVCompleteDeltaApplyExec struct {
 	updateTouchedBitmap []uint8
 	updateTouchedStride int
 	executed            bool
-	runtimeStats        *mvCompleteDeltaApplyRuntimeStats
+	runtimeStats        *mviewCompleteDeltaApplyRuntimeStats
 }
 
-type mvCompleteDeltaCompareColumn struct {
+type mviewCompleteDeltaCompareColumn struct {
 	writableIdx      int
 	mInputColID      int
 	qInputColID      int
@@ -135,7 +135,7 @@ type mvCompleteDeltaCompareColumn struct {
 	touchedByteIndex int
 }
 
-type mvCompleteDeltaApplyWriterStats struct {
+type mviewCompleteDeltaApplyWriterStats struct {
 	chunks int64
 	rowOps int64
 
@@ -144,7 +144,7 @@ type mvCompleteDeltaApplyWriterStats struct {
 	deleteRows int64
 }
 
-func (s *mvCompleteDeltaApplyWriterStats) merge(other mvCompleteDeltaApplyWriterStats) {
+func (s *mviewCompleteDeltaApplyWriterStats) merge(other mviewCompleteDeltaApplyWriterStats) {
 	s.chunks += other.chunks
 	s.rowOps += other.rowOps
 	s.insertRows += other.insertRows
@@ -152,25 +152,25 @@ func (s *mvCompleteDeltaApplyWriterStats) merge(other mvCompleteDeltaApplyWriter
 	s.deleteRows += other.deleteRows
 }
 
-type mvCompleteDeltaApplyRuntimeStats struct {
+type mviewCompleteDeltaApplyRuntimeStats struct {
 	writerTime   time.Duration
-	writerDetail mvCompleteDeltaApplyWriterStats
+	writerDetail mviewCompleteDeltaApplyWriterStats
 }
 
-func (s *mvCompleteDeltaApplyRuntimeStats) reset() {
+func (s *mviewCompleteDeltaApplyRuntimeStats) reset() {
 	if s == nil {
 		return
 	}
 	s.writerTime = 0
-	s.writerDetail = mvCompleteDeltaApplyWriterStats{}
+	s.writerDetail = mviewCompleteDeltaApplyWriterStats{}
 }
 
-func (s *mvCompleteDeltaApplyRuntimeStats) String() string {
+func (s *mviewCompleteDeltaApplyRuntimeStats) String() string {
 	if s == nil {
 		return ""
 	}
 	var buf bytes.Buffer
-	buf.WriteString("mv_complete_delta_apply:{writer:{time:")
+	buf.WriteString("mview_complete_delta_apply:{writer:{time:")
 	buf.WriteString(execdetails.FormatDuration(s.writerTime))
 	buf.WriteString(", chunks:")
 	buf.WriteString(strconv.FormatInt(s.writerDetail.chunks, 10))
@@ -186,18 +186,18 @@ func (s *mvCompleteDeltaApplyRuntimeStats) String() string {
 	return buf.String()
 }
 
-func (s *mvCompleteDeltaApplyRuntimeStats) Clone() execdetails.RuntimeStats {
+func (s *mviewCompleteDeltaApplyRuntimeStats) Clone() execdetails.RuntimeStats {
 	if s == nil {
-		return &mvCompleteDeltaApplyRuntimeStats{}
+		return &mviewCompleteDeltaApplyRuntimeStats{}
 	}
-	return &mvCompleteDeltaApplyRuntimeStats{
+	return &mviewCompleteDeltaApplyRuntimeStats{
 		writerTime:   s.writerTime,
 		writerDetail: s.writerDetail,
 	}
 }
 
-func (s *mvCompleteDeltaApplyRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*mvCompleteDeltaApplyRuntimeStats)
+func (s *mviewCompleteDeltaApplyRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*mviewCompleteDeltaApplyRuntimeStats)
 	if !ok || tmp == nil {
 		return
 	}
@@ -205,12 +205,12 @@ func (s *mvCompleteDeltaApplyRuntimeStats) Merge(other execdetails.RuntimeStats)
 	s.writerDetail.merge(tmp.writerDetail)
 }
 
-func (*mvCompleteDeltaApplyRuntimeStats) Tp() int {
-	return execdetails.TpMVCompleteDeltaApplyRuntimeStats
+func (*mviewCompleteDeltaApplyRuntimeStats) Tp() int {
+	return execdetails.TpMViewCompleteDeltaApplyRuntimeStats
 }
 
 // Open implements the Executor interface.
-func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
+func (e *MViewCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	e.executed = false
 	e.childChunk = nil
 	e.updateRows = e.updateRows[:0]
@@ -221,20 +221,20 @@ func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	clear(e.touched)
 
 	if e.TargetTable == nil {
-		return errors.New("MVCompleteDeltaApply target table is nil")
+		return errors.New("MViewCompleteDeltaApply target table is nil")
 	}
 	if e.TargetHandleCols == nil {
-		return errors.New("MVCompleteDeltaApply target handle cols is nil")
+		return errors.New("MViewCompleteDeltaApply target handle cols is nil")
 	}
 	child := e.Children(0)
 	if child == nil {
-		return errors.New("MVCompleteDeltaApply child executor is nil")
+		return errors.New("MViewCompleteDeltaApply child executor is nil")
 	}
 	childTypes := child.RetFieldTypes()
-	if err := validateMVCompleteDeltaWritableInputColTypes(e.TargetTable, childTypes, e.MWritableInputColIDs); err != nil {
+	if err := validateMViewCompleteDeltaWritableInputColTypes(e.TargetTable, childTypes, e.MWritableInputColIDs); err != nil {
 		return err
 	}
-	if err := validateMVCompleteDeltaWritableInputColTypes(e.TargetTable, childTypes, e.QWritableInputColIDs); err != nil {
+	if err := validateMViewCompleteDeltaWritableInputColTypes(e.TargetTable, childTypes, e.QWritableInputColIDs); err != nil {
 		return err
 	}
 
@@ -261,7 +261,7 @@ func (e *MVCompleteDeltaApplyExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor interface.
-func (e *MVCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *MViewCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.executed {
 		return nil
@@ -269,7 +269,7 @@ func (e *MVCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) e
 	e.executed = true
 	if e.BaseExecutor.RuntimeStats() != nil {
 		if e.runtimeStats == nil {
-			e.runtimeStats = &mvCompleteDeltaApplyRuntimeStats{}
+			e.runtimeStats = &mviewCompleteDeltaApplyRuntimeStats{}
 		} else {
 			e.runtimeStats.reset()
 		}
@@ -278,7 +278,7 @@ func (e *MVCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) e
 
 	child := e.Children(0)
 	if child == nil {
-		return errors.New("MVCompleteDeltaApply child executor is nil")
+		return errors.New("MViewCompleteDeltaApply child executor is nil")
 	}
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
@@ -313,7 +313,7 @@ func (e *MVCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) e
 }
 
 // Close implements the Executor interface.
-func (e *MVCompleteDeltaApplyExec) Close() error {
+func (e *MViewCompleteDeltaApplyExec) Close() error {
 	e.writableFieldTypes = nil
 	e.compareColumns = nil
 	e.oldRow = nil
@@ -330,7 +330,7 @@ func (e *MVCompleteDeltaApplyExec) Close() error {
 	return e.BaseExecutor.Close()
 }
 
-func (e *MVCompleteDeltaApplyExec) applyChunk(
+func (e *MViewCompleteDeltaApplyExec) applyChunk(
 	txn kv.Transaction,
 	tableCtx table.MutateContext,
 	stmtCtx *stmtctx.StatementContext,
@@ -345,8 +345,8 @@ func (e *MVCompleteDeltaApplyExec) applyChunk(
 	if err := e.markChunkUpdateTouchedColumns(input); err != nil {
 		return err
 	}
-	var writerStats *mvCompleteDeltaApplyWriterStats
-	var writerStatsDelta mvCompleteDeltaApplyWriterStats
+	var writerStats *mviewCompleteDeltaApplyWriterStats
+	var writerStatsDelta mviewCompleteDeltaApplyWriterStats
 	if e.runtimeStats != nil {
 		writerStats = &e.runtimeStats.writerDetail
 		writerStatsDelta.chunks = 1
@@ -362,7 +362,7 @@ func (e *MVCompleteDeltaApplyExec) applyChunk(
 		row := input.GetRow(rowIdx)
 		op := ops[rowIdx]
 		switch op {
-		case mvCompleteDeltaDiffOpInsert:
+		case mviewCompleteDeltaDiffOpInsert:
 			writerStatsDelta.insertRows++
 			e.buildInsertRow(row)
 
@@ -386,7 +386,7 @@ func (e *MVCompleteDeltaApplyExec) applyChunk(
 			if err != nil {
 				return err
 			}
-		case mvCompleteDeltaDiffOpDelete:
+		case mviewCompleteDeltaDiffOpDelete:
 			writerStatsDelta.deleteRows++
 			e.buildDeleteRow(row)
 			handle, err := e.TargetHandleCols.BuildHandle(stmtCtx, row)
@@ -396,7 +396,7 @@ func (e *MVCompleteDeltaApplyExec) applyChunk(
 			if err := e.TargetTable.RemoveRecord(tableCtx, txn, handle, e.oldRow); err != nil {
 				return err
 			}
-		case mvCompleteDeltaDiffOpUpdate:
+		case mviewCompleteDeltaDiffOpUpdate:
 			changed, err := e.buildTouchedFromBitmap(updateOrdinal)
 			if err != nil {
 				return err
@@ -414,13 +414,13 @@ func (e *MVCompleteDeltaApplyExec) applyChunk(
 			}
 			updateOrdinal++
 		default:
-			return errors.Errorf("MVCompleteDeltaApply invalid diff op %d at row %d", op, rowIdx)
+			return errors.Errorf("MViewCompleteDeltaApply invalid diff op %d at row %d", op, rowIdx)
 		}
 	}
 	return nil
 }
 
-func (e *MVCompleteDeltaApplyExec) collectChunkUpdateRows(ops []int64) (int, error) {
+func (e *MViewCompleteDeltaApplyExec) collectChunkUpdateRows(ops []int64) (int, error) {
 	if cap(e.updateRows) >= len(ops) {
 		e.updateRows = e.updateRows[:0]
 	} else {
@@ -429,22 +429,22 @@ func (e *MVCompleteDeltaApplyExec) collectChunkUpdateRows(ops []int64) (int, err
 	insertRemain := 0
 	for rowIdx, op := range ops {
 		switch op {
-		case mvCompleteDeltaDiffOpInsert:
+		case mviewCompleteDeltaDiffOpInsert:
 			insertRemain++
-		case mvCompleteDeltaDiffOpDelete:
-		case mvCompleteDeltaDiffOpUpdate:
+		case mviewCompleteDeltaDiffOpDelete:
+		case mviewCompleteDeltaDiffOpUpdate:
 			e.updateRows = append(e.updateRows, rowIdx)
 		default:
-			return 0, errors.Errorf("MVCompleteDeltaApply invalid diff op %d at row %d", op, rowIdx)
+			return 0, errors.Errorf("MViewCompleteDeltaApply invalid diff op %d at row %d", op, rowIdx)
 		}
 	}
 	return insertRemain, nil
 }
 
-func (e *MVCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
+func (e *MViewCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
 	if len(e.MCompareInputColIDs) != len(e.CompareWritableIdxes) || len(e.QCompareInputColIDs) != len(e.CompareWritableIdxes) {
 		return errors.Errorf(
-			"MVCompleteDeltaApply compare mapping length mismatch (compare=%d, M=%d, Q=%d)",
+			"MViewCompleteDeltaApply compare mapping length mismatch (compare=%d, M=%d, Q=%d)",
 			len(e.CompareWritableIdxes),
 			len(e.MCompareInputColIDs),
 			len(e.QCompareInputColIDs),
@@ -453,12 +453,12 @@ func (e *MVCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
 	if cap(e.compareColumns) >= len(e.CompareWritableIdxes) {
 		e.compareColumns = e.compareColumns[:len(e.CompareWritableIdxes)]
 	} else {
-		e.compareColumns = make([]mvCompleteDeltaCompareColumn, len(e.CompareWritableIdxes))
+		e.compareColumns = make([]mviewCompleteDeltaCompareColumn, len(e.CompareWritableIdxes))
 	}
 	for compareIdx, writableIdx := range e.CompareWritableIdxes {
 		if writableIdx < 0 || writableIdx >= len(e.writableFieldTypes) {
 			return errors.Errorf(
-				"MVCompleteDeltaApply writable compare index %d out of field type range [0,%d)",
+				"MViewCompleteDeltaApply writable compare index %d out of field type range [0,%d)",
 				writableIdx,
 				len(e.writableFieldTypes),
 			)
@@ -466,7 +466,7 @@ func (e *MVCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
 		mInputColID := e.MCompareInputColIDs[compareIdx]
 		if mInputColID < 0 || mInputColID >= inputColCount {
 			return errors.Errorf(
-				"MVCompleteDeltaApply M compare input col id %d out of source range [0,%d)",
+				"MViewCompleteDeltaApply M compare input col id %d out of source range [0,%d)",
 				mInputColID,
 				inputColCount,
 			)
@@ -474,13 +474,13 @@ func (e *MVCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
 		qInputColID := e.QCompareInputColIDs[compareIdx]
 		if qInputColID < 0 || qInputColID >= inputColCount {
 			return errors.Errorf(
-				"MVCompleteDeltaApply Q compare input col id %d out of source range [0,%d)",
+				"MViewCompleteDeltaApply Q compare input col id %d out of source range [0,%d)",
 				qInputColID,
 				inputColCount,
 			)
 		}
 		fieldType := e.writableFieldTypes[writableIdx]
-		e.compareColumns[compareIdx] = mvCompleteDeltaCompareColumn{
+		e.compareColumns[compareIdx] = mviewCompleteDeltaCompareColumn{
 			writableIdx:      writableIdx,
 			mInputColID:      mInputColID,
 			qInputColID:      qInputColID,
@@ -493,7 +493,7 @@ func (e *MVCompleteDeltaApplyExec) initCompareColumns(inputColCount int) error {
 	return nil
 }
 
-func (e *MVCompleteDeltaApplyExec) markChunkUpdateTouchedColumns(input *chunk.Chunk) error {
+func (e *MViewCompleteDeltaApplyExec) markChunkUpdateTouchedColumns(input *chunk.Chunk) error {
 	updateCnt := len(e.updateRows)
 	if updateCnt == 0 || e.updateTouchedStride == 0 {
 		e.updateTouchedBitmap = e.updateTouchedBitmap[:0]
@@ -509,7 +509,7 @@ func (e *MVCompleteDeltaApplyExec) markChunkUpdateTouchedColumns(input *chunk.Ch
 	}
 
 	for _, compareCol := range e.compareColumns {
-		if err := markMVCompleteDeltaTouchedRowsByColumn(
+		if err := markMViewCompleteDeltaTouchedRowsByColumn(
 			e.updateRows,
 			e.updateTouchedBitmap,
 			e.updateTouchedStride,
@@ -524,19 +524,19 @@ func (e *MVCompleteDeltaApplyExec) markChunkUpdateTouchedColumns(input *chunk.Ch
 	return nil
 }
 
-func (e *MVCompleteDeltaApplyExec) buildDeleteRow(row chunk.Row) {
+func (e *MViewCompleteDeltaApplyExec) buildDeleteRow(row chunk.Row) {
 	for writableIdx, colID := range e.MWritableInputColIDs {
 		row.DatumWithBuffer(colID, e.writableFieldTypes[writableIdx], &e.oldRow[writableIdx])
 	}
 }
 
-func (e *MVCompleteDeltaApplyExec) buildInsertRow(row chunk.Row) {
+func (e *MViewCompleteDeltaApplyExec) buildInsertRow(row chunk.Row) {
 	for writableIdx, colID := range e.QWritableInputColIDs {
 		row.DatumWithBuffer(colID, e.writableFieldTypes[writableIdx], &e.newRow[writableIdx])
 	}
 }
 
-func (e *MVCompleteDeltaApplyExec) buildUpdateRows(row chunk.Row) {
+func (e *MViewCompleteDeltaApplyExec) buildUpdateRows(row chunk.Row) {
 	for writableIdx, colID := range e.MWritableInputColIDs {
 		row.DatumWithBuffer(colID, e.writableFieldTypes[writableIdx], &e.oldRow[writableIdx])
 	}
@@ -547,7 +547,7 @@ func (e *MVCompleteDeltaApplyExec) buildUpdateRows(row chunk.Row) {
 	}
 }
 
-func (e *MVCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) (bool, error) {
+func (e *MViewCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) (bool, error) {
 	if e.updateTouchedStride == 0 {
 		return false, nil
 	}
@@ -573,12 +573,12 @@ func (e *MVCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) (bo
 	return changed, nil
 }
 
-func markMVCompleteDeltaTouchedRowsByColumn(
+func markMViewCompleteDeltaTouchedRowsByColumn(
 	updateRows []int,
 	updateTouchedBitmap []uint8,
 	updateTouchedStride int,
 	updateTouchedSingleByte bool,
-	compareCol mvCompleteDeltaCompareColumn,
+	compareCol mviewCompleteDeltaCompareColumn,
 	oldCol *chunk.Column,
 	newCol *chunk.Column,
 ) error {

@@ -2314,7 +2314,7 @@ func buildCompleteDiffHandleCols(
 	}
 }
 
-// buildCompleteDiffOpExpr builds the diff-op expression consumed by MVCompleteDeltaApplyExec.
+// buildCompleteDiffOpExpr builds the diff-op expression consumed by MViewCompleteDeltaApplyExec.
 // The marker column is a visible NOT NULL MV column. If the marker is NULL on one side after the
 // full outer join, that side is missing: M missing means INSERT, Q missing means DELETE. If both
 // sides exist but payload columns differ, the row is UPDATE.

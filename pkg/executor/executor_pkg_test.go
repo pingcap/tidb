@@ -92,7 +92,7 @@ func TestShouldUseImportIntoForMVRefreshOutOfPlace(t *testing.T) {
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("mock-storage"))
 }
 
-func newTestMVCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
+func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
 		ID:    1,
 		Name:  pmodel.NewCIStr("mv"),
@@ -109,43 +109,43 @@ func newTestMVCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon 
 	}).(*tables.TableCommon)
 }
 
-func TestValidateMVCompleteDeltaWritableInputColTypesAllowsNullableInput(t *testing.T) {
+func TestValidateMViewCompleteDeltaWritableInputColTypesAllowsNullableInput(t *testing.T) {
 	targetTp := types.NewFieldType(mysql.TypeLonglong)
 	targetTp.AddFlag(mysql.NotNullFlag)
-	targetTbl := newTestMVCompleteDeltaTargetTable(targetTp)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
 
 	inputTp := targetTp.Clone()
 	inputTp.DelFlag(mysql.NotNullFlag)
-	require.NoError(t, validateMVCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{inputTp}, []int{0}))
+	require.NoError(t, validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{inputTp}, []int{0}))
 
 	unsignedInputTp := inputTp.Clone()
 	unsignedInputTp.AddFlag(mysql.UnsignedFlag)
-	err := validateMVCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
+	err := validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
 	require.ErrorContains(t, err, "type mismatch")
 }
 
-type mvCompleteDeltaApplyOpenProbeChild struct {
+type mviewCompleteDeltaApplyOpenProbeChild struct {
 	exec.BaseExecutor
 	opened bool
 }
 
-func (e *mvCompleteDeltaApplyOpenProbeChild) Open(context.Context) error {
+func (e *mviewCompleteDeltaApplyOpenProbeChild) Open(context.Context) error {
 	e.opened = true
 	return nil
 }
 
-func TestMVCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.T) {
+func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.T) {
 	sctx := mock.NewContext()
 	targetTp := types.NewFieldType(mysql.TypeLonglong)
-	targetTbl := newTestMVCompleteDeltaTargetTable(targetTp)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
 	childSchema := expression.NewSchema(&expression.Column{
 		Index:   0,
 		RetType: targetTp,
 	})
-	child := &mvCompleteDeltaApplyOpenProbeChild{
+	child := &mviewCompleteDeltaApplyOpenProbeChild{
 		BaseExecutor: exec.NewBaseExecutor(sctx, childSchema, 0),
 	}
-	applyExec := &MVCompleteDeltaApplyExec{
+	applyExec := &MViewCompleteDeltaApplyExec{
 		BaseExecutor:         exec.NewBaseExecutor(sctx, nil, 0, child),
 		TargetTable:          targetTbl,
 		TargetHandleCols:     plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
@@ -158,7 +158,7 @@ func TestMVCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.
 	require.False(t, child.opened)
 }
 
-func TestMarkMVCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {
 	testCases := []struct {
 		name      string
 		collation string
@@ -190,12 +190,12 @@ func TestMarkMVCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testin
 			input.AppendString(1, tc.newVal)
 
 			updateTouchedBitmap := make([]uint8, 1)
-			err := markMVCompleteDeltaTouchedRowsByColumn(
+			err := markMViewCompleteDeltaTouchedRowsByColumn(
 				[]int{0},
 				updateTouchedBitmap,
 				1,
 				true,
-				mvCompleteDeltaCompareColumn{
+				mviewCompleteDeltaCompareColumn{
 					fieldType:      ft,
 					notNull:        true,
 					touchedBitMask: 1,
@@ -209,7 +209,7 @@ func TestMarkMVCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testin
 	}
 }
 
-func TestMarkMVCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
 	enumFT := types.NewFieldType(mysql.TypeEnum)
 	enumFT.SetCharset("utf8mb4")
 	enumFT.SetCollate("utf8mb4_general_ci")
@@ -218,12 +218,12 @@ func TestMarkMVCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *te
 	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
 
 	enumBitmap := make([]uint8, 1)
-	err := markMVCompleteDeltaTouchedRowsByColumn(
+	err := markMViewCompleteDeltaTouchedRowsByColumn(
 		[]int{0},
 		enumBitmap,
 		1,
 		true,
-		mvCompleteDeltaCompareColumn{
+		mviewCompleteDeltaCompareColumn{
 			fieldType:      enumFT,
 			notNull:        true,
 			touchedBitMask: 1,
@@ -242,12 +242,12 @@ func TestMarkMVCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *te
 	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
 
 	setBitmap := make([]uint8, 1)
-	err = markMVCompleteDeltaTouchedRowsByColumn(
+	err = markMViewCompleteDeltaTouchedRowsByColumn(
 		[]int{0},
 		setBitmap,
 		1,
 		true,
-		mvCompleteDeltaCompareColumn{
+		mviewCompleteDeltaCompareColumn{
 			fieldType:      setFT,
 			notNull:        true,
 			touchedBitMask: 1,
@@ -259,10 +259,10 @@ func TestMarkMVCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *te
 	require.Equal(t, []uint8{0}, setBitmap)
 }
 
-func TestMVCompleteDeltaApplyRuntimeStatsString(t *testing.T) {
-	stats := &mvCompleteDeltaApplyRuntimeStats{
+func TestMViewCompleteDeltaApplyRuntimeStatsString(t *testing.T) {
+	stats := &mviewCompleteDeltaApplyRuntimeStats{
 		writerTime: 12 * time.Millisecond,
-		writerDetail: mvCompleteDeltaApplyWriterStats{
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
 			chunks:     2,
 			rowOps:     7,
 			insertRows: 1,
@@ -271,17 +271,17 @@ func TestMVCompleteDeltaApplyRuntimeStatsString(t *testing.T) {
 		},
 	}
 	s := stats.String()
-	require.Contains(t, s, "mv_complete_delta_apply")
+	require.Contains(t, s, "mview_complete_delta_apply")
 	require.Contains(t, s, "writer:{time:12ms")
 	require.Contains(t, s, "chunks:2")
 	require.Contains(t, s, "row_ops:7")
 	require.Contains(t, s, "rows:{insert:1, update:3, delete:2}")
 }
 
-func TestMVCompleteDeltaApplyRuntimeStatsMergeAndClone(t *testing.T) {
-	left := &mvCompleteDeltaApplyRuntimeStats{
+func TestMViewCompleteDeltaApplyRuntimeStatsMergeAndClone(t *testing.T) {
+	left := &mviewCompleteDeltaApplyRuntimeStats{
 		writerTime: 5 * time.Millisecond,
-		writerDetail: mvCompleteDeltaApplyWriterStats{
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
 			chunks:     1,
 			rowOps:     4,
 			insertRows: 1,
@@ -289,9 +289,9 @@ func TestMVCompleteDeltaApplyRuntimeStatsMergeAndClone(t *testing.T) {
 			deleteRows: 1,
 		},
 	}
-	right := &mvCompleteDeltaApplyRuntimeStats{
+	right := &mviewCompleteDeltaApplyRuntimeStats{
 		writerTime: 7 * time.Millisecond,
-		writerDetail: mvCompleteDeltaApplyWriterStats{
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
 			chunks:     2,
 			rowOps:     5,
 			updateRows: 1,
@@ -307,7 +307,7 @@ func TestMVCompleteDeltaApplyRuntimeStatsMergeAndClone(t *testing.T) {
 	require.Equal(t, int64(3), left.writerDetail.updateRows)
 	require.Equal(t, int64(2), left.writerDetail.deleteRows)
 
-	cloned, ok := left.Clone().(*mvCompleteDeltaApplyRuntimeStats)
+	cloned, ok := left.Clone().(*mviewCompleteDeltaApplyRuntimeStats)
 	require.True(t, ok)
 	require.Equal(t, left.writerTime, cloned.writerTime)
 	require.Equal(t, left.writerDetail, cloned.writerDetail)

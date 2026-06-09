@@ -705,9 +705,9 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 	return
 }
 
-// MVCompleteDeltaApply represents the apply sink contract for COMPLETE DELTA APPLY.
+// MViewCompleteDeltaApply represents the apply sink contract for COMPLETE DELTA APPLY.
 // It consumes one diff-source stream and carries explicit row-image metadata for later sink execution.
-type MVCompleteDeltaApply struct {
+type MViewCompleteDeltaApply struct {
 	baseSchemaProducer
 
 	// Source is the diff-source physical plan for COMPLETE DELTA APPLY.
@@ -730,7 +730,7 @@ type MVCompleteDeltaApply struct {
 }
 
 // ExplainInfo returns the key sink mapping metadata for complete delta MV apply.
-func (p *MVCompleteDeltaApply) ExplainInfo() string {
+func (p *MViewCompleteDeltaApply) ExplainInfo() string {
 	return fmt.Sprintf(
 		"op_offset:%d, m_marker_offset:%d, q_marker_offset:%d, m_group_keys_offset:%s, q_group_keys_offset:%s, m_handle_offset:%s, m_row_offset:%s, q_row_offset:%s",
 		p.OpColID,
@@ -777,8 +777,8 @@ func formatHandleColsInputOffsets(handleCols util.HandleCols) string {
 	return formatMVDeltaMergeOffsets(offsets)
 }
 
-// MemoryUsage returns the memory usage of MVCompleteDeltaApply.
-func (p *MVCompleteDeltaApply) MemoryUsage() (sum int64) {
+// MemoryUsage returns the memory usage of MViewCompleteDeltaApply.
+func (p *MViewCompleteDeltaApply) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}

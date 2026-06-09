@@ -532,7 +532,7 @@ func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
 	}, explain.Rows)
 }
 
-func TestExplainRefreshMVCompleteDeltaPlanTree(t *testing.T) {
+func TestExplainRefreshMViewCompleteDeltaPlanTree(t *testing.T) {
 	sctx := plannercore.MockContext()
 	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
 	savedStore := sctx.Store
@@ -605,7 +605,7 @@ func TestExplainRefreshMVCompleteDeltaPlanTree(t *testing.T) {
 	var hasApply, hasProjection, hasSelection, hasFullOuterJoin bool
 	for _, row := range explain.Rows {
 		switch {
-		case strings.HasSuffix(row[0], "MVCompleteDeltaApply"):
+		case strings.HasSuffix(row[0], "MViewCompleteDeltaApply"):
 			hasApply = true
 		case strings.HasSuffix(row[0], "Projection"):
 			hasProjection = true
@@ -623,7 +623,7 @@ func TestExplainRefreshMVCompleteDeltaPlanTree(t *testing.T) {
 	require.True(t, hasFullOuterJoin)
 }
 
-func TestBuildRefreshMVCompleteDeltaApplyPlan(t *testing.T) {
+func TestBuildRefreshMViewCompleteDeltaApplyPlan(t *testing.T) {
 	sctx := plannercore.MockContext()
 	savedStore := sctx.Store
 	sctx.Store = nil
@@ -678,7 +678,7 @@ func TestBuildRefreshMVCompleteDeltaApplyPlan(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	applyPlan, ok := p.(*plannercore.MVCompleteDeltaApply)
+	applyPlan, ok := p.(*plannercore.MViewCompleteDeltaApply)
 	require.True(t, ok)
 	require.NotNil(t, applyPlan.Source)
 	require.Equal(t, mvID, applyPlan.MVTableID)
@@ -697,7 +697,7 @@ func TestBuildRefreshMVCompleteDeltaApplyPlan(t *testing.T) {
 	)
 }
 
-func TestBuildRefreshMVCompleteDeltaApplyPlanWithCascadesEnabled(t *testing.T) {
+func TestBuildRefreshMViewCompleteDeltaApplyPlanWithCascadesEnabled(t *testing.T) {
 	sctx := plannercore.MockContext()
 	sctx.GetSessionVars().SetEnableCascadesPlanner(true)
 	sctx.GetSessionVars().StmtCtx.HasEnableCascadesPlannerHint = true
@@ -755,14 +755,14 @@ func TestBuildRefreshMVCompleteDeltaApplyPlanWithCascadesEnabled(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	_, ok := p.(*plannercore.MVCompleteDeltaApply)
+	_, ok := p.(*plannercore.MViewCompleteDeltaApply)
 	require.True(t, ok)
 	require.True(t, sctx.GetSessionVars().GetEnableCascadesPlanner())
 	require.True(t, sctx.GetSessionVars().StmtCtx.HasEnableCascadesPlannerHint)
 	require.True(t, sctx.GetSessionVars().StmtCtx.EnableCascadesPlanner)
 }
 
-func TestBuildRefreshMVCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
+func TestBuildRefreshMViewCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
 	sctx := plannercore.MockContext()
 	savedStore := sctx.Store
 	sctx.Store = nil
@@ -814,7 +814,7 @@ func TestBuildRefreshMVCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	applyPlan, ok := p.(*plannercore.MVCompleteDeltaApply)
+	applyPlan, ok := p.(*plannercore.MViewCompleteDeltaApply)
 	require.True(t, ok)
 	require.NotNil(t, applyPlan.Source)
 	require.Equal(t, mvID, applyPlan.MVTableID)

@@ -4038,7 +4038,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if err := diffRes.ValidateSourceLayout(sourcePlan.Schema().Len()); err != nil {
 			return nil, err
 		}
-		return MVCompleteDeltaApply{
+		return MViewCompleteDeltaApply{
 			Source:            sourcePlan,
 			MVTableID:         mvInfo.ID,
 			MVColumnCount:     diffRes.MVColumnCount,
