@@ -8144,11 +8144,22 @@ func TestVector(t *testing.T) {
 func TestExplainExplore(t *testing.T) {
 	cases := []testCase{
 		{`explain explore 'digestxxx'`, true, `EXPLAIN EXPLORE 'digestxxx'`},
+		{`explain explore replayer '/tmp/replayer.zip'`, true, `EXPLAIN EXPLORE REPLAYER '/tmp/replayer.zip'`},
 		{`explain explore select 1 from t`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t`"},
 		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
 		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
 	}
 	RunTest(t, cases, false, false)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`explain explore replayer '/tmp/replayer.zip'`, "", "")
+	require.NoError(t, err)
+	explain, ok := stmt.(*ast.ExplainStmt)
+	require.True(t, ok)
+	require.True(t, explain.Explore)
+	require.Equal(t, "/tmp/replayer.zip", explain.ReplayerFile)
+	require.Empty(t, explain.SQLDigest)
+	require.Nil(t, explain.Stmt)
 }
 
 // TestCompatMariaDB is to test for MariaDB specific table options

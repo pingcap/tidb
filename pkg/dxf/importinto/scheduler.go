@@ -336,10 +336,8 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err = controller.InitDataFiles(ctx); err != nil {
 		return err
 	}
-	if controller.TotalFileSize == 0 {
-		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-			"No file matched, or the file is empty. Please provide a valid file location.",
-		)
+	if err = controller.CheckImportDataSize(); err != nil {
+		return err
 	}
 	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
 		return err

@@ -95,6 +95,9 @@ type infoSchema struct {
 	maskingPolicyMutex sync.RWMutex
 	// factory is used to execute SQL for delayed loading of masking policies.
 	factory func() (pools.Resource, error)
+	// ts is the timestamp at which this InfoSchema was loaded.
+	// Used for snapshot-aware lazy loading of masking policies.
+	ts uint64
 
 	r autoid.Requirement
 }
@@ -586,9 +589,8 @@ func (is *infoSchemaMisc) ResourceGroupByName(name ast.CIStr) (*model.ResourceGr
 }
 
 // MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
-// Note: Policy name is only unique per table, not globally. If multiple tables have policies
-// with the same name, this method returns (nil, false) to avoid returning an ambiguous result.
-// For precise lookup, use MaskingPolicyByTableColumn.
+// Note: Policy name is only unique per table, not globally. This method returns the first matching
+// policy if multiple tables have policies with the same name. For precise lookup, use MaskingPolicyByTableColumn.
 func (is *infoSchema) MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool) {
 	is.loadMaskingPoliciesIfNeeded()
 
@@ -673,6 +675,8 @@ func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
 }
 
 func (is *infoSchema) CloneMaskingPoliciesByTableColumn() map[int64]map[int64]*model.MaskingPolicyInfo {
+	is.loadMaskingPoliciesIfNeeded()
+
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 	cloned := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(is.maskingPolicyTableColumnMap))
@@ -708,7 +712,7 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
 		is.maskingPoliciesLoadCh = loadCh
 		is.maskingPolicyMutex.Unlock()
 
-		policies, err := LoadMaskingPolicies(is.factory)
+		policies, err := LoadMaskingPolicies(is.factory, is.ts)
 
 		is.maskingPolicyMutex.Lock()
 		if err != nil {
@@ -738,13 +742,15 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
 }
 
 // LoadMaskingPolicies loads all masking policy metadata through mysql.tidb_masking_policy.
-func LoadMaskingPolicies(factory func() (pools.Resource, error)) ([]*model.MaskingPolicyInfo, error) {
-	return loadMaskingPoliciesWithTableIDs(factory, nil)
+func LoadMaskingPolicies(factory func() (pools.Resource, error), snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
+	return loadMaskingPoliciesWithTableIDs(factory, nil, snapshotTS)
 }
 
 // loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
 // If tableIDs is empty, all policies are loaded.
-func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64) ([]*model.MaskingPolicyInfo, error) {
+// snapshotTS is used for snapshot-aware loading: when non-zero, the query runs at that timestamp
+// to preserve stale-read semantics.
+func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
 	const maxBatchSize = 1024
 
 	resource, err := factory()
@@ -768,9 +774,13 @@ func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tab
 	loadBatch := func(batchIDs []int64, policies []*model.MaskingPolicyInfo) ([]*model.MaskingPolicyInfo, error) {
 		query, args := buildLoadMaskingPoliciesQuery(batchIDs)
 		internalCtx := kv.WithInternalSourceType(stdctx.Background(), kv.InternalTxnDDL)
+		opts := []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+		if snapshotTS > 0 {
+			opts = append(opts, sqlexec.ExecOptionWithSnapshot(snapshotTS))
+		}
 		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 			internalCtx,
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			opts,
 			query,
 			args...,
 		)
@@ -892,6 +902,10 @@ func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, err
 	if !row.IsNull(13) {
 		createdBy = row.GetString(13)
 	}
+	maskingType, err := maskingPolicyTypeFromString(row.GetString(9))
+	if err != nil {
+		return nil, err
+	}
 
 	return &model.MaskingPolicyInfo{
 		ID:          row.GetInt64(0),
@@ -903,7 +917,7 @@ func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, err
 		ColumnID:    row.GetInt64(6),
 		Expression:  row.GetString(7),
 		Status:      status,
-		MaskingType: maskingPolicyTypeFromString(row.GetString(9)),
+		MaskingType: maskingType,
 		RestrictOps: restrictOps,
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
@@ -923,16 +937,17 @@ func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, er
 	}
 }
 
-func maskingPolicyTypeFromString(tp string) model.MaskingPolicyType {
-	switch model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp))) {
+func maskingPolicyTypeFromString(tp string) (model.MaskingPolicyType, error) {
+	normalized := model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
+	switch normalized {
 	case model.MaskingPolicyTypeFull,
 		model.MaskingPolicyTypePartial,
 		model.MaskingPolicyTypeNull,
 		model.MaskingPolicyTypeDate,
 		model.MaskingPolicyTypeCustom:
-		return model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
+		return normalized, nil
 	default:
-		return model.MaskingPolicyTypeCustom
+		return "", errors.Errorf("unknown masking policy type: %s", tp)
 	}
 }
 
@@ -962,8 +977,7 @@ func maskingPolicyRestrictOpsFromString(restrictOn string) (ast.MaskingPolicyRes
 }
 
 func isMaskingPolicyTableNotReady(err error) bool {
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "not exist")
+	return ErrTableNotExists.Equal(err)
 }
 
 func (is *infoSchema) resetMaskingPolicyCache() {
