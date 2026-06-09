@@ -105,11 +105,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-=======
->>>>>>> 52ab330f545 (server: remove hot-path disconnect monitor (#68685))
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -2048,36 +2044,14 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 // slow pre-commit backstop. It intentionally does not start a background
 // monitor, so short statements do not pay goroutine, ticker, or channel costs.
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
-<<<<<<< HEAD
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			// IsAlive returns 0 only when the connection is known dead. Treat
-			// unknown states as alive so we do not interrupt queries
-			// conservatively when the liveness check itself cannot run.
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(fn)
-	stopMonitor := make(chan struct{})
-	doneMonitor := make(chan struct{})
-	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
-=======
 	sessVars := cc.ctx.GetSessionVars()
 	isAlive := cc.isConnectionAlive
-	sessVars.SQLKiller.IsConnectionAlive.Store(&isAlive)
->>>>>>> 52ab330f545 (server: remove hot-path disconnect monitor (#68685))
+	sessVars.SQLKiller.SetConnectionAliveFunc(isAlive)
 
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
-<<<<<<< HEAD
-			close(stopMonitor)
-			<-doneMonitor
-			cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(nil)
-=======
-			sessVars.SQLKiller.IsConnectionAlive.CompareAndSwap(&isAlive, nil)
->>>>>>> 52ab330f545 (server: remove hot-path disconnect monitor (#68685))
+			sessVars.SQLKiller.SetConnectionAliveFunc(nil)
 		})
 	}
 }

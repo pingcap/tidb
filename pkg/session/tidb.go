@@ -272,8 +272,6 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	return checkStmtLimit(ctx, se, true)
 }
 
-<<<<<<< HEAD
-=======
 // isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
 func isLoadDataLocal(sql sqlexec.Statement) bool {
 	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
@@ -287,7 +285,6 @@ func isLoadDataLocal(sql sqlexec.Statement) bool {
 // the disconnect-before-commit race without hitting another checkpoint.
 const minConnectionAliveCheckBeforeCommitDuration = time.Second
 
->>>>>>> 52ab330f545 (server: remove hot-path disconnect monitor (#68685))
 func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
 		return false
