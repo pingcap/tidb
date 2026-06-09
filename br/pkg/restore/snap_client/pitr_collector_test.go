@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,6 +173,27 @@ func withRewriteRule(hints ...utils.TableIDRemap) backupFileSetOp {
 	return func(set *restore.BackupFileSet) {
 		set.RewriteRules.TableIDRemapHint = append(set.RewriteRules.TableIDRemapHint, hints...)
 	}
+}
+
+type copyInterceptorStorage struct {
+	storeapi.Storage
+	copier storeapi.Copier
+	onCopy func()
+}
+
+func newCopyInterceptorStorage(t *testing.T, s storeapi.Storage, onCopy func()) *copyInterceptorStorage {
+	copier, ok := s.(storeapi.Copier)
+	require.True(t, ok)
+	return &copyInterceptorStorage{
+		Storage: s,
+		copier:  copier,
+		onCopy:  onCopy,
+	}
+}
+
+func (s *copyInterceptorStorage) CopyFrom(ctx context.Context, from storeapi.Storage, spec storeapi.CopySpec) error {
+	s.onCopy()
+	return s.copier.CopyFrom(ctx, from, spec)
 }
 
 func TestCollAFile(t *testing.T) {
