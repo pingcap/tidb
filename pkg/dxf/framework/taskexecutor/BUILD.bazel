@@ -57,7 +57,7 @@ go_test(
     ],
     embed = [":taskexecutor"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 18,
     deps = [
         "//pkg/domain/sqlsvrapi",
         "//pkg/domain/sqlsvrapi/mock",

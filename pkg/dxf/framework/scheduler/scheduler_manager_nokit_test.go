@@ -242,7 +242,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 }
 
 func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
-	t.Run("AcquiresCrossKeyspaceRuntimeAndReleasesOnExit", func(t *testing.T) {
+	t.Run("acquires cross-keyspace runtime and releases it on exit", func(t *testing.T) {
 		ClearSchedulerFactory()
 		t.Cleanup(ClearSchedulerFactory)
 
@@ -293,7 +293,7 @@ func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
 		mgr.schedulerWG.Wait()
 	})
 
-	t.Run("ReleasesCrossKeyspaceRuntimeOnInitFailure", func(t *testing.T) {
+	t.Run("releases cross-keyspace runtime when scheduler init fails", func(t *testing.T) {
 		ClearSchedulerFactory()
 		t.Cleanup(ClearSchedulerFactory)
 
@@ -330,7 +330,7 @@ func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
 		mgr.startScheduler(&task.TaskBase, false, "")
 	})
 
-	t.Run("StopsWhenCrossKeyspaceRuntimeAcquireFails", func(t *testing.T) {
+	t.Run("does not start scheduler when cross-keyspace runtime acquisition fails", func(t *testing.T) {
 		ClearSchedulerFactory()
 		t.Cleanup(ClearSchedulerFactory)
 

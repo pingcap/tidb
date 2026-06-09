@@ -192,9 +192,9 @@ type Param struct {
 // NewParamForTest creates a new Param for test.
 func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
 	param := Param{
-		taskMgr: taskMgr,
+		taskMgr:   taskMgr,
+		TaskStore: store,
 	}
-	param.TaskStore = store
 	return param
 }
 

@@ -83,15 +83,13 @@ type Param struct {
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, stores ...kv.Storage) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
 	param := Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-	}
-	if len(stores) > 0 {
-		param.TaskStore = stores[0]
+		TaskStore: store,
 	}
 	return param
 }
