@@ -380,6 +380,7 @@ func lockFamilyConflicts(acquireKind lockAcquireKind, memberKind lockMemberKind)
 }
 
 var errLockMissingExpireAt = stderrors.New("lock missing ExpireAt")
+var errLockInvalidMeta = stderrors.New("lock has invalid metadata")
 
 type cleanupLeaseClockError struct {
 	err error
@@ -413,6 +414,12 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 			"Use `br log unlock --force` to clear manually if needed.",
 			zap.String("path", path), zap.Stringer("meta", meta))
 		return false, errLockMissingExpireAt
+	}
+	if meta.LockedAt.IsZero() || len(meta.TxnID) != 16 {
+		log.Warn("Encountered cleanup-eligible lock instance with invalid metadata; will not auto-reclaim. "+
+			"Use `br log unlock --force` to clear manually if needed.",
+			zap.String("path", path), zap.Stringer("meta", meta))
+		return false, errLockInvalidMeta
 	}
 	now, err := clock.Now(ctx)
 	if err != nil {

@@ -930,7 +930,29 @@ func TestTryRenewPostWriteProofRejectsExpiredLease(t *testing.T) {
 	require.NoError(t, err)
 
 	err = objstore.TESTTryRenew(ctx, lock)
-	require.ErrorIs(t, err, objstore.TESTRenewPostWriteProofFailed)
+	require.ErrorIs(t, err, objstore.TESTRenewLeaseExpired)
+}
+
+func TestTryRenewRejectsWriteThatCompletesAfterOldLeaseExpired(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetRenewalProofConstants(5*time.Minute, time.Minute)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	renewNow := leaseNow.Add(objstore.LeaseTTL).Add(-time.Millisecond)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			renewNow,
+			leaseNow.Add(objstore.LeaseTTL).Add(time.Nanosecond),
+		},
+	}
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewLeaseExpired)
 }
 
 func TestTryRenewPostWriteProofRejectsTinyRemainingLease(t *testing.T) {
@@ -939,7 +961,7 @@ func TestTryRenewPostWriteProofRejectsTinyRemainingLease(t *testing.T) {
 	defer objstore.TESTSetRenewalProofConstants(5*time.Minute, time.Minute)()
 
 	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
-	renewNow := leaseNow.Add(time.Minute)
+	renewNow := leaseNow.Add(20 * time.Second)
 	clock := &sequenceLeaseClock{
 		times: []time.Time{
 			leaseNow,
@@ -1874,6 +1896,31 @@ func TestLockWithRetryRejectsNilOnLeaseLost(t *testing.T) {
 	require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT."))
 }
 
+func TestLockWithRetryRejectsAcquireWithUnsafeRemainingLease(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(30*time.Millisecond, 10*time.Millisecond, 1, time.Millisecond)()
+	defer objstore.TESTSetRenewalProofConstants(time.Millisecond, time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(25 * time.Millisecond),
+		},
+	}
+	leaseLost := make(chan struct{})
+
+	lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "writer", func() {
+		close(leaseLost)
+	}, clock)
+	if lock != nil {
+		require.NoError(t, lock.Unlock(ctx))
+	}
+	require.Nil(t, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewRemainingLeaseTooSmall)
+}
+
 func TestLockRemoteTruncateRejectsNilOnLeaseLost(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
@@ -2045,11 +2092,17 @@ func TestLockWithRetryMalformedCleanupCandidateDoesNotBlockLaterReclaim(t *testi
 	malformedPath := "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef"
 	zeroExpirePath := "v1/LOCK.WRIT.11111111111111111111111111111111"
 	stalePath := "v1/LOCK.WRIT.22222222222222222222222222222222"
+	invalidMetaPath := "v1/LOCK.WRIT.33333333333333333333333333333333"
 	require.NoError(t, strg.WriteFile(ctx, malformedPath, []byte("{not-json")))
 	writeLockMeta(t, strg, zeroExpirePath, objstore.LockMeta{
 		LockedAt: time.Now().Add(-time.Hour),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "zero-expire",
+	})
+	writeLockMeta(t, strg, invalidMetaPath, objstore.LockMeta{
+		LockedAt: time.Now().Add(-time.Hour),
+		ExpireAt: time.Now().Add(-time.Hour),
+		Hint:     "missing-txn-id",
 	})
 	writeLockMeta(t, strg, stalePath, staleLockMeta(time.Now(), "later-stale-writer"))
 
@@ -2060,6 +2113,7 @@ func TestLockWithRetryMalformedCleanupCandidateDoesNotBlockLaterReclaim(t *testi
 	require.Nil(t, lock)
 	requireFileExists(t, filepath.Join(pth, malformedPath))
 	requireFileExists(t, filepath.Join(pth, zeroExpirePath))
+	requireFileExists(t, filepath.Join(pth, invalidMetaPath))
 	requireFileNotExists(t, filepath.Join(pth, stalePath))
 }
 

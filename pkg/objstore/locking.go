@@ -586,10 +586,11 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 	if err != nil {
 		return renewalResult{}, errors.Annotate(err, "tryRenew: get lease time")
 	}
-	if !meta.ExpireAt.IsZero() && leaseNow.After(meta.ExpireAt) {
+	oldExpireAt := meta.ExpireAt
+	if !oldExpireAt.IsZero() && leaseNow.After(oldExpireAt) {
 		return renewalResult{}, errRenewLeaseExpired
 	}
-	writeTimeout, err := renewalWriteTimeout(meta.ExpireAt, leaseNow)
+	writeTimeout, err := renewalWriteTimeout(oldExpireAt, leaseNow)
 	if err != nil {
 		return renewalResult{}, err
 	}
@@ -621,6 +622,10 @@ func (l *RemoteLock) tryRenew(ctx context.Context) (renewalResult, error) {
 			return renewalResult{}, errors.Annotate(err, "tryRenew: post-write lease time")
 		}
 		return renewalResult{}, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
+	}
+	if !oldExpireAt.IsZero() && nowAfterWrite.After(oldExpireAt) {
+		return renewalResult{}, errors.Annotatef(errRenewLeaseExpired,
+			"now=%s old_expire_at=%s", nowAfterWrite, oldExpireAt)
 	}
 	if nowAfterWrite.After(newExpireAt) {
 		return renewalResult{}, errors.Annotatef(errRenewPostWriteProofFailed,
@@ -930,6 +935,10 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	for {
 		lock, lockErr := locker(ctx, storage, lockPath, hint, clock)
 		if lockErr == nil {
+			if lock.provedRemainingLease <= minRenewRetryRemainingLease() {
+				unlockErr := lock.Unlock(ctx)
+				return nil, multierr.Append(errRenewRemainingLeaseTooSmall, unlockErr)
+			}
 			lock.startRenewal(ctx, onLeaseLost)
 			return lock, nil
 		}
