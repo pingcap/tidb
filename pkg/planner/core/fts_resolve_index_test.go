@@ -72,30 +72,39 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 
 		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
 			"tiflash]",
+			"ftsIndex:hello IN test.fts_t.title",
+		})
+		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckNotContain([]string{
 			"ftsIndex:hello IN test.fts_t.title->",
+			"_FTS_SCORE",
 		})
 		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10").MultiCheckContain([]string{
 			"tiflash]",
-			"ftsIndex:top10 hello IN test.fts_t.title->",
+			"ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE",
+		})
+		tk.MustQuery("explain format = 'plan_tree' select id, fts_match_word('hello', title) as score from fts_t where fts_match_word('hello', title) order by score desc limit 10").MultiCheckContain([]string{
+			"tiflash]",
+			"ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE",
 		})
 		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10").MultiCheckContain([]string{
 			"tiflash]",
-			"ftsIndex:hello IN test.fts_t.title->",
+			"ftsIndex:hello IN test.fts_t.title->_FTS_SCORE",
 		})
 		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10").CheckNotContain("ftsIndex:top10")
 		tk.MustQuery("explain format = 'plan_tree' select fts_match_word('hello', title) from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
 			"tiflash]",
-			"ftsIndex:hello IN test.fts_t.title->",
+			"ftsIndex:hello IN test.fts_t.title->_FTS_SCORE",
 		})
 		tk.MustQuery("explain format = 'plan_tree' select fts_match_word('hello', title), id from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10").MultiCheckContain([]string{
 			"tiflash]",
-			"ftsIndex:top10 hello IN test.fts_t.title->",
+			"ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE",
 		})
 		tk.MustExec("set global tidb_redact_log=ON")
 		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
 			"tiflash]",
-			"ftsIndex:? IN test.fts_t.title->",
+			"ftsIndex:? IN test.fts_t.title",
 		})
+		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").CheckNotContain("ftsIndex:? IN test.fts_t.title->")
 		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").CheckNotContain("ftsIndex:hello")
 		tk.MustExec("set global tidb_redact_log=OFF")
 

@@ -143,7 +143,9 @@ func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor
 	})
 	ds.Schema().Append(&expression.Column{
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:       model.VirtualColFTSScoreID,
 		RetType:  ftsScoreType.Clone(),
+		OrigName: "_FTS_SCORE",
 	})
 
 	planSelection.Conditions = newConds

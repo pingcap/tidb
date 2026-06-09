@@ -602,7 +602,8 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 					ftsIndexBuffer.WriteString(ftsQueryInfo.ColumnNames[0])
 				}
 				cols := p.Schema().Columns
-				if len(cols) > 0 {
+				if len(cols) > 0 && ftsQueryInfo.QueryType == tipb.FTSQueryType_FTSQueryTypeWithScore &&
+					cols[len(cols)-1].ID == model.VirtualColFTSScoreID {
 					ftsIndexBuffer.WriteString("->")
 					ftsIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
 				}
