@@ -14,8 +14,9 @@
 
 package rule
 
-// Note: The order of flags is same as the order of optRule in the list.
-// Do not mess up the order.
+// These flags are used as optimizer rule bitmasks. Keep existing flag values
+// stable by appending new flags at the end. The rule execution order is defined
+// by optRuleList and its explicit flag mapping.
 const (
 	FlagGcSubstitute uint64 = 1 << iota
 	FlagPruneColumns
@@ -28,7 +29,6 @@ const (
 	FlagEliminateProjection
 	FlagMaxMinEliminate
 	FlagConstantPropagation
-	FlagFullTextIndexResolveWhere
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
 	FlagJoinKeyTypeCast
@@ -39,8 +39,6 @@ const (
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
 	FlagPushDownTopN
-	FlagFullTextIndexResolveTopN
-	FlagFullTextIndexResolveProjection
 	FlagOrderAwareJoinReorder
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
@@ -50,8 +48,11 @@ const (
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
-	FlagFullTextIndexResolveReject
 	FlagResolveExpand
+	FlagFullTextIndexResolveWhere
+	FlagFullTextIndexResolveTopN
+	FlagFullTextIndexResolveProjection
+	FlagFullTextIndexResolveReject
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

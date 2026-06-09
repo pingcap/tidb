@@ -614,16 +614,26 @@ func TestCanTiFlashUseHashJoinV2(t *testing.T) {
 }
 
 func TestOptRuleListFlagAlignment(t *testing.T) {
-	// Each position i in optRuleList is gated by the flag bit 1<<i.
-	// The Flag* constants in rule/logical_rules.go are declared via iota in the
-	// same order. This test catches silent misalignment when a rule or flag is
-	// added/removed without updating the other.
-	//
-	// bits.Len64(lastFlag) == bit-position + 1 == expected list length.
-	numFlags := bits.Len64(rule.FlagResolveExpand)
-	require.Equalf(t, numFlags, len(optRuleList),
-		"optRuleList length (%d) does not match Flag* count (%d); "+
-			"did you add a rule without a flag or vice versa? "+
-			"Update both optRuleList and the Flag* iota block in rule/logical_rules.go.",
-		len(optRuleList), numFlags)
+	// Each position in optRuleList is gated by the corresponding entry in
+	// optRuleFlags. Flag values are stable bitmasks, so a rule can be inserted
+	// into the execution order without changing existing flag values.
+	require.Equalf(t, len(optRuleList), len(optRuleFlags),
+		"optRuleList length (%d) does not match optRuleFlags length (%d); "+
+			"did you add a rule without a flag or vice versa?",
+		len(optRuleList), len(optRuleFlags))
+
+	seenFlags := make(map[uint64]struct{}, len(optRuleFlags))
+	for i, flag := range optRuleFlags {
+		require.NotZerof(t, flag, "optRuleFlags[%d] must not be zero", i)
+		require.Zerof(t, flag&(flag-1), "optRuleFlags[%d] must contain exactly one bit", i)
+		_, ok := seenFlags[flag]
+		require.Falsef(t, ok, "optRuleFlags[%d] duplicates flag %d", i, flag)
+		seenFlags[flag] = struct{}{}
+	}
+
+	numFlags := bits.Len64(rule.FlagFullTextIndexResolveReject)
+	require.Equalf(t, numFlags, len(seenFlags),
+		"unique optRuleFlags count (%d) does not match Flag* count (%d); "+
+			"did you add a flag without mapping it to a rule or vice versa?",
+		len(seenFlags), numFlags)
 }
