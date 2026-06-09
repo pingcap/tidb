@@ -447,17 +447,16 @@ func TestFilterOut(t *testing.T) {
 
 func TestRetainLatestMVCCCompactionCoverage(t *testing.T) {
 	comment := func(from, until, shardIndex, shardTotal, minimalCompactionSize uint64, calculateShiftTS bool) string {
-		shard := ""
+		shard := `,"shard":null`
 		if shardTotal > 1 {
 			shard = fmt.Sprintf(`,"shard":{"index":%d,"total":%d}`, shardIndex, shardTotal)
 		}
 		return fmt.Sprintf(
-			`{"config":{"from-ts":%d,"until-ts":%d,"cal-shift-ts":%t,"minimal-compaction-size":%d,"shard-count":%d%s}}`,
+			`{"config":{"from-ts":%d,"until-ts":%d,"cal-shift-ts":%t,"minimal-compaction-size":%d%s}}`,
 			from,
 			until,
 			calculateShiftTS,
 			minimalCompactionSize,
-			shardTotal,
 			shard,
 		)
 	}

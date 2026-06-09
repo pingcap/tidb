@@ -160,7 +160,6 @@ type compactLogBackupCommentConfig struct {
 	UntilTS               *uint64                       `json:"until-ts"`
 	CalShiftTS            *bool                         `json:"cal-shift-ts"`
 	MinimalCompactionSize *uint64                       `json:"minimal-compaction-size"`
-	ShardCount            *uint64                       `json:"shard-count"`
 	Shard                 *compactLogBackupCommentShard `json:"shard"`
 }
 
@@ -224,18 +223,8 @@ func compactLogBackupCompactionIntervalForRetainLatestMVCC(
 		)
 	}
 
-	shardCount := uint64(0)
-	if config.ShardCount != nil {
-		shardCount = *config.ShardCount
-	}
 	shard := config.Shard
 	if shard == nil {
-		if shardCount != 1 {
-			return retainLatestMVCCCompactionInterval{}, false, errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"compact-log-backup compaction comments lack complete shard information",
-			)
-		}
 		return retainLatestMVCCCompactionInterval{
 			from:       fromTS,
 			until:      untilTS,
@@ -249,14 +238,6 @@ func compactLogBackupCompactionIntervalForRetainLatestMVCC(
 			berrors.ErrInvalidArgument,
 			"compact-log-backup compaction comments have invalid shard %d/%d",
 			shard.Index,
-			shard.Total,
-		)
-	}
-	if shardCount != 0 && shardCount != shard.Total {
-		return retainLatestMVCCCompactionInterval{}, false, errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"compact-log-backup compaction comments have inconsistent shard count %d and shard total %d",
-			shardCount,
 			shard.Total,
 		)
 	}
