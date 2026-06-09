@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1451,7 +1452,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	// If we've forced an index merge - we want to keep these plans
-	preferMerge := len(ds.IndexMergeHints) > 0
+	preferMerge := rule.ShouldPreferIndexMerge(ds)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
