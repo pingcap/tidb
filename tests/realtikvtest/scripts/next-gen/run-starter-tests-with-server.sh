@@ -317,7 +317,7 @@ EOF
         echo "Running destructive external starter exit-wait test"
         go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
             -timeout "${STARTER_EXIT_WAIT_TEST_TIMEOUT:-2m}" \
-            -run '^TestExternalStarterExitRequiresManagerNotifierForManagerFree/graceful_exit_waits_for_open_connection$' \
+            -run '^TestExternalStarterExitWaitAndManagerNotifierContracts/graceful_exit_waits_for_open_connection$' \
             -count=1
         if [[ -n "${starter_tidb_pid:-}" ]] && kill -0 "${starter_tidb_pid}" >/dev/null 2>&1; then
             wait "${starter_tidb_pid}" >/dev/null 2>&1 || true

@@ -805,7 +805,9 @@ bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_startertest
 bazel_startertest: failpoint-enable bazel_ci_simple_prepare
-	tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh --under-cluster startertest 40m -count=1
+	# Starter mode needs an external tidb-server process, so this wrapper
+	# intentionally invokes the starter shell runner instead of bazel test.
+	STARTER_RUN_EXIT_WAIT_TEST=1 tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh --under-cluster startertest 40m -count=1
 
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare

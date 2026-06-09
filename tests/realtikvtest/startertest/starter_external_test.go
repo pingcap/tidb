@@ -76,6 +76,7 @@ func TestExternalStarterConfigEndpoint(t *testing.T) {
 	statusURL := requireStarterStatusURL(t)
 	expectedMaxAllowedPacket := requireStarterMaxAllowedPacket(t)
 	expectedTiKVWorkerURL := requireStarterTiKVWorkerURL(t)
+	expectedKeyspace := requireStarterKeyspaceName(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -104,7 +105,7 @@ func TestExternalStarterConfigEndpoint(t *testing.T) {
 
 	require.Equal(t, "starter", cfg.DeployMode)
 	require.EqualValues(t, expectedMaxAllowedPacket, cfg.MaxAllowedPacket)
-	require.Equal(t, "SYSTEM", cfg.KeyspaceName)
+	require.Equal(t, expectedKeyspace, cfg.KeyspaceName)
 	require.Equal(t, "tikv", cfg.Store)
 	require.Equal(t, expectedTiKVWorkerURL, cfg.TiKVWorkerURL)
 	requireHostPort(t, cfg.TiKVWorkerURL)
@@ -212,7 +213,6 @@ func TestExternalStarterExitRejectsInvalidOptions(t *testing.T) {
 		{
 			name: "invalid graceful",
 			query: url.Values{
-				"keyspace": {"SYSTEM"},
 				"graceful": {"maybe"},
 			},
 			want: "invalid graceful\n",
@@ -220,39 +220,34 @@ func TestExternalStarterExitRejectsInvalidOptions(t *testing.T) {
 		{
 			name: "wait duration above max",
 			query: url.Values{
-				"keyspace": {"SYSTEM"},
-				"wait":     {"24h1s"},
+				"wait": {"24h1s"},
 			},
 			want: "invalid wait\n",
 		},
 		{
 			name: "wait legacy seconds above max",
 			query: url.Values{
-				"keyspace": {"SYSTEM"},
-				"wait":     {"86401"},
+				"wait": {"86401"},
 			},
 			want: "invalid wait\n",
 		},
 		{
 			name: "negative wait",
 			query: url.Values{
-				"keyspace": {"SYSTEM"},
-				"wait":     {"-1"},
+				"wait": {"-1"},
 			},
 			want: "invalid wait\n",
 		},
 		{
 			name: "overflow wait",
 			query: url.Values{
-				"keyspace": {"SYSTEM"},
-				"wait":     {"9223372036854775807"},
+				"wait": {"9223372036854775807"},
 			},
 			want: "invalid wait\n",
 		},
 		{
 			name: "invalid skip auto id owner",
 			query: url.Values{
-				"keyspace":           {"SYSTEM"},
 				"skip_auto_id_owner": {"maybe"},
 			},
 			want: "invalid skip_auto_id_owner\n",
@@ -260,7 +255,6 @@ func TestExternalStarterExitRejectsInvalidOptions(t *testing.T) {
 		{
 			name: "invalid need manager free",
 			query: url.Values{
-				"keyspace":      {"SYSTEM"},
 				"need_mgr_free": {"maybe"},
 			},
 			want: "invalid need_mgr_free\n",
@@ -284,8 +278,9 @@ func TestExternalStarterExitRejectsMismatchedKeyspace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	remoteKeyspace := otherStarterKeyspaceName(expectedKeyspace)
 	query := url.Values{
-		"keyspace": {"OTHER"},
+		"keyspace": {remoteKeyspace},
 		"graceful": {"true"},
 	}
 	statusCode, body := getStarterStatusPath(ctx, t, statusURL, "/tidb-pool/exit?"+query.Encode())
@@ -295,11 +290,11 @@ func TestExternalStarterExitRejectsMismatchedKeyspace(t *testing.T) {
 		Local  string `json:"local"`
 	}
 	require.NoError(t, json.Unmarshal(body, &mismatch))
-	require.Equal(t, "OTHER", mismatch.Remote)
+	require.Equal(t, remoteKeyspace, mismatch.Remote)
 	require.Equal(t, expectedKeyspace, mismatch.Local)
 }
 
-func TestExternalStarterExitRequiresManagerNotifierForManagerFree(t *testing.T) {
+func TestExternalStarterExitWaitAndManagerNotifierContracts(t *testing.T) {
 	requireStarterActivatedFromStandby(t)
 	statusURL := requireStarterStatusURL(t)
 	keyspaceName := requireStarterKeyspaceName(t)
@@ -434,53 +429,67 @@ func TestExternalStarterUsernamePrefixContracts(t *testing.T) {
 	defer cancel()
 	require.NoError(t, db.PingContext(ctx))
 
-	cleanupStarterUsernamePrefixData(ctx, t, db)
+	keyspaceName := requireStarterKeyspaceName(t)
+	prefixError := fmt.Sprintf("User name must start with `%s.`", keyspaceName)
+	userName := keyspaceName + ".ext_starter_user"
+	dotUserName := keyspaceName + ".ext.starter_user"
+	renamedUserName := keyspaceName + ".ext_starter_renamed"
+	roleName := keyspaceName + ".ext_starter_role"
+	wrongKeyspaceUserName := otherStarterKeyspaceName(keyspaceName) + ".ext_starter_user"
+
+	cleanupStarterUsernamePrefixData(ctx, t, db, keyspaceName)
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		cleanupStarterUsernamePrefixData(cleanupCtx, t, db)
+		cleanupStarterUsernamePrefixData(cleanupCtx, t, db, keyspaceName)
 	})
 
 	requireErrorContains(t,
 		execSQL(ctx, db, "create user `ext_starter_reject`@`%` identified by 'starter_pwd'"),
-		"User name must start with `SYSTEM.`")
+		prefixError)
 	requireErrorContains(t,
 		execSQL(ctx, db, "create role `ext_starter_role_reject`"),
-		"User name must start with `SYSTEM.`")
+		prefixError)
 
-	require.NoError(t, execSQL(ctx, db, "create user `SYSTEM.ext_starter_user`@`%` identified by 'starter_pwd1'"))
-	require.NoError(t, execSQL(ctx, db, "create user `SYSTEM.ext.starter_user`@`%` identified by 'starter_dot_pwd'"))
-	require.NoError(t, execSQL(ctx, db, "create role `SYSTEM.ext_starter_role`"))
+	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("create user %s@%s identified by 'starter_pwd1'",
+		quoteSQLIdentifier(userName), quoteSQLIdentifier("%"))))
+	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("create user %s@%s identified by 'starter_dot_pwd'",
+		quoteSQLIdentifier(dotUserName), quoteSQLIdentifier("%"))))
+	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("create role %s", quoteSQLIdentifier(roleName))))
 
 	requireErrorContains(t,
-		execSQL(ctx, db, "rename user `SYSTEM.ext_starter_user`@`%` to `ext_starter_renamed`@`%`"),
-		"User name must start with `SYSTEM.`")
+		execSQL(ctx, db, fmt.Sprintf("rename user %s@%s to %s@%s",
+			quoteSQLIdentifier(userName), quoteSQLIdentifier("%"), quoteSQLIdentifier(renamedUserName), quoteSQLIdentifier("%"))),
+		prefixError)
 
 	require.NoError(t, execSQL(ctx, db, "grant ext_starter_role to ext_starter_user"))
-	require.Equal(t, "SYSTEM.ext_starter_user", queryString(ctx, t, db,
-		"select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.ext_starter_role' and TO_USER='SYSTEM.ext_starter_user' and TO_HOST='%'"))
+	require.Equal(t, userName, queryString(ctx, t, db, fmt.Sprintf(
+		"select TO_USER from mysql.role_edges where FROM_USER=%s and TO_USER=%s and TO_HOST=%s",
+		quoteSQLString(roleName), quoteSQLString(userName), quoteSQLString("%"))))
 
 	require.NoError(t, execSQL(ctx, db, "revoke ext_starter_role from ext_starter_user"))
-	require.Equal(t, 0, queryInt(ctx, t, db,
-		"select count(*) from mysql.role_edges where FROM_USER='SYSTEM.ext_starter_role' and TO_USER='SYSTEM.ext_starter_user' and TO_HOST='%'"))
+	require.Equal(t, 0, queryInt(ctx, t, db, fmt.Sprintf(
+		"select count(*) from mysql.role_edges where FROM_USER=%s and TO_USER=%s and TO_HOST=%s",
+		quoteSQLString(roleName), quoteSQLString(userName), quoteSQLString("%"))))
 
 	require.NoError(t, execSQL(ctx, db, "grant ext_starter_role to ext_starter_user"))
 	require.NoError(t, execSQL(ctx, db, "set default role ext_starter_role to ext_starter_user"))
-	require.Equal(t, "SYSTEM.ext_starter_role", queryString(ctx, t, db,
-		"select DEFAULT_ROLE_USER from mysql.default_roles where USER='SYSTEM.ext_starter_user' and DEFAULT_ROLE_USER='SYSTEM.ext_starter_role'"))
+	require.Equal(t, roleName, queryString(ctx, t, db, fmt.Sprintf(
+		"select DEFAULT_ROLE_USER from mysql.default_roles where USER=%s and DEFAULT_ROLE_USER=%s",
+		quoteSQLString(userName), quoteSQLString(roleName))))
 
 	require.NoError(t, execSQL(ctx, db, "alter user ext_starter_user identified by 'starter_pwd2'"))
 	require.NoError(t, execSQL(ctx, db, "alter user `ext.starter_user`@`%` identified by 'starter_dot_pwd2'"))
 
 	userDB := openStarterDBAs(t, "ext_starter_user", "starter_pwd2")
 	require.NoError(t, userDB.PingContext(ctx))
-	require.Equal(t, "SYSTEM.ext_starter_user@%", queryString(ctx, t, userDB, "select current_user()"))
+	require.Equal(t, userName+"@%", queryString(ctx, t, userDB, "select current_user()"))
 
 	dotUserDB := openStarterDBAs(t, "ext.starter_user", "starter_dot_pwd2")
 	require.NoError(t, dotUserDB.PingContext(ctx))
-	require.Equal(t, "SYSTEM.ext.starter_user@%", queryString(ctx, t, dotUserDB, "select current_user()"))
+	require.Equal(t, dotUserName+"@%", queryString(ctx, t, dotUserDB, "select current_user()"))
 
-	wrongKeyspaceDB := openStarterDBAs(t, "OTHER.ext_starter_user", "starter_pwd2")
+	wrongKeyspaceDB := openStarterDBAs(t, wrongKeyspaceUserName, "starter_pwd2")
 	requireErrorContains(t, wrongKeyspaceDB.PingContext(ctx), "User name prefix does not match the assigned keyspace")
 }
 
@@ -719,10 +728,13 @@ func runExternalStarterGracefulExitWaitsForOpenConnection(t *testing.T, statusUR
 
 	require.NoError(t, waitForStarterStatusCode(ctx, statusURL, http.StatusInternalServerError))
 
-	time.Sleep(1200 * time.Millisecond)
-	statusCode, _, err = tryStarterStatusPath(ctx, statusURL, "/status")
-	require.NoError(t, err, "tidb-server exited before the held connection was closed")
-	require.Equal(t, http.StatusInternalServerError, statusCode)
+	require.Eventually(t, func() bool {
+		if time.Since(exitStart) < time.Second {
+			return false
+		}
+		statusCode, _, err = tryStarterStatusPath(ctx, statusURL, "/status")
+		return err == nil && statusCode == http.StatusInternalServerError
+	}, 3*time.Second, 100*time.Millisecond, "tidb-server exited before the held connection was closed")
 	require.Less(t, time.Since(exitStart), 10*time.Second)
 
 	require.NoError(t, conn.Close())
@@ -798,19 +810,41 @@ func waitForStarterAutoIDOwner(ctx context.Context, statusURL string) bool {
 	}
 }
 
-func cleanupStarterUsernamePrefixData(ctx context.Context, t *testing.T, db *sql.DB) {
+func cleanupStarterUsernamePrefixData(ctx context.Context, t *testing.T, db *sql.DB, keyspaceName string) {
 	t.Helper()
-	for _, query := range []string{
-		"drop user if exists `SYSTEM.ext_starter_user`@`%`",
-		"drop user if exists `SYSTEM.ext.starter_user`@`%`",
-		"drop user if exists `SYSTEM.ext_starter_renamed`@`%`",
-		"drop user if exists `SYSTEM.ext_starter_reject`@`%`",
-		"drop user if exists `SYSTEM.OTHER.ext_starter_user`@`%`",
-		"drop role if exists `SYSTEM.ext_starter_role`",
-		"drop role if exists `SYSTEM.ext_starter_role_reject`",
-	} {
-		require.NoError(t, execSQL(ctx, db, query))
+	host := quoteSQLIdentifier("%")
+	userNames := []string{
+		keyspaceName + ".ext_starter_user",
+		keyspaceName + ".ext.starter_user",
+		keyspaceName + ".ext_starter_renamed",
+		keyspaceName + ".ext_starter_reject",
+		otherStarterKeyspaceName(keyspaceName) + ".ext_starter_user",
 	}
+	roleNames := []string{
+		keyspaceName + ".ext_starter_role",
+		keyspaceName + ".ext_starter_role_reject",
+	}
+	for _, userName := range userNames {
+		require.NoError(t, execSQL(ctx, db, fmt.Sprintf("drop user if exists %s@%s", quoteSQLIdentifier(userName), host)))
+	}
+	for _, roleName := range roleNames {
+		require.NoError(t, execSQL(ctx, db, fmt.Sprintf("drop role if exists %s", quoteSQLIdentifier(roleName))))
+	}
+}
+
+func otherStarterKeyspaceName(keyspaceName string) string {
+	if strings.EqualFold(keyspaceName, "OTHER") {
+		return "DIFFERENT"
+	}
+	return "OTHER"
+}
+
+func quoteSQLIdentifier(value string) string {
+	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+}
+
+func quoteSQLString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func cleanupStarterAttributeData(ctx context.Context, t *testing.T, db *sql.DB) {

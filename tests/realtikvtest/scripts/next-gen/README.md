@@ -73,10 +73,11 @@ against the activated external server. For the default `startertest` run, the
 script also runs a final destructive phase that verifies graceful exit waits for
 held client connections before shutting down the external `tidb-server`.
 
-This script is an independent entry point and is not invoked by `run-tests.sh`.
-CI jobs that need external starter coverage should call this script directly.
-For the standard next-gen RealTiKV CI flow, use the Makefile wrapper through
-`run-tests.sh`:
+This script is an independent direct entry point and is not part of generic
+`run-tests.sh` suite discovery. For the standard next-gen RealTiKV CI flow, use
+the `bazel_startertest` Makefile wrapper through `run-tests.sh`; that wrapper
+intentionally calls this shell runner because starter coverage needs an external
+`tidb-server` process:
 
 ```bash
 tests/realtikvtest/scripts/next-gen/run-tests.sh bazel_startertest
@@ -134,7 +135,8 @@ Useful environment variables:
   `tidb-server` (default: `120`)
 - `STARTER_RUN_EXIT_WAIT_TEST`: Whether to run the final destructive
   graceful-exit wait test. By default it runs only for `startertest` when no
-  extra `go test` arguments are passed.
+  extra `go test` arguments are passed. The `bazel_startertest` Makefile wrapper
+  sets this to `1` explicitly because it passes `-count=1`.
 - `STARTER_EXIT_WAIT_TEST_TIMEOUT`: Timeout for the final destructive
   graceful-exit wait test (default: `2m`)
 - `STARTER_TIDB_PORT` / `STARTER_TIDB_STATUS_PORT`: Preferred starting ports
