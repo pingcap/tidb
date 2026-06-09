@@ -300,6 +300,11 @@ func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
 }
 
+// GetRuntime implements sqlsvrapi.Server.
+func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
+	return do
+}
+
 // AcquireKSRuntime implements the sqlsvrapi.Server interface.
 func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
 	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
@@ -566,8 +571,8 @@ func NewDomainWithEtcdClient(
 	do := &Domain{
 		store:             store,
 		exit:              make(chan struct{}),
-		sysSessionPool:    createInternelSessionPool(systemSessionPoolSize, factory),
-		dxfSessionPool:    createInternelSessionPool(dxfSessionPoolSize, factory),
+		sysSessionPool:    createInternalSessionPool(systemSessionPoolSize, factory),
+		dxfSessionPool:    createInternalSessionPool(dxfSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
@@ -612,7 +617,7 @@ func NewDomainWithEtcdClient(
 	return do
 }
 
-func createInternelSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
+func createInternalSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
 	return util.NewSessionPool(
 		capacity, factory,
 		func(r pools.Resource) {
@@ -848,6 +853,12 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	// user keyspace is only allowed to access SYSTEM ks, we can keep it alive.
+	if kv.IsSystemKS(do.store) {
+		do.wg.Run(func() {
+			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
+		}, "crossKSSessMgrGCLoop")
+	}
 
 	return nil
 }
@@ -890,7 +901,7 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return mgr.SessPool(), nil
+	return mgr.SysSessionPool(), nil
 }
 
 // GetCrossKSMgr returns the cross keyspace session manager.
