@@ -332,7 +332,7 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 	return nil
 }
 
-func (w *GCWorker) isNeedToWait() bool {
+func (w *GCWorker) needsToWait() bool {
 	if deploymode.IsStarter() && !intest.InTest {
 		return time.Since(w.lastFinish) < gcWaitTime && w.hasFinishedFirstGCJob
 	}
@@ -430,7 +430,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if w.isNeedToWait() {
+	if w.needsToWait() {
 		logutil.Logger(ctx).Info("another gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil
@@ -450,7 +450,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 func (w *GCWorker) runKeyspaceGCJobInUnifiedGCMode(ctx context.Context, concurrency gcConcurrency) error {
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if w.isNeedToWait() {
+	if w.needsToWait() {
 		logutil.Logger(ctx).Info("another keyspace gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil
