@@ -1790,11 +1790,46 @@ func TestNonPreparedPlanCacheResourceGroup(t *testing.T) {
 	tk.MustExec(`select * from t where pk >= 1`)
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
 	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
-	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 
 	// Test that the resource group comes from the binding and the value in query is ignored.
 	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
 	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+}
+
+func TestPreparedPlanCacheResourceGroup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+
+	tk.MustExec(`prepare st from 'select /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= ?'`)
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(`execute st using @pk`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`execute st using @pk`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where a >= ? USING select /*+ RESOURCE_GROUP(rg2) */ * from t where a >= ?`)
+	tk.MustExec(`prepare st_bind from 'select * from t where a >= ?'`)
+	tk.MustExec(`set @a=1`)
+
+	tk.MustExec(`execute st_bind using @a`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`execute st_bind using @a`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
 }
