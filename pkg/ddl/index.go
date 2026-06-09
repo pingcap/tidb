@@ -124,6 +124,7 @@ var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 const (
 	tikvCapacitySourcePDGRPCStoreStats = "pd_grpc_store_stats"
 	pdStoreStatsRequestTimeout         = 3 * time.Second
+	addIndexSubmissionPrecheckTimeout  = 5 * time.Second
 
 	defaultTiKVReplicaCount                         = 3
 	tikvReplicaCountSourceInfoSchemaPlacementBundle = "infoschema_placement_bundle"
@@ -3280,14 +3281,21 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.Error(err))
 				initialCapacityAvailable = false
 			}
+			precheckCtx := ctx
+			var cancelPrecheck context.CancelFunc
 			if !initialCapacityAvailable {
 				logutil.DDLLogger().Info("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because initial TiKV capacity is unavailable",
 					zap.Int64("jobID", job.ID),
 					zap.String("task-key", taskKey))
 			} else {
-				initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
+				precheckCtx, cancelPrecheck = context.WithTimeout(ctx, addIndexSubmissionPrecheckTimeout)
+				initialCapacity, err = collectTiKVStoreCapacity(precheckCtx, w.store)
 				if err != nil {
-					logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot failed",
+					msg := "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot failed"
+					if isContextDoneError(err) {
+						msg = "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because the submission-time precheck timed out while collecting TiKV capacity"
+					}
+					logutil.DDLLogger().Warn(msg,
 						zap.Int64("jobID", job.ID),
 						zap.String("task-key", taskKey),
 						zap.Error(err))
@@ -3309,7 +3317,11 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				tikvReplicaCountPhysicalID = 0
 			}
 			skipPrediction := func(phase string, err error) {
-				logutil.DDLLogger().Warn("skip TiKV index size prediction and space precheck for add-index task because prediction failed",
+				msg := "skip TiKV index size prediction and space precheck for add-index task because prediction failed"
+				if isContextDoneError(err) {
+					msg = "skip TiKV index size prediction and space precheck for add-index task because the submission-time precheck timed out"
+				}
+				logutil.DDLLogger().Warn(msg,
 					zap.Int64("jobID", job.ID),
 					zap.String("task-key", taskKey),
 					zap.String("prediction-phase", phase),
@@ -3318,13 +3330,13 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				predictionOK = false
 			}
 			if initialCapacity != nil {
-				blockSamplePrediction, err = w.predictTiKVIndexBytesBlockSample(ctx, w.sess.Session(), t, reorgInfo)
+				blockSamplePrediction, err = w.predictTiKVIndexBytesBlockSample(precheckCtx, w.sess.Session(), t, reorgInfo)
 				if err != nil {
 					skipPrediction("block-sample", err)
 				}
 				if predictionOK {
 					blockSampleSingleReplicaPredictedBytes = blockSamplePrediction.PredictedBytes
-					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID, err = w.resolveAddIndexTiKVReplicaCount(ctx, w.sess.Session(), t, reorgInfo)
+					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID, err = w.resolveAddIndexTiKVReplicaCount(precheckCtx, w.sess.Session(), t, reorgInfo)
 					if err != nil {
 						skipPrediction("tikv-replica-count", err)
 					} else {
@@ -3332,6 +3344,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 						blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.MVCCOverheadBytes, tikvReplicaCount)
 					}
 				}
+			}
+			if cancelPrecheck != nil {
+				cancelPrecheck()
 			}
 			if initialCapacity != nil && predictionOK {
 				enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
@@ -3640,6 +3655,10 @@ func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
 
 func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
 	return collectTiKVStoreCapacityFromPDGRPC(ctx, store)
+}
+
+func isContextDoneError(err error) bool {
+	return goerrors.Is(err, context.DeadlineExceeded) || goerrors.Is(err, context.Canceled)
 }
 
 func collectTiKVStoreCapacityFromPDGRPC(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
