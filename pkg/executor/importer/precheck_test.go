@@ -185,7 +185,13 @@ func TestCheckRequirements(t *testing.T) {
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "local:///tmp"
-	require.ErrorContains(t, c.CheckRequirements(ctx, conn), "unsupported cloud storage uri scheme: local")
+	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "unsupported cloud storage uri scheme: local")
+	c.Plan.CloudStorageURI = "azblob://test-bucket/path?account-name=test-account&sas-token=xxxxxx&endpoint=http://127.0.0.1:1/devstoreaccount1"
+	// Azure SDK retries unreachable endpoints aggressively; bound this negative check
+	// so the test still verifies the same failure path without dominating runtime.
+	azblobCtx, cancel := context.WithTimeout(ctx, time.Second)
+	require.ErrorContains(t, c.CheckRequirements(azblobCtx, tk.Session()), "check cloud storage uri access")
+	cancel()
 	// this mock cannot mock credential check, so we just skip it.
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)
