@@ -19,9 +19,11 @@ go_test(
     srcs = ["util_test.go"],
     embed = [":dxfutil"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/domain/sqlsvrapi/mock",
         "//pkg/kv",
+        "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/mock",
         "@com_github_ngaut_pools//:pools",

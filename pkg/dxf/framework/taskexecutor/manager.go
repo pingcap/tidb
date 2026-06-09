@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	litstorage "github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -332,26 +331,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		}
 	}()
 
-	var taskRuntime sqlsvrapi.Runtime
-	if err = m.taskTable.WithNewSession(func(se sessionctx.Context) error {
-		sqlServer := se.GetSQLServer()
-		if task.Keyspace != m.store.GetKeyspace() {
-			var err2 error
-			bookkeeper := fmt.Sprintf("DXF/executor/%d", task.ID)
-			taskRuntime, err2 = sqlServer.AcquireKSRuntime(task.Keyspace, bookkeeper)
-			return err2
-		}
-		taskRuntime = sqlServer.GetRuntime()
-		return nil
-	}); err != nil {
+	bookkeeper := fmt.Sprintf("DXF/executor/%d", task.ID)
+	taskRuntime, releaseRuntime, err := dxfutil.AcquireTaskRuntime(m.taskTable, m.store.GetKeyspace(), task.Keyspace, bookkeeper)
+	if err != nil {
 		m.logger.Warn("acquire task runtime failed", zap.Int64("task-id", taskBase.ID),
 			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
-	}
-	releaseRuntime := func() {
-		if hdl, ok := taskRuntime.(sqlsvrapi.KSRuntimeHandle); ok {
-			hdl.Release()
-		}
 	}
 
 	factory := GetTaskExecutorFactory(task.Type)

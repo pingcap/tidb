@@ -84,14 +84,13 @@ type Param struct {
 
 // NewParamForTest creates a new Param for test.
 func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
-	param := Param{
+	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
 		TaskStore: store,
 	}
-	return param
 }
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.

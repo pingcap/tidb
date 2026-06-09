@@ -44,34 +44,31 @@ func (s *storeWithKS) GetKeyspace() string {
 	return s.ks
 }
 
-type taskExecutorTestSession struct {
+type sessionWithSQLServer struct {
 	*utilmock.Context
 	server sqlsvrapi.Server
 }
 
-func (s *taskExecutorTestSession) GetSQLServer() sqlsvrapi.Server {
+func (s *sessionWithSQLServer) GetSQLServer() sqlsvrapi.Server {
 	return s.server
 }
 
-func newTaskExecutorTestRuntime(ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockRuntime {
-	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
-	runtime.EXPECT().Store().Return(store).AnyTimes()
-	runtime.EXPECT().SysSessionPool().Return(nil).AnyTimes()
-	return runtime
+func newRuntimeWithStore(ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockRuntime {
+	return newMockRuntime(ctrl, store, nil)
 }
 
-func newTaskExecutorTestRuntimeHandle(ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockKSRuntimeHandle {
+func newRuntimeHandle(ctrl *gomock.Controller, store kv.Storage) *sqlsvrapimock.MockKSRuntimeHandle {
 	runtimeHandle := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
 	runtimeHandle.EXPECT().Store().Return(store).AnyTimes()
 	runtimeHandle.EXPECT().SysSessionPool().Return(nil).AnyTimes()
 	return runtimeHandle
 }
 
-func expectTaskExecutorRuntimeSession(ctrl *gomock.Controller, taskTable *mock.MockTaskTable, runtime sqlsvrapi.Runtime) {
+func expectRuntimeFromNewSession(ctrl *gomock.Controller, taskTable *mock.MockTaskTable, runtime sqlsvrapi.Runtime) {
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	server.EXPECT().GetRuntime().Return(runtime).AnyTimes()
 	taskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&taskExecutorTestSession{
+		return fn(&sessionWithSQLServer{
 			Context: utilmock.NewContext(),
 			server:  server,
 		})
@@ -147,7 +144,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	m, err := NewManager(ctx, &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
-	expectTaskExecutorRuntimeSession(ctrl, mockTaskTable, newTaskExecutorTestRuntime(ctrl, m.store))
+	expectRuntimeFromNewSession(ctrl, mockTaskTable, newRuntimeWithStore(ctrl, m.store))
 
 	// no task
 	m.handleExecutableTasks(nil)
@@ -199,7 +196,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	require.False(t, m.isExecutorStarted(taskID))
 }
 
-type crossKeyspaceStartTaskExecutorTestCase struct {
+type crossKeyspaceStartCase struct {
 	ctrl      *gomock.Controller
 	taskTable *mock.MockTaskTable
 	manager   *Manager
@@ -208,7 +205,7 @@ type crossKeyspaceStartTaskExecutorTestCase struct {
 	server    *sqlsvrapimock.MockServer
 }
 
-func newCrossKeyspaceStartTaskExecutorTestCase(t *testing.T, taskID int64, taskKey string) *crossKeyspaceStartTaskExecutorTestCase {
+func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *crossKeyspaceStartCase {
 	t.Helper()
 	ClearTaskExecutors()
 	t.Cleanup(ClearTaskExecutors)
@@ -227,10 +224,10 @@ func newCrossKeyspaceStartTaskExecutorTestCase(t *testing.T, taskID int64, taskK
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	taskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	taskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&taskExecutorTestSession{Context: utilmock.NewContext(), server: server})
+		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
 	})
 
-	return &crossKeyspaceStartTaskExecutorTestCase{
+	return &crossKeyspaceStartCase{
 		ctrl:      ctrl,
 		taskTable: taskTable,
 		manager:   m,
@@ -240,20 +237,20 @@ func newCrossKeyspaceStartTaskExecutorTestCase(t *testing.T, taskID int64, taskK
 	}
 }
 
-func (tc *crossKeyspaceStartTaskExecutorTestCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
-	runtimeHandle := newTaskExecutorTestRuntimeHandle(tc.ctrl, tc.taskStore)
+func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
+	runtimeHandle := newRuntimeHandle(tc.ctrl, tc.taskStore)
 	runtimeHandle.EXPECT().Release()
 	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(runtimeHandle, nil)
 	return runtimeHandle
 }
 
-func (tc *crossKeyspaceStartTaskExecutorTestCase) bookkeeper() string {
+func (tc *crossKeyspaceStartCase) bookkeeper() string {
 	return fmt.Sprintf("DXF/executor/%d", tc.task.ID)
 }
 
 func TestStartTaskExecutorCrossKeyspaceRuntime(t *testing.T) {
 	t.Run("acquires runtime and releases it when executor exits", func(t *testing.T) {
-		tc := newCrossKeyspaceStartTaskExecutorTestCase(t, 201, "cross-ks-executor")
+		tc := newCrossKeyspaceStartCase(t, 201, "cross-ks-executor")
 		runtimeHandle := tc.expectRuntimeAcquiredAndReleased()
 
 		executor := mock.NewMockTaskExecutor(tc.ctrl)
@@ -284,7 +281,7 @@ func TestStartTaskExecutorCrossKeyspaceRuntime(t *testing.T) {
 	})
 
 	t.Run("releases runtime when executor initialization fails", func(t *testing.T) {
-		tc := newCrossKeyspaceStartTaskExecutorTestCase(t, 202, "cross-ks-executor-init-fail")
+		tc := newCrossKeyspaceStartCase(t, 202, "cross-ks-executor-init-fail")
 		runtimeHandle := tc.expectRuntimeAcquiredAndReleased()
 
 		executor := mock.NewMockTaskExecutor(tc.ctrl)
@@ -303,7 +300,7 @@ func TestStartTaskExecutorCrossKeyspaceRuntime(t *testing.T) {
 	})
 
 	t.Run("stops when runtime acquisition fails", func(t *testing.T) {
-		tc := newCrossKeyspaceStartTaskExecutorTestCase(t, 203, "cross-ks-executor-acquire-fail")
+		tc := newCrossKeyspaceStartCase(t, 203, "cross-ks-executor-acquire-fail")
 		acquireErr := errors.New("acquire failed")
 		tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(nil, acquireErr)
 		factoryCalled := false
@@ -320,7 +317,7 @@ func TestStartTaskExecutorCrossKeyspaceRuntime(t *testing.T) {
 	})
 
 	t.Run("releases runtime when task factory is missing", func(t *testing.T) {
-		tc := newCrossKeyspaceStartTaskExecutorTestCase(t, 204, "cross-ks-executor-missing-factory")
+		tc := newCrossKeyspaceStartCase(t, 204, "cross-ks-executor-missing-factory")
 		tc.expectRuntimeAcquiredAndReleased()
 
 		tc.taskTable.EXPECT().FailSubtask(tc.manager.ctx, tc.manager.id, tc.task.ID, gomock.Any()).Return(nil)
@@ -348,7 +345,7 @@ func TestManager(t *testing.T) {
 
 	m, err := NewManager(context.Background(), &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
-	expectTaskExecutorRuntimeSession(ctrl, mockTaskTable, newTaskExecutorTestRuntime(ctrl, m.store))
+	expectRuntimeFromNewSession(ctrl, mockTaskTable, newRuntimeWithStore(ctrl, m.store))
 
 	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
 	task2 := &proto.TaskBase{ID: 2, State: proto.TaskStateReverting, Step: proto.StepOne, Type: "type"}
@@ -391,7 +388,7 @@ func TestManagerHandleTasks(t *testing.T) {
 	m, err := NewManager(context.Background(), &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
-	expectTaskExecutorRuntimeSession(ctrl, mockTaskTable, newTaskExecutorTestRuntime(ctrl, m.store))
+	expectRuntimeFromNewSession(ctrl, mockTaskTable, newRuntimeWithStore(ctrl, m.store))
 
 	// failed to get tasks
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
@@ -473,7 +470,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	m, err := NewManager(context.Background(), &storeWithKS{}, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(10)
-	expectTaskExecutorRuntimeSession(ctrl, mockTaskTable, newTaskExecutorTestRuntime(ctrl, m.store))
+	expectRuntimeFromNewSession(ctrl, mockTaskTable, newRuntimeWithStore(ctrl, m.store))
 
 	var (
 		task1 = &proto.TaskBase{
@@ -675,7 +672,7 @@ func TestStartTaskExecutorResolveTaskRuntimeFromTaskKeyspace(t *testing.T) {
 	require.NoError(t, err)
 
 	taskStore := &storeWithKS{ks: taskKS}
-	runtimeHandle := newTaskExecutorTestRuntimeHandle(ctrl, taskStore)
+	runtimeHandle := newRuntimeHandle(ctrl, taskStore)
 	runtimeHandle.EXPECT().Release()
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	server.EXPECT().AcquireKSRuntime(taskKS, "DXF/executor/1").Return(runtimeHandle, nil)
@@ -688,7 +685,7 @@ func TestStartTaskExecutorResolveTaskRuntimeFromTaskKeyspace(t *testing.T) {
 	})
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&taskExecutorTestSession{Context: utilmock.NewContext(), server: server})
+		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
 	})
 	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	runCh := make(chan struct{})
@@ -739,7 +736,7 @@ func TestStartTaskExecutorResolveTaskRuntimeError(t *testing.T) {
 
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&taskExecutorTestSession{Context: utilmock.NewContext(), server: server})
+		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
 	})
 
 	require.False(t, m.startTaskExecutor(&task.TaskBase))

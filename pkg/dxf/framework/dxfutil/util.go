@@ -23,6 +23,43 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
+// RuntimeSessionProvider provides a session used to access the SQL server runtime.
+type RuntimeSessionProvider interface {
+	WithNewSession(func(se sessionctx.Context) error) error
+}
+
+// AcquireTaskRuntime returns a runtime view for the task keyspace and a release function.
+// Callers must call the release function when the returned runtime is no longer used.
+func AcquireTaskRuntime(
+	sessionProvider RuntimeSessionProvider,
+	currentKS string,
+	taskKS string,
+	holderID string,
+) (sqlsvrapi.Runtime, func(), error) {
+	var taskRuntime sqlsvrapi.Runtime
+	if err := sessionProvider.WithNewSession(func(se sessionctx.Context) error {
+		sqlServer := se.GetSQLServer()
+		if taskKS != currentKS {
+			var err2 error
+			taskRuntime, err2 = sqlServer.AcquireKSRuntime(taskKS, holderID)
+			return err2
+		}
+		taskRuntime = sqlServer.GetRuntime()
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
+	return taskRuntime, func() {
+		releaseTaskRuntime(taskRuntime)
+	}, nil
+}
+
+func releaseTaskRuntime(runtime sqlsvrapi.Runtime) {
+	if hdl, ok := runtime.(sqlsvrapi.KSRuntimeHandle); ok {
+		hdl.Release()
+	}
+}
+
 // CheckRuntime checks if the runtime is valid for the task with the target keyspace.
 func CheckRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 	storeKS := runtime.Store().GetKeyspace()

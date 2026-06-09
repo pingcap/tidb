@@ -41,7 +41,7 @@ var (
 	}
 )
 
-func newTaskExecutorRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+func newSessionPoolForStore(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
 	t.Helper()
 
 	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
@@ -53,7 +53,7 @@ func newTaskExecutorRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) ti
 	return sePool
 }
 
-func newTaskExecutorMockRuntime(
+func newMockRuntime(
 	ctrl *gomock.Controller,
 	store kv.Storage,
 	sePool tidbutil.DestroyableSessionPool,
@@ -182,20 +182,20 @@ func TestBaseTaskExecutorInitChecksTaskRuntime(t *testing.T) {
 
 	taskStore := &storeWithKS{ks: task.Keyspace}
 	taskExecutor := NewBaseTaskExecutor(context.Background(), task, Param{
-		TaskRuntime: newTaskExecutorMockRuntime(ctrl, taskStore, newTaskExecutorRuntimeSessionPool(t, taskStore)),
+		TaskRuntime: newMockRuntime(ctrl, taskStore, newSessionPoolForStore(t, taskStore)),
 	})
 	require.NoError(t, taskExecutor.Init(context.Background()))
 
 	taskExecutor = NewBaseTaskExecutor(context.Background(), task, Param{
-		TaskRuntime: newTaskExecutorMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
+		TaskRuntime: newMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
 	})
 	require.ErrorContains(t, taskExecutor.Init(context.Background()), "store keyspace mismatch with task")
 
 	taskExecutor = NewBaseTaskExecutor(context.Background(), task, Param{
-		TaskRuntime: newTaskExecutorMockRuntime(
+		TaskRuntime: newMockRuntime(
 			ctrl,
 			taskStore,
-			newTaskExecutorRuntimeSessionPool(t, &storeWithKS{ks: "session_ks"}),
+			newSessionPoolForStore(t, &storeWithKS{ks: "session_ks"}),
 		),
 	})
 	require.ErrorContains(t, taskExecutor.Init(context.Background()), "invalid task runtime with mismatched keyspace")

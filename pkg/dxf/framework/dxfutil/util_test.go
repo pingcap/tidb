@@ -15,11 +15,13 @@
 package dxfutil
 
 import (
+	goerrors "errors"
 	"testing"
 
 	"github.com/ngaut/pools"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -58,6 +60,101 @@ func newCheckRuntimeMockRuntime(
 		runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
 	}
 	return runtime
+}
+
+type taskRuntimeSessionProvider struct {
+	se  sessionctx.Context
+	err error
+}
+
+func (p *taskRuntimeSessionProvider) WithNewSession(fn func(se sessionctx.Context) error) error {
+	if p.err != nil {
+		return p.err
+	}
+	return fn(p.se)
+}
+
+func newTaskRuntimeSessionProvider(server *sqlsvrapimock.MockServer) *taskRuntimeSessionProvider {
+	se := utilmock.NewContext()
+	se.BindDomainAndSchValidator(server, nil)
+	return &taskRuntimeSessionProvider{se: se}
+}
+
+func TestAcquireTaskRuntime(t *testing.T) {
+	t.Run("current keyspace uses server runtime", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		store := &storeWithKeyspace{keyspace: "task_ks"}
+		runtime := newCheckRuntimeMockRuntime(ctrl, store, nil)
+		server := sqlsvrapimock.NewMockServer(ctrl)
+		server.EXPECT().GetRuntime().Return(runtime)
+
+		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
+			newTaskRuntimeSessionProvider(server),
+			"task_ks",
+			"task_ks",
+			"holder",
+		)
+		require.NoError(t, err)
+		require.Same(t, runtime, gotRuntime)
+		require.NotNil(t, releaseRuntime)
+		require.NotPanics(t, releaseRuntime)
+	})
+
+	t.Run("different keyspace acquires and releases handle", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		runtimeHandle := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
+		runtimeHandle.EXPECT().Release()
+		server := sqlsvrapimock.NewMockServer(ctrl)
+		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(runtimeHandle, nil)
+
+		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
+			newTaskRuntimeSessionProvider(server),
+			"current_ks",
+			"task_ks",
+			"holder",
+		)
+		require.NoError(t, err)
+		require.Same(t, runtimeHandle, gotRuntime)
+		require.NotNil(t, releaseRuntime)
+		releaseRuntime()
+	})
+
+	t.Run("acquire error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		runtimeErr := goerrors.New("ks runtime not found")
+		server := sqlsvrapimock.NewMockServer(ctrl)
+		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(nil, runtimeErr)
+
+		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
+			newTaskRuntimeSessionProvider(server),
+			"current_ks",
+			"task_ks",
+			"holder",
+		)
+		require.ErrorIs(t, err, runtimeErr)
+		require.Nil(t, gotRuntime)
+		require.Nil(t, releaseRuntime)
+	})
+
+	t.Run("session error", func(t *testing.T) {
+		sessionErr := goerrors.New("session error")
+
+		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
+			&taskRuntimeSessionProvider{err: sessionErr},
+			"current_ks",
+			"task_ks",
+			"holder",
+		)
+		require.ErrorIs(t, err, sessionErr)
+		require.Nil(t, gotRuntime)
+		require.Nil(t, releaseRuntime)
+	})
 }
 
 func TestCheckRuntime(t *testing.T) {
