@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -86,7 +87,7 @@ type VerChecker func(store *metapb.Store, ver *semver.Version) error
 
 // CheckClusterVersion check TiKV version.
 func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerChecker) error {
-	stores, err := client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := client.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
