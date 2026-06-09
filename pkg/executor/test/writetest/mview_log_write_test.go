@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -879,6 +880,47 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 		"1 0 10 101",
 		"2 0 20 200",
 	))
+}
+
+// TestMLogAddColumnRejectsNonPublicBaseColumn verifies that ALTER MATERIALIZED
+// VIEW LOG only accepts public base-table columns. A column being added by
+// concurrent online DDL is visible in metadata before it becomes public, and mlog
+// tracking must reject it until the base DDL finishes.
+func TestMLogAddColumnRejectsNonPublicBaseColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int)")
+	tk.MustExec("create materialized view log on t (id)")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter table t add column added int default 0",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "base-table add-column write-reorg")
+
+	// The base column is non-public while ADD COLUMN is paused, so the mlog
+	// should treat it as unavailable instead of adding a transient column.
+	tk.MustGetErrCode("alter materialized view log on t add column (added)", errno.ErrBadField)
+
+	ctrl.releaseAndWaitFinish(t)
+
+	// Once the base ADD COLUMN completes, the same column is public and can be
+	// tracked by the mlog normally.
+	tk.MustExec("alter materialized view log on t add column (added)")
+	rows := tk.MustQuery("show create materialized view log on t").Rows()
+	require.Len(t, rows, 1)
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t` (`id`, `added`)")
 }
 
 // TestMLogOnlineDDLAddTrackedColumn verifies mlog writes while ADD COLUMN is in

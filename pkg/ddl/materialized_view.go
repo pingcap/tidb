@@ -574,6 +574,9 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 
 	baseColMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
 	for _, col := range baseTable.Meta().Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
 		baseColMap[col.Name.L] = col
 	}
 	mlogColSet := make(map[string]struct{}, len(mlogTable.Meta().Columns)+len(s.Actions))
