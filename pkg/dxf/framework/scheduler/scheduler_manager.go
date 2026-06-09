@@ -352,8 +352,8 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		return
 	}
 
-	bookkeeper := fmt.Sprintf("DXF/scheduler/%d", task.ID)
-	taskRuntime, releaseRuntime, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, sm.store.GetKeyspace(), task.Keyspace, bookkeeper)
+	holderID := fmt.Sprintf("DXF/scheduler/%d", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, sm.store.GetKeyspace(), task.Keyspace, holderID)
 	if err != nil {
 		sm.logger.Warn("acquire task runtime failed", zap.Int64("task-id", basicTask.ID),
 			zap.String("task-key", basicTask.Key), zap.Error(err))
@@ -374,7 +374,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
 		sm.failTask(task.ID, task.State, err)
-		releaseRuntime()
+		releaseFn()
 		return
 	}
 	sm.addScheduler(task.ID, scheduler)
@@ -385,7 +385,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
-			releaseRuntime()
+			releaseFn()
 			sm.delScheduler(task.ID)
 			if allocateSlots {
 				sm.slotMgr.unReserve(basicTask, reservedExecID)

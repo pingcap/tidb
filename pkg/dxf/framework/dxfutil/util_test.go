@@ -37,7 +37,7 @@ func (s *storeWithKeyspace) GetKeyspace() string {
 	return s.keyspace
 }
 
-func newCheckRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+func newCheckTaskRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
 	t.Helper()
 
 	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
@@ -49,7 +49,7 @@ func newCheckRuntimeSessionPool(t *testing.T, sessionStore kv.Storage) tidbutil.
 	return sePool
 }
 
-func newCheckRuntimeMockRuntime(
+func newCheckTaskRuntimeMockRuntime(
 	ctrl *gomock.Controller,
 	store kv.Storage,
 	sePool tidbutil.DestroyableSessionPool,
@@ -86,7 +86,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		defer ctrl.Finish()
 
 		store := &storeWithKeyspace{keyspace: "task_ks"}
-		runtime := newCheckRuntimeMockRuntime(ctrl, store, nil)
+		runtime := newCheckTaskRuntimeMockRuntime(ctrl, store, nil)
 		server := sqlsvrapimock.NewMockServer(ctrl)
 		server.EXPECT().GetRuntime().Return(runtime)
 
@@ -157,22 +157,22 @@ func TestAcquireTaskRuntime(t *testing.T) {
 	})
 }
 
-func TestCheckRuntime(t *testing.T) {
+func TestCheckTaskRuntime(t *testing.T) {
 	t.Run("valid runtime", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 
 		store := &storeWithKeyspace{keyspace: "task_ks"}
-		runtime := newCheckRuntimeMockRuntime(ctrl, store, newCheckRuntimeSessionPool(t, store))
-		require.NoError(t, CheckRuntime(runtime, "task_ks"))
+		runtime := newCheckTaskRuntimeMockRuntime(ctrl, store, newCheckTaskRuntimeSessionPool(t, store))
+		require.NoError(t, CheckTaskRuntime(runtime, "task_ks"))
 	})
 
 	t.Run("store keyspace mismatch", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 
-		runtime := newCheckRuntimeMockRuntime(ctrl, &storeWithKeyspace{keyspace: "store_ks"}, nil)
-		require.ErrorContains(t, CheckRuntime(runtime, "task_ks"),
+		runtime := newCheckTaskRuntimeMockRuntime(ctrl, &storeWithKeyspace{keyspace: "store_ks"}, nil)
+		require.ErrorContains(t, CheckTaskRuntime(runtime, "task_ks"),
 			"store keyspace mismatch with task: store_ks vs task_ks")
 	})
 
@@ -181,12 +181,12 @@ func TestCheckRuntime(t *testing.T) {
 		defer ctrl.Finish()
 
 		store := &storeWithKeyspace{keyspace: "task_ks"}
-		runtime := newCheckRuntimeMockRuntime(
+		runtime := newCheckTaskRuntimeMockRuntime(
 			ctrl,
 			store,
-			newCheckRuntimeSessionPool(t, &storeWithKeyspace{keyspace: "session_ks"}),
+			newCheckTaskRuntimeSessionPool(t, &storeWithKeyspace{keyspace: "session_ks"}),
 		)
-		require.ErrorContains(t, CheckRuntime(runtime, "task_ks"),
+		require.ErrorContains(t, CheckTaskRuntime(runtime, "task_ks"),
 			"invalid task runtime with mismatched keyspace: task_ks vs session_ks")
 	})
 }

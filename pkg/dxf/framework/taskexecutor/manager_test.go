@@ -240,11 +240,11 @@ func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *cros
 func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
 	runtimeHandle := newRuntimeHandle(tc.ctrl, tc.taskStore)
 	runtimeHandle.EXPECT().Release()
-	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(runtimeHandle, nil)
+	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.holderID()).Return(runtimeHandle, nil)
 	return runtimeHandle
 }
 
-func (tc *crossKeyspaceStartCase) bookkeeper() string {
+func (tc *crossKeyspaceStartCase) holderID() string {
 	return fmt.Sprintf("DXF/executor/%d", tc.task.ID)
 }
 
@@ -302,7 +302,7 @@ func TestStartTaskExecutorCrossKeyspaceRuntime(t *testing.T) {
 	t.Run("stops when runtime acquisition fails", func(t *testing.T) {
 		tc := newCrossKeyspaceStartCase(t, 203, "cross-ks-executor-acquire-fail")
 		acquireErr := errors.New("acquire failed")
-		tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(nil, acquireErr)
+		tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.holderID()).Return(nil, acquireErr)
 		factoryCalled := false
 		RegisterTaskType(proto.TaskTypeExample, func(context.Context, *proto.Task, Param) TaskExecutor {
 			factoryCalled = true

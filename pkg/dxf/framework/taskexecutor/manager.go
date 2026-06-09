@@ -331,8 +331,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		}
 	}()
 
-	bookkeeper := fmt.Sprintf("DXF/executor/%d", task.ID)
-	taskRuntime, releaseRuntime, err := dxfutil.AcquireTaskRuntime(m.taskTable, m.store.GetKeyspace(), task.Keyspace, bookkeeper)
+	holderID := fmt.Sprintf("DXF/executor/%d", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(m.taskTable, m.store.GetKeyspace(), task.Keyspace, holderID)
 	if err != nil {
 		m.logger.Warn("acquire task runtime failed", zap.Int64("task-id", taskBase.ID),
 			zap.String("task-key", taskBase.Key), zap.Error(err))
@@ -343,7 +343,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.failSubtask(err, task.ID, nil)
-		releaseRuntime()
+		releaseFn()
 		return false
 	}
 	executor := factory(m.ctx, task, Param{
@@ -357,7 +357,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	err = executor.Init(m.ctx)
 	if err != nil {
 		m.failSubtask(err, task.ID, executor)
-		releaseRuntime()
+		releaseFn()
 		return false
 	}
 	m.addTaskExecutor(executor)
@@ -373,7 +373,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
 			executor.Close()
-			releaseRuntime()
+			releaseFn()
 		}()
 		executor.Run()
 	})

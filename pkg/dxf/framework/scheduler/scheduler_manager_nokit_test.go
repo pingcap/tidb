@@ -281,11 +281,11 @@ func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *cros
 func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
 	runtimeHandle := newRuntimeHandle(tc.ctrl, tc.taskStore)
 	runtimeHandle.EXPECT().Release()
-	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(runtimeHandle, nil)
+	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.holderID()).Return(runtimeHandle, nil)
 	return runtimeHandle
 }
 
-func (tc *crossKeyspaceStartCase) bookkeeper() string {
+func (tc *crossKeyspaceStartCase) holderID() string {
 	return fmt.Sprintf("DXF/scheduler/%d", tc.task.ID)
 }
 
@@ -342,7 +342,7 @@ func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
 		tc := newCrossKeyspaceStartCase(t, 104, "cross-ks-scheduler-acquire-fail")
 		tc.task.State = proto.TaskStatePending
 		acquireErr := errors.New("acquire failed")
-		tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.bookkeeper()).Return(nil, acquireErr)
+		tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.holderID()).Return(nil, acquireErr)
 		var factoryCalled atomic.Bool
 		RegisterSchedulerFactory(proto.TaskTypeExample,
 			func(ctx context.Context, gotTask *proto.Task, param Param) Scheduler {

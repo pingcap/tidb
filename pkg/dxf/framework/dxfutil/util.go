@@ -23,15 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// SessionProvider provides a session used to access the SQL server runtime.
-type SessionProvider interface {
+// sessionProvider provides a session used to access the SQL server runtime.
+type sessionProvider interface {
 	WithNewSession(func(se sessionctx.Context) error) error
 }
 
 // AcquireTaskRuntime returns a runtime view for the task keyspace and a release function.
 // Callers must call the release function when the returned runtime is no longer used.
 func AcquireTaskRuntime(
-	sessionProvider SessionProvider,
+	sessionProvider sessionProvider,
 	currentKS string,
 	taskKS string,
 	holderID string,
@@ -60,8 +60,8 @@ func releaseTaskRuntime(runtime sqlsvrapi.Runtime) {
 	}
 }
 
-// CheckRuntime checks if the runtime is valid for the task with the target keyspace.
-func CheckRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
+// CheckTaskRuntime checks if the runtime is valid for the task with the target keyspace.
+func CheckTaskRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 	storeKS := runtime.Store().GetKeyspace()
 	if storeKS != taskKS {
 		// shouldn't happen normally, but since keyspace mismatch might cause

@@ -123,7 +123,7 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 
 // Init implements the Scheduler interface.
 func (s *BaseScheduler) Init() error {
-	return dxfutil.CheckRuntime(s.TaskRuntime, s.GetTask().Keyspace)
+	return dxfutil.CheckTaskRuntime(s.TaskRuntime, s.GetTask().Keyspace)
 }
 
 // ScheduleTask implements the Scheduler interface.

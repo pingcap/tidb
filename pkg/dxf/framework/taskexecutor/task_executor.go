@@ -261,7 +261,7 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 
 // Init implements the TaskExecutor interface.
 func (e *BaseTaskExecutor) Init(_ context.Context) error {
-	return dxfutil.CheckRuntime(e.TaskRuntime, e.GetTaskBase().Keyspace)
+	return dxfutil.CheckTaskRuntime(e.TaskRuntime, e.GetTaskBase().Keyspace)
 }
 
 // Ctx returns the context of the task executor.
