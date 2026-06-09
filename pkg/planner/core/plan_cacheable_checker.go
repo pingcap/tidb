@@ -307,7 +307,7 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx base.PlanContext, selectStmt *as
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
-	if len(selectStmt.TableHints) > 0 || // hints
+	if !nonPreparedPlanCacheableTableHints(selectStmt.TableHints) || // unsupported hints
 		selectStmt.Having != nil || // having
 		selectStmt.WindowSpecs != nil || // window function
 		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
@@ -326,6 +326,17 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx base.PlanContext, selectStmt *as
 		return nil, false, reason
 	}
 	return tableNames, true, ""
+}
+
+func nonPreparedPlanCacheableTableHints(hints []*ast.TableOptimizerHint) bool {
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case "set_var", "resource_group":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // extractTableNames extracts table names from the input node.
@@ -404,7 +415,8 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
 		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr,
+		*ast.TableOptimizerHint:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.Limit:
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {

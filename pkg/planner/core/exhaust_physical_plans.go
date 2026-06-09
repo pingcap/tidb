@@ -2267,7 +2267,10 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
+	if canUsePartialOrder4TopN(lt) {
+		ret = append(ret, getPhysTopNWithPartialOrderProperty(lt, prop)...)
+	}
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
 		topN := PhysicalTopN{
@@ -2317,6 +2320,56 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		ret = append(ret, topN)
 	}
 	return ret
+}
+
+// canUsePartialOrder4TopN checks if the TopN's child tree satisfies the supported partial-order pattern.
+func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
+	if !lt.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() {
+		return false
+	}
+	if len(lt.ByItems) == 0 {
+		return false
+	}
+	return checkPartialOrderPattern(lt.Children()[0])
+}
+
+func checkPartialOrderPattern(plan base.LogicalPlan) bool {
+	switch p := plan.(type) {
+	case *logicalop.DataSource:
+		return true
+	case *logicalop.LogicalSelection:
+		return len(p.Children()) == 1 && checkPartialOrderPattern(p.Children()[0])
+	case *logicalop.LogicalProjection:
+		return len(p.Children()) == 1 && checkPartialOrderPattern(p.Children()[0])
+	default:
+		return false
+	}
+}
+
+func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	sortItems := make([]*property.SortItem, 0, len(lt.ByItems))
+	for _, byItem := range lt.ByItems {
+		col, ok := byItem.Expr.(*expression.Column)
+		if !ok {
+			return nil
+		}
+		sortItems = append(sortItems, &property.SortItem{Col: col, Desc: byItem.Desc})
+	}
+	partialOrderProp := &property.PhysicalProperty{
+		TaskTp:      property.CopMultiReadTaskType,
+		ExpectedCnt: math.MaxFloat64,
+		PartialOrderInfo: &property.PartialOrderInfo{
+			SortItems: sortItems,
+		},
+		CTEProducerStatus: prop.CTEProducerStatus,
+	}
+	topN := PhysicalTopN{
+		ByItems:     lt.ByItems,
+		PartitionBy: lt.PartitionBy,
+		Count:       lt.Count,
+		Offset:      lt.Offset,
+	}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), partialOrderProp)
+	return []base.PhysicalPlan{topN}
 }
 
 func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {

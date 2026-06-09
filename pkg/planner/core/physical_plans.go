@@ -1282,6 +1282,11 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix index length in bytes.
+	PrefixLen int
 }
 
 // GetPartitionBy returns partition by fields
@@ -1325,7 +1330,8 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer +
+		size.SizeOfUint64*2 + size.SizeOfInt64 + size.SizeOfInt
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -2076,6 +2082,11 @@ type PhysicalLimit struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix index length in bytes.
+	PrefixLen int
 }
 
 // GetPartitionBy returns partition by fields
@@ -2106,7 +2117,7 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2 + size.SizeOfInt64 + size.SizeOfInt
 	return
 }
 

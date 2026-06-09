@@ -295,6 +295,10 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptIndexPruneThreshold, Value: strconv.Itoa(DefTiDBOptIndexPruneThreshold), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.OptIndexPruneThreshold = TidbOptInt(val, DefTiDBOptIndexPruneThreshold)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptimizerEnableOuterJoinReorder, Value: BoolToOnOff(DefTiDBEnableOuterJoinReorder), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableOuterJoinReorder = TiDBOptOn(val)
 		return nil
@@ -2901,16 +2905,15 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(DefTiDBOptPartialOrderedIndexForTopN), Type: TypeBool, IsHintUpdatableVerified: true,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPartialOrderedIndexForTopN, Value: DefTiDBOptPartialOrderedIndexForTopN, Type: TypeEnum, PossibleValues: []string{"DISABLE", "COST"}, IsHintUpdatableVerified: true,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			// Only allow exact values: 0, 1, ON, OFF (case-insensitive).
 			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
-			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
+			if lowerValue != "disable" && lowerValue != "cost" {
 				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBOptPartialOrderedIndexForTopN, originalValue)
 			}
 			return normalizedValue, nil
 		}, SetSession: func(s *SessionVars, val string) error {
-			s.OptPartialOrderedIndexForTopN = TiDBOptOn(val)
+			s.OptPartialOrderedIndexForTopN = strings.ToUpper(val)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBExternalTS, Value: strconv.FormatInt(DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
