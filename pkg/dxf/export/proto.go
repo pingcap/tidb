@@ -18,6 +18,9 @@
 package export
 
 import (
+	"os"
+	"strconv"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
@@ -39,6 +42,30 @@ type TaskMeta struct {
 }
 
 const defaultWritersPerEncoder = 2
+
+// Benchmark env knobs (perf prototype). They let the worker-tidb operator tune
+// the export pipeline without a statement-level option, mirroring the existing
+// TIDB_EXPORT_NOOP_WRITER switch.
+var (
+	// exportReaderPool is the size of the decoupled reader pool. When > 0 the
+	// executor uses the decoupled pipeline: a shared pool of this many readers
+	// round-robins region-sized pages into m ordered per-file buffers (m =
+	// file/writer count), so the number of concurrent cop reads is decoupled
+	// from the writer/file count. 0 keeps the coupled 1:1 reader/writer path.
+	exportReaderPool = envInt("TIDB_EXPORT_READERS", 0)
+	// exportEncBufSize is the per-file encoded-buffer channel depth used by the
+	// decoupled pipeline.
+	exportEncBufSize = envInt("TIDB_EXPORT_ENCBUF", channelBufSize)
+)
+
+// envInt reads a positive integer from env var name, falling back to def when
+// it is unset, malformed, or non-positive.
+func envInt(name string, def int) int {
+	if v, err := strconv.Atoi(os.Getenv(name)); err == nil && v > 0 {
+		return v
+	}
+	return def
+}
 
 func (m *TaskMeta) effectiveWritersPerEncoder() int {
 	if m.WritersPerEncoder > 0 {
