@@ -212,8 +212,9 @@ func initUnfinishedPathsFromExpr(
 		// case 3: use the new logic if the previous logic didn't succeed to collect access filters that can build a
 		// valid range directly.
 		ret[i].idxColHasUsableFilter = make([]bool, len(idxCols))
-		// If every CNF item in this OR branch is collected as an access filter,
-		// the original OR branch does not need to be rechecked by a Selection.
+		// If every CNF item in this OR branch is collected as an access filter, the original OR branch does not need
+		// to be rechecked by a Selection, which means we don't need to set the `needKeepFilter` flag if we found that
+		// `collectedCNFItems` does not contain false after the loop.
 		collectedCNFItems := make([]bool, len(cnfItems))
 		for j, col := range idxCols {
 			for k, cnfItem := range cnfItems {
@@ -223,9 +224,7 @@ func initUnfinishedPathsFromExpr(
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
-					(tp == eqOrInOnNonMVColTp ||
-						tp == multiValuesOROnMVColTp ||
-						tp == singleValueOnMVColTp) {
+					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
 					ret[i].idxColHasUsableFilter[j] = true
 					collectedCNFItems[k] = true

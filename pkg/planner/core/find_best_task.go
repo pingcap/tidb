@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"maps"
@@ -1560,10 +1561,10 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 	}
 
-	// Some top-level AND filters have already been used to build every chosen
-	// partial path, for example `a = 1` in `a = 1 AND (b = 2 OR c = 3)`.
-	// Remove them after the alternatives are fixed, so the global Selection
-	// only keeps predicates that are not guaranteed by all partial paths.
+	// Some top-level AND filters have already been used to build every chosen partial path.
+	// For example, `a = 1 AND (b = 2 OR c = 3)` for index (a,b) and (a,c) doesn't need any global Selection.
+	// Remove them after the alternatives are fixed, so the global Selection only keeps predicates that are not
+	// guaranteed by all partial paths.
 	tableFilters := removeCoveredIndexMergeTopLevelFilters(ds, path.TableFilters, determinedIndexPartialPaths)
 
 	// step2: gen a new **concrete** index merge path.
@@ -1624,7 +1625,7 @@ func indexMergeTopLevelFilterCovered(
 	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), filter) {
 		return false
 	}
-	filterHash := string(filter.HashCode())
+	filterHash := filter.HashCode()
 	for _, path := range partialPaths {
 		if !indexMergePartialPathCoversFilter(ds, path, filter, filterHash) {
 			return false
@@ -1637,7 +1638,7 @@ func indexMergePartialPathCoversFilter(
 	ds *logicalop.DataSource,
 	path *util.AccessPath,
 	filter expression.Expression,
-	filterHash string,
+	filterHash []byte,
 ) bool {
 	// Be conservative: only remove a filter when a normal index partial path
 	// carries the exact predicate in AccessConds. Filters handled by table/MV
@@ -1654,9 +1655,9 @@ func indexMergePartialPathCoversFilter(
 	return expressionContainsHash(path.AccessConds, filterHash)
 }
 
-func expressionContainsHash(exprs []expression.Expression, hash string) bool {
+func expressionContainsHash(exprs []expression.Expression, hash []byte) bool {
 	for _, expr := range exprs {
-		if string(expr.HashCode()) == hash {
+		if bytes.Equal(expr.HashCode(), hash) {
 			return true
 		}
 	}
