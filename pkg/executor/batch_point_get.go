@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -79,6 +80,9 @@ type BatchPointGetExec struct {
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	MaskingExprs []expression.Expression
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
@@ -246,6 +250,13 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	if e.MaskingExprs != nil && req.NumRows() > 0 {
+		if err := applyMaskingExprs(sctx, schema, e.MaskingExprs, req); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

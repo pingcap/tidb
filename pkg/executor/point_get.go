@@ -95,6 +95,7 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 	e.SetInitCap(1)
 	e.SetMaxChunkSize(1)
 	e.Init(p)
+	e.MaskingExprs = p.MaskingExprs
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -144,6 +145,9 @@ type PointGetExecutor struct {
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	MaskingExprs []expression.Expression
 
 	stats *runtimeStatsWithSnapshot
 }
@@ -448,6 +452,41 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	if e.MaskingExprs != nil && req.NumRows() > 0 {
+		if err := applyMaskingExprs(sctx, schema, e.MaskingExprs, req); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// applyMaskingExprs evaluates masking expressions for each row in the chunk and
+// replaces the original column values with masked values.
+func applyMaskingExprs(sctx sessionctx.Context, schema *expression.Schema, maskingExprs []expression.Expression, req *chunk.Chunk) error {
+	fieldTypes := make([]*types.FieldType, len(schema.Columns))
+	for i, col := range schema.Columns {
+		fieldTypes[i] = col.RetType
+	}
+	maskedChunk := chunk.NewChunkWithCapacity(fieldTypes, req.NumRows())
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+		row := req.GetRow(rowIdx)
+		for colIdx, expr := range maskingExprs {
+			if expr != nil {
+				result, err := expr.Eval(evalCtx, row)
+				if err != nil {
+					return err
+				}
+				maskedChunk.AppendDatum(colIdx, &result)
+			} else {
+				datum := row.GetDatum(colIdx, schema.Columns[colIdx].RetType)
+				maskedChunk.AppendDatum(colIdx, &datum)
+			}
+		}
+	}
+	req.SwapColumns(maskedChunk)
 	return nil
 }
 

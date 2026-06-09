@@ -506,6 +506,15 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	}
 	p.DBName = dbName
 
+	// Build masking expressions for columns with masking policies.
+	if is := ctx.GetInfoSchema(); is != nil && len(names) > 0 {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			return nil
+		}
+		p.MaskingExprs = maskExprs
+	}
+
 	return p
 }
 
@@ -763,6 +772,20 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 
 	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
+
+	// Build masking expressions for columns with masking policies.
+	// Only apply masking for top-level result-producing SELECT statements.
+	// We detect synthetic SELECTs for DML by checking if output names are empty.
+	if is := ctx.GetInfoSchema(); is != nil && len(names) > 0 {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			// Fail-closed: do not use PointGet fast path when masking cannot be applied.
+			// The query will fall back to the normal planner path.
+			return nil
+		}
+		p.MaskingExprs = maskExprs
+	}
+
 	return p
 }
 
@@ -1461,4 +1484,79 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	return &col.Name.Name
+}
+
+// buildMaskingExprsForPointGet builds masking expressions for PointGetPlan/BatchPointGetPlan.
+// This is similar to buildMaskingReplaceExprs in logical_plan_builder.go
+// but adapted for the fast path.
+func buildMaskingExprsForPointGet(
+	ctx context.Context,
+	sctx base.PlanContext,
+	is infoschema.InfoSchema,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	tbl *model.TableInfo,
+) ([]expression.Expression, error) {
+	if is == nil || schema == nil || len(names) == 0 {
+		return nil, nil
+	}
+	sv := sctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		return nil, nil
+	}
+	if len(is.AllMaskingPolicies()) == 0 {
+		return nil, nil
+	}
+	cols := schema.Columns
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+	schemaVersion := is.SchemaMetaVersion()
+	hasMask := false
+	for i, col := range cols {
+		policy, colInfo := findMaskingPolicyForColumn(is, tbl, names[i])
+		if policy == nil || colInfo == nil {
+			continue
+		}
+		if policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(sctx.GetExprCtx(), sv, schemaVersion, policy, tbl, colInfo)
+		if err != nil {
+			return nil, err
+		}
+		if placeholder == nil {
+			continue
+		}
+		masked := expression.ColumnSubstitute(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		replaceExprs[i] = masked
+		hasMask = true
+	}
+	if !hasMask {
+		return nil, nil
+	}
+	return replaceExprs, nil
+}
+
+func findMaskingPolicyForColumn(is infoschema.InfoSchema, tbl *model.TableInfo, name *types.FieldName) (*model.MaskingPolicyInfo, *model.ColumnInfo) {
+	if tbl == nil || name == nil {
+		return nil, nil
+	}
+	colName := name.OrigColName
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	colInfo := tbl.FindPublicColumnByName(colName.L)
+	if colInfo == nil {
+		return nil, nil
+	}
+	policy, ok := is.MaskingPolicyByTableColumn(tbl.ID, colInfo.ID)
+	if !ok || policy == nil {
+		return nil, nil
+	}
+	return policy, colInfo
 }
