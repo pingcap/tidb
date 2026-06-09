@@ -61,6 +61,88 @@ Example:
 ./run-tests.sh bazel_addindextest
 ```
 
+### run-starter-tests-with-server.sh
+
+This script runs external starter-mode tests against a real `tidb-server`
+process. It first reuses `bootstrap-test-with-cluster.sh` to start PD, TiKV,
+TiKV-Worker, and MinIO. Then it starts `bin/tidb-server` with
+`deploy-mode = "starter"` and runs Go tests through the MySQL protocol and
+status HTTP APIs. By default, the script starts TiDB in standby mode, activates
+the configured keyspace through `/tidb-pool/activate`, and then runs the tests
+against the activated external server. For the default `startertest` run, the
+script also runs a final destructive phase that verifies graceful exit waits for
+held client connections before shutting down the external `tidb-server`.
+
+This script is an independent direct entry point and is not part of generic
+`run-tests.sh` suite discovery. For the standard next-gen RealTiKV CI flow, use
+the `bazel_startertest` Makefile wrapper through `run-tests.sh`; that wrapper
+intentionally calls this shell runner because starter coverage needs an external
+`tidb-server` process:
+
+```bash
+tests/realtikvtest/scripts/next-gen/run-tests.sh bazel_startertest
+```
+
+When `TIDB_SERVER_BIN` is not set, the script builds `bin/tidb-server` from the
+current checkout before starting the external server. The script exports
+`NEXT_GEN=1` internally, so the built binary and the Go tests both use the
+next-gen code paths.
+
+Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
+`bin/tikv-server`, and `bin/tikv-worker` must also be available.
+
+Usage:
+
+```bash
+tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh [<test_suite>] [<timeout>] [<go test args>...]
+```
+
+Arguments:
+- `<test_suite>`: The test suite directory under `./tests/realtikvtest/`
+  (default: `startertest`)
+- `<timeout>`: Optional timeout for the test suite (default: `40m`)
+- `<go test args>`: Optional extra arguments passed to `go test`
+
+Example:
+
+```bash
+tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh startertest 40m -run TestExternalStarterSysVarContracts
+```
+
+Useful environment variables:
+- `TIDB_SERVER_BIN`: Path to the next-gen `tidb-server` binary
+  (default: `bin/tidb-server`, built from the current checkout by the script)
+- `STARTER_MAX_ALLOWED_PACKET`: Starter `max-allowed-packet` config used by
+  the external server (default: `65536`)
+- `STARTER_TIKV_WORKER_URL`: Starter `tikv-worker-url` config used by the
+  external server (default: `localhost:19000`)
+- `STARTER_KEYSPACE_NAME`: Starter keyspace activated by the script
+  (default: `SYSTEM`)
+- `STARTER_STANDBY_MODE`: Whether to start in standby mode and activate before
+  running tests (default: `1`; set to `0` to start directly with
+  `-keyspace-name`)
+- `STARTER_ACTIVATE_EXPORT_ID`: `export_id` sent in the standby activation
+  request (default: `starter-external-export`)
+- `STARTER_ACTIVATE_MAX_IDLE_SECONDS`: `max_idle_seconds` sent in the standby
+  activation request (default: `60`)
+- `STARTER_KEYSPACE_OBSERVABILITY`: Whether to configure starter keyspace
+  observability mappings and send activation metadata for those mappings
+  (default: follows `STARTER_STANDBY_MODE`; requires standby activation)
+- `STARTER_KEYSPACE_META_TENANT` / `STARTER_KEYSPACE_META_PROJECT`: Metadata
+  values sent in the standby activation request and expected in starter
+  observability labels (defaults: `starter_tenant` / `starter_project`)
+- `STARTER_ACTIVATION_TIMEOUT`: Starter standby activation timeout passed to
+  `tidb-server` (default: `120`)
+- `STARTER_RUN_EXIT_WAIT_TEST`: Whether to run the final destructive
+  graceful-exit wait test. By default it runs only for `startertest` when no
+  extra `go test` arguments are passed. The `bazel_startertest` Makefile wrapper
+  sets this to `1` explicitly because it passes `-count=1`.
+- `STARTER_EXIT_WAIT_TEST_TIMEOUT`: Timeout for the final destructive
+  graceful-exit wait test (default: `2m`)
+- `STARTER_TIDB_PORT` / `STARTER_TIDB_STATUS_PORT`: Preferred starting ports
+  for the SQL and status listeners (defaults: `4000` / `10080`; the script
+  advances to the next available port if needed)
+
 ## Configuration Files
 
 The test cluster uses configuration files from `tests/realtikvtest/configs/next-gen/`:
