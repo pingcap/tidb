@@ -1160,7 +1160,7 @@ func TestLeaderTick(t *testing.T) {
 		err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
 		require.NoError(t, err)
 		s.gcWorker.lastFinish = time.Now()
-		s.gcWorker.isFirstTickFinished = true
+		s.gcWorker.hasFinishedFirstGCJob = true
 		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
 		require.NoError(t, err)
 		select {
@@ -1187,7 +1187,7 @@ func TestLeaderTick(t *testing.T) {
 		err := s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
 		require.NoError(t, err)
 		s.gcWorker.lastFinish = time.Now()
-		s.gcWorker.isFirstTickFinished = false
+		s.gcWorker.hasFinishedFirstGCJob = false
 
 		originInTest := intest.InTest
 		intest.InTest = false

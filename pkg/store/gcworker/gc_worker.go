@@ -80,7 +80,8 @@ type GCWorker struct {
 	cancel               context.CancelFunc
 	done                 chan error
 	regionLockResolver   tikv.RegionLockResolver
-	isFirstTickFinished  bool
+
+	hasFinishedFirstGCJob bool
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -231,7 +232,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 		case err := <-w.done:
 			w.gcIsRunning = false
 			w.lastFinish = time.Now()
-			w.isFirstTickFinished = true
+			w.hasFinishedFirstGCJob = true
 			if err != nil {
 				logutil.Logger(ctx).Error("runGCJob", zap.String("category", "gc worker"), zap.Error(err))
 			}
@@ -333,7 +334,7 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 
 func (w *GCWorker) isNeedToWait() bool {
 	if deploymode.IsStarter() && !intest.InTest {
-		return time.Since(w.lastFinish) < gcWaitTime && w.isFirstTickFinished
+		return time.Since(w.lastFinish) < gcWaitTime && w.hasFinishedFirstGCJob
 	}
 	return time.Since(w.lastFinish) < gcWaitTime
 }
