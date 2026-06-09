@@ -45,7 +45,5 @@ type Server interface {
 	// The acquired handle should be released after use.
 	// this is only used in next-gen to access keyspace other than current.
 	AcquireKSRuntime(targetKS string, holderID string) (KSRuntimeHandle, error)
-	GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error)
-	GetKSStore(targetKS string) (store kv.Storage, err error)
 	GetDDLOwnerMgr() owner.Manager
 }

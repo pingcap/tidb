@@ -333,6 +333,7 @@ go_test(
         "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/domain/sqlsvrapi/mock",
         "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",

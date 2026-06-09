@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -185,15 +184,12 @@ type Param struct {
 	nodeRes        *proto.NodeResource
 	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
 	TaskRuntime sqlsvrapi.Runtime
-	// TaskStore is kept temporarily while DXF task implementations migrate to TaskRuntime.
-	TaskStore kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+func NewParamForTest(taskMgr TaskManager) Param {
 	return Param{
-		taskMgr:   taskMgr,
-		TaskStore: store,
+		taskMgr: taskMgr,
 	}
 }
 
