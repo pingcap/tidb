@@ -168,16 +168,28 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		select {
-		case err := <-done:
-			t.Fatalf("analyze finished before cancel, err=%v", err)
-		case <-time.After(50 * time.Millisecond):
+		tkWatcher := testkit.NewTestKit(t, store)
+		tkWatcher.MustExec("use test")
+		var earlyDone bool
+		var earlyErr error
+		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
+			rows := tkWatcher.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+		if earlyDone {
+			t.Fatalf("analyze finished before cancel, err=%v", earlyErr)
 		}
 		cancel()
 
 		select {
 		case <-done:
-			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			rows := tkWatcher.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
 			require.Len(t, rows, 1)
 			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
 			require.Contains(t, rows[0][1].(string), "context canceled")
