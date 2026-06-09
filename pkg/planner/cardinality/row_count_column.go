@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -219,13 +218,16 @@ func tryColumnEstimateForSingleColRanges(
 	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colID) {
 		return statistics.RowEstimate{}, false
 	}
-	// For a single-column unique non-nullable index where all ranges are
-	// non-null point probes, the index-based path returns exactly 1 per range,
-	// which is more accurate than histogram estimation. Bail out so the caller
-	// can use that path instead. Multi-column unique indexes are not eligible
-	// because single-column ranges don't cover the full index, so the "exactly 1"
-	// guarantee does not apply.
-	if len(idx.Info.Columns) == 1 && idx.Info.Unique && mysql.HasNotNullFlag(c.Info.GetFlag()) {
+	// For a single-column unique index where all ranges are non-null point
+	// probes, the index-based path returns exactly 1 per range, which is more
+	// accurate than histogram estimation. Bail out so the caller can use that
+	// path instead. Multi-column unique indexes are not eligible because
+	// single-column ranges don't cover the full index, so the "exactly 1"
+	// guarantee does not apply. Column nullability does not matter: a unique
+	// index only enforces uniqueness on non-null values, but IsPointNonNullable
+	// already filters out NULL ranges, so any range that survives is a
+	// non-null point and the unique constraint applies.
+	if len(idx.Info.Columns) == 1 && idx.Info.Unique {
 		tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
 		allPoints := true
 		for _, r := range indexRanges {

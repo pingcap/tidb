@@ -948,8 +948,9 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 }
 
 // TestTryColumnEstimateGuards verifies that tryColumnEstimateForSingleColRanges
-// bails out (returns false) for partial indexes, MV indexes, and unique non-nullable
-// indexes on point probes, deferring to the index-based estimation path in each case.
+// bails out (returns false) for partial indexes, MV indexes, and single-column
+// unique indexes on point probes, deferring to the index-based estimation path
+// in each case.
 func TestTryColumnEstimateGuards(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
