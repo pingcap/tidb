@@ -63,15 +63,22 @@ func TestExpBackoffEstimation(t *testing.T) {
 	}
 
 	// The last case disables expBackoff column-level estimates via failpoint; the
-	// planner falls back to the index histogram (betweenRowCountOnIndex).
-	// We do not assert the exact estRows value here: when all composite-key values
-	// land in TopN the histogram is empty for this range and the estimate clamps to
-	// 1.00, but on machines where some values end up in histogram buckets the result
-	// can differ. The key semantic is that the planner produces a valid plan without
-	// panicking or erroring — verified by MustQuery completing successfully.
+	// planner falls back to the index histogram (betweenRowCountOnIndex). The
+	// exact estRows is environment-dependent (1.00 when the composite-key values
+	// all land in TopN so the histogram is empty for this range; ~1.36 when some
+	// values end up in buckets), so we assert structural invariants of the
+	// fallback plan rather than the numeric estimate.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults", `return(true)`))
-	tk.MustQuery(input[inputLen-1])
+	rows := tk.MustQuery(input[inputLen-1]).Rows()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults"))
+	require.Len(t, rows, 2, "fallback plan should be IndexReader → IndexRangeScan")
+	require.Equal(t, "IndexReader", rows[0][0])
+	require.Equal(t, "└─IndexRangeScan", rows[1][0])
+	require.Equal(t, "table:exp_backoff, index:idx(a, b, c, d)", rows[1][3])
+	require.Contains(t, rows[1][4], "range:[1 1 1 3,1 1 1 5]")
+	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estRows, 0.0)
 }
 
 func TestNULLOnFullSampling(t *testing.T) {
