@@ -16,12 +16,14 @@ package taskexecutor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -316,18 +318,6 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		return false
 	}
 
-	taskStore := m.store
-	if m.store.GetKeyspace() != task.Keyspace {
-		if err2 := m.taskTable.WithNewSession(func(se sessionctx.Context) error {
-			var err2 error
-			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
-			return err2
-		}); err2 != nil {
-			m.logger.Warn("get task store failed", zap.Int64("task-id", task.ID),
-				zap.String("task-key", task.Key), zap.Error(err2))
-			return false
-		}
-	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
 			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
@@ -342,22 +332,47 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		}
 	}()
 
+	var taskRuntime sqlsvrapi.Runtime
+	if err = m.taskTable.WithNewSession(func(se sessionctx.Context) error {
+		sqlServer := se.GetSQLServer()
+		if task.Keyspace != m.store.GetKeyspace() {
+			var err2 error
+			bookkeeper := fmt.Sprintf("DXF/executor/%d", task.ID)
+			taskRuntime, err2 = sqlServer.AcquireKSRuntime(task.Keyspace, bookkeeper)
+			return err2
+		}
+		taskRuntime = sqlServer.GetRuntime()
+		return nil
+	}); err != nil {
+		m.logger.Warn("acquire task runtime failed", zap.Int64("task-id", taskBase.ID),
+			zap.String("task-key", taskBase.Key), zap.Error(err))
+		return false
+	}
+	releaseRuntime := func() {
+		if hdl, ok := taskRuntime.(sqlsvrapi.KSRuntimeHandle); ok {
+			hdl.Release()
+		}
+	}
+
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.failSubtask(err, task.ID, nil)
+		releaseRuntime()
 		return false
 	}
 	executor := factory(m.ctx, task, Param{
-		taskTable: m.taskTable,
-		slotMgr:   m.slotManager,
-		nodeRc:    m.getNodeResource(),
-		execID:    m.id,
-		TaskStore: taskStore,
+		taskTable:   m.taskTable,
+		slotMgr:     m.slotManager,
+		nodeRc:      m.getNodeResource(),
+		execID:      m.id,
+		TaskRuntime: taskRuntime,
+		TaskStore:   taskRuntime.Store(),
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {
 		m.failSubtask(err, task.ID, executor)
+		releaseRuntime()
 		return false
 	}
 	m.addTaskExecutor(executor)
@@ -373,6 +388,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
 			executor.Close()
+			releaseRuntime()
 		}()
 		executor.Run()
 	})
