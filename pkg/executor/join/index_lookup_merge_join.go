@@ -185,7 +185,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	for i := range concurrency {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
 		for range numResChkHold {
-			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.RetFieldTypes(), e.MaxChunkSize())
+			e.joinChkResourceCh[i] <- e.NewChunk()
 		}
 	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -717,7 +717,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*IndexJoinLoo
 
 // fetchNextInnerResult collects a chunk of inner results from inner child executor.
 func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
-	task.innerResult = imw.innerExec.NewChunkWithCapacity(imw.innerExec.RetFieldTypes(), imw.innerExec.MaxChunkSize(), imw.innerExec.MaxChunkSize())
+	task.innerResult = imw.innerExec.NewChunkWithCapacity(imw.innerExec.RetFieldTypes(), imw.innerExec.InitCap(), imw.innerExec.MaxChunkSize())
 	err = exec.Next(ctx, imw.innerExec, task.innerResult)
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
 	beginRow = task.innerIter.Begin()
