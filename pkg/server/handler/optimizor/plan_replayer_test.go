@@ -358,6 +358,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	tk.MustExec("admin reload bindings")
 	tk.MustExec("use planReplayer")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
 

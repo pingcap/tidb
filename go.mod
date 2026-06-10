@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.8
+go 1.25.10
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -96,11 +96,11 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260420101835-c50e8eda8a57
+	github.com/pingcap/kvproto v0.0.0-20260608025309-50b863799195
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20260507102040-d3d6e146648f
+	github.com/pingcap/tipb v0.0.0-20260605083900-f9f651ef5fbc
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
@@ -118,8 +118,8 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260521074709-0df8691a666e
-	github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e
+	github.com/tikv/client-go/v2 v2.0.8-0.20260610023945-a60836569d3e
+	github.com/tikv/pd/client v0.0.0-20260609141937-b01426f6b08b
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

@@ -473,10 +473,6 @@ type StatementContext struct {
 	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
 	// round already produced a same-order index join candidate for a decorrelated Apply.
 	AlternativeLogicalPlanSameOrderIndexJoin bool
-	// AlternativeLogicalPlanOrderAwareJoinReorder indicates whether at least one
-	// logical build round produced an order-aware join reorder candidate that is
-	// worth exploring in a dedicated alternative round.
-	AlternativeLogicalPlanOrderAwareJoinReorder bool
 	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
@@ -650,7 +646,6 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
-	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 }
 
@@ -664,12 +659,6 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
 // has already produced a same-order index join candidate for a decorrelated Apply.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
-}
-
-// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the current
-// logical build round produced an order-aware join reorder candidate.
-func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
-	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
 }
 
 // MarkAlternativeLogicalPlanPreferCorrelate records that the current logical

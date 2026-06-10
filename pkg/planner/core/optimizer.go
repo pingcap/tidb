@@ -98,13 +98,8 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-<<<<<<< HEAD
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-=======
-	&rule.OuterJoinToSemiJoin{},
 	&CorrelateSolver{},
-	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
->>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
+	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&ResolveExpand{},
 }

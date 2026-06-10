@@ -5,7 +5,7 @@
       {
         "SQL": "select * from t1 where exists (select 1 from t2 where t2.a = t1.a)",
         "Plan": [
-          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "HashJoin 7992.00 root  semi join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
@@ -20,7 +20,7 @@
       {
         "SQL": "select * from t1 where not exists (select 1 from t2 where t2.a = t1.a)",
         "Plan": [
-          "HashJoin 8000.00 root  anti semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -51,10 +51,7 @@
         "SQL": "select * from t1 where exists (select 1 from t2)",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12, ScalarQueryCol#13",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -65,7 +62,7 @@
       {
         "SQL": "select * from t1 where a not in (select a from t2)",
         "Plan": [
-          "HashJoin 8000.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "HashJoin 8000.00 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -78,7 +75,7 @@
       {
         "SQL": "select * from t1 where exists (select 1 from t2 where t2.a > t1.a)",
         "Plan": [
-          "HashJoin 7992.00 root  CARTESIAN semi join, left side:TableReader, other cond:gt(test.t2.a, test.t1.a)",
+          "HashJoin 7992.00 root  CARTESIAN semi join, other cond:gt(test.t2.a, test.t1.a)",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
@@ -92,7 +89,7 @@
       {
         "SQL": "select * from t1 where exists (select 1 from t2 where t2.a = t1.a and t2.b > t1.b)",
         "Plan": [
-          "HashJoin 7984.01 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)",
+          "HashJoin 7984.01 root  semi join, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)",
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -108,7 +105,7 @@
       {
         "SQL": "select * from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a = t1.a)",
         "Plan": [
-          "Apply 8000.00 root  CARTESIAN semi join, left side:TableReader",
+          "Apply 10000.00 root  CARTESIAN semi join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─Limit(Probe) 10000.00 root  offset:0, count:1",
@@ -257,14 +254,15 @@
       {
         "SQL": "select * from t1 where b = 1 and a in (select a from t2)",
         "Plan": [
-          "IndexJoin 9.99 root  inner join, inner:StreamAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "IndexJoin 9.99 root  inner join, inner:HashAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "├─TableReader(Build) 9.99 root  data:Selection",
           "│ └─Selection 9.99 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─StreamAgg(Probe) 9.99 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "  └─IndexReader 9.99 root  index:Selection",
-          "    └─Selection 9.99 cop[tikv]  not(isnull(test.t2.a))",
-          "      └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "└─HashAgg(Probe) 9.99 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "  └─IndexReader 9.99 root  index:HashAgg",
+          "    └─HashAgg 9.99 cop[tikv]  group by:test.t2.a, ",
+          "      └─Selection 9.99 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -274,7 +272,7 @@
         "SQL": "select * from t1 where b = 1 and exists (select 1 from t2 where t2.a = t1.a) limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─IndexHashJoin 1.00 root  semi join, inner:IndexReader, left side:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "└─IndexHashJoin 1.00 root  semi join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "  ├─TableReader(Build) 1.25 root  data:Selection",
           "  │ └─Selection 1.25 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
           "  │   └─TableFullScan 1251.25 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -290,7 +288,7 @@
         "SQL": "select * from t1 where b = 1 and a not in (select a from t2) limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─HashJoin 1.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "└─HashJoin 1.00 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t2.a)]",
           "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 1.25 root  data:Selection",
@@ -303,16 +301,16 @@
         "SQL": "select * from t1 where b = 1 and a in (select a from t2 where t2.b > 0) limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─IndexJoin 1.00 root  inner join, inner:StreamAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "└─IndexHashJoin 1.00 root  inner join, inner:HashAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "  ├─TableReader(Build) 1.00 root  data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
           "  │   └─TableFullScan 1001.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─StreamAgg(Probe) 1.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "    └─Projection 1.00 root  test.t2.a, test.t2.b",
-          "      └─IndexLookUp 1.00 root  ",
-          "        ├─Selection(Build) 3.00 cop[tikv]  not(isnull(test.t2.a))",
-          "        │ └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo",
-          "        └─Selection(Probe) 1.00 cop[tikv]  gt(test.t2.b, 0)",
+          "  └─HashAgg(Probe) 3.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "    └─IndexLookUp 3.00 root  ",
+          "      ├─Selection(Build) 3.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │ └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "      └─HashAgg(Probe) 3.00 cop[tikv]  group by:test.t2.a, ",
+          "        └─Selection 1.00 cop[tikv]  gt(test.t2.b, 0)",
           "          └─TableRowIDScan 3.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": [

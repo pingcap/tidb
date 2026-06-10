@@ -1057,7 +1057,6 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	// decorrelation and would be silently ineffective on LogicalApply nodes.
 	semiJoinRewriteHint := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if !noDecorrelate && len(corCols) > 0 && !semiJoinRewriteHint {
-		b.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
 		if b.ctx.GetSessionVars().EnableCorrelateSubquery {
 			noDecorrelate = true
 		}
@@ -1251,7 +1250,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
 	// prevent decorrelation of correlated IN subqueries so they stay as Apply with index lookups.
 	if !noDecorrelate && len(corCols) > 0 && !v.Not {
-		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
 		if planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
 			planCtx.builder.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
 		}
@@ -1269,9 +1267,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// then convert it to a correlated Apply with index lookups.
 	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag
 	if canRewriteToJoinAgg {
-		// Record that the alternative logical plans variable is relevant — toggling it
-		// changes whether we take the InnerJoin+Agg path or the SemiApply path.
-		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
 		// Signal that a correlate alternative round is worth attempting.
 		if planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
 			planCtx.builder.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
@@ -1316,7 +1311,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		// and the subquery is non-correlated, mark the join so that CorrelateSolver
 		// converts it to a correlated Apply.
 		if len(corCols) == 0 && !v.Not {
-			planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
 			if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
 				if ap, ok := planCtx.plan.(*logicalop.LogicalApply); ok {
 					ap.PreferCorrelate = true
@@ -2662,6 +2656,20 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 			if idx >= 0 {
 				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
+		}
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so it also has FullSchema/FullNames for USING/NATURAL joins.
+		// When FullSchema is nil, treat Apply as a transparent wrapper and recurse into the outer
+		// (left) child, which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+		if x.FullSchema == nil {
+			return findFieldNameFromNaturalUsingJoin(x.Children()[0], v)
+		}
+		idx, err := expression.FindFieldName(x.FullNames, v)
+		if err != nil {
+			return nil, nil, err
+		}
+		if idx >= 0 {
+			return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 		}
 	}
 	return nil, nil, nil

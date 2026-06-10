@@ -19,60 +19,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
-	"github.com/pingcap/tidb/pkg/types"
 )
-
-// FastClonePointGetForPlanCache is a fast path to clone a PointGetPlan for plan cache.
-func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop.PointGetPlan) *physicalop.PointGetPlan {
-	if dst == nil {
-		dst = new(physicalop.PointGetPlan)
-	}
-	dst.Plan = src.Plan
-	dst.Plan.SetSCtx(newCtx)
-	dst.ProbeParents = src.ProbeParents
-	dst.PartitionNames = src.PartitionNames
-	dst.DBName = src.DBName
-	dst.SetSchema(src.Schema())
-	dst.TblInfo = src.TblInfo
-	dst.IndexInfo = src.IndexInfo
-	dst.PartitionIdx = nil // partition prune will be triggered during execution phase
-	dst.Handle = nil       // handle will be set during rebuild phase
-	if src.HandleConstant == nil {
-		dst.HandleConstant = nil
-	} else {
-		if src.HandleConstant.SafeToShareAcrossSession() {
-			dst.HandleConstant = src.HandleConstant
-		} else {
-			dst.HandleConstant = src.HandleConstant.Clone().(*expression.Constant)
-		}
-	}
-	dst.HandleFieldType = src.HandleFieldType
-	dst.HandleColOffset = src.HandleColOffset
-	if len(dst.IndexValues) < len(src.IndexValues) { // actually set during rebuild phase
-		dst.IndexValues = make([]types.Datum, len(src.IndexValues))
-	} else {
-		dst.IndexValues = dst.IndexValues[:len(src.IndexValues)]
-	}
-	dst.IndexConstants = utilfuncp.CloneConstantsForPlanCache(src.IndexConstants, dst.IndexConstants)
-	dst.ColsFieldType = src.ColsFieldType
-	dst.IdxCols = utilfuncp.CloneColumnsForPlanCache(src.IdxCols, dst.IdxCols)
-	dst.IdxColLens = src.IdxColLens
-	dst.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(src.AccessConditions, dst.AccessConditions)
-	dst.UnsignedHandle = src.UnsignedHandle
-	dst.IsTableDual = src.IsTableDual
-	dst.Lock = src.Lock
-	dst.SetOutputNames(src.OutputNames())
-	dst.LockWaitTime = src.LockWaitTime
-	dst.Columns = src.Columns
-
-	// remaining fields are unnecessary to clone:
-	// cost, planCostInit, planCost, planCostVer2, accessCols
-	return dst
-}
 
 // cloneLogicalSubtree creates a shallow clone of the logical plan subtree,
 // ensuring each node has a fresh plan ID and independent mutable state (children,
@@ -251,7 +200,6 @@ func cloneTopN(tn *logicalop.LogicalTopN) (*logicalop.LogicalTopN, bool) {
 	clone := *tn
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		tn.SCtx(), tn.TP(), &clone, tn.QueryBlockOffset())
-	clone.SetSchema(tn.Schema().Clone())
 	clone.ByItems = append([]*util.ByItems(nil), tn.ByItems...)
 	if len(tn.PartitionBy) > 0 {
 		clone.PartitionBy = append([]property.SortItem(nil), tn.PartitionBy...)
@@ -281,6 +229,5 @@ func freshAccessPath(src *util.AccessPath) *util.AccessPath {
 		ForcePartialOrder:     src.ForcePartialOrder,
 		IsUkShardIndexPath:    src.IsUkShardIndexPath,
 		IndexLookUpPushDownBy: src.IndexLookUpPushDownBy,
-		NoncacheableReason:    src.NoncacheableReason,
 	}
 }

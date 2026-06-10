@@ -44,4 +44,6 @@ var (
 	ErrNetPacketTooLarge = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
 	// ErrMustChangePassword is returned when the user must change the password.
 	ErrMustChangePassword = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
+	// ErrServerShutdown is returned when the server is shutting down.
+	ErrServerShutdown = dbterror.ClassServer.NewStd(errno.ErrServerShutdown)
 )

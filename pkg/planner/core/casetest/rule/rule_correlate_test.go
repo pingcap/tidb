@@ -94,38 +94,38 @@ func TestCorrelateAlternativeChoosesApply(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("1 1"))
 }
 
-func TestCorrelate(tt *testing.T) {
-	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2, t3")
-		tk.MustExec("create table t1 (a int, b int, key(a))")
-		tk.MustExec("create table t2 (a int, b int, key(a))")
-		tk.MustExec("create table t3 (a int, b int, key(a))")
-		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
-		tk.MustExec("insert into t2 values (1,10),(2,20)")
-		tk.MustExec("insert into t3 values (10,1),(20,2)")
+func TestCorrelate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a int, b int, key(a))")
+	tk.MustExec("create table t2 (a int, b int, key(a))")
+	tk.MustExec("create table t3 (a int, b int, key(a))")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
+	tk.MustExec("insert into t2 values (1,10),(2,20)")
+	tk.MustExec("insert into t3 values (10,1),(20,2)")
 
-		// Enable the correlate rule.
-		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	// Enable the correlate rule.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
 
-		var input []string
-		var output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-		suite := GetCorrelateSuiteData()
-		suite.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
-			})
-			tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(output[i].Plan...))
-			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
-		}
-	})
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	suite := GetCorrelateSuiteData()
+	suite.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
 }
 
 // explainContains scans all explain rows for a substring in the operator column.
@@ -207,44 +207,4 @@ func TestCorrelateParallelApply(t *testing.T) {
 
 	require.Equal(t, serialRows, parallelRows,
 		"correlate alternative + parallel apply must produce the same result as standard path")
-}
-
-// TestCorrelateWithCostFactors verifies that when hash/merge join cost factors
-// are increased, the correlate alternative round wins and produces Apply-based
-// plans with correlated index access for cases that normally choose HashJoin.
-func TestCorrelateWithCostFactors(tt *testing.T) {
-	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2, t3")
-		tk.MustExec("create table t1 (a int, b int, key(a))")
-		tk.MustExec("create table t2 (a int, b int, key(a))")
-		tk.MustExec("create table t3 (a int, b int, key(a))")
-		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
-		tk.MustExec("insert into t2 values (1,10),(2,20)")
-		tk.MustExec("insert into t3 values (10,1),(20,2)")
-
-		// Enable the correlate rule and penalize hash/merge joins so the
-		// correlate alternative (Apply with index lookup) wins the cost comparison.
-		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
-		tk.MustExec("set tidb_opt_hash_join_cost_factor = 1000")
-		tk.MustExec("set tidb_opt_merge_join_cost_factor = 1000")
-
-		var input []string
-		var output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-		suite := GetCorrelateSuiteData()
-		suite.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
-			})
-			tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(output[i].Plan...))
-			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
-		}
-	})
 }

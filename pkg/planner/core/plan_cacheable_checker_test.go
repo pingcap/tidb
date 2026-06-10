@@ -401,6 +401,8 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select count(*) from test.t1 where a > 1 and b < 2 group by a", // group by & partitioned
 		"select * from test.t order by a",                               // order by
 		"select * from test.t1 order by a",                              // order by & partitioned
+		"select /*+ set_var(max_execution_time=2000) */ * from test.t where a > 1",
+		"select /*+ resource_group(rg1) */ * from test.t where a > 1",
 
 		// 2-way joins
 		"select * from test.t inner join test.t3 on test.t.a=test.t3.a",

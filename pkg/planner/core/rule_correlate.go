@@ -19,10 +19,12 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -34,7 +36,7 @@ import (
 type CorrelateSolver struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (s *CorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (retPlan base.LogicalPlan, retChanged bool, retErr error) {
+func (s *CorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (retPlan base.LogicalPlan, retChanged bool, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("CorrelateSolver panic",
@@ -107,9 +109,9 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	//     inner rows, and the joiner returns 0 instead of NULL.
 	//
 	// Skip unless ALL equality columns on both sides are proven NOT NULL.
-	if join.JoinType == base.LeftOuterSemiJoin || join.JoinType == base.AntiLeftOuterSemiJoin {
+	if join.JoinType == logicalop.LeftOuterSemiJoin || join.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		for _, eqCond := range join.EqualConditions {
-			col0, col1, ok := expression.IsColOpCol(eqCond)
+			col0, col1, ok := isColEqCol(eqCond)
 			if !ok {
 				return p, planChanged, nil
 			}
@@ -170,12 +172,7 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	// PPD has already finished by the time this rule runs, so without this
 	// local pass the predicates would stay in the Selection and the inner
 	// side could only do full scans.
-	_, innerPlan, err := sel.PredicatePushDown(nil)
-	if err != nil {
-		// PPD failed (e.g., conditions reference columns pruned from the
-		// DataSource schema); abort the correlate optimization.
-		return p, planChanged, nil
-	}
+	_, innerPlan := sel.PredicatePushDown(nil, nil)
 
 	// Reset stats on DataSources that received correlated conditions so DeriveStats
 	// re-runs during physical optimization. This is necessary because the original
@@ -223,7 +220,7 @@ func (*CorrelateSolver) buildCorrelatedCond(
 	rightSchema *expression.Schema,
 	join *logicalop.LogicalJoin,
 ) (expression.Expression, *expression.CorrelatedColumn) {
-	col0, col1, ok := expression.IsColOpCol(eqCond)
+	col0, col1, ok := isColEqCol(eqCond)
 	if !ok {
 		return nil, nil
 	}
@@ -253,6 +250,20 @@ func (*CorrelateSolver) buildCorrelatedCond(
 	)
 
 	return cond, corCol
+}
+
+func isColEqCol(expr expression.Expression) (*expression.Column, *expression.Column, bool) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ {
+		return nil, nil, false
+	}
+	args := sf.GetArgs()
+	if len(args) != 2 {
+		return nil, nil, false
+	}
+	lCol, lOk := args[0].(*expression.Column)
+	rCol, rOk := args[1].(*expression.Column)
+	return lCol, rCol, lOk && rOk
 }
 
 // liftDataSourceConds walks the plan tree and for each DataSource with
