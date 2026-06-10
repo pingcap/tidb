@@ -1690,9 +1690,9 @@ func TestS3StorageCustomAWSEndpointWithFIPSMode(t *testing.T) {
 			Endpoint:       s.URL,
 			ForcePathStyle: true,
 		}}},
-		&storeapi.Options{})
+		&ExternalStorageOptions{})
 	require.NoError(t, err)
-	ss, ok := es.(*Storage)
+	ss, ok := es.(*S3Storage)
 	require.True(t, ok)
 	require.Equal(t, "us-west-2", ss.GetOptions().Region)
 }
