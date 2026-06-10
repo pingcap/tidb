@@ -617,12 +617,14 @@ func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, 
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		replicas, err := infoschema.GetTiFlashStoreCount(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+		if config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
+			replicas, err := infoschema.GetTiFlashStoreCount(store)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if replicas == 0 {
+				return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+			}
 		}
 
 		// Always try to set to 1 as the default replica count.
@@ -825,6 +827,7 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	// set default shard row id bits and pre-split regions for table.
 	if !tbInfo.HasClusteredIndex() && tbInfo.TempTableType == model.TempTableNone {
 		tbInfo.ShardRowIDBits = ctx.GetShardRowIDBits()
+		tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
@@ -1671,7 +1674,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
 			continue
 		}
-		if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) != nil {
+		if model.FindIndexByColumnsForForeignKey(tbInfo, tbInfo.Indices, fk.Cols...) != nil {
 			continue
 		}
 		idxName := fk.Name

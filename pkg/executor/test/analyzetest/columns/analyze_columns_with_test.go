@@ -38,7 +38,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int primary key)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -106,7 +106,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -183,7 +183,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -261,7 +261,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -387,7 +387,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -484,78 +484,6 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 	}
 }
 
-func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
-	for _, val := range []ast.ColumnChoice{ast.ColumnList, ast.PredicateColumns} {
-		func(choice ast.ColumnChoice) {
-			store, dom := testkit.CreateMockStoreAndDomain(t)
-
-			tk := testkit.NewTestKit(t, store)
-			h := dom.StatsHandle()
-			tk.MustExec("use test")
-			tk.MustExec("drop table if exists t")
-			tk.MustExec("set @@tidb_analyze_version = 2")
-			tk.MustExec("set @@tidb_enable_extended_stats = on")
-			tk.MustExec("create table t (a int, b int, c int)")
-			statstestutil.HandleNextDDLEventWithTxn(h)
-			tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
-			tk.MustExec("insert into t values (5,1,1), (4,2,2), (3,3,3), (2,4,4), (1,5,5)")
-			tk.MustExec("flush stats_delta")
-
-			is := dom.InfoSchema()
-			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-			require.NoError(t, err)
-			tblID := tbl.Meta().ID
-
-			switch choice {
-			case ast.ColumnList:
-				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
-				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
-					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
-				))
-			case ast.PredicateColumns:
-				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-				}()
-				tk.MustExec("select * from t where b > 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
-				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
-				require.Equal(t, 1, len(rows))
-				require.Equal(t, "b", rows[0][3])
-				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
-			}
-			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
-			require.Equal(t, 2, len(rows))
-			require.Equal(t, "b", rows[0][3])
-			require.Equal(t, "c", rows[1][3])
-
-			tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
-				testkit.Rows("0 5"))
-			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
-				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t  b 0 1 1",
-					"test t  b 0 2 1",
-					"test t  c 0 1 1",
-					"test t  c 0 2 1"))
-			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
-				testkit.Rows("0 1 0 0 0 0 0", // column a is not analyzed
-					"0 2 5 0 5 2 1",
-					"0 3 5 0 5 2 1",
-				))
-			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
-				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t  b 0 0 2 1 3 4 0",
-					"test t  b 0 1 3 1 5 5 0",
-					"test t  c 0 0 2 1 3 4 0",
-					"test t  c 0 1 3 1 5 5 0"))
-			rows = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Rows()
-			require.Equal(t, 1, len(rows))
-			require.Equal(t, []any{"test", "t", "s1", "[b,c]", "correlation", "1.000000"}, rows[0][:len(rows[0])-1])
-		}(val)
-	}
-}
-
 func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 	for _, val := range []ast.ColumnChoice{ast.ColumnList, ast.PredicateColumns} {
 		func(choice ast.ColumnChoice) {
@@ -569,7 +497,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

@@ -860,7 +860,7 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 	// ignoreError must be set.
 	var sb strings.Builder
 	for _, job := range failedJobs {
-		sb.WriteString(fmt.Sprintf("%s, %s;\n", job.String(redactLog), job.err.Error()))
+		fmt.Fprintf(&sb, "%s, %s;\n", job.String(redactLog), job.err.Error())
 	}
 
 	errStr := sb.String()

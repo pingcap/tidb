@@ -89,7 +89,8 @@ type WalkOption struct {
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
 	// StartAfter is the key to start after. If not empty, the walk will start
-	// after the key. Currently only S3-like storage supports this option.
+	// after the key. This is currently supported by S3-like storage, GCS and
+	// local storage.
 	StartAfter string
 }
 
@@ -116,9 +117,9 @@ type WriterOption struct {
 
 // ReaderOption reader option.
 type ReaderOption struct {
-	// StartOffset is inclusive. And it's incompatible with Seek.
+	// StartOffset is inclusive.
 	StartOffset *int64
-	// EndOffset is exclusive. And it's incompatible with Seek.
+	// EndOffset is exclusive.
 	EndOffset *int64
 	// PrefetchSize will switch to NewPrefetchReader if value is positive.
 	PrefetchSize int

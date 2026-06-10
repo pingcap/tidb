@@ -107,13 +107,13 @@ select 1 from t where y = YEAR(CURDATE());
 select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
 cast(cast('14:15' as time) as year) = YEAR(CURDATE())
 1
-explain select null as a union all select 'a' as a;
+explain format='brief' select null as a union all select 'a' as a;
 id	estRows	task	access object	operator info
-Union_8	2.00	root		
-├─Projection_10	1.00	root		<nil>->Column#3
-│ └─TableDual_12	1.00	root		rows:1
-└─Projection_14	1.00	root		a->Column#3
-  └─TableDual_16	1.00	root		rows:1
+Union	2.00	root		
+├─Projection	1.00	root		<nil>->Column#3
+│ └─TableDual	1.00	root		rows:1
+└─Projection	1.00	root		a->Column#3
+  └─TableDual	1.00	root		rows:1
 select null as a union all select 'a' as a;
 a
 NULL

@@ -487,46 +487,46 @@ func TestCopPaging(t *testing.T) {
 
 	// limit 960 should go paging
 	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:960",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+			"Limit root  offset:0, count:960",
+			"└─IndexLookUp root  ",
+			"  ├─Selection(Build) cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
 	}
 
 	// selection between limit and indexlookup, limit 960 should also go paging
 	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:960",
-			"└─IndexLookUp 3.20 root  ",
-			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+			"Limit root  offset:0, count:960",
+			"└─IndexLookUp root  ",
+			"  ├─Selection(Build) cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
 	}
 
 	// limit 961 exceeds the threshold, it should not go paging
 	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:961",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+			"Limit root  offset:0, count:961",
+			"└─IndexLookUp root  ",
+			"  ├─Selection(Build) cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
 	}
 
 	// selection between limit and indexlookup, limit 961 should not go paging too
 	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:961",
-			"└─IndexLookUp 3.20 root  ",
-			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+			"Limit root  offset:0, count:961",
+			"└─IndexLookUp root  ",
+			"  ├─Selection(Build) cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
 	}
 }
 

@@ -1,4 +1,4 @@
-drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8, t9, tmp1, tmp2;
 
 # wait regions split after create table to make the test stable
 set @@tidb_scatter_region='table';
@@ -200,6 +200,29 @@ insert into t3 values(1, 2, 3);
 explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 --disable_warnings
+
+## issue #67546, correlated subquery under Apply should work with index_lookup_pushdown,
+set @@tidb_replica_read='leader';
+create table t8 (a int, b int, key idx_a(a));
+create table t9 (a int, b int, key idx_a(a));
+insert into t8 values (20,1),(24,5),(23,9);
+insert into t9 values (1,1),(3,2),(6,3),(10,4),(12,5),(15,6),(25,7);
+explain format='plan_tree' select *
+from t8
+where t8.a < (
+    select /*+ INDEX_LOOKUP_PUSHDOWN(t9, idx_a) */ sum(t9.b)
+    from t9 use index(idx_a)
+    where t9.a > t8.b
+)
+order by t8.a, t8.b;
+select *
+from t8
+where t8.a < (
+    select /*+ INDEX_LOOKUP_PUSHDOWN(t9, idx_a) */ sum(t9.b)
+    from t9 use index(idx_a)
+    where t9.a > t8.b
+)
+order by t8.a, t8.b;
 
 # restore tidb_scatter_region
 set @@tidb_scatter_region=default;

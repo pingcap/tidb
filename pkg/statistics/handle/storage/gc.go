@@ -16,8 +16,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -27,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -130,7 +127,7 @@ func GCStats(
 			zap.Error(err))
 	}
 
-	return removeDeletedExtendedStats(sctx, gcVer)
+	return nil
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
@@ -165,9 +162,6 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool
 			return err
 		}
 		if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {
 			return err
 		}
 		if _, err = util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
@@ -275,13 +269,6 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 	return nil
 }
 
-// removeDeletedExtendedStats removes deleted extended stats.
-func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err error) {
-	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
-	_, err = util.Exec(sctx, sql, statistics.ExtendedStatsDeleted, version)
-	return
-}
-
 // gcTableStats GC this table's stats.
 // The GC of a table will be a two-phase process:
 // 1. Delete the column/index's stats from storage. Then other TiDB nodes will be aware that those stats are deleted.
@@ -341,41 +328,6 @@ func gcTableStats(sctx sessionctx.Context,
 		}
 	}
 
-	// Mark records in mysql.stats_extended as `deleted`.
-	rows, _, err = util.ExecRows(sctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	for _, row := range rows {
-		statsName, strColIDs := row.GetString(0), row.GetString(1)
-		var colIDs []int64
-		err = json.Unmarshal([]byte(strColIDs), &colIDs)
-		if err != nil {
-			logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", strColIDs), zap.Error(err))
-			return errors.Trace(err)
-		}
-		for _, colID := range colIDs {
-			found := false
-			for _, col := range tblInfo.Columns {
-				if colID == col.ID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				logutil.BgLogger().Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
-				err = statsHandler.MarkExtendedStatsDeleted(statsName, physicalID, true)
-				if err != nil {
-					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
-					return errors.Trace(err)
-				}
-				break
-			}
-		}
-	}
 	return nil
 }
 
@@ -407,41 +359,4 @@ func writeGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 		newTS,
 	)
 	return err
-}
-
-// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func MarkExtendedStatsDeleted(sctx sessionctx.Context,
-	statsCache types.StatsCache,
-	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
-	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		if ifExists {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("extended statistics '%s' for the specified table does not exist", statsName)
-	}
-	if len(rows) > 1 {
-		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
-	}
-
-	defer func() {
-		if err == nil {
-			removeExtendedStatsItem(statsCache, tableID, statsName)
-		}
-	}()
-	version, err := util.GetStartTS(sctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %?, last_stats_histograms_version = %? WHERE table_id = %?", version, version, tableID); err != nil {
-		return 0, err
-	}
-	statsVer = version
-	if _, err = util.Exec(sctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, statistics.ExtendedStatsDeleted, statsName, tableID); err != nil {
-		return 0, err
-	}
-	return
 }

@@ -544,6 +544,8 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	indexJoinResult *indexJoinPathResult) string {
 	buffer := bytes.NewBufferString("[")
 	isFirst := true
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	redact := ectx.GetTiDBRedactLog()
 	for idxOff, keyOff := range indexJoinResult.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
@@ -553,11 +555,9 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "eq(%v, %v)", indexJoinResult.chosenPath.IdxCols[idxOff], outerJoinKeys[keyOff])
+		fmt.Fprintf(buffer, "eq(%v, %v)", indexJoinResult.chosenPath.IdxCols[idxOff].StringWithCtx(ectx, redact), outerJoinKeys[keyOff].StringWithCtx(ectx, redact))
 	}
-	ectx := sctx.GetExprCtx().GetEvalCtx()
 	// It is to build the range info which is used in explain. It is necessary to redact the range info.
-	redact := ectx.GetTiDBRedactLog()
 	for _, access := range indexJoinResult.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
@@ -826,54 +826,6 @@ func getBestIndexJoinPathResultByProp(
 	}
 
 	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
-	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
-	}
-	return bestResult, keyOff2IdxOff
-}
-
-// getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
-// index join path for each access path. It returns the best index join path result and the mapping.
-func getBestIndexJoinPathResult(
-	join *logicalop.LogicalJoin,
-	innerChild *logicalop.DataSource,
-	innerJoinKeys, outerJoinKeys []*expression.Column,
-	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
-	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions,
-		outerJoinKeys:         outerJoinKeys,
-		innerJoinKeys:         innerJoinKeys,
-		innerPushedConditions: innerChild.PushedDownConds,
-		innerSchema:           innerChild.Schema(),
-		innerTableStats:       innerChild.TableStats,
-	}
-	var bestResult *indexJoinPathResult
-	for _, path := range innerChild.PossibleAccessPaths {
-		if checkPathValid(path) {
-			result, emptyRange, err := indexJoinPathBuild(join.SCtx(), path, indexJoinInfo, false)
-			if emptyRange {
-				return nil, nil
-			}
-			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-				continue
-			}
-			if indexJoinPathCompare(innerChild, bestResult, result) {
-				bestResult = result
-			}
-		}
-	}
-	if bestResult == nil || bestResult.chosenPath == nil {
-		return nil, nil
-	}
-
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}

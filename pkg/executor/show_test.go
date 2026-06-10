@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -53,6 +54,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 
 	fmap := plannercore.ImportIntoFieldMap
 	rowCntIdx := fmap["ImportedRows"]
+	sourceFileSizeIdx := fmap["SourceFileSize"]
 	startIdx := fmap["StartTime"]
 	endIdx := fmap["EndTime"]
 
@@ -94,6 +96,49 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	// runtime info have update time, so use it
 	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
 	require.EqualValues(t, t2025, c.GetRow(4).GetTime(14))
+
+	// conflict-step runtime progress should use conflict count labels.
+	ri = &importinto.RuntimeInfo{
+		Step:      proto.ImportStepCollectConflicts,
+		Processed: 12,
+		Total:     34,
+		Speed:     5,
+	}
+	executor.FillOneImportJobInfo(c, jobInfo, ri)
+	require.Equal(t, "12 conflicts", c.GetRow(5).GetString(fmap["CurStepProcessedSize"]))
+	require.Equal(t, "34 conflicts", c.GetRow(5).GetString(fmap["CurStepTotalSize"]))
+	require.Equal(t, "5 conflicts/s", c.GetRow(5).GetString(fmap["CurStepSpeed"]))
+
+	// preparing phase should be visible while current business step is still init.
+	jobInfo.Step = importer.JobStepPreparing
+	ri = &importinto.RuntimeInfo{
+		Step: proto.StepInit,
+	}
+	executor.FillOneImportJobInfo(c, jobInfo, ri)
+	require.Equal(t, importer.JobStepPreparing, c.GetRow(6).GetString(fmap["Phase"]))
+	require.Equal(t, proto.Step2Str(proto.ImportInto, proto.StepInit), c.GetRow(6).GetString(fmap["CurStep"]))
+
+	// source_file_size may be unknown for pending or running(preparing) jobs in async prepare.
+	jobInfo.Status = "pending"
+	jobInfo.Step = ""
+	jobInfo.SourceFileSize = 0
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "N/A", c.GetRow(7).GetString(sourceFileSizeIdx))
+
+	jobInfo.Status = importer.JobStatusRunning
+	jobInfo.Step = importer.JobStepPreparing
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "N/A", c.GetRow(8).GetString(sourceFileSizeIdx))
+
+	// For other states/steps, keep the existing size formatting.
+	jobInfo.Step = importer.JobStepImporting
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "0B", c.GetRow(9).GetString(sourceFileSizeIdx))
+
+	jobInfo.Step = importer.JobStepPreparing
+	jobInfo.SourceFileSize = 3
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "3B", c.GetRow(10).GetString(sourceFileSizeIdx))
 }
 
 func TestShow(t *testing.T) {

@@ -312,13 +312,13 @@ func blockingMergePartitionStats2GlobalStats(
 				globalStats.Fms[i] = allFms[i][j]
 			} else {
 				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-				allFms[i][j].DestroyAndPutToPool()
+				allFms[i][j] = nil // Release for GC.
 			}
 		}
 
 		// Update the global NDV.
 		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
-		globalStats.Fms[i].DestroyAndPutToPool()
+		globalStats.Fms[i] = nil // Release for GC.
 
 		// Merge CMSketch.
 		globalStats.Cms[i] = allCms[i][0]

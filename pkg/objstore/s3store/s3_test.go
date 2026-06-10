@@ -560,6 +560,50 @@ func TestFileExistsNoError(t *testing.T) {
 	require.True(t, exists)
 }
 
+func TestFileSyncedNoError(t *testing.T) {
+	s := CreateS3Suite(t)
+	ctx := context.Background()
+
+	s.MockS3.EXPECT().
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
+			return &s3.HeadObjectOutput{ReplicationStatus: types.ReplicationStatusCompleted}, nil
+		})
+
+	synced, err := s.Storage.FileSynced(ctx, "file")
+	require.NoError(t, err)
+	require.True(t, synced)
+}
+
+func TestFileSyncedPending(t *testing.T) {
+	s := CreateS3Suite(t)
+	ctx := context.Background()
+
+	s.MockS3.EXPECT().
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&s3.HeadObjectOutput{ReplicationStatus: types.ReplicationStatusPending}, nil)
+
+	synced, err := s.Storage.FileSynced(ctx, "file")
+	require.NoError(t, err)
+	require.False(t, synced)
+}
+
+func TestFileSyncedEmptyStatus(t *testing.T) {
+	s := CreateS3Suite(t)
+	ctx := context.Background()
+
+	s.MockS3.EXPECT().
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&s3.HeadObjectOutput{}, nil)
+
+	synced, err := s.Storage.FileSynced(ctx, "file")
+	require.Error(t, err)
+	require.False(t, synced)
+	require.Contains(t, err.Error(), "is empty")
+}
+
 func TestDeleteFileNoError(t *testing.T) {
 	s := CreateS3Suite(t)
 	ctx := context.Background()
@@ -1593,6 +1637,31 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			require.Equal(t, region, ss.GetOptions().Region)
 		}(ca.name, ca.expectRegion, ca.s3)
 	}
+}
+
+func TestS3StorageCustomAWSEndpointWithFIPSMode(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "ab")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "cd")
+	t.Setenv("AWS_SESSION_TOKEN", "ef")
+	t.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
+
+	s := createGetBucketRegionServer("us-west-2", 200, true)
+	defer s.Close()
+
+	es, err := New(context.Background(),
+		&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{
+			Region:         "us-west-2",
+			Bucket:         "bucket",
+			Prefix:         "prefix",
+			Provider:       "aws",
+			Endpoint:       s.URL,
+			ForcePathStyle: true,
+		}}},
+		&storeapi.Options{})
+	require.NoError(t, err)
+	ss, ok := es.(*Storage)
+	require.True(t, ok)
+	require.Equal(t, "us-west-2", ss.GetOptions().Region)
 }
 
 func TestRetryError(t *testing.T) {

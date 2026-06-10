@@ -153,7 +153,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
 	for tp := version.ServerTypeUnknown; tp < version.ServerTypeAll; tp++ {
-		mockConf.ServerInfo.ServerType = version.ServerType(tp)
+		mockConf.ServerInfo.ServerType = tp
 		comment := fmt.Sprintf("current server type: %v", tp)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -897,6 +897,17 @@ func TestBuildPartitionClauses(t *testing.T) {
 		query := buildSelectQuery(dbName, tbName, fields, testCase.partition, testCase.where, testCase.orderByClause)
 		require.Equal(t, testCase.expectedQuery, query)
 	}
+}
+
+func TestBuildTiDBTableSampleQuery(t *testing.T) {
+	require.Equal(t,
+		"SELECT `a`,`b` FROM `test`.`t` TABLESAMPLE REGIONS() ORDER BY `a`,`b`",
+		buildTiDBTableSampleQuery([]string{"a", "b"}, "test", "t"),
+	)
+	require.Equal(t,
+		"SELECT `a` FROM `test`.`t` PARTITION(`p0`,`p1`) TABLESAMPLE REGIONS() ORDER BY `a`",
+		buildTiDBTableSampleQuery([]string{"a"}, "test", "t", "p0", "p1"),
+	)
 }
 
 func TestBuildWhereCondition(t *testing.T) {

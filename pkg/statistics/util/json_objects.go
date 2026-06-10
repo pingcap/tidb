@@ -33,7 +33,6 @@ type JSONTable struct {
 	Partitions        map[string]*JSONTable  `json:"partitions"`
 	DatabaseName      string                 `json:"database_name"`
 	TableName         string                 `json:"table_name"`
-	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
 	PredicateColumns  []*JSONPredicateColumn `json:"predicate_columns"`
 	Count             int64                  `json:"count"`
 	ModifyCount       int64                  `json:"modify_count"`
@@ -46,15 +45,6 @@ func (j *JSONTable) Sort() {
 	slices.SortFunc(j.PredicateColumns, func(a, b *JSONPredicateColumn) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
-}
-
-// JSONExtendedStats is used for dumping extended statistics.
-type JSONExtendedStats struct {
-	StatsName  string  `json:"stats_name"`
-	StringVals string  `json:"string_vals"`
-	ColIDs     []int64 `json:"cols"`
-	ScalarVals float64 `json:"scalar_vals"`
-	Tp         uint8   `json:"type"`
 }
 
 // JSONColumn is used for dumping statistics.

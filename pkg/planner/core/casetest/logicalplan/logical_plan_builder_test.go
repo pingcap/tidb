@@ -34,7 +34,7 @@ func TestGroupBySchema(t *testing.T) {
     col_date DATE,
     PRIMARY KEY (col_int_auto_increment, col_pk_char, col_datetime, col_int, col_date)
 );`)
-		testKit.MustQuery(`explain format='brief' SELECT *
+		testKit.MustQuery(`explain format = 'plan_tree' SELECT *
 FROM mysql_3 t1
 WHERE EXISTS
     (SELECT DISTINCT a1.*
@@ -44,13 +44,13 @@ WHERE EXISTS
                FROM mysql_3 a1 NATURAL
                RIGHT JOIN mysql_3 a2
                WHERE t1.col_pk_date IS NULL
-               GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual 0.00 root  rows:0",
-			"ScalarSubQuery N/A root  Output: ScalarQueryCol#29, ScalarQueryCol#30, ScalarQueryCol#31, ScalarQueryCol#32, ScalarQueryCol#33, ScalarQueryCol#34, ScalarQueryCol#35",
-			"└─HashJoin 8000.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.mysql_3.col_pk_char, test.mysql_3.col_pk_char)]",
-			"  ├─HashAgg(Build) 1.00 root  group by:test.mysql_3.col_pk_char, funcs:firstrow(test.mysql_3.col_pk_char)->test.mysql_3.col_pk_char",
-			"  │ └─TableDual 0.00 root  rows:0",
-			"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-			"    └─TableFullScan 10000.00 cop[tikv] table:a1 keep order:false, stats:pseudo"))
+               GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual root  rows:0",
+			"ScalarSubQuery root  Output: ScalarQueryCol#29, ScalarQueryCol#30, ScalarQueryCol#31, ScalarQueryCol#32, ScalarQueryCol#33, ScalarQueryCol#34, ScalarQueryCol#35",
+			"└─HashJoin root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.mysql_3.col_pk_char, test.mysql_3.col_pk_char)]",
+			"  ├─HashAgg(Build) root  group by:test.mysql_3.col_pk_char, funcs:firstrow(test.mysql_3.col_pk_char)->test.mysql_3.col_pk_char",
+			"  │ └─TableDual root  rows:0",
+			"  └─TableReader(Probe) root  data:TableFullScan",
+			"    └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo"))
 	})
 }
 

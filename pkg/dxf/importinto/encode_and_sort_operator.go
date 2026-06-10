@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"go.uber.org/zap"
@@ -53,6 +53,7 @@ type encodeAndSortOperator struct {
 	logger            *zap.Logger
 	errCh             chan error
 	indicesGenKV      map[int64]importer.GenKVIndex
+	onDupKey          importer.OnDupKeyMode
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -77,6 +78,7 @@ func newEncodeAndSortOperator(
 		logger:        executor.logger,
 		errCh:         make(chan error),
 		indicesGenKV:  executor.indicesGenKV,
+		onDupKey:      executor.taskMeta.Plan.GetOnDupKeyMode(),
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -101,7 +103,7 @@ type chunkWorker struct {
 	ctx context.Context
 	op  *encodeAndSortOperator
 
-	dataWriter  *external.EngineWriter
+	dataWriter  *simplesst.EngineWriter
 	indexWriter *importer.IndexRouteWriter
 }
 
@@ -119,13 +121,13 @@ func newChunkWorker(
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID)
+		indexWriterFn := func(indexID int64) (*simplesst.Writer, error) {
+			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.onDupKey)
 			if err != nil {
 				return nil, err
 			}
-			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(func(summary *external.WriterSummary) {
+			builder := simplesst.NewWriterBuilder().
+				SetOnCloseFunc(func(summary *simplesst.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
@@ -135,26 +137,26 @@ func newChunkWorker(
 				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
-			writerID := path.Join("index", external.IndexID2KVGroup(indexID), workerUUID)
+			writerID := path.Join("index", globalsort.IndexID2KVGroup(indexID), workerUUID)
 			writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 			return writer, nil
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
-		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(func(summary *external.WriterSummary) {
+		builder := simplesst.NewWriterBuilder().
+			SetOnCloseFunc(func(summary *simplesst.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
-			SetOnDup(engineapi.OnDuplicateKeyRecord).
+			SetOnDup(getOnDupForConflictedKV(op.onDupKey)).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
-		writerID := path.Join(external.DataKVGroup, workerUUID)
+		writerID := path.Join(globalsort.DataKVGroup, workerUUID)
 		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
-		w.dataWriter = external.NewEngineWriter(writer)
+		w.dataWriter = simplesst.NewEngineWriter(writer)
 
 		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
 	}
@@ -199,9 +201,9 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
-	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
-	// we use half of the total available memory for data writer, and the other half
-	// for encoding and other stuffs, it's an experience value, might not optimal.
+	memPerCon := resource.MemoryPerCore()
+	// we use writerMemBudgetRatio of available memory per core for the writer,
+	// and the remaining memory for encoding and other stuffs.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
 	// takes 3 shares, and each index KV writer takes 1 share.
 	// suppose we have memPerCon = 2G
@@ -211,6 +213,6 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	// 	| 1               | 768/256 MiB           |
 	// 	| 5               | 384/128 MiB           |
 	// 	| 13              | 192/64 MiB            |
-	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
+	memPerShare := float64(memPerCon) * writerMemBudgetRatio / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
 }

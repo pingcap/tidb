@@ -124,6 +124,18 @@ func TestRewriteDBInfo(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, DBInfo.ID, sr.DbReplaceMap[dbID].DbID)
 	require.Equal(t, newId, sr.DbReplaceMap[dbID].DbID)
+
+	writeValue := RawWriteCFValue{
+		t:          WriteTypePut,
+		startTs:    1,
+		shortValue: value,
+		txnSource:  7,
+	}
+	result, err := sr.rewriteValue(writeValue.EncodeTo(), consts.WriteCF, sr.rewriteDBInfo)
+	require.Nil(t, err)
+	rewrittenWriteValue := new(RawWriteCFValue)
+	require.Nil(t, rewrittenWriteValue.ParseFrom(result.NewValue))
+	require.Equal(t, rewrittenWriteValue.txnSource, uint64(7)|kv.LightningPhysicalImportTxnSource)
 }
 
 func TestRewriteKeyForTable(t *testing.T) {

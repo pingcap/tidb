@@ -150,19 +150,7 @@ func attach2Task4PhysicalIndexMergeJoin(pp base.PhysicalPlan, tasks ...base.Task
 	return t
 }
 
-func indexHashJoinAttach2TaskV1(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
-	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
-	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.InnerPlan)
-	} else {
-		p.SetChildren(p.InnerPlan, outerTask.Plan())
-	}
-	t := &physicalop.RootTask{}
-	t.SetPlan(p)
-	return t
-}
-
-func indexHashJoinAttach2TaskV2(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+func indexHashJoinAttach2Task(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	// only fill the wrapped physical index join is ok.
@@ -180,29 +168,16 @@ func indexHashJoinAttach2TaskV2(p *physicalop.PhysicalIndexHashJoin, tasks ...ba
 
 // attach2Task4PhysicalIndexHashJoin implements PhysicalPlan interface.
 func attach2Task4PhysicalIndexHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
-	p := pp.(*physicalop.PhysicalIndexHashJoin)
-	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
-		return indexHashJoinAttach2TaskV2(p, tasks...)
-	}
-	return indexHashJoinAttach2TaskV1(p, tasks...)
+	return indexHashJoinAttach2Task(pp.(*physicalop.PhysicalIndexHashJoin), tasks...)
 }
 
-func indexJoinAttach2TaskV1(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
-	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
-	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.InnerPlan)
-	} else {
-		p.SetChildren(p.InnerPlan, outerTask.Plan())
-	}
-	t := &physicalop.RootTask{}
-	t.SetPlan(p)
-	return t
-}
-
-func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
+func indexJoinAttach2Task(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*physicalop.RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.FromDecorrelatedApply {
+		p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin()
+	}
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), innerTask.Plan())
 	} else {
@@ -215,11 +190,7 @@ func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task)
 }
 
 func attach2Task4PhysicalIndexJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
-	p := pp.(*physicalop.PhysicalIndexJoin)
-	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
-		return indexJoinAttach2TaskV2(p, tasks...)
-	}
-	return indexJoinAttach2TaskV1(p, tasks...)
+	return indexJoinAttach2Task(pp.(*physicalop.PhysicalIndexJoin), tasks...)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
@@ -246,6 +217,12 @@ func attach2Task4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &physicalop.RootTask{}
 	task.SetPlan(p)
+	if rt, ok := lTask.(*physicalop.RootTask); ok && rt.IndexJoinInfo != nil {
+		task.IndexJoinInfo = rt.IndexJoinInfo
+	}
+	if rt, ok := rTask.(*physicalop.RootTask); ok && rt.IndexJoinInfo != nil {
+		task.IndexJoinInfo = rt.IndexJoinInfo
+	}
 	task.Warnings.CopyFrom(&rTask.(*physicalop.RootTask).Warnings, &lTask.(*physicalop.RootTask).Warnings)
 	return task
 }
@@ -884,13 +861,13 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
-	byItemIndex := make([]int, 0)
+	heavyByItemIndexes := make([]int, 0)
 	for i, byItem := range p.ByItems {
 		if ContainHeavyFunction(byItem.Expr) {
-			byItemIndex = append(byItemIndex, i)
+			heavyByItemIndexes = append(heavyByItemIndexes, i)
 		}
 	}
-	if fixValue && len(byItemIndex) > 0 {
+	if fixValue && len(heavyByItemIndexes) > 0 {
 		x, err := p.Clone(p.SCtx())
 		if err != nil {
 			return nil, nil
@@ -940,11 +917,12 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 			DistanceCol *expression.Column
 		}
 		distanceCols := make([]DistanceColItem, 0)
-		for _, idx := range byItemIndex {
+		for _, idx := range heavyByItemIndexes {
 			bottomProjExprs = append(bottomProjExprs, newGlobalTopN.ByItems[idx].Expr)
 			distanceCol := &expression.Column{
 				UniqueID: newGlobalTopN.SCtx().GetSessionVars().AllocPlanColumnID(),
 				RetType:  newGlobalTopN.ByItems[idx].Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+				Index:    len(bottomProjExprs) - 1,
 			}
 			distanceCols = append(distanceCols, DistanceColItem{
 				Index:       idx,
@@ -977,13 +955,11 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 		}
 		topN.SetChildren(bottomProj)
 
-		// orderByCol is the column `distanceCol`, so this explain always success.
-		orderByCol, _ := topN.ByItems[0].Expr.(*expression.Column)
-		orderByCol.Index = len(bottomProj.Exprs) - 1
-
-		// try to Check and modify plan when it is possible to not scanning vector column at all.
-		tryReturnDistanceFromIndex(topN, newGlobalTopN, childPlan, bottomProj)
-
+		// Only try to skip scanning the vector column when the first order-by item is the vector
+		// distance (i.e. vector index can be chosen).
+		if len(heavyByItemIndexes) == 1 && heavyByItemIndexes[0] == 0 {
+			tryReturnDistanceFromIndex(topN, newGlobalTopN, childPlan, bottomProj)
+		}
 		return topN, newGlobalTopN
 	}
 
@@ -1014,7 +990,10 @@ func tryReturnDistanceFromIndex(local, global *physicalop.PhysicalTopN, childPla
 		return false
 	}
 
-	orderByCol, _ := local.ByItems[0].Expr.(*expression.Column)
+	orderByCol, ok := local.ByItems[0].Expr.(*expression.Column)
+	if !ok {
+		return false
+	}
 	var annQueryInfo *physicalop.ColumnarIndexExtra
 	for _, idx := range tableScan.UsedColumnarIndexes {
 		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
@@ -1092,7 +1071,7 @@ func tryReturnDistanceFromIndex(local, global *physicalop.PhysicalTopN, childPla
 	// modify the topN's ByItem
 	local.ByItems[0].Expr = virtualDistanceCol
 	global.ByItems[0].Expr = virtualDistanceCol
-	local.ByItems[0].Expr.(*expression.Column).Index = tableScan.Schema().Len() - 1
+	virtualDistanceCol.Index = tableScan.Schema().Len() - 1
 
 	return true
 }
@@ -1290,6 +1269,23 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		}
 	}
 	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.RootTaskConds) == 0 {
+		// Handle IndexMerge with advisory sort items when some (but not all)
+		// partial paths satisfy the sort order. When all paths satisfy, the
+		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
+		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished && !copTask.IdxMergeIsIntersection &&
+			copTask.IdxMergeMatchWithAdvisorySortItems {
+			intest.Assert(len(copTask.IdxMergePartPlans) == len(copTask.IdxMergePartPlansMatchResults))
+			allSatisfy := true
+			for _, result := range copTask.IdxMergePartPlansMatchResults {
+				if !result.Matched() {
+					allSatisfy = false
+					break
+				}
+			}
+			if !allSatisfy {
+				return handleAdvisorySortItemsForIndexMerge(p, copTask)
+			}
+		}
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *physicalop.PhysicalTopN
@@ -1309,6 +1305,27 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.FinishIndexPlan()
+			if copTask.TablePlan == nil {
+				// Keep TopN at root when the order-by columns cannot be resolved against the
+				// index plan but the reader still has no table-side after finishing the index plan.
+				// This can happen when a virtual generated column is covered by an expression index.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
+			if containVirtualColumn(p, copTask.TablePlan.Schema().Columns) {
+				// Keep TopN at root when it would be pushed to the table/probe side of an
+				// IndexLookUp on a virtual generated column. The build/index side may not
+				// preserve the global order in this case, so a probe-side partial TopN can
+				// stop too early and return wrong rows.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
 			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
 			copTask.TablePlan = pushedDownTopN
 			if newGlobalTopN != nil {
@@ -1435,12 +1452,72 @@ func estimateMaxXForPartialOrder() uint64 {
 	return 0
 }
 
+// handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
+// has advisory sort items satisfaction info. It pushes Limit to partial paths
+// that satisfy the sort order and TopN to those that don't, then keeps a root
+// TopN for final merge.
+func handleAdvisorySortItemsForIndexMerge(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+	newCount := p.Offset + p.Count
+
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
+	for i, partialPlan := range copTask.IdxMergePartPlans {
+		if copTask.IdxMergePartPlansMatchResults[i].Matched() {
+			// This partial path satisfies the sort order, push Limit.
+			childProfile := partialPlan.StatsInfo()
+			stats := property.DeriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := physicalop.PhysicalLimit{
+				Count:       newCount,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit.SetChildren(partialPlan)
+			pushedDownLimit.SetSchema(partialPlan.Schema())
+			copTask.IdxMergePartPlans[i] = pushedDownLimit
+		} else if canPushToIndexPlan(partialPlan, cols) {
+			// This partial path does not satisfy the sort order, push TopN.
+			pushedDownTopN, _ := getPushedDownTopN(p, partialPlan, copTask.GetStoreType())
+			copTask.IdxMergePartPlans[i] = pushedDownTopN
+		}
+	}
+
+	// Push TopN to the table plan side if it exists.
+	if copTask.TablePlan != nil {
+		pushedDownTopN, _ := getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
+		copTask.TablePlan = pushedDownTopN
+	}
+
+	// Keep the root TopN as the final merge layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	if len(p.GetPartitionBy()) > 0 {
+		return rootTask
+	}
+	return attachPlan2Task(p, rootTask)
+}
+
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.
 func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalProjection)
 	t := tasks[0].Copy()
+	// when it's a copTask, we can push down projection to indexPlan or tablePlan respectively, say logical plan: proj->ds, when ds can supply the needed columns to proj
+	// doesn't mean its index plan can supply needed columns to proj when it's double read and index plan is not finished. When it's not, we should finish the index plan
+	// immediately and push down projection to table plan if possible. For the case of index merge, we can only push down projection to table plan since index plan and table
+	// plan will be union-ed together and the final output will be used by projection, so both of them should provide needed columns to projection.
 	if cop, ok := t.(*physicalop.CopTask); ok {
 		if (len(cop.RootTaskConds) == 0 && len(cop.IdxMergePartPlans) == 0) && expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, cop.GetStoreType()) {
+			if !cop.IndexPlanFinished {
+				// when index plan is not finished, and index plan can not supply the columns the proj needed.
+				if !canPushToIndexPlan(cop.IndexPlan, expression.ExtractColumnsFromExpressions(p.Exprs, nil)) {
+					// finish index plan and push down projection to table plan.
+					cop.FinishIndexPlan()
+				}
+			}
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}

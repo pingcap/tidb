@@ -70,7 +70,7 @@ select 1 from t where y = YEAR(CURDATE());
 select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
 
 # TestIssue49526
-explain select null as a union all select 'a' as a;
+explain format='brief' select null as a union all select 'a' as a;
 --sorted_result
 select null as a union all select 'a' as a;
 

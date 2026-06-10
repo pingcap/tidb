@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -38,44 +40,70 @@ import (
 	"go.opencensus.io/stats/view"
 )
 
-func TestExtendedStatsPrivileges(t *testing.T) {
+func TestStarterUsernamePolicyInSimpleExec(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "SYSTEM"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("create user 'u1'@'%'")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
-	ctx := context.Background()
-	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ALTER command denied to user 'u1'@'%' for table 't'", err.Error())
-	tk.MustExec("grant alter on test.* to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 't'", err.Error())
-	tk.MustExec("grant select on test.* to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'", err.Error())
-	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.NoError(t, err)
+	tk.MustExec("create user if not exists `SYSTEM.r1`@`%`")
+	tk.MustExec("create user if not exists `SYSTEM.u1`@`%`")
 
-	_, err = se.Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]DROP STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'", err.Error())
-	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
-	require.NoError(t, err)
-	tk.MustExec("drop user 'u1'@'%'")
+	tk.MustContainErrMsg("create user u2@'%' identified by 'pwd'", "User name must start with `SYSTEM.`")
+	tk.MustContainErrMsg("create role r2", "User name must start with `SYSTEM.`")
+	tk.MustExec("create role `SYSTEM.r2`")
+	tk.MustQuery("select User from mysql.user where User='SYSTEM.r2' and Host='%'").Check(testkit.Rows("SYSTEM.r2"))
+	tk.MustContainErrMsg("rename user `SYSTEM.u1`@`%` to u2@'%'", "User name must start with `SYSTEM.`")
+
+	tk.MustExec("grant r1 to u1")
+	tk.MustQuery("select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.r1' and TO_USER='SYSTEM.u1' and TO_HOST='%'").Check(testkit.Rows("SYSTEM.u1"))
+
+	tk.MustExec("set default role r1 to u1")
+	tk.MustQuery("select USER, DEFAULT_ROLE_USER from mysql.default_roles where USER='SYSTEM.u1' and DEFAULT_ROLE_USER='SYSTEM.r1'").Check(testkit.Rows("SYSTEM.u1 SYSTEM.r1"))
+
+	tk.MustExec("set default role none to u1")
+	tk.MustQuery("select USER from mysql.default_roles where USER='SYSTEM.u1'").Check(testkit.Rows())
+
+	tk.MustExec("set default role all to u1")
+	tk.MustQuery("select USER, DEFAULT_ROLE_USER from mysql.default_roles where USER='SYSTEM.u1' and DEFAULT_ROLE_USER='SYSTEM.r1'").Check(testkit.Rows("SYSTEM.u1 SYSTEM.r1"))
+
+	tk.MustExec("revoke r1 from u1")
+	tk.MustQuery("select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.r1' and TO_USER='SYSTEM.u1' and TO_HOST='%'").Check(testkit.Rows())
+	tk.MustQuery("select USER from mysql.default_roles where USER='SYSTEM.u1'").Check(testkit.Rows())
+
+	tk.MustExec("alter user u1 identified by 'pwd2'")
+	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.u1' and host='%'").Check(testkit.Rows(auth.EncodePassword("pwd2")))
+
+	tk.MustExec("create user if not exists `SYSTEM.keao.yang`@`%`")
+	tk.MustExec("alter user `keao.yang`@`%` identified by 'pwd3'")
+	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.keao.yang' and host='%'").Check(testkit.Rows(auth.EncodePassword("pwd3")))
+
+	tk.MustExec("create user if not exists `SYSTEM.admin`@`%`")
+	tk.MustExec("grant create user on *.* to `SYSTEM.admin`@`%`")
+	tk.MustExec("create user if not exists `SYSTEM.u_sys`@`%`")
+	tk.MustExec("grant system_user on *.* to `SYSTEM.u_sys`@`%`")
+	adminTk := testkit.NewTestKit(t, store)
+	require.NoError(t, adminTk.Session().Auth(&auth.UserIdentity{Username: "SYSTEM.admin", Hostname: "localhost", AuthUsername: "SYSTEM.admin", AuthHostname: "%"}, nil, nil, nil))
+	adminTk.MustContainErrMsg("alter user u_sys identified by 'pwd4'", "SYSTEM_USER or SUPER")
+	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.u_sys' and host='%'").Check(testkit.Rows(auth.EncodePassword("")))
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustContainErrMsg("grant select on *.* to u_auto@'%'", "User name must start with `SYSTEM.`")
+	tk.MustQuery("select User from mysql.user where User='u_auto' and Host='%'").Check(testkit.Rows())
+	tk.MustExec("set sql_mode=default")
 }
 
 func TestUserWithSetNames(t *testing.T) {
@@ -586,7 +614,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_drop_gstats"), ast.NewCIStr("test_drop_gstats"))
 	require.NoError(t, err)

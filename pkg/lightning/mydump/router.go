@@ -195,6 +195,10 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`,
 		Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
+	// parquet source file pattern with parquet internal compression suffix, matches files like
+	// '{schema}.{table}.0001.{snappy|gz|zst|...}.parquet'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*)\.([0-9]+)\.(snappy|gzip|gz|zstd|zst)\.parquet$`,
+		Schema: "$1", Table: "$2", Type: TypeParquet, Key: "$3", Unescape: true},
 	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`,
 		Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},

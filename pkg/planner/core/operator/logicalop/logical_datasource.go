@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,6 +50,8 @@ import (
 type DataSource struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
+	// AstIndexHints keeps the original AST hints for later access-path selection.
+	// It is treated as read-only after DataSource build and may be shared by plans rebuilt from the same AST.
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
@@ -56,6 +59,7 @@ type DataSource struct {
 	Columns       []*model.ColumnInfo
 	DBName        ast.CIStr
 
+	// TableAsName points to the AST alias and is only used as read-only metadata after plan build.
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
@@ -84,7 +88,8 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64 `hash64-equals:"true"`
-	PartitionNames  []ast.CIStr
+	// PartitionNames records the explicit partition list from AST and is treated as read-only after plan build.
+	PartitionNames []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -189,6 +194,10 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
+	// Later single-scan/index-covering checks should use columns required by
+	// the DataSource output, not all columns in ds.Schema(). ds.Schema() may
+	// also include columns kept only because ds.AllConds references them, so
+	// build ColsRequiringFullLen from `used` here.
 	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
 		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
@@ -232,7 +241,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
 	// If the parent operator need no columns from the DataSource, we return the smallest column. Don't add the empty proj.
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() &&
+		(ds.TableInfo.TiFlashReplica != nil || UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)) {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -242,6 +252,14 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		return proj, nil
 	}
 	return ds, nil
+}
+
+// HasTiFlash checks whether the table has TiFlash replicas (real or hypothetical).
+// It does not include MPP gating; callers should check IsMPPAllowed() separately when needed.
+func (ds *DataSource) HasTiFlash() bool {
+	return (ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available &&
+		ds.TableInfo.TiFlashReplica.Count > 0) ||
+		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
@@ -310,7 +328,7 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
@@ -331,7 +349,14 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	return result
+	_, tiflashInIsolationRead := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]
+	preferTiKVOnly := ds.PreferStoreType&h.PreferTiKV != 0 && ds.PreferStoreType&h.PreferTiFlash == 0
+	hasTiFlashReplica := ds.HasTiFlash()
+	ds.hasTiFlash = tiflashInIsolationRead && !preferTiKVOnly && hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	return &base.PossiblePropertiesInfo{
+		Orders:     result,
+		HasTiFlash: ds.hasTiFlash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
@@ -578,6 +603,7 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 // NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(tp.GetFlag() | mysql.UnsignedFlag)
 	return &expression.Column{
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
@@ -822,4 +848,17 @@ func (ds *DataSource) CheckPartialIndexes() {
 			return checkIndex(path, false)
 		})
 	}
+}
+
+// UsedHypoTiFlashReplicas checks whether the table uses hypothetical TiFlash replicas.
+func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInfo *model.TableInfo) bool {
+	if ctx.StmtCtx.InExplainStmt && ctx.HypoTiFlashReplicas != nil {
+		hypoReplicas := ctx.HypoTiFlashReplicas
+		originalTableName := tblInfo.Name.L
+		if hypoReplicas[dbName.L] != nil {
+			_, ok := hypoReplicas[dbName.L][originalTableName]
+			return ok
+		}
+	}
+	return false
 }
