@@ -15,6 +15,7 @@
 package errmsg
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -146,4 +147,40 @@ func TestExtendPrefersLongestPattern(t *testing.T) {
 	sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, "Access denied for user 'root.foo'@'127.0.0.1' (using password: YES)")
 	Extend(sqlErr)
 	require.Equal(t, "Access denied for user 'root.foo'@'127.0.0.1' (using password: YES), specific user prefix message.", sqlErr.Message)
+}
+
+func TestExtendConcurrentWithStoreGlobalConfig(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.ErrorMessageExtensions = []config.ErrorMessageExtension{
+		{Pattern: `^Access denied`, Suffix: "generic access denied message"},
+		{Pattern: `^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`, Suffix: "specific user prefix message"},
+	}
+	config.StoreGlobalConfig(&newCfg)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originCfg)
+	})
+
+	publishedCfg := config.GetGlobalConfig()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 1000 {
+			config.StoreGlobalConfig(publishedCfg)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 1000 {
+			sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, "Access denied for user 'root.foo'@'127.0.0.1' (using password: YES)")
+			Extend(sqlErr)
+		}
+	}()
+
+	close(start)
+	wg.Wait()
 }

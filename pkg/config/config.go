@@ -1311,12 +1311,22 @@ func GetGlobalConfig() *Config {
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	_ = config.prepareErrorMessageExtensions(true)
-	globalConf.Store(config)
+	newConfig := config.cloneForStore()
+	_ = newConfig.prepareErrorMessageExtensions(true)
+	globalConf.Store(newConfig)
 	TikvConfigLock.Lock()
 	defer TikvConfigLock.Unlock()
-	cfg := *config.GetTiKVConfig()
+	cfg := *newConfig.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
+}
+
+func (c *Config) cloneForStore() *Config {
+	newConfig := *c
+	if len(c.ErrorMessageExtensions) > 0 {
+		newConfig.ErrorMessageExtensions = make([]ErrorMessageExtension, len(c.ErrorMessageExtensions))
+		copy(newConfig.ErrorMessageExtensions, c.ErrorMessageExtensions)
+	}
+	return &newConfig
 }
 
 // removedConfig contains items that are no longer supported.
