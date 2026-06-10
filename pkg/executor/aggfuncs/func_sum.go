@@ -434,12 +434,12 @@ func (e *baseSumDistinct4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 		return nil
 	}
 	sum := *types.NewDecFromInt(0)
+	var newSum types.MyDecimal
 	for _, val := range p.valSet.M {
-		newSum := new(types.MyDecimal)
-		if err := types.DecimalAdd(&sum, val, newSum); err != nil {
+		if err := types.DecimalAdd(&sum, val, &newSum); err != nil {
 			return err
 		}
-		sum = *newSum
+		sum = newSum
 	}
 	chk.AppendMyDecimal(e.ordinal, &sum)
 	return nil
