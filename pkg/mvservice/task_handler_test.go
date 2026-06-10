@@ -2008,6 +2008,37 @@ func TestServerHelperTryBackoffRefreshManualCancel(t *testing.T) {
 		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
 	})
 
+	t.Run("locked_next_time_null_keeps_unscheduled", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+		resolverCalled := false
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockMVNextTime,
+			testSQLUpdateMVNextTime,
+			101,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				resolverCalled = true
+				next := mvsNow().UTC().Add(time.Hour)
+				return &next, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.False(t, resolverCalled)
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
+	})
+
 	t.Run("resolver_error_falls_back_to_cooldown", func(t *testing.T) {
 		se := newRecordingSessionContext()
 		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
@@ -2151,5 +2182,36 @@ func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {
 		require.Len(t, se.executedRestrictedArg[1], 2)
 		require.Nil(t, se.executedRestrictedArg[1][0])
 		require.Equal(t, int64(201), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("locked_next_time_null_keeps_unscheduled", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockPurgeNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+		resolverCalled := false
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockPurgeNextTime,
+			testSQLUpdatePurgeNextTime,
+			201,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				resolverCalled = true
+				next := mvsNow().UTC().Add(time.Hour)
+				return &next, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.False(t, resolverCalled)
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockPurgeNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
 	})
 }

@@ -300,7 +300,7 @@ Important implication:
 
 - persisting `NEXT_TIME` is required for correctness of this backoff
 - local in-memory reschedule alone is not enough, because a later metadata fetch would otherwise
-  rebuild the task from old system-table state and re-make it due too early
+  rebuild the task from old system-table state and re-make it too early
 - whether the object still has background auto refresh/purge should be judged from the current
   persisted info-row state, using `NEXT_TIME IS NOT NULL` as the v1 signal
 - if the current info row already has `NEXT_TIME IS NULL`, `mvservice` must not synthesize a new

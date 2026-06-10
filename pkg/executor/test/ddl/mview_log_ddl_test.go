@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,19 @@ func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
 	rs, err := tk.Session().ExecuteInternal(ctx, sql)
 	require.NoError(t, err)
 	require.Nil(t, rs)
+}
+
+func waitMVTaskCancelWatcherRequested(t *testing.T, watchNamePrefix string) <-chan struct{} {
+	t.Helper()
+
+	requestedCh := make(chan struct{})
+	var requestedChClosed atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvTaskCancelWatcherRequested", func(watchName string) {
+		if strings.HasPrefix(watchName, watchNamePrefix) && requestedChClosed.CompareAndSwap(false, true) {
+			close(requestedCh)
+		}
+	})
+	return requestedCh
 }
 
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
@@ -711,6 +725,7 @@ func TestPurgeMaterializedViewLogCancelWatcherUsesHistRequest(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 
 	requester := "'purge_watcher_req'@'stage-d'"
+	requestedCh := waitMVTaskCancelWatcherRequested(t, "mlog-purge-")
 	tk.MustExec(
 		`UPDATE mysql.tidb_mlog_purge_hist
 SET CANCEL_REQUESTED_AT = NOW(6),
@@ -721,7 +736,11 @@ WHERE MLOG_ID = ?
 		requester,
 		mlogID,
 	)
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-requestedCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for purge cancel watcher to observe request")
+	}
 
 	require.NoError(t, failpoint.Disable(pauseFailpoint))
 	paused = false
@@ -807,8 +826,13 @@ func TestCancelMaterializedViewLogPurgeJob(t *testing.T) {
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_purge_cancel_u", Hostname: "%"}, nil, nil, nil))
 	tkCancel.MustGetErrCode(fmt.Sprintf("cancel materialized view log purge job %s", jobID), errno.ErrTableaccessDenied)
 	tk.MustExec("grant alter on test.t_purge_cancel_job to 'mv_purge_cancel_u'@'%'")
+	requestedCh := waitMVTaskCancelWatcherRequested(t, "mlog-purge-")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view log purge job %s", jobID))
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-requestedCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for purge cancel watcher to observe request")
+	}
 
 	require.NoError(t, failpoint.Disable(pauseFailpoint))
 	paused = false

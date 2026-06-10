@@ -3996,10 +3996,13 @@ const (
 	ImportIntoCancel ImportIntoActionTp = "cancel"
 )
 
+// CancelMaterializedViewJobType identifies which materialized-view job family a CANCEL statement targets.
 type CancelMaterializedViewJobType uint8
 
 const (
+	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
 	CancelMaterializedViewJobTypeRefresh CancelMaterializedViewJobType = iota + 1
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
 	CancelMaterializedViewJobTypeLogPurge
 )
 

@@ -56,6 +56,19 @@ func requireRowsContainPrefix(t *testing.T, rows [][]any, prefix string) {
 	require.Failf(t, "prefix not found", "prefix=%s rows=%v", prefix, rows)
 }
 
+func waitMVTaskCancelWatcherRequested(t *testing.T, watchNamePrefix string) <-chan struct{} {
+	t.Helper()
+
+	requestedCh := make(chan struct{})
+	var requestedChClosed atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvTaskCancelWatcherRequested", func(watchName string) {
+		if strings.HasPrefix(watchName, watchNamePrefix) && requestedChClosed.CompareAndSwap(false, true) {
+			close(requestedCh)
+		}
+	})
+	return requestedCh
+}
+
 func requireRefreshTiFlashSessionVarsApplied(
 	t *testing.T,
 	refresh func(),
@@ -1535,6 +1548,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCancelWatcherStopsBeforeCreate
 	}, 10*time.Second, 100*time.Millisecond)
 
 	requester := "'oop_watcher_req'@'stage-c'"
+	requestedCh := waitMVTaskCancelWatcherRequested(t, "refresh-")
 	tk.MustExec(
 		`UPDATE mysql.tidb_mview_refresh_hist
 SET CANCEL_REQUESTED_AT = NOW(6),
@@ -1545,7 +1559,11 @@ WHERE MVIEW_ID = ?
 		requester,
 		mviewID,
 	)
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-requestedCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh cancel watcher to observe request")
+	}
 
 	require.NoError(t, failpoint.Disable(pauseFailpoint))
 	paused = false
@@ -1820,6 +1838,7 @@ func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 
 	requester := "'refresh_watcher_req'@'stage-c'"
+	requestedCh := waitMVTaskCancelWatcherRequested(t, "refresh-")
 	tk.MustExec(
 		`UPDATE mysql.tidb_mview_refresh_hist
 SET CANCEL_REQUESTED_AT = NOW(6),
@@ -1830,7 +1849,11 @@ WHERE MVIEW_ID = ?
 		requester,
 		mviewID,
 	)
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-requestedCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh cancel watcher to observe request")
+	}
 
 	require.NoError(t, failpoint.Disable(pauseFailpoint))
 	paused = false
@@ -1917,8 +1940,13 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_cancel_u", Hostname: "%"}, nil, nil, nil))
 	tkCancel.MustGetErrCode(fmt.Sprintf("cancel materialized view refresh job %s", jobID), errno.ErrTableaccessDenied)
 	tk.MustExec("grant alter on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
+	requestedCh := waitMVTaskCancelWatcherRequested(t, "refresh-")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-requestedCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh cancel watcher to observe request")
+	}
 
 	require.NoError(t, failpoint.Disable(pauseFailpoint))
 	paused = false

@@ -721,6 +721,13 @@ func tryBackoffMVTaskManualCancel(
 	if len(rows) == 0 {
 		return false, time.Time{}, nil
 	}
+	if rows[0].IsNull(0) {
+		if _, err := sqlExec.ExecuteInternal(ctx, "COMMIT"); err != nil {
+			return false, time.Time{}, err
+		}
+		committed = true
+		return true, time.Time{}, nil
+	}
 
 	appliedNextUTC := nextTimeUTC
 	var appliedNextArg any = nextTimeUTC
@@ -741,6 +748,13 @@ func tryBackoffMVTaskManualCancel(
 				appliedNextArg = appliedNextUTC
 			}
 		}
+	} else {
+		logutil.BgLogger().Warn(
+			"derive materialized view task next schedule after manual cancel failed, fallback to cooldown",
+			zap.Int64("object_id", objectID),
+			zap.Time("cooldown_next_time_utc", nextTimeUTC),
+			zap.Error(err),
+		)
 	}
 	if _, err := execRCRestrictedSQLWithSession(ctx, sctx, updateSQL, []any{appliedNextArg, objectID}); err != nil {
 		return false, time.Time{}, err
