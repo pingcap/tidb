@@ -223,7 +223,6 @@ func (*avgPartial4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 type partialResult4AvgDistinctDecimal struct {
-	partialResult4AvgDecimal
 	valSet set.StringToDecimalSetWithMemoryUsage
 }
 
@@ -257,8 +256,6 @@ func (*baseAvgDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta
 
 func (*baseAvgDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
-	p.sum = *types.NewDecFromInt(0)
-	p.count = int64(0)
 	p.valSet, _ = set.NewStringToDecimalSetWithMemoryUsage()
 }
 
@@ -281,26 +278,28 @@ func (e *baseAvgDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext,
 			continue
 		}
 		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + types.MyDecimalStructSize
-		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p.sum, input, newSum)
-		if err != nil {
-			return memDelta, err
-		}
-		p.sum = *newSum
-		p.count++
 	}
 	return memDelta, nil
 }
 
 func (e *baseAvgDistinct4Decimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
-	if p.count == 0 {
+	count := int64(p.valSet.Count())
+	if count == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	decimalCount := types.NewDecFromInt(p.count)
+	sum := *types.NewDecFromInt(0)
+	for _, val := range p.valSet.M {
+		newSum := new(types.MyDecimal)
+		if err := types.DecimalAdd(&sum, val, newSum); err != nil {
+			return err
+		}
+		sum = *newSum
+	}
+	decimalCount := types.NewDecFromInt(count)
 	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
+	err := types.DecimalDiv(&sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}
@@ -331,14 +330,6 @@ func (*avgPartial4DistinctDecimal) MergePartialResult(_ AggFuncUpdateContext, sr
 		}
 
 		memDelta += d.valSet.Insert(key, val)
-
-		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&d.sum, val, newSum)
-		if err != nil {
-			return memDelta, err
-		}
-		d.sum = *newSum
-		d.count++
 	}
 	return memDelta, nil
 }
@@ -492,7 +483,6 @@ func (*avgPartial4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 type partialResult4AvgDistinctFloat64 struct {
-	partialResult4AvgFloat64
 	valSet set.Float64SetWithMemoryUsage
 }
 
@@ -510,8 +500,6 @@ func (*baseAvgDistinct4Float64) AllocPartialResult() (pr PartialResult, memDelta
 
 func (*baseAvgDistinct4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
-	p.sum = float64(0)
-	p.count = int64(0)
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
@@ -526,8 +514,6 @@ func (e *baseAvgDistinct4Float64) UpdatePartialResult(sctx AggFuncUpdateContext,
 			continue
 		}
 
-		p.sum += input
-		p.count++
 		memDelta += p.valSet.Insert(input)
 	}
 	return memDelta, nil
@@ -535,11 +521,16 @@ func (e *baseAvgDistinct4Float64) UpdatePartialResult(sctx AggFuncUpdateContext,
 
 func (e *baseAvgDistinct4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
-	if p.count == 0 {
+	count := p.valSet.Count()
+	if count == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
+	sum := float64(0)
+	for val := range p.valSet.M {
+		sum += val
+	}
+	chk.AppendFloat64(e.ordinal, sum/float64(count))
 	return nil
 }
 
@@ -555,8 +546,6 @@ func (*avgPartial4DistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, sr
 		}
 
 		memDelta += d.valSet.Insert(val)
-		d.sum += val
-		d.count++
 	}
 	return memDelta, nil
 }

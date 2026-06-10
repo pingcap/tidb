@@ -117,7 +117,6 @@ func (*baseGroupConcatDistinct4String) AllocPartialResult() (pr PartialResult, m
 
 func (*baseGroupConcatDistinct4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
-	p.buffer = nil
 	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
 }
 
@@ -173,21 +172,20 @@ func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpd
 		return nil
 	}
 
+	buffer := &bytes.Buffer{}
 	for _, val := range p.valSet.M {
-		if p.buffer == nil {
-			p.buffer = &bytes.Buffer{}
-		} else {
-			p.buffer.WriteString(e.sep)
+		if buffer.Len() > 0 {
+			buffer.WriteString(e.sep)
 		}
-		p.buffer.WriteString(val)
+		buffer.WriteString(val)
 	}
 
-	err := e.truncatePartialResultIfNeed(sctx, p.buffer)
+	err := e.truncatePartialResultIfNeed(sctx, buffer)
 	if err != nil {
 		return err
 	}
 
-	chk.AppendString(e.ordinal, p.buffer.String())
+	chk.AppendString(e.ordinal, buffer.String())
 	return nil
 }
 
@@ -317,7 +315,7 @@ func (e *groupConcat) GetTruncated() *int32 {
 }
 
 type partialResult4GroupConcatDistinct struct {
-	basePartialResult4GroupConcat
+	valsBuf           *bytes.Buffer
 	valSet            set.StringToStringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }

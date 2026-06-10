@@ -47,14 +47,10 @@ type partialResult4SumDecimal struct {
 }
 
 type partialResult4SumDistinctFloat64 struct {
-	val    float64
-	isNull bool
 	valSet set.Float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
-	val    types.MyDecimal
-	isNull bool
 	valSet set.StringToDecimalSetWithMemoryUsage
 }
 
@@ -334,14 +330,12 @@ type baseSumDistinct4Float64 struct {
 func (*baseSumDistinct4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	setSize := int64(0)
 	p := new(partialResult4SumDistinctFloat64)
-	p.isNull = true
 	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + setSize
 }
 
 func (*baseSumDistinct4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
-	p.isNull = true
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
@@ -356,23 +350,21 @@ func (e *baseSumDistinct4Float64) UpdatePartialResult(sctx AggFuncUpdateContext,
 			continue
 		}
 		memDelta += p.valSet.Insert(input)
-		if p.isNull {
-			p.val = input
-			p.isNull = false
-			continue
-		}
-		p.val += input
 	}
 	return memDelta, nil
 }
 
 func (e *baseSumDistinct4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctFloat64)(pr)
-	if p.isNull {
+	if p.valSet.Count() == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, p.val)
+	sum := float64(0)
+	for val := range p.valSet.M {
+		sum += val
+	}
+	chk.AppendFloat64(e.ordinal, sum)
 	return nil
 }
 
@@ -388,8 +380,6 @@ func (*sum4PartialDistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, sr
 		}
 
 		memDelta += d.valSet.Insert(val)
-		d.val += val
-		d.isNull = false
 	}
 	return memDelta, nil
 }
@@ -404,7 +394,6 @@ type baseSumDistinct4Decimal struct {
 
 func (*baseSumDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
-	p.isNull = true
 	setSize := int64(0)
 	p.valSet, setSize = set.NewStringToDecimalSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
@@ -412,7 +401,6 @@ func (*baseSumDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta
 
 func (*baseSumDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
-	p.isNull = true
 	p.valSet, _ = set.NewStringToDecimalSetWithMemoryUsage()
 }
 
@@ -435,27 +423,25 @@ func (e *baseSumDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext,
 			continue
 		}
 		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + types.MyDecimalStructSize
-		if p.isNull {
-			p.val = *input
-			p.isNull = false
-			continue
-		}
-		newSum := new(types.MyDecimal)
-		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
-			return memDelta, err
-		}
-		p.val = *newSum
 	}
 	return memDelta, nil
 }
 
 func (e *baseSumDistinct4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctDecimal)(pr)
-	if p.isNull {
+	if p.valSet.Count() == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendMyDecimal(e.ordinal, &p.val)
+	sum := *types.NewDecFromInt(0)
+	for _, val := range p.valSet.M {
+		newSum := new(types.MyDecimal)
+		if err := types.DecimalAdd(&sum, val, newSum); err != nil {
+			return err
+		}
+		sum = *newSum
+	}
+	chk.AppendMyDecimal(e.ordinal, &sum)
 	return nil
 }
 
@@ -471,14 +457,6 @@ func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, s
 		}
 
 		memDelta += d.valSet.Insert(key, val)
-
-		newSum := new(types.MyDecimal)
-		if err = types.DecimalAdd(&d.val, val, newSum); err != nil {
-			return memDelta, err
-		}
-
-		d.val = *newSum
-		d.isNull = false
 	}
 	return memDelta, nil
 }

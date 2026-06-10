@@ -36,7 +36,7 @@ func (e *stddevSamp4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr 
 }
 
 type stddevSampOriginal4DistinctFloat64 struct {
-	varPop4DistinctFloat64
+	varPopOriginal4DistinctFloat64
 }
 
 type stddevSampPartial4DistinctFloat64 struct {
@@ -45,22 +45,22 @@ type stddevSampPartial4DistinctFloat64 struct {
 
 func (e *stddevSampOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
-	if p.count <= 1 {
+	count, variance := calculateDistinctFloat64Variance(p)
+	if count <= 1 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	variance := p.variance / float64(p.count-1)
-	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
+	chk.AppendFloat64(e.ordinal, math.Sqrt(variance/float64(count-1)))
 	return nil
 }
 
 func (e *stddevSampPartial4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
-	if p.count <= 1 {
+	count, variance := calculateDistinctFloat64Variance(p)
+	if count <= 1 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	variance := p.variance / float64(p.count-1)
-	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
+	chk.AppendFloat64(e.ordinal, math.Sqrt(variance/float64(count-1)))
 	return nil
 }

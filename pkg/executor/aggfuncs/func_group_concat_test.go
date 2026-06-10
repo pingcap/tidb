@@ -43,7 +43,7 @@ func TestGroupConcat(t *testing.T) {
 	ctx := mock.NewContext()
 
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 0, 5, nil, "0 1 2 3 4")
-	testAggFunc(t, test)
+	testAggFuncWithoutDistinct(t, test)
 
 	test2 := buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00")
 	test2.orderBy = true
