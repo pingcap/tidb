@@ -42,6 +42,53 @@ func defaultCtx() sessionctx.Context {
 	return ctx
 }
 
+func TestJoinerOtherConditionChunkUsesInitChunkSize(t *testing.T) {
+	lfields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
+	rfields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
+	fields := append(append([]*types.FieldType{}, lfields...), rfields...)
+	conditions := []expression.Expression{expression.NewOne()}
+	defaultInner := []types.Datum{types.NewIntDatum(0)}
+
+	for _, joinType := range []base.JoinType{base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin} {
+		ctx := defaultCtx()
+		initChunkSize := 8
+		ctx.GetSessionVars().InitChunkSize = initChunkSize
+		maxChunkSize := ctx.GetSessionVars().MaxChunkSize
+		joiner := NewJoiner(ctx, joinType, false, defaultInner, conditions, lfields, rfields, nil, false)
+		base := joinerBaseForTest(t, joiner)
+		require.NotNil(t, base.chk)
+		require.Equal(t, initChunkSize, base.chk.Capacity())
+
+		cloned := joiner.Clone()
+		clonedBase := joinerBaseForTest(t, cloned)
+		require.NotNil(t, clonedBase.chk)
+		require.Equal(t, initChunkSize, clonedBase.chk.Capacity())
+
+		outerRow := genTestChunk(maxChunkSize, 1, lfields).GetRow(0)
+		innerChk := genTestChunk(maxChunkSize, initChunkSize+1, rfields)
+		result := chunk.New(fields, maxChunkSize, maxChunkSize)
+		iter := chunk.NewIterator4Chunk(innerChk)
+		iter.Begin()
+		_, _, err := joiner.TryToMatchInners(outerRow, iter, result)
+		require.NoError(t, err)
+		require.Equal(t, initChunkSize+1, result.NumRows())
+	}
+}
+
+func joinerBaseForTest(t *testing.T, joiner Joiner) *baseJoiner {
+	switch j := joiner.(type) {
+	case *innerJoiner:
+		return &j.baseJoiner
+	case *leftOuterJoiner:
+		return &j.baseJoiner
+	case *rightOuterJoiner:
+		return &j.baseJoiner
+	default:
+		t.Fatalf("unexpected joiner type %T", joiner)
+	}
+	return nil
+}
+
 func TestRequiredRows(t *testing.T) {
 	joinTypes := []base.JoinType{base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin}
 	lTypes := [][]byte{
