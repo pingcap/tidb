@@ -21,7 +21,6 @@ package schematracker
 import (
 	"context"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -253,11 +252,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogName := "$mlog$" + baseTable.Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
-	if utf8.RuneCountInString(mlogNameCIStr.L) > mysql.MaxTableNameLength {
-		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mlogNameCIStr)
-	}
+	mlogNameCIStr := ddl.BuildMaterializedViewLogName(baseTable.Name)
 	if _, err := d.TableByName(context.Background(), schemaName, mlogNameCIStr); err == nil {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
 	} else if !infoschema.ErrTableNotExists.Equal(err) {

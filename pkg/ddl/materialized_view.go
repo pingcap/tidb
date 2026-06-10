@@ -47,7 +47,19 @@ import (
 const (
 	mviewAttrAlertWarning = "mview_alert_warning"
 	mviewAttrAlertOverdue = "mview_alert_overdue"
+
+	materializedViewLogNamePrefix = "$mlog$"
 )
+
+// BuildMaterializedViewLogName builds the internal materialized view log table name for a base table.
+func BuildMaterializedViewLogName(baseTableName pmodel.CIStr) pmodel.CIStr {
+	baseNameRunes := []rune(baseTableName.O)
+	maxBaseNameLen := mysql.MaxTableNameLength - len(materializedViewLogNamePrefix)
+	if len(baseNameRunes) > maxBaseNameLen {
+		baseNameRunes = baseNameRunes[:maxBaseNameLen]
+	}
+	return pmodel.NewCIStr(materializedViewLogNamePrefix + string(baseNameRunes))
+}
 
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
 	is := e.infoCache.GetLatest()
@@ -89,7 +101,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogName := BuildMaterializedViewLogName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, baseTableName.Schema, mlogName)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -289,7 +301,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogName := BuildMaterializedViewLogName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
 	if err != nil {
 		return err
@@ -417,7 +429,7 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogName := BuildMaterializedViewLogName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
 	if err != nil {
 		return err

@@ -387,13 +387,18 @@ func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	tk.MustExec("use test")
 
 	maxName := strings.Repeat("表", 58)
+	expectedMLogName := ddl.BuildMaterializedViewLogName(pmodel.NewCIStr(maxName)).O
 	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", maxName))
 	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", maxName))
-	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", "$mlog$"+maxName)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", expectedMLogName)).Check(testkit.Rows("1"))
+	tk.MustExec(fmt.Sprintf("drop materialized view log on `%s`", maxName))
 
 	tooLongName := strings.Repeat("表", 59)
 	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", tooLongName))
-	tk.MustGetErrCode(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName), errno.ErrTooLongIdent)
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName))
+	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", expectedMLogName)).Check(testkit.Rows("1"))
+	tk.MustExec(fmt.Sprintf("alter materialized view log on `%s` purge next date_add(now(), interval 1 hour)", tooLongName))
+	tk.MustQuery(fmt.Sprintf("show create materialized view log on `%s`", tooLongName)).CheckAt([]int{0}, testkit.Rows(tooLongName))
 }
 
 func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {
