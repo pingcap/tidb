@@ -289,17 +289,17 @@ func (e *baseAvgDistinct4Decimal) AppendFinalResult2Chunk(ctx AggFuncUpdateConte
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	sum := *types.NewDecFromInt(0)
-	var newSum types.MyDecimal
+	var sumBuf, sumTmpBuf types.MyDecimal
+	sum, sumTmp := sumBuf.FromInt(0), &sumTmpBuf
 	for _, val := range p.valSet.M {
-		if err := types.DecimalAdd(&sum, val, &newSum); err != nil {
+		if err := types.DecimalAdd(sum, val, sumTmp); err != nil {
 			return err
 		}
-		sum = newSum
+		sum, sumTmp = sumTmp, sum
 	}
 	decimalCount := types.NewDecFromInt(count)
 	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
+	err := types.DecimalDiv(sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}

@@ -180,13 +180,18 @@ func mergePartialResult4VarPopDistinctFloat64(src, dst *partialResult4VarPopDist
 }
 
 func calculateDistinctFloat64Variance(p *partialResult4VarPopDistinctFloat64) (count int64, variance float64) {
+	count = int64(p.valSet.Count())
+	if count == 0 {
+		return 0, 0
+	}
 	sum := float64(0)
 	for val := range p.valSet.M {
-		count++
 		sum += val
-		if count > 1 {
-			variance = calculateIntermediate(count, sum, val, variance)
-		}
+	}
+	mean := sum / float64(count)
+	for val := range p.valSet.M {
+		diff := val - mean
+		variance += diff * diff
 	}
 	return count, variance
 }
