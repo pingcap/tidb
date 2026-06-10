@@ -36,12 +36,27 @@ type TaskMeta struct {
 	FileSize int64 `json:"file_size"`
 	// SubtaskRegions is the number of regions per subtask span, 0 means auto.
 	SubtaskRegions int `json:"subtask_regions"`
-	// WritersPerEncoder is m: each encoder serves m reader/writer pairs,
-	// 0 means the default.
+	// Each encoder (one per task-concurrency slot) serves ReadersPerEncoder
+	// readers and WritersPerEncoder writers; both 0 mean the default 1. Writers
+	// must be a multiple of readers so the readers evenly split the writers'
+	// sub-ranges. Total readers = thread×ReadersPerEncoder, total writers =
+	// thread×WritersPerEncoder, decoupling cop read concurrency from S3 write
+	// fan-out.
+	ReadersPerEncoder int `json:"readers_per_encoder"`
 	WritersPerEncoder int `json:"writers_per_encoder"`
 }
 
-const defaultWritersPerEncoder = 2
+const (
+	defaultReadersPerEncoder = 1
+	defaultWritersPerEncoder = 1
+)
+
+func (m *TaskMeta) effectiveReadersPerEncoder() int {
+	if m.ReadersPerEncoder > 0 {
+		return m.ReadersPerEncoder
+	}
+	return defaultReadersPerEncoder
+}
 
 // Benchmark env knobs (perf prototype). They let the worker-tidb operator tune
 // the export pipeline without a statement-level option, mirroring the existing

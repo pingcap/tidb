@@ -66,6 +66,7 @@ type exportOptions struct {
 	// thread is the task concurrency, which is also the per-subtask encoder
 	// count. 0 means auto: min(8, executor node CPU).
 	thread            int
+	readersPerEncoder int
 	writersPerEncoder int
 	subtaskRegions    int
 	detached          bool
@@ -107,6 +108,12 @@ func (e *ExportTableExec) parseOptions() (*exportOptions, error) {
 				return nil, errors.Errorf("invalid thread value")
 			}
 			opts.thread = int(v)
+		case "readers_per_encoder":
+			v, err := optAsInt64()
+			if err != nil || v <= 0 || v > 16 {
+				return nil, errors.Errorf("invalid readers_per_encoder value")
+			}
+			opts.readersPerEncoder = int(v)
 		case "writers_per_encoder":
 			v, err := optAsInt64()
 			if err != nil || v <= 0 || v > 16 {
@@ -181,6 +188,7 @@ func (e *ExportTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Format:            "csv",
 		FileSize:          opts.fileSize,
 		SubtaskRegions:    opts.subtaskRegions,
+		ReadersPerEncoder: opts.readersPerEncoder,
 		WritersPerEncoder: opts.writersPerEncoder,
 	}
 	taskKey := export.TaskKey(tblInfo.ID, snapshotTS)
