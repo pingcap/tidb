@@ -853,6 +853,13 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	// only SYSTEM ks need this GC loop, user keyspace is only allowed to access
+	// SYSTEM ks, we can keep it alive.
+	if kv.IsSystemKS(do.store) {
+		do.wg.Run(func() {
+			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
+		}, "crossKSSessMgrGCLoop")
+	}
 
 	return nil
 }
