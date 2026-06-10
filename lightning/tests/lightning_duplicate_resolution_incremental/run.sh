@@ -22,7 +22,7 @@ check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-resolution1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-resolution2.log"
-WAIT_LIGHTNING_START_SECONDS=120
+WAIT_LIGHTNING_START_SECONDS=30
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
 export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckDupe=return(10)"
