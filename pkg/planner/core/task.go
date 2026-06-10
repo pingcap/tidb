@@ -398,13 +398,14 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// for hash inner join, both side is ok, by default, we use the probe side
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
+	// for full outer join, it can not keep its children's MPPPartitionType, because it will generate NULL values for both left and right sides
 	task := &MppTask{p: p}
 	var outerTask *MppTask
-	// can not use the task from tasks because it maybe updated.
 	switch p.JoinType {
 	case logicalop.FullOuterJoin:
 	case logicalop.InnerJoin:
 		if p.InnerChildIdx == 0 {
+			// can not use the task from tasks because it maybe updated.
 			outerTask = rTask
 		} else {
 			outerTask = lTask
