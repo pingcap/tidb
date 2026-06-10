@@ -192,7 +192,6 @@ go_library(
         "//pkg/util/tracing",
         "//pkg/util/zeropool",
         "@com_github_bits_and_blooms_bitset//:bitset",
-        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/coprocessor",

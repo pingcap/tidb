@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -4670,17 +4669,15 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
-			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
-			}
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
 		// share the same AWS role to access import-into source data bucket, this
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			if err := checkNextGenS3PathWithSem(u); err != nil {
+				return nil, err
+			}
 			values := u.Query()
 			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
