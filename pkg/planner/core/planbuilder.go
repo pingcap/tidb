@@ -4726,17 +4726,15 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
-			if kerneltype.IsNextGen() && storage.IsS3(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
-			}
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
 		// share the same AWS role to access import-into source data bucket, this
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && storage.IsS3(u) {
+			if err := checkNextGenS3PathWithSem(u); err != nil {
+				return nil, err
+			}
 			values := u.Query()
 			values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -6381,14 +6379,19 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the keyspace name as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, disallow explicit S3 external ID unless it
+// is the keyspace name. The keyspace name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
-	for k := range values {
-		lowerK := strings.ToLower(k)
-		if lowerK == storage.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+	expectedExternalID := config.GetGlobalKeyspaceName()
+	for k, vs := range values {
+		normalizedK := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+		if normalizedK == storage.S3ExternalID {
+			for _, v := range vs {
+				if v != expectedExternalID {
+					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+				}
+			}
 		}
 	}
 
