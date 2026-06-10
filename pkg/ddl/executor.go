@@ -6769,7 +6769,7 @@ func (e *executor) createMaskingPolicyWithInfo(
 	onExist OnExist,
 ) error {
 	is := e.infoCache.GetLatest()
-		if existPolicy, ok := e.getMaskingPolicyByNameForDDL(ctx, tableID, cols, policy.Name); ok {
+	if existPolicy, ok := e.getMaskingPolicyByNameForDDL(ctx, tableID, cols, policy.Name); ok {
 		if existPolicy.ColumnID != policy.ColumnID {
 			return errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
 		}
