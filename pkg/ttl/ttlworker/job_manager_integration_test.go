@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -38,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testflag"
@@ -47,13 +51,21 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -104,6 +116,127 @@ func sessionFactoryWithTimeout(t *testing.T, from any, timeout time.Duration) fu
 		}
 		panic("timeout")
 	}
+}
+
+// ttlIndexScanRegionClient is a test-only PD client that returns a fixed set of
+// regions for TTL index keys. It implements the small subset needed by
+// tikv.RegionCache while keeping the region layout deterministic.
+type ttlIndexScanRegionClient struct {
+	pd.Client
+	t       *testing.T
+	regions []*router.Region
+}
+
+func newTTLIndexScanRegionClient(t *testing.T) *ttlIndexScanRegionClient {
+	return &ttlIndexScanRegionClient{t: t}
+}
+
+func newTTLIndexScanRegion(id uint64, startKey, endKey []byte) *router.Region {
+	leader := &metapb.Peer{Id: id, StoreId: 1, Role: metapb.PeerRole_Voter}
+	return &router.Region{
+		Meta: &metapb.Region{
+			Id:       id,
+			StartKey: startKey,
+			EndKey:   endKey,
+			Peers:    []*metapb.Peer{leader},
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: 1,
+				Version: 1,
+			},
+		},
+		Leader: leader,
+	}
+}
+
+// addRegion records a half-open region range [startKey, endKey).
+func (c *ttlIndexScanRegionClient) addRegion(startKey, endKey []byte) {
+	require.True(c.t, kv.Key(endKey).Cmp(startKey) > 0)
+	c.regions = append(c.regions, newTTLIndexScanRegion(uint64(1000+len(c.regions)), startKey, endKey))
+	sort.Slice(c.regions, func(i, j int) bool {
+		return kv.Key(c.regions[i].Meta.StartKey).Cmp(c.regions[j].Meta.StartKey) < 0
+	})
+}
+
+func (c *ttlIndexScanRegionClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
+	regions := make([]*router.Region, 0, min(len(c.regions), limit))
+	for _, r := range c.regions {
+		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 || kv.Key(r.Meta.EndKey).Cmp(key) <= 0 {
+			continue
+		}
+		regions = append(regions, r)
+		if len(regions) >= limit {
+			break
+		}
+	}
+	if len(regions) == 0 {
+		regions = append(regions, newTTLIndexScanRegion(1, []byte{}, []byte{0xFF, 0xFF}))
+	}
+	return regions, nil
+}
+
+func (c *ttlIndexScanRegionClient) GetRegion(_ context.Context, key []byte, _ ...opt.GetRegionOption) (*router.Region, error) {
+	for _, r := range c.regions {
+		if kv.Key(r.Meta.StartKey).Cmp(key) <= 0 && kv.Key(r.Meta.EndKey).Cmp(key) > 0 {
+			return r, nil
+		}
+	}
+	return nil, errors.Errorf("region not found for key %q", key)
+}
+
+func (c *ttlIndexScanRegionClient) GetRegionByID(_ context.Context, regionID uint64, _ ...opt.GetRegionOption) (*router.Region, error) {
+	for _, r := range c.regions {
+		if r.Meta.Id == regionID {
+			return r, nil
+		}
+	}
+	return nil, errors.Errorf("region %d not found", regionID)
+}
+
+func (c *ttlIndexScanRegionClient) BatchScanRegions(ctx context.Context, ranges []router.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
+	regions := make([]*router.Region, 0, len(c.regions))
+	for _, kr := range ranges {
+		r, err := c.ScanRegions(ctx, kr.StartKey, kr.EndKey, limit, opts...)
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, r...)
+	}
+	return regions, nil
+}
+
+func (c *ttlIndexScanRegionClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
+	return &metapb.Store{Id: storeID, Address: fmt.Sprintf("127.0.0.%d", storeID), State: metapb.StoreState_Up}, nil
+}
+
+func (c *ttlIndexScanRegionClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
+	return []*metapb.Store{{Id: 1, Address: "127.0.0.1", State: metapb.StoreState_Up}}, nil
+}
+
+func (c *ttlIndexScanRegionClient) GetClusterID(context.Context) uint64 {
+	return 1
+}
+
+func (c *ttlIndexScanRegionClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+// ttlIndexScanRegionStore wraps the normal TestKit mock store and only replaces
+// the region cache. SQL execution, sessions, and table metadata still use the
+// base store created by testkit.CreateMockStoreAndDomain.
+type ttlIndexScanRegionStore struct {
+	helper.Storage
+	regionCache *tikv.RegionCache
+}
+
+func newTTLIndexScanRegionStore(base helper.Storage, regionClient *ttlIndexScanRegionClient) *ttlIndexScanRegionStore {
+	return &ttlIndexScanRegionStore{
+		Storage:     base,
+		regionCache: tikv.NewRegionCache(regionClient),
+	}
+}
+
+func (s *ttlIndexScanRegionStore) GetRegionCache() *tikv.RegionCache {
+	return s.regionCache
 }
 
 func TestWithSession(t *testing.T) {
@@ -649,6 +782,114 @@ func TestSubmitJob(t *testing.T) {
 		"%d %d test ttlp1 p0 %d %d running",
 		tableID, physicalID, tableStatus.CurrentJobStartTime.Unix(), tableStatus.CurrentJobTTLExpire.Unix(),
 	)))
+}
+
+func TestSubmitJobWithIndexScanForAnonymizedLargeTableShape(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/scan-split-cnt", "return(4)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/scan-split-cnt"))
+	}()
+
+	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
+	vardef.TTLEnableIndexScan.Store(true)
+	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, dom)
+
+	waitAndStopTTLManager(t, dom)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table ttl_events(
+		tenant_id bigint not null,
+		event_id bigint not null,
+		expired_at datetime not null,
+		status tinyint,
+		payload varchar(128),
+		primary key (tenant_id, event_id),
+		index idx_ttl_expired_at(expired_at)
+	) TTL=expired_at + interval 1 hour`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_events"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
+	se, closeSe := sessionFactory()
+	defer closeSe()
+
+	ttlTblForRegions, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	idxForRegions := ttlTblForRegions.FindTTLIndex()
+	require.NotNil(t, idxForRegions)
+
+	regionClient := newTTLIndexScanRegionClient(t)
+	indexKey := func(s string) []byte {
+		tm, err := time.ParseInLocation(time.DateTime, s, se.GetSessionVars().Location())
+		require.NoError(t, err)
+		ft := ttlTblForRegions.TimeColumn.FieldType
+		datum := types.NewTimeDatum(types.NewTime(types.FromGoTime(tm), ft.GetType(), ft.GetDecimal()))
+		encoded, err := codec.EncodeKey(se.GetSessionVars().Location(), nil, datum)
+		require.NoError(t, err)
+		return tablecodec.EncodeIndexSeekKey(ttlTblForRegions.ID, idxForRegions.ID, encoded)
+	}
+	encodedMinNotNull, err := codec.EncodeKey(se.GetSessionVars().Location(), nil, types.MinNotNullDatum())
+	require.NoError(t, err)
+	regionClient.addRegion(tablecodec.EncodeIndexSeekKey(ttlTblForRegions.ID, idxForRegions.ID, encodedMinNotNull), indexKey("2020-01-01 00:00:00"))
+	regionClient.addRegion(indexKey("2020-01-01 00:00:00"), indexKey("2022-01-01 00:00:00"))
+	regionClient.addRegion(indexKey("2022-01-01 00:00:00"), indexKey("2024-01-01 00:00:00"))
+	regionClient.addRegion(indexKey("2024-01-01 00:00:00"), indexKey("2100-01-01 00:00:00"))
+	helperStore, ok := store.(helper.Storage)
+	require.True(t, ok)
+	regionStore := newTTLIndexScanRegionStore(helperStore, regionClient)
+	t.Cleanup(regionStore.regionCache.Close)
+
+	m := ttlworker.NewJobManager("manager-1", nil, regionStore, nil, func() bool {
+		return true
+	})
+	require.NoError(t, m.SubmitJob(se, tblID, tblID, "request-index-scan"))
+
+	ttlTbl := m.InfoSchemaCache().Tables[tblID]
+	require.NotNil(t, ttlTbl)
+	idx := ttlTbl.FindTTLIndex()
+	require.NotNil(t, idx)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	sql, args := cache.SelectFromTTLTaskWithJobID("request-index-scan")
+	rows, err := se.ExecuteSQL(ctx, sql, args...)
+	require.NoError(t, err)
+	require.Len(t, rows, 4)
+
+	tasks := make([]*cache.TTLTask, 0, len(rows))
+	for _, row := range rows {
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), row, m.InfoSchemaCache())
+		require.NoError(t, err)
+		require.NotNil(t, task.SplitBy)
+		require.Equal(t, idx.ID, *task.SplitBy)
+		tasks = append(tasks, task)
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].ScanID < tasks[j].ScanID
+	})
+
+	require.Empty(t, tasks[0].ScanRangeStart)
+	require.Equal(t, "2020-01-01 00:00:00", tasks[0].ScanRangeEnd[0].GetMysqlTime().String())
+	require.Equal(t, "2020-01-01 00:00:00", tasks[1].ScanRangeStart[0].GetMysqlTime().String())
+	require.Equal(t, "2022-01-01 00:00:00", tasks[1].ScanRangeEnd[0].GetMysqlTime().String())
+	require.Equal(t, "2022-01-01 00:00:00", tasks[2].ScanRangeStart[0].GetMysqlTime().String())
+	require.Equal(t, "2024-01-01 00:00:00", tasks[2].ScanRangeEnd[0].GetMysqlTime().String())
+	require.Equal(t, "2024-01-01 00:00:00", tasks[3].ScanRangeStart[0].GetMysqlTime().String())
+	require.Empty(t, tasks[3].ScanRangeEnd)
+
+	generator, err := sqlbuilder.NewScanQueryGenerator(ttlTbl, tasks[1].ExpireTime, tasks[1].ScanRangeStart, tasks[1].ScanRangeEnd, idx.Name.O)
+	require.NoError(t, err)
+	scanSQL, err := generator.NextSQL(nil, 32)
+	require.NoError(t, err)
+	require.Contains(t, scanSQL, "FORCE INDEX(`idx_ttl_expired_at`)")
+	require.Contains(t, scanSQL, "`expired_at` >= '2020-01-01 00:00:00'")
+	require.Contains(t, scanSQL, "`expired_at` < '2022-01-01 00:00:00'")
+	require.Contains(t, scanSQL, "ORDER BY `expired_at`, `tenant_id`, `event_id` ASC")
+	tk.MustQuery("explain format='brief' " + scanSQL).MultiCheckContain([]string{"IndexRangeScan", "idx_ttl_expired_at"})
 }
 
 func TestRescheduleJobs(t *testing.T) {
