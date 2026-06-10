@@ -1616,6 +1616,12 @@ func (c *Config) prepareErrorMessageExtensions(ignoreInvalid bool) error {
 	for idx := range c.ErrorMessageExtensions {
 		extension := &c.ErrorMessageExtensions[idx]
 		extension.Regexp = nil
+		if strings.TrimSpace(extension.Pattern) == "" {
+			if ignoreInvalid {
+				continue
+			}
+			return fmt.Errorf("empty error-msg-extension pattern")
+		}
 		compiledRegexp, err := regexp.Compile(extension.Pattern)
 		if err != nil {
 			if ignoreInvalid {

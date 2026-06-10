@@ -207,6 +207,13 @@ func TestErrorMessageExtensionInvalidRegexp(t *testing.T) {
 	require.ErrorContains(t, conf.Valid(), "invalid error-msg-extension regexp")
 
 	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: " \t", Suffix: "missing pattern"},
+	}
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	conf = NewConfig()
 	conf.ErrorMessageExtensions = []ErrorMessageExtension{
 		{Pattern: ".*", Suffix: "not allowed"},
 	}
@@ -220,6 +227,26 @@ error-msg-extension = [
 `), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { suffix = "missing pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "", suffix = "empty pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
 }
 
 func TestKeyspaceObservability(t *testing.T) {
