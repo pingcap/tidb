@@ -6381,34 +6381,20 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
-// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
-// name is used as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, disallow explicit S3 external ID unless it
+// is the keyspace name. The keyspace name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
-	hasAccessKey := false
-	hasSecretAccessKey := false
-	hasRoleARN := false
 	for k, vs := range values {
 		normalizedK := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-		switch normalizedK {
-		case storage.S3ExternalID:
+		if normalizedK == storage.S3ExternalID {
 			for _, v := range vs {
 				if v != expectedExternalID {
 					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 				}
 			}
-		case "access-key":
-			hasAccessKey = hasAccessKey || values.Get(k) != ""
-		case "secret-access-key":
-			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
-		case "role-arn":
-			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
-	}
-	if (!hasAccessKey || !hasSecretAccessKey) && !hasRoleARN {
-		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil
