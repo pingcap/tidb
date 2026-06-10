@@ -1416,6 +1416,76 @@ local diagnosisRUCostDistributionPanel = graphPanel.new(
   )
 );
 
+local diagnosisClientWaitRow = row.new(collapse=true, title="Client request wait / retry / failure");
+local diagnosisClientWaitPanel = graphPanel.new(
+  title="Client Request Wait And Failure",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  description="Shows local resource-control request wait distribution together with retry and final failure rates.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-success-p99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(resource_manager_client_request_success_bucket{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-success-p90",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_limit_reserve_time_failed_bucket{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-failed-reserve-p99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(resource_manager_client_request_limit_reserve_time_failed_bucket{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-failed-reserve-p90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_retry{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-retry/s",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_fail{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, type)',
+    legendFormat="{{instance}}-{{resource_group}}-{{type}}-fail/s",
+  )
+) + {
+  seriesOverrides: [
+    {
+      alias: "/\\/s$/",
+      yaxis: 2,
+    },
+  ],
+  yaxes: [
+    {
+      format: "s",
+      label: null,
+      logBase: 1,
+      max: null,
+      min: null,
+      show: true,
+    },
+    {
+      format: "ops",
+      label: null,
+      logBase: 1,
+      max: null,
+      min: null,
+      show: true,
+    },
+  ],
+};
+
 local diagnosisTokenRow = row.new(collapse=true, title="Token balance / throttled / token request latency");
 local diagnosisTokenBalancePanel = graphPanel.new(
   title="Token Balance And Throttle",
@@ -1675,6 +1745,10 @@ TiDBResourceControlDash
   .addPanel(diagnosisResourceBytesPanel, gridPos=rightPanelPos)
   .addPanel(diagnosisResourceCPUCostPanel, gridPos=leftPanelPos)
   .addPanel(diagnosisRUCostDistributionPanel, gridPos=rightPanelPos),
+  gridPos=rowPos
+).addPanel(
+  diagnosisClientWaitRow
+  .addPanel(diagnosisClientWaitPanel, gridPos=fullPanelPos),
   gridPos=rowPos
 ).addPanel(
   diagnosisTokenRow

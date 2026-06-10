@@ -4599,6 +4599,152 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Shows local resource-control request wait distribution together with retry and final failure rates.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 24,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 59,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [
+                  {
+                     "alias": "/\\/s$/",
+                     "yaxis": 2
+                  }
+               ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-success-p99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.90, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-success-p90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_limit_reserve_time_failed_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-failed-reserve-p99",
+                     "refId": "C"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.90, sum(rate(resource_manager_client_request_limit_reserve_time_failed_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-failed-reserve-p90",
+                     "refId": "D"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_client_request_retry{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-retry/s",
+                     "refId": "E"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, type)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-{{type}}-fail/s",
+                     "refId": "F"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Client Request Wait And Failure",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "ops",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            }
+         ],
+         "repeat": null,
+         "repeatIteration": null,
+         "repeatRowId": null,
+         "showTitle": true,
+         "title": "Client request wait / retry / failure",
+         "titleSize": "h6",
+         "type": "row"
+      },
+      {
+         "collapse": true,
+         "collapsed": true,
+         "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+         },
+         "id": 60,
+         "panels": [
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
                "description": "Shows available token balance and throttling state by resource group and TiDB instance.",
                "fill": 1,
                "fillGradient": 0,
@@ -4608,7 +4754,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 59,
+               "id": 61,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4701,7 +4847,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 60,
+               "id": 62,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4816,7 +4962,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 61,
+         "id": 63,
          "panels": [
             {
                "aliasColors": { },
@@ -4833,7 +4979,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 62,
+               "id": 64,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4943,7 +5089,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 63,
+         "id": 65,
          "panels": [
             {
                "aliasColors": { },
@@ -4960,7 +5106,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 64,
+               "id": 66,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -5053,7 +5199,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 65,
+               "id": 67,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
