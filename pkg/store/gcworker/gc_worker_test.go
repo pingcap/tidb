@@ -1111,71 +1111,72 @@ func TestLeaderTick(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	t.Run("UnifiedGCNeedsToWait", func(t *testing.T) {
-		if kerneltype.IsClassic() {
-			t.Skip("starter deploy mode is only available in nextgen kernel")
-		}
+}
 
-		originInTest := intest.InTest
-		originDeployMode := deploymode.Get()
-		t.Cleanup(func() {
-			intest.InTest = originInTest
-			require.NoError(t, deploymode.Set(originDeployMode))
-		})
+func TestUnifiedGCNeedsToWait(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("starter deploy mode is only available in nextgen kernel")
+	}
 
-		// Starter unified GC skips the initial gcWaitTime only in production and
-		// only before the first GC job has completed. Other modes, and intest by
-		// default, keep the normal cooldown semantics.
-		testCases := []struct {
-			name                  string
-			deployMode            deploymode.Mode
-			inTest                bool
-			hasFinishedFirstGCJob bool
-			expected              bool
-		}{
-			{
-				name:                  "starter still waits in intest",
-				deployMode:            deploymode.Starter,
-				inTest:                true,
-				hasFinishedFirstGCJob: false,
-				expected:              true,
-			},
-			{
-				name:                  "starter skips initial wait in production",
-				deployMode:            deploymode.Starter,
-				inTest:                false,
-				hasFinishedFirstGCJob: false,
-				expected:              false,
-			},
-			{
-				name:                  "starter waits after first gc job in production",
-				deployMode:            deploymode.Starter,
-				inTest:                false,
-				hasFinishedFirstGCJob: true,
-				expected:              true,
-			},
-			{
-				name:                  "premium still waits in production",
-				deployMode:            deploymode.Premium,
-				inTest:                false,
-				hasFinishedFirstGCJob: false,
-				expected:              true,
-			},
-		}
-
-		for _, tc := range testCases {
-			t.Run(tc.name, func(t *testing.T) {
-				intest.InTest = tc.inTest
-				require.NoError(t, deploymode.Set(tc.deployMode))
-
-				worker := &GCWorker{
-					lastFinish:            time.Now(),
-					hasFinishedFirstGCJob: tc.hasFinishedFirstGCJob,
-				}
-				require.Equal(t, tc.expected, worker.needsToWait())
-			})
-		}
+	originInTest := intest.InTest
+	originDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		intest.InTest = originInTest
+		require.NoError(t, deploymode.Set(originDeployMode))
 	})
+
+	// Starter unified GC skips the initial gcWaitTime only in production and
+	// only before the first GC job has completed. Other modes, and intest by
+	// default, keep the normal cooldown semantics.
+	testCases := []struct {
+		name                  string
+		deployMode            deploymode.Mode
+		inTest                bool
+		hasFinishedFirstGCJob bool
+		expected              bool
+	}{
+		{
+			name:                  "starter still waits in intest",
+			deployMode:            deploymode.Starter,
+			inTest:                true,
+			hasFinishedFirstGCJob: false,
+			expected:              true,
+		},
+		{
+			name:                  "starter skips initial wait in production",
+			deployMode:            deploymode.Starter,
+			inTest:                false,
+			hasFinishedFirstGCJob: false,
+			expected:              false,
+		},
+		{
+			name:                  "starter waits after first gc job in production",
+			deployMode:            deploymode.Starter,
+			inTest:                false,
+			hasFinishedFirstGCJob: true,
+			expected:              true,
+		},
+		{
+			name:                  "premium still waits in production",
+			deployMode:            deploymode.Premium,
+			inTest:                false,
+			hasFinishedFirstGCJob: false,
+			expected:              true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			intest.InTest = tc.inTest
+			require.NoError(t, deploymode.Set(tc.deployMode))
+
+			worker := &GCWorker{
+				lastFinish:            time.Now(),
+				hasFinishedFirstGCJob: tc.hasFinishedFirstGCJob,
+			}
+			require.Equal(t, tc.expected, worker.needsToWait())
+		})
+	}
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {
