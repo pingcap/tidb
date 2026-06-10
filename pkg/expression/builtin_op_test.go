@@ -75,6 +75,14 @@ func TestUnaryMinusDecimalRetTypeFlen(t *testing.T) {
 
 	f, err := newFunctionForTest(ctx, ast.UnaryMinus, arg)
 	require.NoError(t, err)
+	require.Equal(t, 11, f.GetType(ctx.GetEvalCtx()).GetFlen())
+	require.Equal(t, 2, f.GetType(ctx.GetEvalCtx()).GetDecimal())
+
+	colType := types.NewFieldType(mysql.TypeNewDecimal)
+	colType.SetFlen(10)
+	colType.SetDecimal(2)
+	f, err = newFunctionForTest(ctx, ast.UnaryMinus, &Column{RetType: colType})
+	require.NoError(t, err)
 	require.Equal(t, 10, f.GetType(ctx.GetEvalCtx()).GetFlen())
 	require.Equal(t, 2, f.GetType(ctx.GetEvalCtx()).GetDecimal())
 }
@@ -85,6 +93,12 @@ func TestUnaryMinusIntRetTypeFlen(t *testing.T) {
 	signedArg := datumsToConstants(types.MakeDatums(int64(123)))[0]
 	signedArg.GetType(ctx.GetEvalCtx()).SetFlen(11)
 	signedFunc, err := newFunctionForTest(ctx, ast.UnaryMinus, signedArg)
+	require.NoError(t, err)
+	require.Equal(t, 12, signedFunc.GetType(ctx.GetEvalCtx()).GetFlen())
+
+	signedColType := types.NewFieldType(mysql.TypeLonglong)
+	signedColType.SetFlen(11)
+	signedFunc, err = newFunctionForTest(ctx, ast.UnaryMinus, &Column{RetType: signedColType})
 	require.NoError(t, err)
 	require.Equal(t, 11, signedFunc.GetType(ctx.GetEvalCtx()).GetFlen())
 

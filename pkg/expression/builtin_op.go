@@ -1075,10 +1075,13 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	if evalType == types.ETDecimal ||
-		(evalType == types.ETInt && !intOverflow && !mysql.HasUnsignedFlag(argExprTp.GetFlag())) {
-		// Unary minus only flips the sign for decimal values.
-		// For signed integer without overflow, the sign width is already covered by the input flen.
+	_, isColumn := argExpr.(*Column)
+	if _, ok := argExpr.(*CorrelatedColumn); ok {
+		isColumn = true
+	}
+	if isColumn && (evalType == types.ETDecimal ||
+		(evalType == types.ETInt && !intOverflow && !mysql.HasUnsignedFlag(argExprTp.GetFlag()))) {
+		// Column types already reserve their signed display width, so unary minus does not widen them.
 		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen())
 	} else {
 		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
