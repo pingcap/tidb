@@ -1122,19 +1122,26 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	}
 
 	var maskingPolicies map[int64]*model.MaskingPolicyInfo
-	if ctx != nil {
-		if is := ctx.GetInfoSchema(); is != nil {
-			allPolicies := is.AllMaskingPolicies()
-			if len(allPolicies) > 0 {
-				maskingPolicies = make(map[int64]*model.MaskingPolicyInfo)
-				for _, policy := range allPolicies {
-					if policy.TableID == tableInfo.ID {
-						maskingPolicies[policy.ColumnID] = policy
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				maskingPolicies = nil
+			}
+		}()
+		if ctx != nil {
+			if is := ctx.GetInfoSchema(); is != nil {
+				allPolicies := is.AllMaskingPolicies()
+				if len(allPolicies) > 0 {
+					maskingPolicies = make(map[int64]*model.MaskingPolicyInfo)
+					for _, policy := range allPolicies {
+						if policy.TableID == tableInfo.ID {
+							maskingPolicies[policy.ColumnID] = policy
+						}
 					}
 				}
 			}
 		}
-	}
+	}()
 
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
