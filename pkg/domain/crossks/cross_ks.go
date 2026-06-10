@@ -48,7 +48,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const crossKSSessPoolSize = 5
+const (
+	crossKSSessPoolSize         = 5
+	crossKSRuntimeIdleTimeout   = 30 * time.Minute
+	crossKSRuntimeSweepInterval = time.Minute
+)
 
 type runtimeEntry struct {
 	sessMgr       *SessionManager
@@ -326,7 +330,7 @@ func (*Manager) createSessionManager(
 
 // release releases the runtime handle for the specified keyspace and holderID.
 // the resources will be cleaned up if there is no active holder after enough
-// time. we will impl this part later.
+// time.
 func (m *Manager) release(targetKS string, holderID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -343,6 +347,57 @@ func (m *Manager) release(targetKS string, holderID string) {
 		zap.String("targetKS", targetKS),
 		zap.String("holderID", holderID),
 		zap.Int("activeHolderCount", len(entry.activeHolders)))
+}
+
+// RunSystemKSGCLoop periodically evicts idle cross keyspace runtimes.
+// as the name noted, this loop only runs in SYSTEM keyspace, user keyspace
+// only access the SYSTEM ks, and will be kept alive.
+// Note: there are raw caller to GetOrCreate which conflicts with the GC loop.
+// we will make the API more clear in the future after we can refactor those
+// callers to use Acquire instead of GetOrCreate directly.
+func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
+	interval := crossKSRuntimeSweepInterval
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+		}
+	}
+}
+
+func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
+	type evictedRuntime struct {
+		targetKS string
+		entry    *runtimeEntry
+	}
+
+	evicted := make([]evictedRuntime, 0, 1)
+	now := time.Now()
+	m.mu.Lock()
+	for targetKS, entry := range m.runtimes {
+		if len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() {
+			continue
+		}
+		if now.Sub(entry.lastReleaseAt) < idleTimeout {
+			continue
+		}
+		delete(m.runtimes, targetKS)
+		evicted = append(evicted, evictedRuntime{targetKS: targetKS, entry: entry})
+	}
+	m.mu.Unlock()
+
+	for _, item := range evicted {
+		logutil.BgLogger().Info("evict idle cross keyspace runtime",
+			zap.String("targetKS", item.targetKS),
+			zap.Duration("idleTimeout", idleTimeout),
+			zap.Time("lastReleaseAt", item.entry.lastReleaseAt))
+		item.entry.sessMgr.close()
+	}
 }
 
 // Close closes all session managers and their associated resources.
@@ -375,8 +430,8 @@ func (h *runtimeHandle) Store() kv.Storage {
 	return h.entry.sessMgr.Store()
 }
 
-func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
-	return h.entry.sessMgr.SessPool()
+func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
+	return h.entry.sessMgr.SysSessionPool()
 }
 
 func (h *runtimeHandle) Release() {
@@ -412,8 +467,8 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
 }
 
-// SessPool returns the session pool used by the session manager.
-func (m *SessionManager) SessPool() util.DestroyableSessionPool {
+// SysSessionPool returns the session pool used by the session manager.
+func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 	return m.sessPool
 }
 

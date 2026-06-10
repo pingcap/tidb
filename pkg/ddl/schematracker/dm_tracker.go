@@ -1140,6 +1140,11 @@ func (*SchemaTracker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceSt
 	return nil
 }
 
+// CreateMaskingPolicy implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) CreateMaskingPolicy(_ sessionctx.Context, _ *ast.CreateMaskingPolicyStmt) error {
+	return nil
+}
+
 // CreatePlacementPolicy implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	return nil
