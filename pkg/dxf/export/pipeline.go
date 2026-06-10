@@ -86,12 +86,12 @@ func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, or
 				id:    i,
 				start: bounds[i],
 				end:   bounds[i+1],
-				encCh: make(chan []byte, channelBufSize),
+				encCh: make(chan []byte, exportEncBufSize),
 			}
 			writers = append(writers, w)
 		}
 
-		workCh := make(chan readerChunk, len(writers)*channelBufSize)
+		workCh := make(chan readerChunk, len(writers)*exportEncBufSize)
 		for _, w := range writers {
 			eg.Go(func() error {
 				return e.runReader(egCtx, physicalID, w, workCh)
