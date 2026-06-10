@@ -178,6 +178,51 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	require.Equal(t, ts, uint64(99))
 }
 
+func TestGetMaxRecoverableCheckpointFromStoragePrefersResumeState(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := storage.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
+		{
+			storeID:          1,
+			globalCheckpoint: 99,
+		},
+	})
+	require.Nil(t, err)
+
+	err = s.WriteFile(ctx, resumeStateFileName, []byte(`{"last_checkpoint":88}`))
+	require.Nil(t, err)
+
+	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, uint64(88), ts)
+}
+
+func TestGetMaxRecoverableCheckpointFromStorageFallbackToGlobalCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := storage.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
+		{
+			storeID:          1,
+			globalCheckpoint: 98,
+		},
+		{
+			storeID:          2,
+			globalCheckpoint: 99,
+		},
+	})
+	require.Nil(t, err)
+
+	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, uint64(99), ts)
+}
+
 func TestHasAnyWriteCFLogFile(t *testing.T) {
 	makeLogFile := func(cf string) *logclient.LogDataFileInfo {
 		return &logclient.LogDataFileInfo{

@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -87,6 +86,8 @@ const (
 	flagStreamEndTS        = "end-ts"
 	flagGCSafePointTTS     = "gc-ttl"
 	flagMessage            = "message"
+
+	resumeStateFileName = "crr-checkpoint/resume-state.json"
 
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
@@ -1332,7 +1333,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
+	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1989,15 +1990,13 @@ func getLogInfo(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, false, "")
+	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 }
 
 func getLogInfoFromStorage(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	checkRequirements bool,
-	fromReplicationStorage bool,
-	replicationStatusSubPrefix string,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -2030,19 +2029,9 @@ func getLogInfoFromStorage(
 	logMinTS := max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	var logMaxTS uint64
-	if fromReplicationStorage {
-		ts, err := getGlobalCheckpointFromReplicationStorage(ctx, s, replicationStatusSubPrefix)
-		if err != nil {
-			return backupLogInfo{}, errors.Trace(err)
-		}
-		logMaxTS = ts
-	} else {
-		ts, err := getGlobalCheckpointFromStorage(ctx, s)
-		if err != nil {
-			return backupLogInfo{}, errors.Trace(err)
-		}
-		logMaxTS = ts
+	logMaxTS, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	if err != nil {
+		return backupLogInfo{}, errors.Trace(err)
 	}
 	logMaxTS = max(logMinTS, logMaxTS)
 
@@ -2072,46 +2061,39 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStora
 	return globalCheckPointTS, errors.Trace(err)
 }
 
+func getMaxRecoverableCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
+	ts, exists, err := getCheckpointFromResumeState(ctx, s)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if exists {
+		return ts, nil
+	}
+	return getGlobalCheckpointFromStorage(ctx, s)
+}
+
 // PersistentState captures the calculator progress needed to resume after restart.
 type PersistentState struct {
 	LastCheckpoint uint64 `json:"last_checkpoint"`
 }
 
-func normalizeStorageSubDir(subDir string) (string, error) {
-	trimmed := strings.Trim(subDir, "/")
-	if trimmed == "" {
-		return "", fmt.Errorf("state storage subdir must not be empty")
-	}
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("state storage subdir must stay within selected storage, got %q", subDir)
-	}
-	return cleaned, nil
-}
-
-func GetStatusFileName(subDir string) (string, error) {
-	normalizedSubDir, err := normalizeStorageSubDir(subDir)
+func getCheckpointFromResumeState(ctx context.Context, s storage.ExternalStorage) (uint64, bool, error) {
+	exists, err := s.FileExists(ctx, resumeStateFileName)
 	if err != nil {
-		return "", err
+		return 0, false, errors.Trace(err)
 	}
-	return path.Join(normalizedSubDir, "resume-state.json"), nil
-}
-
-func getGlobalCheckpointFromReplicationStorage(ctx context.Context, s storage.ExternalStorage, replicationStatusSubPrefix string) (uint64, error) {
-	// parse the replication status
-	statusFileName, err := GetStatusFileName(replicationStatusSubPrefix)
-	if err != nil {
-		return 0, errors.Trace(err)
+	if !exists {
+		return 0, false, nil
 	}
-	statusContent, err := s.ReadFile(ctx, statusFileName)
+	statusContent, err := s.ReadFile(ctx, resumeStateFileName)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var state PersistentState
 	if err := json.Unmarshal(statusContent, &state); err != nil {
-		return 0, fmt.Errorf("decode persisted resume state %s: %w", statusFileName, err)
+		return 0, true, fmt.Errorf("decode persisted resume state %s: %w", resumeStateFileName, err)
 	}
-	return state.LastCheckpoint, nil
+	return state.LastCheckpoint, true, nil
 }
 
 // getFullBackupTS gets the snapshot-ts of full backup
