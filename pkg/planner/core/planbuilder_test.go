@@ -1143,17 +1143,11 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	})
 
 	for _, str := range []string{
-<<<<<<< HEAD
 		"S3://bucket?External-id=abc",
+		"s3://bucket?external_id=abc",
+		"s3://bucket?external-id=aaa&external_id=abc",
 		"oss://bucket?External-id=abc",
 		"oSS://bucket?External-id=abc",
-=======
-		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
-		"oss://bucket?External-id=abc&role-arn=arn",
-		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
->>>>>>> 222da210ca6 (importinto: allow explicit external ID matching target value (#69045))
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1163,24 +1157,10 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
-<<<<<<< HEAD
-=======
-		"s3://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external_id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?access-key=ak&secret-access-key=sk",
-		"s3://bucket?access_key=ak&secret_access_key=sk",
-		"oss://bucket?role-arn=arn",
-		"oss://bucket?role_arn=arn",
-	} {
-		u, err := url.Parse(str)
-		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
-		require.NoError(t, err)
-	}
-
-	for _, str := range []string{
->>>>>>> 222da210ca6 (importinto: allow explicit external ID matching target value (#69045))
+		"S3://bucket?External-id=aaa",
+		"s3://bucket?external-id=aaa",
+		"s3://bucket?external_id=aaa",
+		"s3://bucket?external-id=aaa&external_id=aaa",
 		"s3://bucket",
 		"oss://bucket",
 	} {
