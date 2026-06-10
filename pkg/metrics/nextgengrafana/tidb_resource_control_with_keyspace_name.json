@@ -5065,12 +5065,12 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows instance-level token request latency together with per-group request volume.",
+               "description": "Shows instance-level token bucket request latency.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
-                  "w": 24,
+                  "w": 12,
                   "x": 0,
                   "y": 7
                },
@@ -5096,12 +5096,7 @@
                "points": false,
                "renderer": "flot",
                "repeat": null,
-               "seriesOverrides": [
-                  {
-                     "alias": "/-req\\/s$/",
-                     "yaxis": 2
-                  }
-               ],
+               "seriesOverrides": [ ],
                "spaceLength": 10,
                "stack": false,
                "steppedLine": false,
@@ -5126,19 +5121,12 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-avg",
                      "refId": "C"
-                  },
-                  {
-                     "expr": "sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-req/s",
-                     "refId": "D"
                   }
                ],
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Token Request Latency And Volume",
+               "title": "Token Request Latency",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -5155,6 +5143,92 @@
                "yaxes": [
                   {
                      "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Shows per-resource-group token bucket request volume.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 7
+               },
+               "id": 66,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-req/s",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Token Request Volume",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "ops",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -5189,7 +5263,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 66,
+         "id": 67,
          "panels": [
             {
                "aliasColors": { },
@@ -5206,7 +5280,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 67,
+               "id": 68,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -5313,7 +5387,7 @@
                   "x": 0,
                   "y": 7
                },
-               "id": 68,
+               "id": 69,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -5406,7 +5480,7 @@
                   "x": 12,
                   "y": 7
                },
-               "id": 69,
+               "id": 70,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,

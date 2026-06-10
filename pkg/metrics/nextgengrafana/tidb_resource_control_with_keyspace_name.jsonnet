@@ -1504,8 +1504,8 @@ local diagnosisTokenBalancePanel = graphPanel.new(
   )
 );
 
-local diagnosisTokenLatencyPanel = graphPanel.new(
-  title="Token Request Latency And Volume",
+local diagnosisTokenRequestLatencyPanel = graphPanel.new(
+  title="Token Request Latency",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=true,
@@ -1515,7 +1515,7 @@ local diagnosisTokenLatencyPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="s",
-  description="Shows instance-level token request latency together with per-group request volume.",
+  description="Shows instance-level token bucket request latency.",
 ).addTarget(
   prometheus.target(
     'histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_duration_bucket{' + diagnosisTiDBInstanceSelector + '}[1m])) by (instance, le))',
@@ -1531,37 +1531,26 @@ local diagnosisTokenLatencyPanel = graphPanel.new(
     'sum(rate(resource_manager_client_token_request_duration_sum{' + diagnosisTiDBInstanceSelector + '}[1m])) by (instance) / sum(rate(resource_manager_client_token_request_duration_count{' + diagnosisTiDBInstanceSelector + '}[1m])) by (instance)',
     legendFormat="{{instance}}-avg",
   )
+);
+
+local diagnosisTokenRequestVolumePanel = graphPanel.new(
+  title="Token Request Volume",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="ops",
+  description="Shows per-resource-group token bucket request volume.",
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_client_token_request_resource_group{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group)',
     legendFormat="{{instance}}-{{resource_group}}-req/s",
   )
-) + {
-  seriesOverrides: [
-    {
-      alias: "/-req\\/s$/",
-      yaxis: 2,
-    },
-  ],
-  yaxes: [
-    {
-      format: "s",
-      label: null,
-      logBase: 1,
-      max: null,
-      min: null,
-      show: true,
-    },
-    {
-      format: "ops",
-      label: null,
-      logBase: 1,
-      max: null,
-      min: null,
-      show: true,
-    },
-  ],
-};
+);
 
 local diagnosisPDAllocationRow = row.new(collapse=true, title="PD Allocation And Config");
 local diagnosisServerAllocationPanel = graphPanel.new(
@@ -1751,7 +1740,8 @@ TiDBResourceControlDash
   diagnosisClientLimiterRow
   .addPanel(diagnosisClientRequestWaitDurationPanel, gridPos=leftPanelPos)
   .addPanel(diagnosisClientRequestRetryFailureRatePanel, gridPos=rightPanelPos)
-  .addPanel(diagnosisTokenLatencyPanel, gridPos=secondRowFullPanelPos),
+  .addPanel(diagnosisTokenRequestLatencyPanel, gridPos=secondRowLeftPanelPos)
+  .addPanel(diagnosisTokenRequestVolumePanel, gridPos=secondRowRightPanelPos),
   gridPos=rowPos
 ).addPanel(
   diagnosisPDAllocationRow
