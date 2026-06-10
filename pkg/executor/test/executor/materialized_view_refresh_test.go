@@ -195,7 +195,7 @@ func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
 	fastRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze fast with profile").Rows()
 	requireRowsContainPrefix(t, fastRows, "[S01 TXN_BEGIN]")
 	requireRowsContainPrefix(t, fastRows, "[S04 DATA_CHANGE_FAST_MERGE]")
-	requireRowsContainPrefix(t, fastRows, "  MVDeltaMerge")
+	requireRowsContainPrefix(t, fastRows, "  MViewDeltaMerge")
 	requireRowsContainPrefix(t, fastRows, "[S07 FINALIZE_HIST]")
 
 	tk.MustExec("insert into t_mv_explain_analyze values (4, 8)")
@@ -228,7 +228,7 @@ func TestFastDryRunMaterializedViewRefreshUsesCurrentDB(t *testing.T) {
 
 	rows := tk.MustQuery("refresh materialized view mv_fast_dry_run fast dry run").Rows()
 	requireRowsContainPrefix(t, rows, "[S04 DATA_CHANGE_FAST_MERGE]")
-	requireRowsContainPrefix(t, rows, "  MVDeltaMerge")
+	requireRowsContainPrefix(t, rows, "  MViewDeltaMerge")
 }
 
 func TestMaterializedViewRefreshOutOfPlaceObserveLoadShadowPlanUsesBuildSQL(t *testing.T) {

@@ -3991,7 +3991,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullUpdateOutputMVOffsets = append([]int(nil), template.OutputMVOffsets...)
 		}
 
-		plan := MVDeltaMerge{
+		plan := MViewDeltaMerge{
 			Source:                      sourcePlan,
 			FullUpdateInnerSource:       fullUpdateInnerSource,
 			FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
@@ -4067,10 +4067,10 @@ type mvFullUpdateLookupTemplate struct {
 // full-update lookup template plan. The optimized plan is expected to contain an IndexJoin-style
 // shape produced from mview.FullUpdateLookupTemplateSelect; this helper discards the outer probe
 // side and keeps only the inner lookup child, index-range template, key-position mapping, and the
-// output-column to MV-offset mapping needed by MVDeltaMerge full recomputation.
+// output-column to MV-offset mapping needed by MViewDeltaMerge full recomputation.
 //
 // The outer side exists only to make the optimizer build an IndexJoin and expose how probe group-key
-// columns flow into the inner lookup. During execution, MVDeltaMerge supplies one changed group-key
+// columns flow into the inner lookup. During execution, MViewDeltaMerge supplies one changed group-key
 // tuple at a time by refilling the extracted lookup metadata directly, so keeping the outer child
 // would only duplicate work.
 func extractMVFullUpdateLookupTemplate(

@@ -83,8 +83,8 @@ const (
 	TypeUpdate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
-	// TypeMVDeltaMerge is the type of MVDeltaMerge.
-	TypeMVDeltaMerge = "MVDeltaMerge"
+	// TypeMViewDeltaMerge is the type of MViewDeltaMerge.
+	TypeMViewDeltaMerge = "MViewDeltaMerge"
 	// TypeMViewCompleteDeltaApply is the type of complete delta MV apply sink.
 	TypeMViewCompleteDeltaApply = "MViewCompleteDeltaApply"
 	// TypeIndexLookUp is the type of IndexLookUp.
@@ -208,7 +208,7 @@ const (
 	typeExpandID                int = 58
 	typeImportIntoID            int = 59
 	TypeScalarSubQueryID        int = 60
-	typeMVDeltaMergeID          int = 61
+	typeMViewDeltaMergeID       int = 61
 	typeMViewCompleteIncApplyID int = 62
 )
 
@@ -275,8 +275,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeUpdateID
 	case TypeDelete:
 		return typeDeleteID
-	case TypeMVDeltaMerge:
-		return typeMVDeltaMergeID
+	case TypeMViewDeltaMerge:
+		return typeMViewDeltaMergeID
 	case TypeMViewCompleteDeltaApply:
 		return typeMViewCompleteIncApplyID
 	case TypeIndexLookUp:
@@ -407,8 +407,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeUpdate
 	case typeDeleteID:
 		return TypeDelete
-	case typeMVDeltaMergeID:
-		return TypeMVDeltaMerge
+	case typeMViewDeltaMergeID:
+		return TypeMViewDeltaMerge
 	case typeMViewCompleteIncApplyID:
 		return TypeMViewCompleteDeltaApply
 	case typeIndexLookUpID:

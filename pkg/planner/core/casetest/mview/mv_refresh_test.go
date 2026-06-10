@@ -150,7 +150,7 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.Equal(t, mvID, mergePlan.MVTableID)
@@ -195,7 +195,7 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	require.NoError(t, explain.RenderResult())
 	require.NotEmpty(t, explain.Rows)
 	require.Equal(t,
-		[]string{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], count(b)@2->[1], sum(b)@3->[2,5]]"},
+		[]string{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], count(b)@2->[1], sum(b)@3->[2,5]]"},
 		explain.Rows[0],
 	)
 }
@@ -283,7 +283,7 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.NotNil(t, mergePlan.FullUpdateInnerSource)
@@ -408,7 +408,7 @@ func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 	require.Equal(t, [][]string{
-		{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0]]"},
+		{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0]]"},
 		{"└─HashJoin", "8000.00", "root", "", "left outer join, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain.a)]"},
 		{"  ├─HashAgg(Build)", "6400.00", "root", "", "group by:test.$mlog$t.a, funcs:sum_int(Column#11)->Column#6, funcs:firstrow(test.$mlog$t.a)->test.$mlog$t.a"},
 		{"  │ └─TableReader", "6400.00", "root", "", "data:HashAgg"},
@@ -515,7 +515,7 @@ func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 	require.Equal(t, [][]string{
-		{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], max(b)@2->[1,2,3,4], min(b)@3->[5,6,7,8]], full_update:index_lookup"},
+		{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], max(b)@2->[1,2,3,4], min(b)@3->[5,6,7,8]], full_update:index_lookup"},
 		{"├─HashJoin", "8000.00", "root", "", "left outer join, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain_minmax.a)]"},
 		{"│ ├─HashAgg(Build)", "6400.00", "root", "", "group by:Column#31, funcs:sum_int(Column#22)->Column#7, funcs:max(Column#23)->Column#8, funcs:max_count(Column#24)->Column#9, funcs:max(Column#25)->Column#10, funcs:max_count(Column#26)->Column#11, funcs:min(Column#27)->Column#12, funcs:min_count(Column#28)->Column#13, funcs:min(Column#29)->Column#14, funcs:min_count(Column#30)->Column#15, funcs:firstrow(Column#31)->test.$mlog$t.a"},
 		{"│ │ └─Projection", "8000.00", "root", "", "test.$mlog$t._mlog$_old_new->Column#22, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#23, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#24, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#25, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#26, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#27, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#28, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#29, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#30, test.$mlog$t.a->Column#31"},
@@ -910,7 +910,7 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.Equal(t, mvID, mergePlan.MVTableID)

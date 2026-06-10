@@ -195,7 +195,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildProfileRefreshMaterializedView(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
-	case *plannercore.MVDeltaMerge:
+	case *plannercore.MViewDeltaMerge:
 		return b.buildMViewDeltaMerge(v)
 	case *plannercore.MViewCompleteDeltaApply:
 		return b.buildMViewCompleteDeltaApply(v)
@@ -1390,10 +1390,6 @@ func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMate
 }
 
 func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompleteDeltaApply) exec.Executor {
-	if v == nil {
-		b.err = errors.New("MViewCompleteDeltaApply plan is nil")
-		return nil
-	}
 	if v.Source == nil {
 		b.err = errors.New("MViewCompleteDeltaApply source plan is nil")
 		return nil

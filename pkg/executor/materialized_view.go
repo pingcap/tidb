@@ -262,7 +262,7 @@ func (e *MViewCompleteDeltaApplyExec) Open(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *MViewCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.MaxChunkSize())
+	req.Reset()
 	if e.executed {
 		return nil
 	}
@@ -2900,7 +2900,7 @@ func collectFastRefreshMLogScanRows(sessVars *variable.SessionVars) *int64 {
 	if sessVars == nil || sessVars.StmtCtx == nil || sessVars.StmtCtx.RuntimeStatsColl == nil {
 		return nil
 	}
-	mergePlan, ok := sessVars.StmtCtx.GetPlan().(*plannercore.MVDeltaMerge)
+	mergePlan, ok := sessVars.StmtCtx.GetPlan().(*plannercore.MViewDeltaMerge)
 	if !ok || mergePlan.Source == nil || mergePlan.MLogTableID == 0 {
 		return nil
 	}

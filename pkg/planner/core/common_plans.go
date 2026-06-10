@@ -568,9 +568,9 @@ func (p *Delete) MemoryUsage() (sum int64) {
 	return
 }
 
-// MVDeltaMerge represents a fast-refresh merge plan for materialized view maintenance.
+// MViewDeltaMerge represents a fast-refresh merge plan for materialized view maintenance.
 // It consumes `Source` rows (MV snapshot + delta payload) and applies them to the MV table.
-type MVDeltaMerge struct {
+type MViewDeltaMerge struct {
 	baseSchemaProducer
 
 	// Source is the merge-source physical plan. Its row layout is:
@@ -607,8 +607,8 @@ type MVDeltaMerge struct {
 	AggInfos []mview.AggInfo `plan-cache-clone:"shallow"`
 }
 
-// ExplainInfo returns aggregate dependency information for MV delta merge.
-func (p *MVDeltaMerge) ExplainInfo() string {
+// ExplainInfo returns aggregate dependency information for MView delta merge.
+func (p *MViewDeltaMerge) ExplainInfo() string {
 	if len(p.AggInfos) == 0 {
 		return "agg_deps:[]"
 	}
@@ -619,7 +619,7 @@ func (p *MVDeltaMerge) ExplainInfo() string {
 		if i > 0 {
 			builder.WriteString(", ")
 		}
-		builder.WriteString(formatMVDeltaMergeAggDependency(p.AggInfos[i]))
+		builder.WriteString(formatMViewDeltaMergeAggDependency(p.AggInfos[i]))
 	}
 	builder.WriteString("]")
 	if p.FullUpdateInnerSource != nil {
@@ -628,28 +628,28 @@ func (p *MVDeltaMerge) ExplainInfo() string {
 	return builder.String()
 }
 
-func formatMVDeltaMergeAggDependency(aggInfo mview.AggInfo) string {
+func formatMViewDeltaMergeAggDependency(aggInfo mview.AggInfo) string {
 	var builder strings.Builder
-	builder.WriteString(formatMVDeltaMergeAggName(aggInfo))
+	builder.WriteString(formatMViewDeltaMergeAggName(aggInfo))
 	builder.WriteString("@")
 	builder.WriteString(strconv.Itoa(aggInfo.MVOffset))
 	builder.WriteString("->")
-	builder.WriteString(formatMVDeltaMergeOffsets(aggInfo.Dependencies))
+	builder.WriteString(formatMViewDeltaMergeOffsets(aggInfo.Dependencies))
 	return builder.String()
 }
 
-func formatMVDeltaMergeAggName(aggInfo mview.AggInfo) string {
+func formatMViewDeltaMergeAggName(aggInfo mview.AggInfo) string {
 	if aggInfo.Kind == mview.AggCountStar {
 		return "count(*)"
 	}
-	aggKindName := formatMVDeltaMergeAggKind(aggInfo.Kind)
+	aggKindName := formatMViewDeltaMergeAggKind(aggInfo.Kind)
 	if aggInfo.ArgColName == "" {
 		return aggKindName
 	}
 	return aggKindName + "(" + aggInfo.ArgColName + ")"
 }
 
-func formatMVDeltaMergeAggKind(kind mview.AggKind) string {
+func formatMViewDeltaMergeAggKind(kind mview.AggKind) string {
 	switch kind {
 	case mview.AggCount:
 		return "count"
@@ -664,7 +664,7 @@ func formatMVDeltaMergeAggKind(kind mview.AggKind) string {
 	}
 }
 
-func formatMVDeltaMergeOffsets(offsets []int) string {
+func formatMViewDeltaMergeOffsets(offsets []int) string {
 	if len(offsets) == 0 {
 		return "[]"
 	}
@@ -681,8 +681,8 @@ func formatMVDeltaMergeOffsets(offsets []int) string {
 	return builder.String()
 }
 
-// MemoryUsage returns the memory usage of MVDeltaMerge.
-func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
+// MemoryUsage returns the memory usage of MViewDeltaMerge.
+func (p *MViewDeltaMerge) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
@@ -736,11 +736,11 @@ func (p *MViewCompleteDeltaApply) ExplainInfo() string {
 		p.OpColID,
 		inputOffsetAtMVOffset(p.MRowInputColIDs, p.MarkerMVOffset),
 		inputOffsetAtMVOffset(p.QRowInputColIDs, p.MarkerMVOffset),
-		formatMVDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.MRowInputColIDs, p.GroupKeyMVOffsets)),
-		formatMVDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.QRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.MRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.QRowInputColIDs, p.GroupKeyMVOffsets)),
 		formatHandleColsInputOffsets(p.MHandleCols),
-		formatMVDeltaMergeOffsets(p.MRowInputColIDs),
-		formatMVDeltaMergeOffsets(p.QRowInputColIDs),
+		formatMViewDeltaMergeOffsets(p.MRowInputColIDs),
+		formatMViewDeltaMergeOffsets(p.QRowInputColIDs),
 	)
 }
 
@@ -774,7 +774,7 @@ func formatHandleColsInputOffsets(handleCols util.HandleCols) string {
 		}
 		offsets = append(offsets, col.Index)
 	}
-	return formatMVDeltaMergeOffsets(offsets)
+	return formatMViewDeltaMergeOffsets(offsets)
 }
 
 // MemoryUsage returns the memory usage of MViewCompleteDeltaApply.

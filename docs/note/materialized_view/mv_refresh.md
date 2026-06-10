@@ -726,7 +726,7 @@ to any specific aggregate output column.
 
 1. Use an internal implementation statement path, not ad-hoc SQL text concatenation for write phase.
 2. Let optimizer build one physical diff-source plan (`FOJ + Selection`) first.
-3. Add one dedicated sink physical operator on top (similar role to `MVDeltaMerge` in FAST path).
+3. Add one dedicated sink physical operator on top (similar role to `MViewDeltaMerge` in FAST path).
 4. Executor reads diff rows chunk-by-chunk and applies row operations to MV table directly.
 
 Expected end-to-end shape:
