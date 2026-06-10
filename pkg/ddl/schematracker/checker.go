@@ -164,8 +164,15 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.C
 		return ret
 	}
 
-	s1 := removeClusteredIndexComment(result.String())
-	s2 := removeClusteredIndexComment(result2.String())
+	// Remove masking policy annotations: the real executor adds them via InfoSchema
+	// but the SchemaTracker does not have masking policy info, so strip them before comparing.
+		removeMaskingPolicyComment := func(s string) string {
+		re := regexp.MustCompile(` /\* MASKING POLICY .+? \*/`)
+		return re.ReplaceAllString(s, "")
+	}
+
+	s1 := removeMaskingPolicyComment(removeClusteredIndexComment(result.String()))
+	s2 := removeMaskingPolicyComment(removeClusteredIndexComment(result2.String()))
 
 	// Remove shard_row_id_bits and pre_split_regions comments.
 	if ctx.GetSessionVars().ShardRowIDBits != 0 || ctx.GetSessionVars().PreSplitRegions != 0 {
