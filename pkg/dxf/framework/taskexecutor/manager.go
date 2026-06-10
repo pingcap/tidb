@@ -368,12 +368,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	)
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
-				zap.Stringer("type", task.Type))
-			m.slotManager.free(task.ID)
-			m.delTaskExecutor(executor)
 			executor.Close()
 			releaseFn()
+			m.delTaskExecutor(executor)
+			m.slotManager.free(task.ID)
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
+				zap.Stringer("type", task.Type))
 		}()
 		executor.Run()
 	})
