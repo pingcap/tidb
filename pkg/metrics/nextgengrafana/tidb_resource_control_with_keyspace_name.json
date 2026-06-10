@@ -3961,7 +3961,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows resource-group SQL latency together with instance-level RC queue wait and query throughput.",
+               "description": "Shows SQL query throughput by TiDB instance and resource group.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -3992,12 +3992,93 @@
                "points": false,
                "renderer": "flot",
                "repeat": null,
-               "seriesOverrides": [
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
                   {
-                     "alias": "/-qps$/",
-                     "yaxis": 2
+                     "expr": "sum(rate(tidb_server_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, result)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-{{result}}-qps",
+                     "refId": "A"
                   }
                ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Query QPS By TiDB",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "ops",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "ops",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Shows resource-group SQL latency by TiDB instance.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 52,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
                "spaceLength": 10,
                "stack": false,
                "steppedLine": false,
@@ -4015,26 +4096,12 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-p90",
                      "refId": "B"
-                  },
-                  {
-                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", sql_type=\"general\"}[1m])) by (le, instance))",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-queue-p99",
-                     "refId": "C"
-                  },
-                  {
-                     "expr": "sum(rate(tidb_server_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, result)",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-{{result}}-qps",
-                     "refId": "D"
                   }
                ],
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "SQL Latency And Query Total",
+               "title": "SQL Latency By TiDB",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -4058,7 +4125,7 @@
                      "show": true
                   },
                   {
-                     "format": "ops",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -4073,16 +4140,122 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Shows instance-level SQL queue wait caused by Resource Control.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 24,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 53,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", sql_type=\"general\"}[1m])) by (le, instance))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-queue-p99",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "RC Queue Wait By TiDB",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            }
+         ],
+         "repeat": null,
+         "repeatIteration": null,
+         "repeatRowId": null,
+         "showTitle": true,
+         "title": "1. SQL Symptoms",
+         "titleSize": "h6",
+         "type": "row"
+      },
+      {
+         "collapse": true,
+         "collapsed": true,
+         "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+         },
+         "id": 54,
+         "panels": [
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
                "description": "Shows demand, actual grant, average RU, fill rate, and throttling together.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 12,
+                  "x": 0,
                   "y": 0
                },
-               "id": 52,
+               "id": 55,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4148,7 +4321,100 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Demand And Fill Rate",
+               "title": "RU Demand, Grant And Fill Rate",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Shows available token balance and throttling state by resource group and TiDB instance.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 56,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "resource_manager_client_resource_group_token_balance{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-balance",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "resource_manager_client_resource_group_throttled{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-throttled",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Token Balance And Throttle",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -4186,7 +4452,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "SQL latency / Time_queued_by_rc / query_total",
+         "title": "2. RU Demand And Supply",
          "titleSize": "h6",
          "type": "row"
       },
@@ -4199,7 +4465,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 53,
+         "id": 57,
          "panels": [
             {
                "aliasColors": { },
@@ -4216,7 +4482,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 54,
+               "id": 58,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4293,7 +4559,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows client-side read and write byte cost rates by resource group.",
+               "description": "Shows the RU cost distribution for client accounting events.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -4302,7 +4568,107 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 55,
+               "id": 59,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_consume_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-p99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.90, sum(rate(resource_manager_client_token_request_consume_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-p90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_client_token_request_consume_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group) / sum(rate(resource_manager_client_token_request_consume_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-avg",
+                     "refId": "C"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "RU Cost Distribution",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Shows client-side read and write byte cost rates by resource group.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 60,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4392,10 +4758,10 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 0,
+                  "x": 12,
                   "y": 0
                },
-               "id": 56,
+               "id": 61,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4472,23 +4838,43 @@
                      "show": true
                   }
                ]
-            },
+            }
+         ],
+         "repeat": null,
+         "repeatIteration": null,
+         "repeatRowId": null,
+         "showTitle": true,
+         "title": "3. Client RU Consumption",
+         "titleSize": "h6",
+         "type": "row"
+      },
+      {
+         "collapse": true,
+         "collapsed": true,
+         "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+         },
+         "id": 62,
+         "panels": [
             {
                "aliasColors": { },
                "bars": false,
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows the RU cost distribution for client accounting events.",
+               "description": "Shows local resource-control request wait distribution.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 12,
+                  "x": 0,
                   "y": 0
                },
-               "id": 57,
+               "id": 63,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4511,131 +4897,6 @@
                "renderer": "flot",
                "repeat": null,
                "seriesOverrides": [ ],
-               "spaceLength": 10,
-               "stack": false,
-               "steppedLine": false,
-               "targets": [
-                  {
-                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_consume_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group, le))",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-p99",
-                     "refId": "A"
-                  },
-                  {
-                     "expr": "histogram_quantile(0.90, sum(rate(resource_manager_client_token_request_consume_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group, le))",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-p90",
-                     "refId": "B"
-                  },
-                  {
-                     "expr": "sum(rate(resource_manager_client_token_request_consume_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group) / sum(rate(resource_manager_client_token_request_consume_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group)",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-avg",
-                     "refId": "C"
-                  }
-               ],
-               "thresholds": [ ],
-               "timeFrom": null,
-               "timeShift": null,
-               "title": "RU Cost Distribution",
-               "tooltip": {
-                  "shared": true,
-                  "sort": 0,
-                  "value_type": "individual"
-               },
-               "type": "graph",
-               "xaxis": {
-                  "buckets": null,
-                  "mode": "time",
-                  "name": null,
-                  "show": true,
-                  "values": [ ]
-               },
-               "yaxes": [
-                  {
-                     "format": "short",
-                     "label": null,
-                     "logBase": 1,
-                     "max": null,
-                     "min": null,
-                     "show": true
-                  },
-                  {
-                     "format": "short",
-                     "label": null,
-                     "logBase": 1,
-                     "max": null,
-                     "min": null,
-                     "show": true
-                  }
-               ]
-            }
-         ],
-         "repeat": null,
-         "repeatIteration": null,
-         "repeatRowId": null,
-         "showTitle": true,
-         "title": "Client accounting cost details",
-         "titleSize": "h6",
-         "type": "row"
-      },
-      {
-         "collapse": true,
-         "collapsed": true,
-         "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 0
-         },
-         "id": 58,
-         "panels": [
-            {
-               "aliasColors": { },
-               "bars": false,
-               "dashLength": 10,
-               "dashes": false,
-               "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows local resource-control request wait distribution together with retry and final failure rates.",
-               "fill": 1,
-               "fillGradient": 0,
-               "gridPos": {
-                  "h": 7,
-                  "w": 24,
-                  "x": 0,
-                  "y": 0
-               },
-               "id": 59,
-               "legend": {
-                  "alignAsTable": true,
-                  "avg": true,
-                  "current": true,
-                  "max": true,
-                  "min": true,
-                  "rightSide": true,
-                  "show": true,
-                  "sideWidth": null,
-                  "total": false,
-                  "values": true
-               },
-               "lines": true,
-               "linewidth": 1,
-               "links": [ ],
-               "nullPointMode": "null",
-               "percentage": false,
-               "pointradius": 5,
-               "points": false,
-               "renderer": "flot",
-               "repeat": null,
-               "seriesOverrides": [
-                  {
-                     "alias": "/\\/s$/",
-                     "yaxis": 2
-                  }
-               ],
                "spaceLength": 10,
                "stack": false,
                "steppedLine": false,
@@ -4667,26 +4928,12 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-failed-reserve-p90",
                      "refId": "D"
-                  },
-                  {
-                     "expr": "sum(rate(resource_manager_client_request_retry{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-retry/s",
-                     "refId": "E"
-                  },
-                  {
-                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, type)",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-{{type}}-fail/s",
-                     "refId": "F"
                   }
                ],
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Client Request Wait And Failure",
+               "title": "Client Request Wait Duration",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -4710,7 +4957,7 @@
                      "show": true
                   },
                   {
-                     "format": "ops",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -4718,43 +4965,23 @@
                      "show": true
                   }
                ]
-            }
-         ],
-         "repeat": null,
-         "repeatIteration": null,
-         "repeatRowId": null,
-         "showTitle": true,
-         "title": "Client request wait / retry / failure",
-         "titleSize": "h6",
-         "type": "row"
-      },
-      {
-         "collapse": true,
-         "collapsed": true,
-         "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 0
-         },
-         "id": 60,
-         "panels": [
+            },
             {
                "aliasColors": { },
                "bars": false,
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows available token balance and throttling state by resource group and TiDB instance.",
+               "description": "Shows local resource-control retry and final failure rates.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 0,
+                  "x": 12,
                   "y": 0
                },
-               "id": 61,
+               "id": 64,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4782,24 +5009,24 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "resource_manager_client_resource_group_token_balance{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
+                     "expr": "sum(rate(resource_manager_client_request_retry{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-balance",
+                     "legendFormat": "{{instance}}-{{resource_group}}-retry/s",
                      "refId": "A"
                   },
                   {
-                     "expr": "resource_manager_client_resource_group_throttled{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
+                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, type)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-throttled",
+                     "legendFormat": "{{instance}}-{{resource_group}}-{{type}}-fail/s",
                      "refId": "B"
                   }
                ],
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Token Balance And Throttle",
+               "title": "Client Request Retry And Failure Rate",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -4815,7 +5042,7 @@
                },
                "yaxes": [
                   {
-                     "format": "short",
+                     "format": "ops",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -4823,7 +5050,7 @@
                      "show": true
                   },
                   {
-                     "format": "short",
+                     "format": "ops",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -4843,11 +5070,11 @@
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
-                  "w": 12,
-                  "x": 12,
+                  "w": 24,
+                  "x": 0,
                   "y": 0
                },
-               "id": 62,
+               "id": 65,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -4949,7 +5176,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "Token balance / throttled / token request latency",
+         "title": "4. Client Limiter And PD Requests",
          "titleSize": "h6",
          "type": "row"
       },
@@ -4962,7 +5189,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 63,
+         "id": 66,
          "panels": [
             {
                "aliasColors": { },
@@ -4979,7 +5206,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 64,
+               "id": 67,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -5070,27 +5297,7 @@
                      "show": true
                   }
                ]
-            }
-         ],
-         "repeat": null,
-         "repeatIteration": null,
-         "repeatRowId": null,
-         "showTitle": true,
-         "title": "trickle_duration_ms / active_slot_count / token_loan / slot_events_total",
-         "titleSize": "h6",
-         "type": "row"
-      },
-      {
-         "collapse": true,
-         "collapsed": true,
-         "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 0
-         },
-         "id": 65,
-         "panels": [
+            },
             {
                "aliasColors": { },
                "bars": false,
@@ -5106,7 +5313,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 66,
+               "id": 68,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -5151,7 +5358,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU Config",
+               "title": "Resource Group RU Config",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -5199,7 +5406,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 67,
+               "id": 69,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -5275,7 +5482,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "ru_per_sec / ru_capacity / throttling cause",
+         "title": "5. PD Allocation And Config",
          "titleSize": "h6",
          "type": "row"
       }

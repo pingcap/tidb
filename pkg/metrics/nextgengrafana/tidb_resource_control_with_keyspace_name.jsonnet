@@ -1220,9 +1220,28 @@ local diagnosisTiDBInstanceSelector = 'k8s_cluster="$k8s_cluster", tidb_cluster=
 local diagnosisClientRCSelector = diagnosisTiDBSelector + ', keyspace_name=~"$keyspace_name"';
 local diagnosisPDRCSelector = 'k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", keyspace_name=~"$keyspace_name"';
 
-local diagnosisSQLLatencyRow = row.new(collapse=true, title="SQL latency / Time_queued_by_rc / query_total");
+local diagnosisSQLSymptomsRow = row.new(collapse=true, title="1. SQL Symptoms");
+local diagnosisQueryQPSPanel = graphPanel.new(
+  title="Query QPS By TiDB",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="ops",
+  description="Shows SQL query throughput by TiDB instance and resource group.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_query_total{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, result)',
+    legendFormat="{{instance}}-{{resource_group}}-{{result}}-qps",
+  )
+);
+
 local diagnosisSQLLatencyPanel = graphPanel.new(
-  title="SQL Latency And Query Total",
+  title="SQL Latency By TiDB",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=true,
@@ -1232,7 +1251,7 @@ local diagnosisSQLLatencyPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="s",
-  description="Shows resource-group SQL latency together with instance-level RC queue wait and query throughput.",
+  description="Shows resource-group SQL latency by TiDB instance.",
 ).addTarget(
   prometheus.target(
     'histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{' + diagnosisTiDBSelector + '}[1m])) by (le, instance, resource_group))',
@@ -1243,45 +1262,31 @@ local diagnosisSQLLatencyPanel = graphPanel.new(
     'histogram_quantile(0.90, sum(rate(tidb_server_handle_query_duration_seconds_bucket{' + diagnosisTiDBSelector + '}[1m])) by (le, instance, resource_group))',
     legendFormat="{{instance}}-{{resource_group}}-p90",
   )
+);
+
+local diagnosisRCQueueWaitPanel = graphPanel.new(
+  title="RC Queue Wait By TiDB",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  description="Shows instance-level SQL queue wait caused by Resource Control.",
 ).addTarget(
   prometheus.target(
     'histogram_quantile(0.99, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket{' + diagnosisTiDBInstanceSelector + ', sql_type="general"}[1m])) by (le, instance))',
     legendFormat="{{instance}}-queue-p99",
   )
-).addTarget(
-  prometheus.target(
-    'sum(rate(tidb_server_query_total{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, result)',
-    legendFormat="{{instance}}-{{resource_group}}-{{result}}-qps",
-  )
-) + {
-  seriesOverrides: [
-    {
-      alias: "/-qps$/",
-      yaxis: 2,
-    },
-  ],
-  yaxes: [
-    {
-      format: "s",
-      label: null,
-      logBase: 1,
-      max: null,
-      min: null,
-      show: true,
-    },
-    {
-      format: "ops",
-      label: null,
-      logBase: 1,
-      max: null,
-      min: null,
-      show: true,
-    },
-  ],
-};
+);
+
+local diagnosisRUDemandRow = row.new(collapse=true, title="2. RU Demand And Supply");
 
 local diagnosisDemandPanel = graphPanel.new(
-  title="Demand And Fill Rate",
+  title="RU Demand, Grant And Fill Rate",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=true,
@@ -1319,7 +1324,7 @@ local diagnosisDemandPanel = graphPanel.new(
   )
 );
 
-local diagnosisClientAccountingRow = row.new(collapse=true, title="Client accounting cost details");
+local diagnosisClientRUConsumptionRow = row.new(collapse=true, title="3. Client RU Consumption");
 local diagnosisRUConsumptionByTypePanel = graphPanel.new(
   title="RU Consumption By Type",
   datasource=myDS,
@@ -1416,9 +1421,9 @@ local diagnosisRUCostDistributionPanel = graphPanel.new(
   )
 );
 
-local diagnosisClientWaitRow = row.new(collapse=true, title="Client request wait / retry / failure");
-local diagnosisClientWaitPanel = graphPanel.new(
-  title="Client Request Wait And Failure",
+local diagnosisClientLimiterRow = row.new(collapse=true, title="4. Client Limiter And PD Requests");
+local diagnosisClientRequestWaitDurationPanel = graphPanel.new(
+  title="Client Request Wait Duration",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=true,
@@ -1428,7 +1433,7 @@ local diagnosisClientWaitPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="s",
-  description="Shows local resource-control request wait distribution together with retry and final failure rates.",
+  description="Shows local resource-control request wait distribution.",
 ).addTarget(
   prometheus.target(
     'histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, le))',
@@ -1449,6 +1454,20 @@ local diagnosisClientWaitPanel = graphPanel.new(
     'histogram_quantile(0.90, sum(rate(resource_manager_client_request_limit_reserve_time_failed_bucket{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, le))',
     legendFormat="{{instance}}-{{resource_group}}-failed-reserve-p90",
   )
+);
+
+local diagnosisClientRequestRetryFailureRatePanel = graphPanel.new(
+  title="Client Request Retry And Failure Rate",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="ops",
+  description="Shows local resource-control retry and final failure rates.",
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_client_request_retry{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group)',
@@ -1459,34 +1478,8 @@ local diagnosisClientWaitPanel = graphPanel.new(
     'sum(rate(resource_manager_client_request_fail{' + diagnosisTiDBSelector + '}[1m])) by (instance, resource_group, type)',
     legendFormat="{{instance}}-{{resource_group}}-{{type}}-fail/s",
   )
-) + {
-  seriesOverrides: [
-    {
-      alias: "/\\/s$/",
-      yaxis: 2,
-    },
-  ],
-  yaxes: [
-    {
-      format: "s",
-      label: null,
-      logBase: 1,
-      max: null,
-      min: null,
-      show: true,
-    },
-    {
-      format: "ops",
-      label: null,
-      logBase: 1,
-      max: null,
-      min: null,
-      show: true,
-    },
-  ],
-};
+);
 
-local diagnosisTokenRow = row.new(collapse=true, title="Token balance / throttled / token request latency");
 local diagnosisTokenBalancePanel = graphPanel.new(
   title="Token Balance And Throttle",
   datasource=myDS,
@@ -1570,7 +1563,7 @@ local diagnosisTokenLatencyPanel = graphPanel.new(
   ],
 };
 
-local diagnosisServerRow = row.new(collapse=true, title="trickle_duration_ms / active_slot_count / token_loan / slot_events_total");
+local diagnosisPDAllocationRow = row.new(collapse=true, title="5. PD Allocation And Config");
 local diagnosisServerAllocationPanel = graphPanel.new(
   title="Server Slots, Loan, And Trickle",
   datasource=myDS,
@@ -1605,9 +1598,8 @@ local diagnosisServerAllocationPanel = graphPanel.new(
   )
 );
 
-local diagnosisLimitRow = row.new(collapse=true, title="ru_per_sec / ru_capacity / throttling cause");
 local diagnosisLimitConfigPanel = graphPanel.new(
-  title="RU Config",
+  title="Resource Group RU Config",
   datasource=myDS,
   legend_rightSide=true,
   legend_min=true,
@@ -1735,32 +1727,32 @@ TiDBResourceControlDash
   ,
   gridPos=rowPos
 ).addPanel(
-  diagnosisSQLLatencyRow
-  .addPanel(diagnosisSQLLatencyPanel, gridPos=leftPanelPos)
-  .addPanel(diagnosisDemandPanel, gridPos=rightPanelPos),
+  diagnosisSQLSymptomsRow
+  .addPanel(diagnosisQueryQPSPanel, gridPos=leftPanelPos)
+  .addPanel(diagnosisSQLLatencyPanel, gridPos=rightPanelPos)
+  .addPanel(diagnosisRCQueueWaitPanel, gridPos=fullPanelPos),
   gridPos=rowPos
 ).addPanel(
-  diagnosisClientAccountingRow
+  diagnosisRUDemandRow
+  .addPanel(diagnosisDemandPanel, gridPos=leftPanelPos)
+  .addPanel(diagnosisTokenBalancePanel, gridPos=rightPanelPos),
+  gridPos=rowPos
+).addPanel(
+  diagnosisClientRUConsumptionRow
   .addPanel(diagnosisRUConsumptionByTypePanel, gridPos=leftPanelPos)
-  .addPanel(diagnosisResourceBytesPanel, gridPos=rightPanelPos)
-  .addPanel(diagnosisResourceCPUCostPanel, gridPos=leftPanelPos)
-  .addPanel(diagnosisRUCostDistributionPanel, gridPos=rightPanelPos),
+  .addPanel(diagnosisRUCostDistributionPanel, gridPos=rightPanelPos)
+  .addPanel(diagnosisResourceBytesPanel, gridPos=leftPanelPos)
+  .addPanel(diagnosisResourceCPUCostPanel, gridPos=rightPanelPos),
   gridPos=rowPos
 ).addPanel(
-  diagnosisClientWaitRow
-  .addPanel(diagnosisClientWaitPanel, gridPos=fullPanelPos),
+  diagnosisClientLimiterRow
+  .addPanel(diagnosisClientRequestWaitDurationPanel, gridPos=leftPanelPos)
+  .addPanel(diagnosisClientRequestRetryFailureRatePanel, gridPos=rightPanelPos)
+  .addPanel(diagnosisTokenLatencyPanel, gridPos=fullPanelPos),
   gridPos=rowPos
 ).addPanel(
-  diagnosisTokenRow
-  .addPanel(diagnosisTokenBalancePanel, gridPos=leftPanelPos)
-  .addPanel(diagnosisTokenLatencyPanel, gridPos=rightPanelPos),
-  gridPos=rowPos
-).addPanel(
-  diagnosisServerRow
-  .addPanel(diagnosisServerAllocationPanel, gridPos=fullPanelPos),
-  gridPos=rowPos
-).addPanel(
-  diagnosisLimitRow
+  diagnosisPDAllocationRow
+  .addPanel(diagnosisServerAllocationPanel, gridPos=fullPanelPos)
   .addPanel(diagnosisLimitConfigPanel, gridPos=leftPanelPos)
   .addPanel(diagnosisLimitCausePanel, gridPos=rightPanelPos),
   gridPos=rowPos
