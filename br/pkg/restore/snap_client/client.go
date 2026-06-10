@@ -1032,9 +1032,12 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
 		for _, db := range dbs {
-			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
 			}
 		}
 		return nil
@@ -1047,7 +1050,14 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
+			}
+			return nil
 		})
 	}
 	return eg.Wait()

@@ -342,7 +342,8 @@ func TestReplaceLog(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("b")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)

@@ -260,6 +260,9 @@ type CopTask struct {
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
+
+	// partialOrderMatchResult stores the match result for partial order optimization.
+	partialOrderMatchResult *property.PartialOrderMatchResult
 }
 
 // Invalid implements Task interface.

@@ -144,6 +144,9 @@ func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.BasePhysicalPlan = *basePlan
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
+	if op.PrefixCol != nil {
+		cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+	}
 	return cloned, true
 }
 
@@ -323,6 +326,9 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 	}
 	cloned.physicalSchemaProducer = *basePlan
 	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
+	if op.PrefixCol != nil {
+		cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+	}
 	return cloned, true
 }
 
