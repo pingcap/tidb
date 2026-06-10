@@ -49,13 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> 3180d052036 (br: pre-lease log-backup storage and readLock leak fixes (#67850))
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -2571,7 +2565,7 @@ func (m *mockBatchProcessor) ProcessBatch(
 
 func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 	ctx := context.Background()
-	stg, err := objstore.NewLocalStorage(t.TempDir())
+	stg, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
 	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
@@ -2585,7 +2579,7 @@ func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 	require.Error(t, err, "expected Load() to fail on malformed migration file")
 
 	var lingering []string
-	require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+	require.NoError(t, stg.WalkDir(ctx, &storage.WalkOption{
 		SubDir:    "v1",
 		ObjPrefix: "LOCK",
 	}, func(p string, _ int64) error {

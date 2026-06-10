@@ -113,7 +113,7 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 // dependency is the storage. It is intended for tests that exercise
 // storage-level behavior (lock acquisition, migration loading) and do
 // not need the full domain / session / checkpoint wiring.
-func TEST_NewLogClientWithStorage(s storeapi.Storage) *LogClient {
+func TEST_NewLogClientWithStorage(s storage.ExternalStorage) *LogClient {
 	return &LogClient{storage: s}
 }
 
