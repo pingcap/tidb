@@ -731,19 +731,17 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	type observedTiKVUsageResult struct {
 		taskID              int64
 		logicalIndexKVBytes int64
-		observedIncrease    int64
+		ingestedSSTBytes    uint64
 		initialUsedBytes    int64
-		finalUsedBytes      int64
 	}
 	var observedResult atomic.Pointer[observedTiKVUsageResult]
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLogObservedTiKVCapacityIncrease",
-		func(taskID, logicalIndexKVBytes, observedIncrease, initialUsedBytes, finalUsedBytes int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLogIngestedSSTBytes",
+		func(taskID, logicalIndexKVBytes int64, ingestedSSTBytes uint64, initialUsedBytes int64) {
 			observedResult.Store(&observedTiKVUsageResult{
 				taskID:              taskID,
 				logicalIndexKVBytes: logicalIndexKVBytes,
-				observedIncrease:    observedIncrease,
+				ingestedSSTBytes:    ingestedSSTBytes,
 				initialUsedBytes:    initialUsedBytes,
-				finalUsedBytes:      finalUsedBytes,
 			})
 		})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
@@ -818,7 +816,10 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.NotNil(t, got)
 	require.EqualValues(t, taskIDNum, got.taskID)
 	require.EqualValues(t, readIndexBytes, got.logicalIndexKVBytes)
-	require.GreaterOrEqual(t, got.observedIncrease, int64(0))
+	if kerneltype.IsNextGen() {
+		require.Positive(t, got.ingestedSSTBytes)
+	}
+	require.Positive(t, got.initialUsedBytes)
 }
 
 func TestSplitRangeForTable(t *testing.T) {

@@ -4837,7 +4837,7 @@ func estimateSampledKVsPhysicalBytesWithSplit(
 
 func estimateSortedSampledIndexKVPhysicalBytes(sortedKVs []sampledIndexKV) (int64, error) {
 	if kerneltype.IsNextGen() {
-		return estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs, tikvMVCCPredictionFallbackTS)
+		return estimateSortedSampledIndexKVCSELogicalPhysicalBytes(sortedKVs)
 	}
 	return estimateSortedSampledIndexKVPhysicalBytesClassic(sortedKVs)
 }
@@ -4894,6 +4894,42 @@ func estimateSortedSampledIndexKVCSEPhysicalBytes(sortedKVs []sampledIndexKV, co
 	}
 	return dataBlockBytes + estimateNextGenCSEBinaryFuse8FilterBytes(entryCount), nil
 }
+
+// estimateSortedSampledIndexKVCSELogicalPhysicalBytes estimates the logical index
+// KV payload in the next-gen CSE block model, excluding MVCC version/user-meta bytes.
+func estimateSortedSampledIndexKVCSELogicalPhysicalBytes(sortedKVs []sampledIndexKV) (int64, error) {
+	mvccDataBlockBytes, entryCount, err := estimateSortedSampledIndexKVCSEDataBlockPhysicalBytes(sortedKVs, tikvMVCCPredictionFallbackTS)
+	if err != nil {
+		return 0, err
+	}
+	logicalRawBytes, _, err := estimateSortedSampledIndexKVCSEDataBlockRawBytesWithEntry(
+		sortedKVs,
+		nextGenCSELogicalBlockEntrySize,
+	)
+	if err != nil {
+		return 0, err
+	}
+	mvccRawBytes, _, err := estimateSortedSampledIndexKVCSEDataBlockRawBytesWithEntry(
+		sortedKVs,
+		nextGenCSEBlockEntrySize,
+	)
+	if err != nil {
+		return 0, err
+	}
+	logicalDataBlockBytes := mvccDataBlockBytes
+	if logicalRawBytes > 0 && mvccRawBytes > 0 && logicalRawBytes < mvccRawBytes {
+		// Repeated MVCC metadata can make the compressed MVCC payload smaller than
+		// the directly encoded logical payload. Keep the same CSE physical model,
+		// but remove the metadata contribution by scaling with raw payload bytes.
+		logicalDataBlockBytes = int64(math.Ceil(float64(mvccDataBlockBytes) * float64(logicalRawBytes) / float64(mvccRawBytes)))
+		if logicalDataBlockBytes >= mvccDataBlockBytes && mvccDataBlockBytes > 0 {
+			logicalDataBlockBytes = mvccDataBlockBytes - 1
+		}
+	}
+	return logicalDataBlockBytes + estimateNextGenCSEBinaryFuse8FilterBytes(entryCount), nil
+}
+
+type nextGenCSEBlockEntrySizeFn func(sampledIndexKV, int) int
 
 func estimateSortedSampledIndexKVCSEDataBlockPhysicalBytes(sortedKVs []sampledIndexKV, commitTS uint64) (int64, int, error) {
 	if len(sortedKVs) == 0 {
@@ -4952,6 +4988,55 @@ func estimateSortedSampledIndexKVCSEDataBlockPhysicalBytes(sortedKVs []sampledIn
 	return totalPhysicalBytes, entryCount, nil
 }
 
+func estimateSortedSampledIndexKVCSEDataBlockRawBytesWithEntry(
+	sortedKVs []sampledIndexKV,
+	entrySizeFn nextGenCSEBlockEntrySizeFn,
+) (int64, int, error) {
+	if len(sortedKVs) == 0 {
+		return 0, 0, nil
+	}
+	var (
+		totalRawBytes int64
+		entryCount    int
+		blockKVs      = make([]sampledIndexKV, 0, min(len(sortedKVs), blockSamplePredictionMaxRows))
+		blockBytes    int
+		lastKey       []byte
+	)
+	flushBlock := func() error {
+		if len(blockKVs) == 0 {
+			return nil
+		}
+		rawBytes, err := estimateSampledIndexKVCSEBlockRawBytesWithEntry(blockKVs, entrySizeFn)
+		if err != nil {
+			return err
+		}
+		totalRawBytes += rawBytes
+		blockKVs = blockKVs[:0]
+		blockBytes = 0
+		return nil
+	}
+
+	for _, kvPair := range sortedKVs {
+		if lastKey != nil && bytes.Equal(kvPair.key, lastKey) {
+			continue
+		}
+		entrySize := entrySizeFn(kvPair, 0)
+		if len(blockKVs) > 0 && blockBytes+entrySize > nextGenCSEBlockSize {
+			if err := flushBlock(); err != nil {
+				return 0, 0, err
+			}
+		}
+		blockKVs = append(blockKVs, kvPair)
+		blockBytes += entrySize
+		entryCount++
+		lastKey = kvPair.key
+	}
+	if err := flushBlock(); err != nil {
+		return 0, 0, err
+	}
+	return totalRawBytes, entryCount, nil
+}
+
 func estimateSampledIndexKVCSEBlockPhysicalBytes(blockKVs []sampledIndexKV, commitTS uint64, encoder *zstd.Encoder) (int64, error) {
 	if len(blockKVs) == 0 {
 		return 0, nil
@@ -4985,6 +5070,22 @@ func estimateSampledIndexKVCSEBlockPhysicalBytes(blockKVs []sampledIndexKV, comm
 	return int64(len(encoder.EncodeAll(payload, nil))), nil
 }
 
+func estimateSampledIndexKVCSEBlockRawBytesWithEntry(blockKVs []sampledIndexKV, entrySizeFn nextGenCSEBlockEntrySizeFn) (int64, error) {
+	if len(blockKVs) == 0 {
+		return 0, nil
+	}
+	commonPrefixLen := sharedPrefixLength(blockKVs[0].key, blockKVs[len(blockKVs)-1].key)
+	if commonPrefixLen > nextGenCSEBlockKeySuffixMaxLen {
+		return 0, errors.Errorf("next-gen CSE block common prefix length %d exceeds u16 limit", commonPrefixLen)
+	}
+
+	rawBytes := int64(4 + 4 + 4*len(blockKVs) + 2 + commonPrefixLen)
+	for _, kvPair := range blockKVs {
+		rawBytes += int64(entrySizeFn(kvPair, commonPrefixLen))
+	}
+	return rawBytes, nil
+}
+
 func estimateNextGenCSEBinaryFuse8FilterBytes(entryCount int) int64 {
 	if entryCount <= 0 {
 		return 0
@@ -4998,6 +5099,10 @@ func estimateNextGenCSEBinaryFuse8FilterBytes(entryCount int) int64 {
 func nextGenCSEBlockEntrySize(kvPair sampledIndexKV, commonPrefixLen int) int {
 	return 2 + len(kvPair.key) - commonPrefixLen +
 		1 + nextGenCSEValueVersionLen + 1 + nextGenCSEValueUserMetaSize + len(kvPair.value)
+}
+
+func nextGenCSELogicalBlockEntrySize(kvPair sampledIndexKV, commonPrefixLen int) int {
+	return 2 + len(kvPair.key) - commonPrefixLen + 1 + len(kvPair.value)
 }
 
 func appendNextGenCSEBlockEntry(payload []byte, kvPair sampledIndexKV, commonPrefixLen int, commitTS uint64) ([]byte, error) {
