@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -190,18 +191,16 @@ func TestMarkMViewCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *tes
 			input.AppendString(1, tc.newVal)
 
 			updateTouchedBitmap := make([]uint8, 1)
-			err := markMViewCompleteDeltaTouchedRowsByColumn(
+			err := executil.MarkTouchedRowsByColumn(
 				[]int{0},
 				updateTouchedBitmap,
 				1,
-				true,
-				mviewCompleteDeltaCompareColumn{
-					fieldType:      ft,
-					notNull:        true,
-					touchedBitMask: 1,
-				},
+				0,
 				input.Column(0),
 				input.Column(1),
+				ft,
+				true,
+				"test",
 			)
 			require.NoError(t, err)
 			require.Equal(t, tc.touched, updateTouchedBitmap[0] != 0)
@@ -218,18 +217,16 @@ func TestMarkMViewCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t 
 	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
 
 	enumBitmap := make([]uint8, 1)
-	err := markMViewCompleteDeltaTouchedRowsByColumn(
+	err := executil.MarkTouchedRowsByColumn(
 		[]int{0},
 		enumBitmap,
 		1,
-		true,
-		mviewCompleteDeltaCompareColumn{
-			fieldType:      enumFT,
-			notNull:        true,
-			touchedBitMask: 1,
-		},
+		0,
 		enumChk.Column(0),
 		enumChk.Column(1),
+		enumFT,
+		true,
+		"test",
 	)
 	require.NoError(t, err)
 	require.Equal(t, []uint8{0}, enumBitmap)
@@ -242,18 +239,16 @@ func TestMarkMViewCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t 
 	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
 
 	setBitmap := make([]uint8, 1)
-	err = markMViewCompleteDeltaTouchedRowsByColumn(
+	err = executil.MarkTouchedRowsByColumn(
 		[]int{0},
 		setBitmap,
 		1,
-		true,
-		mviewCompleteDeltaCompareColumn{
-			fieldType:      setFT,
-			notNull:        true,
-			touchedBitMask: 1,
-		},
+		0,
 		setChk.Column(0),
 		setChk.Column(1),
+		setFT,
+		true,
+		"test",
 	)
 	require.NoError(t, err)
 	require.Equal(t, []uint8{0}, setBitmap)

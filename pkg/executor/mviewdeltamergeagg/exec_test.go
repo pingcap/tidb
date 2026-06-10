@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -900,7 +901,7 @@ func TestMaxFastPathAndSingleRowRecompute(t *testing.T) {
 	require.Len(t, res.RowOps, 3)
 	require.Equal(t, RowOpUpdate, res.RowOps[0].Tp)
 	require.Equal(t, RowOpUpdate, res.RowOps[1].Tp)
-	require.Equal(t, RowOpNoOp, res.RowOps[2].Tp)
+	require.Equal(t, RowOpUpdate, res.RowOps[2].Tp)
 
 	maxCol := res.ComputedCols[7]
 	require.NotNil(t, maxCol)
@@ -1843,10 +1844,18 @@ func TestNoOpWhenAggValueUnchanged(t *testing.T) {
 
 	require.Len(t, writer.results, 1)
 	require.Len(t, writer.results[0].RowOps, 1)
-	require.Equal(t, RowOpNoOp, writer.results[0].RowOps[0].Tp)
+	require.Equal(t, RowOpUpdate, writer.results[0].RowOps[0].Tp)
 	require.Equal(t, 1, writer.results[0].UpdateTouchedStride)
 	require.Equal(t, 2, writer.results[0].UpdateTouchedBitCnt)
 	require.Equal(t, uint8(0), writer.results[0].UpdateTouchedBitmap[0])
+
+	tableWriter := &tableResultWriter{
+		aggWritableIDs: []int{0, 1},
+		touched:        make([]bool, 2),
+	}
+	changed := tableWriter.buildTouchedFromBitmap(writer.results[0].UpdateTouchedBitmap, writer.results[0].UpdateTouchedStride, 0)
+	require.False(t, changed)
+	require.Equal(t, []bool{false, false}, tableWriter.touched)
 }
 
 func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
@@ -1868,11 +1877,9 @@ func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
 	chk.AppendString(1, "x")
 
 	updateRows := []int{0, 1, 2, 3}
-	updateChanged := make([]bool, len(updateRows))
 	updateTouchedBitmap := make([]uint8, len(updateRows))
-	err := markUpdateTouchedRowsByColumn(
+	err := executil.MarkTouchedRowsByColumn(
 		updateRows,
-		updateChanged,
 		updateTouchedBitmap,
 		1,
 		0,
@@ -1880,9 +1887,9 @@ func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
 		chk.Column(1),
 		ft,
 		false,
+		"aggregate change",
 	)
 	require.NoError(t, err)
-	require.Equal(t, []bool{true, true, false, true}, updateChanged)
 	require.Equal(t, []uint8{1, 1, 0, 1}, updateTouchedBitmap)
 }
 
@@ -1894,11 +1901,9 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) 
 	enumChk.AppendEnum(0, types.Enum{Name: "x", Value: 1})
 	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
 
-	enumChanged := make([]bool, 1)
 	enumBitmap := make([]uint8, 1)
-	err := markUpdateTouchedRowsByColumn(
+	err := executil.MarkTouchedRowsByColumn(
 		[]int{0},
-		enumChanged,
 		enumBitmap,
 		1,
 		0,
@@ -1906,9 +1911,9 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) 
 		enumChk.Column(1),
 		enumFT,
 		true,
+		"aggregate change",
 	)
 	require.NoError(t, err)
-	require.Equal(t, []bool{false}, enumChanged)
 	require.Equal(t, []uint8{0}, enumBitmap)
 
 	setFT := types.NewFieldType(mysql.TypeSet)
@@ -1918,11 +1923,9 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) 
 	setChk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
 	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
 
-	setChanged := make([]bool, 1)
 	setBitmap := make([]uint8, 1)
-	err = markUpdateTouchedRowsByColumn(
+	err = executil.MarkTouchedRowsByColumn(
 		[]int{0},
-		setChanged,
 		setBitmap,
 		1,
 		0,
@@ -1930,9 +1933,9 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) 
 		setChk.Column(1),
 		setFT,
 		true,
+		"aggregate change",
 	)
 	require.NoError(t, err)
-	require.Equal(t, []bool{false}, setChanged)
 	require.Equal(t, []uint8{0}, setBitmap)
 }
 

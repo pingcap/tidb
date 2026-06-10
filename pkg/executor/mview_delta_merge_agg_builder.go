@@ -82,7 +82,6 @@ const (
 	MinMaxRecomputeSingleRow = mviewdeltamergeagg.MinMaxRecomputeSingleRow
 	MinMaxRecomputeBatch     = mviewdeltamergeagg.MinMaxRecomputeBatch
 
-	MViewDeltaMergeAggRowOpNoOp   = mviewdeltamergeagg.RowOpNoOp
 	MViewDeltaMergeAggRowOpInsert = mviewdeltamergeagg.RowOpInsert
 	MViewDeltaMergeAggRowOpUpdate = mviewdeltamergeagg.RowOpUpdate
 	MViewDeltaMergeAggRowOpDelete = mviewdeltamergeagg.RowOpDelete

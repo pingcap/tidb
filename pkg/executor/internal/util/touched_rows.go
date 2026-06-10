@@ -24,16 +24,34 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
-// MarkTouchedRowsByColumn compares old/new chunk columns and calls markTouched for each changed update row.
+type touchedBitmapMarker struct {
+	bitmap           []uint8
+	stride           int
+	bitByteOffset    int
+	bitMask          uint8
+	singleByteStride bool
+}
+
+func (m touchedBitmapMarker) mark(updateOrdinal int) {
+	if m.singleByteStride {
+		m.bitmap[updateOrdinal] |= m.bitMask
+		return
+	}
+	m.bitmap[updateOrdinal*m.stride+m.bitByteOffset] |= m.bitMask
+}
+
+// MarkTouchedRowsByColumn compares old/new chunk columns and marks touched bits for changed update rows.
 // The comparison deliberately uses binary semantics for string-like values to match row-update touched-column
 // detection instead of SQL collation equality.
 func MarkTouchedRowsByColumn(
 	updateRows []int,
+	updateTouchedBitmap []uint8,
+	updateTouchedStride int,
+	updateBitPos int,
 	oldCol *chunk.Column,
 	newCol *chunk.Column,
 	fieldType *types.FieldType,
 	notNull bool,
-	markTouched func(updateOrdinal int),
 	comparisonContext string,
 ) error {
 	if fieldType == nil {
@@ -41,6 +59,14 @@ func MarkTouchedRowsByColumn(
 	}
 	if len(updateRows) == 0 {
 		return nil
+	}
+	bitByteOffset := updateBitPos >> 3
+	marker := touchedBitmapMarker{
+		bitmap:           updateTouchedBitmap,
+		stride:           updateTouchedStride,
+		bitByteOffset:    bitByteOffset,
+		bitMask:          uint8(1 << (updateBitPos & 7)),
+		singleByteStride: updateTouchedStride == 1,
 	}
 
 	switch fieldType.EvalType() {
@@ -51,7 +77,7 @@ func MarkTouchedRowsByColumn(
 			if notNull {
 				for updateOrdinal, rowIdx := range updateRows {
 					if oldVals[rowIdx] != newVals[rowIdx] {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 				}
 				return nil
@@ -61,12 +87,12 @@ func MarkTouchedRowsByColumn(
 				newIsNull := newCol.IsNull(rowIdx)
 				if oldIsNull || newIsNull {
 					if oldIsNull != newIsNull {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 					continue
 				}
 				if oldVals[rowIdx] != newVals[rowIdx] {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -76,7 +102,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if oldVals[rowIdx] != newVals[rowIdx] {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -86,12 +112,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if oldVals[rowIdx] != newVals[rowIdx] {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil
@@ -102,7 +128,7 @@ func MarkTouchedRowsByColumn(
 			if notNull {
 				for updateOrdinal, rowIdx := range updateRows {
 					if oldVals[rowIdx] != newVals[rowIdx] {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 				}
 				return nil
@@ -112,12 +138,12 @@ func MarkTouchedRowsByColumn(
 				newIsNull := newCol.IsNull(rowIdx)
 				if oldIsNull || newIsNull {
 					if oldIsNull != newIsNull {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 					continue
 				}
 				if oldVals[rowIdx] != newVals[rowIdx] {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -127,7 +153,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if oldVals[rowIdx] != newVals[rowIdx] {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -137,12 +163,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if oldVals[rowIdx] != newVals[rowIdx] {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil
@@ -152,7 +178,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -162,12 +188,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil
@@ -178,7 +204,7 @@ func MarkTouchedRowsByColumn(
 			if notNull {
 				for updateOrdinal, rowIdx := range updateRows {
 					if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 				}
 				return nil
@@ -188,12 +214,12 @@ func MarkTouchedRowsByColumn(
 				newIsNull := newCol.IsNull(rowIdx)
 				if oldIsNull || newIsNull {
 					if oldIsNull != newIsNull {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 					continue
 				}
 				if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -201,7 +227,7 @@ func MarkTouchedRowsByColumn(
 			if notNull {
 				for updateOrdinal, rowIdx := range updateRows {
 					if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 				}
 				return nil
@@ -211,12 +237,12 @@ func MarkTouchedRowsByColumn(
 				newIsNull := newCol.IsNull(rowIdx)
 				if oldIsNull || newIsNull {
 					if oldIsNull != newIsNull {
-						markTouched(updateOrdinal)
+						marker.mark(updateOrdinal)
 					}
 					continue
 				}
 				if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -224,7 +250,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -234,12 +260,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil
@@ -249,7 +275,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if oldVals[rowIdx] != newVals[rowIdx] {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -259,12 +285,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if oldVals[rowIdx] != newVals[rowIdx] {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil
@@ -274,7 +300,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if oldVals[rowIdx] != newVals[rowIdx] {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -284,12 +310,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if oldVals[rowIdx] != newVals[rowIdx] {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil
@@ -297,7 +323,7 @@ func MarkTouchedRowsByColumn(
 		if notNull {
 			for updateOrdinal, rowIdx := range updateRows {
 				if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 			}
 			return nil
@@ -307,12 +333,12 @@ func MarkTouchedRowsByColumn(
 			newIsNull := newCol.IsNull(rowIdx)
 			if oldIsNull || newIsNull {
 				if oldIsNull != newIsNull {
-					markTouched(updateOrdinal)
+					marker.mark(updateOrdinal)
 				}
 				continue
 			}
 			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-				markTouched(updateOrdinal)
+				marker.mark(updateOrdinal)
 			}
 		}
 		return nil

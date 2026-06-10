@@ -140,10 +140,8 @@ type MinMaxRecomputeExec struct {
 type RowOpType uint8
 
 const (
-	// RowOpNoOp means there is no MView row to touch.
-	RowOpNoOp RowOpType = iota
 	// RowOpInsert means insert a new MView row.
-	RowOpInsert
+	RowOpInsert RowOpType = iota
 	// RowOpUpdate means update an existing MView row.
 	RowOpUpdate
 	// RowOpDelete means delete an existing MView row.
@@ -225,9 +223,7 @@ type mergeWorkerData struct {
 	minMaxResultNullRows              []bool
 	minMaxResultEncodedKeys           [][]byte
 	// For building update operations.
-	updateRows      []int
-	updateOpIndexes []int
-	updateChanged   []bool
+	updateRows []int
 }
 
 type mergeRuntimeStats struct {
@@ -1708,10 +1704,8 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 	rowOps := make([]RowOp, 0, input.NumRows())
 
 	var updateRows []int
-	var updateOpIndexes []int
 	if workerData != nil {
 		updateRows = workerData.updateRows[:0]
-		updateOpIndexes = workerData.updateOpIndexes[:0]
 	}
 	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
 		newCount := newCountStarVals[rowIdx]
@@ -1735,13 +1729,11 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 				updateOrdinal: int32(updateOrdinal),
 			})
 			updateRows = append(updateRows, rowIdx)
-			updateOpIndexes = append(updateOpIndexes, len(rowOps)-1)
 		}
 	}
 
 	if workerData != nil {
 		workerData.updateRows = updateRows
-		workerData.updateOpIndexes = updateOpIndexes
 	}
 
 	updateTouchedBitCnt := len(e.aggOutputColIDs)
@@ -1751,20 +1743,6 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 		return rowOps, nil, updateTouchedStride, updateTouchedBitCnt, nil
 	}
 	updateTouchedBitmap := make([]uint8, updateCnt*updateTouchedStride)
-
-	var updateChanged []bool
-	if workerData != nil {
-		updateChanged = workerData.updateChanged
-	}
-	if cap(updateChanged) < updateCnt {
-		updateChanged = make([]bool, updateCnt)
-	} else {
-		updateChanged = updateChanged[:updateCnt]
-		clear(updateChanged)
-	}
-	if workerData != nil {
-		workerData.updateChanged = updateChanged
-	}
 
 	fieldTypes := e.Children(0).RetFieldTypes()
 	for bitPos, colID := range e.aggOutputColIDs {
@@ -1782,9 +1760,8 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 		if newCol == nil {
 			return nil, nil, 0, 0, errors.Errorf("computed agg col %d is nil", colID)
 		}
-		if err := markUpdateTouchedRowsByColumn(
+		if err := executil.MarkTouchedRowsByColumn(
 			updateRows,
-			updateChanged,
 			updateTouchedBitmap,
 			updateTouchedStride,
 			bitPos,
@@ -1794,57 +1771,12 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 			// TODO: Use the MV target column metadata for the not-null quick path once the
 			// aggregate output col ID to MV column offset mapping is tracked explicitly.
 			false,
+			"aggregate change",
 		); err != nil {
 			return nil, nil, 0, 0, err
 		}
 	}
-
-	for updateOrdinal, opIdx := range updateOpIndexes {
-		if !updateChanged[updateOrdinal] {
-			rowOps[opIdx].Tp = RowOpNoOp
-		}
-	}
 	return rowOps, updateTouchedBitmap, updateTouchedStride, updateTouchedBitCnt, nil
-}
-
-func markUpdateTouchedRowsByColumn(
-	updateRows []int,
-	updateChanged []bool,
-	updateTouchedBitmap []uint8,
-	updateTouchedStride int,
-	updateBitPos int,
-	oldCol *chunk.Column,
-	newCol *chunk.Column,
-	ft *types.FieldType,
-	notNull bool,
-) error {
-	if ft == nil {
-		return errors.New("field type is nil when comparing aggregate outputs")
-	}
-	if len(updateRows) == 0 {
-		return nil
-	}
-	bitMask := uint8(1 << (updateBitPos & 7))
-	bitByteOffset := updateBitPos >> 3
-	singleByteStride := updateTouchedStride == 1
-
-	setTouched := func(updateOrdinal int) {
-		updateChanged[updateOrdinal] = true
-		if singleByteStride {
-			updateTouchedBitmap[updateOrdinal] |= bitMask
-			return
-		}
-		updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-	}
-	return executil.MarkTouchedRowsByColumn(
-		updateRows,
-		oldCol,
-		newCol,
-		ft,
-		notNull,
-		setTouched,
-		"aggregate change",
-	)
 }
 
 func chunkRowColDatum(col *chunk.Column, rowIdx int, ft *types.FieldType, d *types.Datum) {

@@ -114,8 +114,7 @@ type MViewCompleteDeltaApplyExec struct {
 	touched            []bool
 	// currTouchedIdxes caches writable-column indexes touched by the current UPDATE row.
 	// It lets us clear only previously-set bits in `touched` and patch only changed columns in `newRow`.
-	currTouchedIdxes        []int
-	updateTouchedSingleByte bool
+	currTouchedIdxes []int
 
 	childChunk          *chunk.Chunk
 	updateRows          []int
@@ -126,13 +125,11 @@ type MViewCompleteDeltaApplyExec struct {
 }
 
 type mviewCompleteDeltaCompareColumn struct {
-	writableIdx      int
-	mInputColID      int
-	qInputColID      int
-	fieldType        *types.FieldType
-	notNull          bool
-	touchedBitMask   uint8
-	touchedByteIndex int
+	writableIdx int
+	mInputColID int
+	qInputColID int
+	fieldType   *types.FieldType
+	notNull     bool
 }
 
 type mviewCompleteDeltaApplyWriterStats struct {
@@ -216,7 +213,6 @@ func (e *MViewCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	e.updateRows = e.updateRows[:0]
 	e.updateTouchedBitmap = e.updateTouchedBitmap[:0]
 	e.updateTouchedStride = 0
-	e.updateTouchedSingleByte = false
 	e.currTouchedIdxes = e.currTouchedIdxes[:0]
 	clear(e.touched)
 
@@ -255,7 +251,6 @@ func (e *MViewCompleteDeltaApplyExec) Open(ctx context.Context) error {
 	}
 	e.currTouchedIdxes = make([]int, 0, len(e.compareColumns))
 	e.updateTouchedStride = (len(e.compareColumns) + 7) >> 3
-	e.updateTouchedSingleByte = e.updateTouchedStride == 1
 	e.childChunk = exec.NewFirstChunk(child)
 	return nil
 }
@@ -324,7 +319,6 @@ func (e *MViewCompleteDeltaApplyExec) Close() error {
 	e.updateRows = nil
 	e.updateTouchedBitmap = nil
 	e.updateTouchedStride = 0
-	e.updateTouchedSingleByte = false
 	e.executed = false
 	e.runtimeStats = nil
 	return e.BaseExecutor.Close()
@@ -397,10 +391,7 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 				return err
 			}
 		case mviewCompleteDeltaDiffOpUpdate:
-			changed, err := e.buildTouchedFromBitmap(updateOrdinal)
-			if err != nil {
-				return err
-			}
+			changed := e.buildTouchedFromBitmap(updateOrdinal)
 			if changed {
 				writerStatsDelta.updateRows++
 				e.buildUpdateRows(row)
@@ -481,13 +472,11 @@ func (e *MViewCompleteDeltaApplyExec) initCompareColumns(inputColCount int) erro
 		}
 		fieldType := e.writableFieldTypes[writableIdx]
 		e.compareColumns[compareIdx] = mviewCompleteDeltaCompareColumn{
-			writableIdx:      writableIdx,
-			mInputColID:      mInputColID,
-			qInputColID:      qInputColID,
-			fieldType:        fieldType,
-			notNull:          mysql.HasNotNullFlag(fieldType.GetFlag()),
-			touchedBitMask:   uint8(1 << (compareIdx & 7)),
-			touchedByteIndex: compareIdx >> 3,
+			writableIdx: writableIdx,
+			mInputColID: mInputColID,
+			qInputColID: qInputColID,
+			fieldType:   fieldType,
+			notNull:     mysql.HasNotNullFlag(fieldType.GetFlag()),
 		}
 	}
 	return nil
@@ -508,15 +497,17 @@ func (e *MViewCompleteDeltaApplyExec) markChunkUpdateTouchedColumns(input *chunk
 		clear(e.updateTouchedBitmap)
 	}
 
-	for _, compareCol := range e.compareColumns {
-		if err := markMViewCompleteDeltaTouchedRowsByColumn(
+	for compareIdx, compareCol := range e.compareColumns {
+		if err := executil.MarkTouchedRowsByColumn(
 			e.updateRows,
 			e.updateTouchedBitmap,
 			e.updateTouchedStride,
-			e.updateTouchedSingleByte,
-			compareCol,
+			compareIdx,
 			input.Column(compareCol.mInputColID),
 			input.Column(compareCol.qInputColID),
+			compareCol.fieldType,
+			compareCol.notNull,
+			"COMPLETE DELTA APPLY",
 		); err != nil {
 			return err
 		}
@@ -547,9 +538,9 @@ func (e *MViewCompleteDeltaApplyExec) buildUpdateRows(row chunk.Row) {
 	}
 }
 
-func (e *MViewCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) (bool, error) {
+func (e *MViewCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) bool {
 	if e.updateTouchedStride == 0 {
-		return false, nil
+		return false
 	}
 	for _, idx := range e.currTouchedIdxes {
 		e.touched[idx] = false
@@ -570,34 +561,7 @@ func (e *MViewCompleteDeltaApplyExec) buildTouchedFromBitmap(updateOrdinal int) 
 			b &= b - 1
 		}
 	}
-	return changed, nil
-}
-
-func markMViewCompleteDeltaTouchedRowsByColumn(
-	updateRows []int,
-	updateTouchedBitmap []uint8,
-	updateTouchedStride int,
-	updateTouchedSingleByte bool,
-	compareCol mviewCompleteDeltaCompareColumn,
-	oldCol *chunk.Column,
-	newCol *chunk.Column,
-) error {
-	setTouched := func(updateOrdinal int) {
-		if updateTouchedSingleByte {
-			updateTouchedBitmap[updateOrdinal] |= compareCol.touchedBitMask
-			return
-		}
-		updateTouchedBitmap[updateOrdinal*updateTouchedStride+compareCol.touchedByteIndex] |= compareCol.touchedBitMask
-	}
-	return executil.MarkTouchedRowsByColumn(
-		updateRows,
-		oldCol,
-		newCol,
-		compareCol.fieldType,
-		compareCol.notNull,
-		setTouched,
-		"COMPLETE DELTA APPLY",
-	)
+	return changed
 }
 
 // Next implements the Executor Next interface.
