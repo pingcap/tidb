@@ -25,6 +25,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
@@ -95,7 +96,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "s3", "ks3", "oss":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", redactSensitiveURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", ast.RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
@@ -117,7 +118,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "gs", "gcs":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", redactSensitiveURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", ast.RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
@@ -133,7 +134,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "azure", "azblob":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", redactSensitiveURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", ast.RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
@@ -149,46 +150,6 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %s not support yet", u.Scheme)
 	}
-}
-
-func redactSensitiveURL(rawURL string) string {
-	u, err := ParseRawURL(rawURL)
-	if err != nil {
-		return rawURL
-	}
-
-	var redactKeys map[string]struct{}
-	switch strings.ToLower(u.Scheme) {
-	case "s3", "ks3", "oss":
-		redactKeys = map[string]struct{}{
-			"access-key":        {},
-			"secret-access-key": {},
-			"session-token":     {},
-		}
-	case "azure", "azblob":
-		redactKeys = map[string]struct{}{
-			"account-key":    {},
-			"encryption-key": {},
-			"sas-token":      {},
-		}
-	}
-	if len(redactKeys) == 0 {
-		return rawURL
-	}
-
-	values := u.Query()
-	redacted := false
-	for key := range values {
-		if _, ok := redactKeys[NormalizeQueryParameterKey(key)]; ok {
-			values[key] = []string{"xxxxxx"}
-			redacted = true
-		}
-	}
-	if !redacted {
-		return rawURL
-	}
-	u.RawQuery = values.Encode()
-	return u.String()
 }
 
 // ExtractQueryParameters moves the query parameters of the URL into the options
