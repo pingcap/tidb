@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -77,27 +78,34 @@ func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, or
 	}
 	writerCnt := len(bounds) - 1
 	eg, egCtx := errgroup.WithContext(ctx)
-	m := e.taskMeta.effectiveWritersPerEncoder()
-	for wStart := 0; wStart < writerCnt; wStart += m {
-		wEnd := min(wStart+m, writerCnt)
+	nw := e.taskMeta.effectiveWritersPerEncoder()
+	nr := e.taskMeta.effectiveReadersPerEncoder()
+	for wStart := 0; wStart < writerCnt; wStart += nw {
+		wEnd := min(wStart+nw, writerCnt)
 		writers := make([]*writerChan, 0, wEnd-wStart)
 		for i := wStart; i < wEnd; i++ {
-			w := &writerChan{
+			writers = append(writers, &writerChan{
 				id:    i,
 				start: bounds[i],
 				end:   bounds[i+1],
 				encCh: make(chan []byte, exportEncBufSize),
-			}
-			writers = append(writers, w)
+			})
 		}
 
 		workCh := make(chan readerChunk, len(writers)*exportEncBufSize)
 		for _, w := range writers {
 			eg.Go(func() error {
-				return e.runReader(egCtx, physicalID, w, workCh)
-			})
-			eg.Go(func() error {
 				return e.runFileWriter(egCtx, ordinal, w.id, w.encCh)
+			})
+		}
+		// nr readers share this encoder's nw writers: reader r round-robins the
+		// contiguous slice writers[rStart:rStart+per], so each file stays in key
+		// order while only nr (not nw) readers of this group feed the encoder.
+		per := (len(writers) + nr - 1) / nr
+		for rStart := 0; rStart < len(writers); rStart += per {
+			sub := writers[rStart:min(rStart+per, len(writers))]
+			eg.Go(func() error {
+				return e.runGroupReader(egCtx, physicalID, sub, workCh)
 			})
 		}
 		eg.Go(func() error {
@@ -107,34 +115,60 @@ func (e *dumpStepExecutor) runPipeline(ctx context.Context, physicalID int64, or
 	return eg.Wait()
 }
 
-// runReader cop-scans the writer's sub-range in handle order and feeds raw
-// chunks to the encoder.
-func (e *dumpStepExecutor) runReader(ctx context.Context, physicalID int64, w *writerChan, workCh chan<- readerChunk) error {
+// runGroupReader cop-scans the sub-ranges of its assigned writers, reading them
+// round-robin (one open cursor per sub-range) so all the writers stay fed by a
+// single reader goroutine. Each sub-range is read in handle order by its one
+// cursor, so the per-file output order is preserved; chunks are tagged with
+// their writer and sent to the shared encoder.
+func (e *dumpStepExecutor) runGroupReader(ctx context.Context, physicalID int64, writers []*writerChan, workCh chan<- readerChunk) error {
 	exprCtx := newExportExprCtx()
 	distCtx := newExportDistSQLCtx(e.store.GetClient())
-	rs, err := buildScan(ctx, exprCtx, distCtx, e.taskMeta.TableInfo, physicalID,
-		e.colInfos, e.fieldTps, e.taskMeta.SnapshotTS, w.start, w.end)
-	if err != nil {
-		return err
+	rss := make([]distsql.SelectResult, len(writers))
+	closeAll := func() {
+		for _, rs := range rss {
+			if rs != nil {
+				rs.Close()
+			}
+		}
 	}
-	defer rs.Close()
-	rows := 0
-	for {
-		// the chunk is returned to the pool by the encoder after encoding.
-		chk := e.getChunk()
-		if err := rs.Next(ctx, chk); err != nil {
-			return errors.Trace(err)
-		}
-
-		if chk.NumRows() == 0 {
-			e.logger.Info("export sub-range read done", zap.Int("writer", w.id), zap.Int("rows", rows))
-			return sendCtx(ctx, workCh, readerChunk{writer: w})
-		}
-		rows += chk.NumRows()
-		if err := sendCtx(ctx, workCh, readerChunk{writer: w, chk: chk}); err != nil {
+	for i, w := range writers {
+		rs, err := buildScan(ctx, exprCtx, distCtx, e.taskMeta.TableInfo, physicalID,
+			e.colInfos, e.fieldTps, e.taskMeta.SnapshotTS, w.start, w.end)
+		if err != nil {
+			closeAll()
 			return err
 		}
+		rss[i] = rs
 	}
+	defer closeAll()
+
+	active := len(rss)
+	for active > 0 {
+		for i := range rss {
+			if rss[i] == nil {
+				continue
+			}
+			// the chunk is returned to the pool by the encoder after encoding.
+			chk := e.getChunk()
+			if err := rss[i].Next(ctx, chk); err != nil {
+				return errors.Trace(err)
+			}
+			if chk.NumRows() == 0 {
+				e.chunkPool.Put(chk)
+				if err := sendCtx(ctx, workCh, readerChunk{writer: writers[i]}); err != nil {
+					return err
+				}
+				rss[i].Close()
+				rss[i] = nil
+				active--
+				continue
+			}
+			if err := sendCtx(ctx, workCh, readerChunk{writer: writers[i], chk: chk}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // runEncoder is the CPU-bound stage: it drains chunks of its m sub-ranges
