@@ -117,6 +117,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/domain/serverinfo",
+        "//pkg/domain/sqlsvrapi/mock",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/planner",
         "//pkg/dxf/framework/proto",
