@@ -6326,8 +6326,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	expectedExternalID := config.GetGlobalKeyspaceName()
 	for k, vs := range values {
 		normalizedK := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-		switch normalizedK {
-		case s3like.S3ExternalID:
+		if normalizedK == s3like.S3ExternalID {
 			for _, v := range vs {
 				if v != expectedExternalID {
 					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
