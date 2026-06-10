@@ -1566,6 +1566,15 @@ func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.Logic
 		}
 		expr, placeholder, err := getMaskingPolicyExpr(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
 		if err != nil {
+			// Log and skip this column — this can happen during DDL transitions
+			// (e.g., column rename where the expression still references the old name).
+			logutil.BgLogger().Warn("failed to build masking policy expression, skipping",
+				zap.String("policy", policy.Name.L),
+				zap.Error(err),
+			)
+			continue
+		}
+		if err != nil {
 			return nil, err
 		}
 		if placeholder == nil {
@@ -1595,8 +1604,9 @@ func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName
 	}
 	dbName := name.DBName
 	if dbName.L == "" {
-		// Cannot determine source database (e.g., derived table aliasing clears DBName).
-		// Skip masking rather than risk applying the wrong policy via CurrentDB fallback.
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if dbName.L == "" {
 		return nil, nil, nil
 	}
 	tbl, err := b.is.TableByName(context.Background(), dbName, tblName)
