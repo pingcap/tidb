@@ -71,7 +71,11 @@ var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, no
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
-const initialMaxCores uint64 = 10000
+const (
+	initialMaxCores uint64 = 10000
+
+	partitionProcessorStaticPruneBlacklistWarning = "partition_processor in mysql.opt_rule_blacklist is ignored because static partition pruning requires it for correctness"
+)
 
 var (
 	// the old ref of optRuleList for downgrading to old optimizing routine.
@@ -986,7 +990,7 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule, logic) {
 			continue
 		}
 		logic, _, err = rule.Optimize(ctx, logic)
@@ -1008,7 +1012,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule, logic) {
 			continue
 		}
 		var planChanged bool
@@ -1018,7 +1022,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
-		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
+		if planChanged && ok && !isLogicalRuleDisabled(interactionRule, logic) {
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
@@ -1034,9 +1038,41 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	return logic, err
 }
 
-func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
+func isLogicalRuleDisabled(r base.LogicalOptRule, logic base.LogicalPlan) bool {
 	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
-	return disabled
+	if !disabled {
+		return false
+	}
+	if _, ok := r.(*rule.PartitionProcessor); ok && !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode &&
+		hasPartitionedDataSource(logic) {
+		// Static pruning needs PartitionProcessor to rewrite logical partition scans
+		// into concrete partition scans; skipping it can make partition data invisible.
+		appendPartitionProcessorStaticPruneBlacklistWarning(logic)
+		return false
+	}
+	return true
+}
+
+func hasPartitionedDataSource(logic base.LogicalPlan) bool {
+	if ds, ok := logic.(*logicalop.DataSource); ok {
+		return ds.TableInfo != nil && ds.TableInfo.GetPartitionInfo() != nil
+	}
+	for _, child := range logic.Children() {
+		if hasPartitionedDataSource(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendPartitionProcessorStaticPruneBlacklistWarning(logic base.LogicalPlan) {
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	for _, warn := range stmtCtx.GetWarnings() {
+		if warn.Err != nil && warn.Err.Error() == partitionProcessorStaticPruneBlacklistWarning {
+			return
+		}
+	}
+	stmtCtx.AppendWarning(errors.NewNoStackError(partitionProcessorStaticPruneBlacklistWarning))
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
