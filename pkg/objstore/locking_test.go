@@ -1012,7 +1012,7 @@ func TestTryRenewPostWriteProofAcceptsMinimumRemainingLease(t *testing.T) {
 
 	delay, err := objstore.TESTTryRenewWithDelay(ctx, lock)
 	require.NoError(t, err)
-	require.Equal(t, 20*time.Second, delay)
+	require.Zero(t, delay)
 }
 
 func TestTryRenewReturnsDelayFromRemainingLease(t *testing.T) {
@@ -1023,12 +1023,13 @@ func TestTryRenewReturnsDelayFromRemainingLease(t *testing.T) {
 
 	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
 	renewNow := leaseNow.Add(10 * time.Millisecond)
+	postWriteProofNow := renewNow.Add(15 * time.Millisecond)
 	clock := &sequenceLeaseClock{
 		times: []time.Time{
 			leaseNow,
 			leaseNow.Add(time.Millisecond),
 			renewNow,
-			renewNow.Add(75 * time.Millisecond),
+			postWriteProofNow,
 		},
 	}
 	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", clock)
@@ -1036,7 +1037,7 @@ func TestTryRenewReturnsDelayFromRemainingLease(t *testing.T) {
 
 	delay, err := objstore.TESTTryRenewWithDelay(ctx, lock)
 	require.NoError(t, err)
-	require.Equal(t, 5*time.Millisecond, delay)
+	require.Equal(t, 15*time.Millisecond, delay)
 }
 
 func TestTryRenewLeaseClockErrorIsTransient(t *testing.T) {
@@ -1297,6 +1298,45 @@ func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
 			// remaining lease, not from a fresh 450ms TTL.
 		case <-time.After(130 * time.Millisecond):
 			t.Fatal("renewal did not use the post-acquire proven remaining lease")
+		}
+	})
+
+	t.Run("renews immediately when proven lease is below two thirds ttl", func(t *testing.T) {
+		ctx := context.Background()
+		base, _ := createMockStorage(t)
+		ttl := 450 * time.Millisecond
+		renewInterval := ttl / 3
+		postAcquireProofElapsed := renewInterval + 5*time.Millisecond
+		renewalProofElapsed := renewInterval + 20*time.Millisecond
+		storage := &failWriteAfterStorage{
+			Storage:   base,
+			failAfter: 0,
+			failed:    make(chan struct{}),
+		}
+		defer objstore.TESTSetLeaseConstants(ttl, renewInterval, 3, 5*time.Millisecond)()
+		defer objstore.TESTSetRenewalProofConstants(10*time.Millisecond, time.Millisecond)()
+
+		leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+		clock := &sequenceLeaseClock{
+			times: []time.Time{
+				leaseNow,                              // acquire timestamp
+				leaseNow.Add(postAcquireProofElapsed), // leaves less than 2/3 TTL, but more than retry threshold.
+				leaseNow.Add(renewalProofElapsed),     // renewal pre-write proof
+			},
+		}
+		lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", clock)
+		require.NoError(t, err)
+		defer objstore.TESTStopRenewal(lock)
+		storage.path = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
+
+		objstore.TESTStartRenewal(ctx, lock, nil)
+
+		select {
+		case <-storage.failed:
+			// expected: the first renewal starts immediately because the
+			// proven remaining lease is already below 2/3 TTL.
+		case <-time.After(50 * time.Millisecond):
+			t.Fatal("renewal waited even though the proven lease was already below 2/3 TTL")
 		}
 	})
 }

@@ -168,9 +168,9 @@ var (
 	// long lease does not force an equally long crash-reclaim delay.
 	staleReclaimGrace = 30 * time.Minute
 
-	// renewInterval is the cadence at which a startRenewal-tracked lock
-	// refreshes its ExpireAt. Renewing at TTL/3 leaves 2*TTL/3 for retry
-	// backoff before the lease would actually expire.
+	// renewInterval is the maximum delay before a startRenewal-tracked lock
+	// refreshes its ExpireAt. With the default TTL/3 value, a fresh lease is
+	// renewed when 2*TTL/3 remains.
 	renewInterval = LeaseTTL / 3
 
 	// renewWriteTimeoutCap bounds a single renewal proof operation. The write
@@ -529,7 +529,11 @@ func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 }
 
 func renewDelayFromRemaining(remaining time.Duration) time.Duration {
-	delay := remaining / 3
+	// Renew around the point where 2/3 of the TTL remains. A fresh 1h lease
+	// waits 20m, while a lock returned late from acquire renews immediately
+	// once the proven lease window is already below that target.
+	targetRemaining := LeaseTTL * 2 / 3
+	delay := remaining - targetRemaining
 	if delay > renewInterval {
 		delay = renewInterval
 	}
