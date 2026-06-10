@@ -1123,6 +1123,9 @@ func TestLeaderTick(t *testing.T) {
 			require.NoError(t, deploymode.Set(originDeployMode))
 		})
 
+		// Starter unified GC skips the initial gcWaitTime only in production and
+		// only before the first GC job has completed. Other modes, and intest by
+		// default, keep the normal cooldown semantics.
 		testCases := []struct {
 			name                  string
 			deployMode            deploymode.Mode

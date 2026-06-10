@@ -81,6 +81,9 @@ type GCWorker struct {
 	done                 chan error
 	regionLockResolver   tikv.RegionLockResolver
 
+	// Starter unified GC skips gcWaitTime only before the first completed GC job
+	// in production. After one GC job finishes, it falls back to the normal
+	// debounce behavior shared by other deployment modes.
 	hasFinishedFirstGCJob bool
 }
 
@@ -333,6 +336,11 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 }
 
 func (w *GCWorker) needsToWait() bool {
+	// In production Starter mode, unified GC should fast-start on the first tick
+	// instead of paying an extra gcWaitTime after worker bootstrap. The first
+	// completion flips hasFinishedFirstGCJob, so later ticks still honor the
+	// normal cooldown. Keep intest on the historical behavior unless a test
+	// explicitly opts into the production-only path.
 	if deploymode.IsStarter() && !intest.InTest {
 		return time.Since(w.lastFinish) < gcWaitTime && w.hasFinishedFirstGCJob
 	}
