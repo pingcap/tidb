@@ -68,23 +68,25 @@ func deleteFromSet(set []string, value string) []string {
 
 const dmlChildChunkTargetBytes = 256 * 1024
 
-func newDMLChildChunk(dmlExec exec.Executor, fields []*types.FieldType) *chunk.Chunk {
-	initCap := estimateDMLChildChunkInitCap(fields, dmlExec.MaxChunkSize())
-	return dmlExec.NewChunkWithCapacity(fields, initCap, dmlExec.MaxChunkSize())
+// Use child InitCap as the upper bound, but reduce it for wide rows to avoid large upfront allocation.
+func newDMLChildChunk(dmlExec exec.Executor, fields []*types.FieldType, maxInitCap int) *chunk.Chunk {
+	maxChunkSize := dmlExec.MaxChunkSize()
+	initCap := estimateDMLChildChunkInitCap(fields, maxChunkSize, maxInitCap)
+	return dmlExec.NewChunkWithCapacity(fields, initCap, maxChunkSize)
 }
 
-func estimateDMLChildChunkInitCap(fields []*types.FieldType, maxChunkSize int) int {
-	if maxChunkSize <= 1 {
-		return max(1, maxChunkSize)
+func estimateDMLChildChunkInitCap(fields []*types.FieldType, maxChunkSize, maxInitCap int) int {
+	if maxChunkSize <= 0 || maxInitCap <= 0 {
+		return chunk.ZeroCapacity
 	}
 	rowWidth := 0
 	for _, field := range fields {
 		rowWidth += chunk.EstimateTypeWidth(field)
 	}
 	if rowWidth <= 0 {
-		return min(chunk.InitialCapacity, maxChunkSize)
+		return min(maxChunkSize, maxInitCap)
 	}
-	return max(1, min(chunk.InitialCapacity, maxChunkSize, dmlChildChunkTargetBytes/rowWidth))
+	return max(1, min(maxChunkSize, maxInitCap, dmlChildChunkTargetBytes/rowWidth))
 }
 
 // batchRetrieverHelper is a helper for batch returning data with known total rows. This helps implementing memtable

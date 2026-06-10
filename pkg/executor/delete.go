@@ -91,7 +91,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := exec.RetTypes(e.Children(0))
 	datumRow := make([]types.Datum, 0, len(fields))
-	chk := newDMLChildChunk(e, fields)
+	chk := newDMLChildChunk(e, fields, e.Children(0).InitCap())
 	columns := e.Children(0).Schema().Columns
 	rowCount := 0
 	if len(columns) != len(fields) {

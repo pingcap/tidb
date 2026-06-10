@@ -208,7 +208,7 @@ func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int
 	return limitExec
 }
 
-func TestDMLChildChunkDoesNotInheritLimitInitCap(t *testing.T) {
+func TestDMLChildChunkInitCapByRowWidth(t *testing.T) {
 	sctx := defaultCtx()
 	child := buildLimitExec(sctx, newRequiredRowsDataSource(sctx, 10, nil), 0, 1000)
 	require.Equal(t, 1000, child.InitCap())
@@ -217,8 +217,8 @@ func TestDMLChildChunkDoesNotInheritLimitInitCap(t *testing.T) {
 	base.SetInitCap(chunk.ZeroCapacity)
 	dmlExec := &DeleteExec{BaseExecutor: base}
 
-	chk := newDMLChildChunk(dmlExec, exec.RetTypes(child))
-	require.Equal(t, chunk.InitialCapacity, chk.Capacity())
+	chk := newDMLChildChunk(dmlExec, exec.RetTypes(child), child.InitCap())
+	require.Equal(t, 1000, chk.Capacity())
 	require.Equal(t, sctx.GetSessionVars().MaxChunkSize, chk.RequiredRows())
 
 	fields := make([]*types.FieldType, 1024)
@@ -231,7 +231,7 @@ func TestDMLChildChunkDoesNotInheritLimitInitCap(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, expression.NewSchema(cols...), 0),
 	}, 0, 1000)
 
-	chk = newDMLChildChunk(dmlExec, exec.RetTypes(wideChild))
+	chk = newDMLChildChunk(dmlExec, exec.RetTypes(wideChild), wideChild.InitCap())
 	require.Equal(t, 1, chk.Capacity())
 	require.Equal(t, sctx.GetSessionVars().MaxChunkSize, chk.RequiredRows())
 }
