@@ -474,7 +474,7 @@ func applyMaskingExprs(sctx sessionctx.Context, schema *expression.Schema, maski
 	}
 	maskedChunk := chunk.NewChunkWithCapacity(fieldTypes, req.NumRows())
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+	for rowIdx := range req.NumRows() {
 		row := req.GetRow(rowIdx)
 		for colIdx, expr := range maskingExprs {
 			if expr != nil {

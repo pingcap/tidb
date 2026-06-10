@@ -1483,7 +1483,7 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 // This is similar to buildMaskingReplaceExprs in logical_plan_builder.go
 // but adapted for the fast path.
 func buildMaskingExprsForPointGet(
-	ctx context.Context,
+	_ context.Context,
 	sctx base.PlanContext,
 	is infoschema.InfoSchema,
 	schema *expression.Schema,

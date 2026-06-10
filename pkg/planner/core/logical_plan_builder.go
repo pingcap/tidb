@@ -1611,6 +1611,9 @@ func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName
 	if colInfo == nil {
 		return nil, nil, nil
 	}
+	if colInfo.ID != col.ID {
+		return nil, nil, nil
+	}
 	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
 	if !ok || policy == nil {
 		return nil, nil, nil
@@ -1642,7 +1645,7 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	if len(originalFields) == 0 || len(originalFields) < oldLen {
 		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
 	}
-	for i := 0; i < oldLen; i++ {
+	for i := range oldLen {
 		field := originalFields[i]
 		if field == nil || field.Auxiliary || field.WildCard != nil || field.Expr == nil {
 			return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
@@ -1668,7 +1671,7 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	finalProj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
 	newNames := make([]*types.FieldName, 0, oldLen)
-	for i := 0; i < oldLen; i++ {
+	for i := range oldLen {
 		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), proj.Exprs[i], child.Schema(), childMaskExprs)
 		finalProj.Exprs = append(finalProj.Exprs, expr)
 
@@ -1709,7 +1712,7 @@ func (b *PlanBuilder) buildFinalProjectionWithMaskingSimple(ctx context.Context,
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
 	newNames := make([]*types.FieldName, 0, oldLen)
-	for i := 0; i < oldLen; i++ {
+	for i := range oldLen {
 		col := p.Schema().Columns[i]
 		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), col, p.Schema(), maskExprs)
 		proj.Exprs = append(proj.Exprs, expr)
