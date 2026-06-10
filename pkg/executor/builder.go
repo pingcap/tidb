@@ -1409,10 +1409,6 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 	if b.err != nil {
 		return nil
 	}
-	if sourceExec == nil {
-		b.err = errors.New("MViewCompleteDeltaApply source executor is nil")
-		return nil
-	}
 	sourceFieldTypes := sourceExec.RetFieldTypes()
 	if v.OpColID < 0 || v.OpColID >= len(sourceFieldTypes) {
 		b.err = errors.Errorf("MViewCompleteDeltaApply op column id %d out of source range [0,%d)", v.OpColID, len(sourceFieldTypes))
