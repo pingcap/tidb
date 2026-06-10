@@ -281,7 +281,7 @@ Core execution semantics:
 - For `COMPLETE IN PLACE` / `COMPLETE DELTA APPLY` / `FAST` success path, updates `LAST_SUCCESS_READ_TSO` with CAS condition (`LAST_SUCCESS_READ_TSO <=> <locked_tso>`) and verifies readback equals `TxnCtx.GetForUpdateTS()`.
 - For `COMPLETE IN PLACE` / `COMPLETE DELTA APPLY` / `FAST` execution failure, rolls back the whole refresh transaction to guarantee all-or-nothing MV data replacement.
 - `COMPLETE IN PLACE` rebuilds data with `DELETE FROM mv` + `INSERT INTO mv SELECT ...`.
-- `COMPLETE DELTA APPLY` uses internal-only statement `RefreshMaterializedViewImplementStmt`, a `FULL OUTER JOIN` diff-source plan, and a dedicated `MVCompleteDeltaApply` sink plan.
+- `COMPLETE DELTA APPLY` uses internal-only statement `RefreshMaterializedViewImplementStmt`, a `FULL OUTER JOIN` diff-source plan, and a dedicated `MViewCompleteDeltaApply` sink plan.
 - `COMPLETE OUT OF PLACE` uses a dedicated execution path (not the above refresh transaction):
   - build stage runs in independent internal session(s) outside explicit refresh transaction;
   - cutover and `mysql.tidb_mview_refresh_info` migration/update are done atomically in DDL worker transaction.
@@ -297,7 +297,7 @@ Core execution semantics:
 
 ### COMPLETE OUT OF PLACE (implemented)
 
-#### Current execution model
+Current execution model:
 
 1. Outer refresh path acquires the MV advisory lock and inserts a `running` history row before heavy work.
 2. Build stage runs in a dedicated internal autocommit session:
@@ -726,7 +726,7 @@ to any specific aggregate output column.
 
 1. Use an internal implementation statement path, not ad-hoc SQL text concatenation for write phase.
 2. Let optimizer build one physical diff-source plan (`FOJ + Selection`) first.
-3. Add one dedicated sink physical operator on top (similar role to `MVDeltaMerge` in FAST path).
+3. Add one dedicated sink physical operator on top (similar role to `MViewDeltaMerge` in FAST path).
 4. Executor reads diff rows chunk-by-chunk and applies row operations to MV table directly.
 
 Expected end-to-end shape:
@@ -737,7 +737,7 @@ RefreshMaterializedViewExec
     -> ExecuteInternalStmt(RefreshMaterializedViewImplementStmt for COMPLETE DELTA APPLY)
       -> PlanBuilder.buildRefreshMaterializedViewImplement(...)
         -> optimize diff-source SELECT (FOJ + Selection)
-        -> wrap by new sink plan node (for example MVCompleteDiffApply)
+        -> wrap by new sink plan node (for example MViewCompleteDiffApply)
       -> executorBuilder.build<NewSink>(...)
         -> new sink exec consumes child rows and writes target table (insert/update/delete)
 ```
@@ -788,7 +788,7 @@ Note on diff filtering:
 
 Write mapping contract for sink executor should be explicit:
 
-Recommended root sink-plan contract (`MVCompleteDeltaApply` style):
+Recommended root sink-plan contract (`MViewCompleteDeltaApply` style):
 
 1. `OpColID`: child column index of `diff_op`.
 2. `MarkerMVOffset`: which MV column is used as the side-missing marker.
@@ -819,7 +819,7 @@ Current write strategy:
 Implemented today:
 
 1. Parser/AST support for `COMPLETE DELTA APPLY`, including reject cases for invalid mode combinations.
-2. Planner diff-source build with `FULL OUTER JOIN`, diff filter, stable output layout, and explicit sink metadata (`MVCompleteDeltaApply`).
+2. Planner diff-source build with `FULL OUTER JOIN`, diff filter, stable output layout, and explicit sink metadata (`MViewCompleteDeltaApply`).
 3. Executor builder/runtime that derives writable mappings from target table metadata and applies diff rows via `AddRecord` / `RemoveRecord` / `UpdateRecord`.
 4. Refresh framework integration, including advisory lock, history lifecycle, CAS watermark update, rollback-on-error semantics, and observability for `DRY RUN` / `WITH PROFILE`.
 
@@ -840,7 +840,6 @@ Still future work:
 
 Current targeted coverage lives mainly in `pkg/executor/test/executor/`, `pkg/planner/core/casetest/mview/`,
 and `pkg/planner/mview/`, including:
-
 1. Parser/AST acceptance and rejection for `COMPLETE OUT OF PLACE` / `COMPLETE DELTA APPLY`.
 2. Planner contract tests for:
    - `FULL OUTER JOIN` diff-source layout;

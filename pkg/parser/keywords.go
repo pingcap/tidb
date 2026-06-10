@@ -347,6 +347,7 @@ var Keywords = []KeywordsType{
 	{"DECLARE", false, "unreserved"},
 	{"DEFINER", false, "unreserved"},
 	{"DELAY_KEY_WRITE", false, "unreserved"},
+	{"DELTA", false, "unreserved"},
 	{"DIGEST", false, "unreserved"},
 	{"DIRECTORY", false, "unreserved"},
 	{"DISABLE", false, "unreserved"},

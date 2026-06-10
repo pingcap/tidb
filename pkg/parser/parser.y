@@ -402,6 +402,7 @@ import (
 	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	delta                 "DELTA"
 	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
@@ -1443,10 +1444,9 @@ import (
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
-	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
-	RefreshOutOfPlaceOpt                   "REFRESH MATERIALIZED VIEW OUT OF PLACE option"
+	RefreshCompleteModeOpt                 "REFRESH MATERIALIZED VIEW COMPLETE mode option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5585,26 +5585,28 @@ PurgeMaterializedViewLogStmt:
 	}
 
 RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt RefreshMaterializedViewType RefreshOutOfPlaceOpt RefreshMaterializedViewObserveOpt
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteModeOpt RefreshMaterializedViewObserveOpt
 	{
+		completeType := $7.(ast.RefreshMaterializedViewCompleteType)
 		observeType := $8.(ast.RefreshMaterializedViewObserveType)
 		$$ = &ast.RefreshMaterializedViewStmt{
 			ViewName:      $4.(*ast.TableName),
 			WithAsyncMode: $5.(bool),
-			Type:          $6.(ast.RefreshMaterializedViewType),
-			OutOfPlace:    $7.(bool),
+			Type:          ast.RefreshMaterializedViewTypeComplete,
+			CompleteType:  completeType,
 			ObserveType:   observeType,
 		}
 	}
-
-RefreshMaterializedViewType:
-	"COMPLETE"
+|	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "FAST" RefreshMaterializedViewObserveOpt
 	{
-		$$ = ast.RefreshMaterializedViewTypeComplete
-	}
-|	"FAST"
-	{
-		$$ = ast.RefreshMaterializedViewTypeFast
+		observeType := $7.(ast.RefreshMaterializedViewObserveType)
+		$$ = &ast.RefreshMaterializedViewStmt{
+			ViewName:      $4.(*ast.TableName),
+			WithAsyncMode: $5.(bool),
+			Type:          ast.RefreshMaterializedViewTypeFast,
+			CompleteType:  ast.RefreshMaterializedViewCompleteTypeInPlace,
+			ObserveType:   observeType,
+		}
 	}
 
 RefreshMaterializedViewObserveOpt:
@@ -5631,14 +5633,22 @@ RefreshWithAsyncModeOpt:
 		$$ = true
 	}
 
-RefreshOutOfPlaceOpt:
+RefreshCompleteModeOpt:
 	/* EMPTY */
 	{
-		$$ = false
+		$$ = ast.RefreshMaterializedViewCompleteTypeDefault
+	}
+|	"IN" "PLACE"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeInPlace
 	}
 |	"OUT" "OF" "PLACE"
 	{
-		$$ = true
+		$$ = ast.RefreshMaterializedViewCompleteTypeOutOfPlace
+	}
+|	"DELTA" "APPLY"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeDeltaApply
 	}
 
 /******************************************************************
@@ -7212,6 +7222,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
+|	"DELTA"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"

@@ -413,6 +413,7 @@ go_test(
         "//pkg/executor/internal/builder",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
+        "//pkg/executor/internal/util",
         "//pkg/executor/join",
         "//pkg/executor/sortexec",
         "//pkg/expression",

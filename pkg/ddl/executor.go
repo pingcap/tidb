@@ -2130,6 +2130,18 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
 	return nil
 }
 
+func checkMaterializedViewIndexWritableColumnConstraints(
+	tblInfo *model.TableInfo,
+	hiddenCols []*model.ColumnInfo,
+) error {
+	if tblInfo == nil || tblInfo.MaterializedView == nil || len(hiddenCols) == 0 {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		"ADD INDEX on materialized view table that changes writable columns",
+	)
+}
+
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	return e.alterTable(ctx, sctx, stmt, false)
 }
@@ -5434,6 +5446,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		// It means that there is already an index exists with same name
 		return nil
 	}
+	isHypo := indexOption != nil && indexOption.Tp == pmodel.IndexTypeHypo
+	if !isHypo {
+		if err := checkMaterializedViewIndexWritableColumnConstraints(t.Meta(), hiddenCols); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	tblInfo := t.Meta()
 	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
@@ -5462,8 +5480,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		}
 	}
 
-	if indexOption != nil && indexOption.Tp == pmodel.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, false,
+	if isHypo { // for hypo-index
+		hypoTblInfo := tblInfo
+		if len(hiddenCols) > 0 {
+			hypoTblInfo = tblInfo.Clone()
+			hypoTblInfo.Columns = finalColumns
+		}
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, hypoTblInfo, indexName, false, unique, false,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err

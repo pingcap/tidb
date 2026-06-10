@@ -16,6 +16,7 @@ package mvrefresh
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -149,7 +150,7 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.Equal(t, mvID, mergePlan.MVTableID)
@@ -194,7 +195,7 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	require.NoError(t, explain.RenderResult())
 	require.NotEmpty(t, explain.Rows)
 	require.Equal(t,
-		[]string{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], count(b)@2->[1], sum(b)@3->[2,5]]"},
+		[]string{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], count(b)@2->[1], sum(b)@3->[2,5]]"},
 		explain.Rows[0],
 	)
 }
@@ -282,7 +283,7 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.NotNil(t, mergePlan.FullUpdateInnerSource)
@@ -407,7 +408,7 @@ func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 	require.Equal(t, [][]string{
-		{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0]]"},
+		{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0]]"},
 		{"└─HashJoin", "8000.00", "root", "", "left outer join, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain.a)]"},
 		{"  ├─HashAgg(Build)", "6400.00", "root", "", "group by:test.$mlog$t.a, funcs:sum_int(Column#11)->Column#6, funcs:firstrow(test.$mlog$t.a)->test.$mlog$t.a"},
 		{"  │ └─TableReader", "6400.00", "root", "", "data:HashAgg"},
@@ -514,7 +515,7 @@ func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 	require.Equal(t, [][]string{
-		{"MVDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], max(b)@2->[1,2,3,4], min(b)@3->[5,6,7,8]], full_update:index_lookup"},
+		{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], max(b)@2->[1,2,3,4], min(b)@3->[5,6,7,8]], full_update:index_lookup"},
 		{"├─HashJoin", "8000.00", "root", "", "left outer join, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain_minmax.a)]"},
 		{"│ ├─HashAgg(Build)", "6400.00", "root", "", "group by:Column#31, funcs:sum_int(Column#22)->Column#7, funcs:max(Column#23)->Column#8, funcs:max_count(Column#24)->Column#9, funcs:max(Column#25)->Column#10, funcs:max_count(Column#26)->Column#11, funcs:min(Column#27)->Column#12, funcs:min_count(Column#28)->Column#13, funcs:min(Column#29)->Column#14, funcs:min_count(Column#30)->Column#15, funcs:firstrow(Column#31)->test.$mlog$t.a"},
 		{"│ │ └─Projection", "8000.00", "root", "", "test.$mlog$t._mlog$_old_new->Column#22, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#23, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#24, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#25, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#26, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#27, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#28, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#29, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#30, test.$mlog$t.a->Column#31"},
@@ -529,6 +530,308 @@ func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
 		{"    └─HashAgg(Probe)", "1.00", "cop[tikv]", "", "group by:test.t.a, funcs:max(test.t.b)->Column#43, funcs:min(test.t.b)->Column#44"},
 		{"      └─TableRowIDScan", "1.00", "cop[tikv]", "table:t", "keep order:false, stats:pseudo"},
 	}, explain.Rows)
+}
+
+func TestExplainRefreshMViewCompleteDeltaPlanTree(t *testing.T) {
+	sctx := plannercore.MockContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1001)
+	mvID := int64(1002)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	baseTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_complete_diff"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.NotEmpty(t, explain.Rows)
+
+	var hasApply, hasProjection, hasSelection, hasFullOuterJoin bool
+	for _, row := range explain.Rows {
+		switch {
+		case strings.HasSuffix(row[0], "MViewCompleteDeltaApply"):
+			hasApply = true
+		case strings.HasSuffix(row[0], "Projection"):
+			hasProjection = true
+		case strings.HasSuffix(row[0], "Selection"):
+			hasSelection = true
+		case strings.HasSuffix(row[0], "HashJoin"):
+			if strings.Contains(row[4], "full outer join") {
+				hasFullOuterJoin = true
+			}
+		}
+	}
+	require.True(t, hasApply)
+	require.True(t, hasProjection)
+	require.True(t, hasSelection)
+	require.True(t, hasFullOuterJoin)
+}
+
+func TestBuildRefreshMViewCompleteDeltaApplyPlan(t *testing.T) {
+	sctx := plannercore.MockContext()
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1101)
+	mvID := int64(1102)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	baseTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_complete_apply"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	applyPlan, ok := p.(*plannercore.MViewCompleteDeltaApply)
+	require.True(t, ok)
+	require.NotNil(t, applyPlan.Source)
+	require.Equal(t, mvID, applyPlan.MVTableID)
+	require.Equal(t, len(mvTbl.Columns), applyPlan.MVColumnCount)
+	require.Equal(t, 0, applyPlan.OpColID)
+	require.Equal(t, 0, applyPlan.MarkerMVOffset)
+	require.Equal(t, []int{0}, applyPlan.GroupKeyMVOffsets)
+	require.Equal(t, []int{1, 2}, applyPlan.MRowInputColIDs)
+	require.Equal(t, []int{3, 4}, applyPlan.QRowInputColIDs)
+	require.Equal(t, 1, applyPlan.MHandleCols.NumCols())
+	require.Equal(t, 1, applyPlan.MHandleCols.GetCol(0).Index)
+	require.Equal(
+		t,
+		"op_offset:0, m_marker_offset:1, q_marker_offset:3, m_group_keys_offset:[1], q_group_keys_offset:[3], m_handle_offset:[1], m_row_offset:[1,2], q_row_offset:[3,4]",
+		applyPlan.ExplainInfo(),
+	)
+}
+
+func TestBuildRefreshMViewCompleteDeltaApplyPlanWithCascadesEnabled(t *testing.T) {
+	sctx := plannercore.MockContext()
+	sctx.GetSessionVars().SetEnableCascadesPlanner(true)
+	sctx.GetSessionVars().StmtCtx.HasEnableCascadesPlannerHint = true
+	sctx.GetSessionVars().StmtCtx.EnableCascadesPlanner = true
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1101)
+	mvID := int64(1102)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	baseTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_complete_apply_cascades"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	_, ok := p.(*plannercore.MViewCompleteDeltaApply)
+	require.True(t, ok)
+	require.True(t, sctx.GetSessionVars().GetEnableCascadesPlanner())
+	require.True(t, sctx.GetSessionVars().StmtCtx.HasEnableCascadesPlannerHint)
+	require.True(t, sctx.GetSessionVars().StmtCtx.EnableCascadesPlanner)
+}
+
+func TestBuildRefreshMViewCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
+	sctx := plannercore.MockContext()
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1201)
+	mvID := int64(1202)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_complete_apply_nullable_gk"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	applyPlan, ok := p.(*plannercore.MViewCompleteDeltaApply)
+	require.True(t, ok)
+	require.NotNil(t, applyPlan.Source)
+	require.Equal(t, mvID, applyPlan.MVTableID)
+	require.Equal(t, len(mvTbl.Columns), applyPlan.MVColumnCount)
+	require.Equal(t, 0, applyPlan.OpColID)
+	require.Equal(t, 1, applyPlan.MarkerMVOffset)
+	require.Equal(t, []int{0}, applyPlan.GroupKeyMVOffsets)
+	require.Equal(t, []int{2, 3}, applyPlan.MRowInputColIDs)
+	require.Equal(t, []int{4, 5}, applyPlan.QRowInputColIDs)
+	require.Equal(t, 1, applyPlan.MHandleCols.NumCols())
+	require.Equal(t, int64(model.ExtraHandleID), applyPlan.MHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, applyPlan.MHandleCols.GetCol(0).Index)
+	require.Equal(
+		t,
+		"op_offset:0, m_marker_offset:3, q_marker_offset:5, m_group_keys_offset:[2], q_group_keys_offset:[4], m_handle_offset:[1], m_row_offset:[2,3], q_row_offset:[4,5]",
+		applyPlan.ExplainInfo(),
+	)
 }
 
 func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
@@ -607,7 +910,7 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
 
-	mergePlan, ok := p.(*plannercore.MVDeltaMerge)
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.Equal(t, mvID, mergePlan.MVTableID)
