@@ -1207,7 +1207,7 @@ local FailedQueryOPMPanel = graphPanel.new(
   description="The number of failed queries per minute",
 ).addTarget(
   prometheus.target(
-    'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance",resource_group=~"$resource_group"}[1m])) by (type, instance,resource_group)',
+    'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance",resource_group=~"$resource_group"}[1m])) by (type, instance,resource_group)',
     legendFormat="{{type}}-{{instance}}-{{resource_group}}",
   )
 );
