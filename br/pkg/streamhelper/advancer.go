@@ -38,6 +38,8 @@ import (
 const (
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 	globalCheckpointFileName           = checkpointTypeGlobal + ".ts"
+
+	resolveLockTargetSampleLimit = 8
 )
 
 var createGlobalCheckpointStorage = storage.Create
@@ -148,6 +150,16 @@ func (c *checkpoint) equal(o *checkpoint) bool {
 		bytes.Equal(c.EndKey, o.EndKey) && c.TS == o.TS
 }
 
+func (c *checkpoint) clone() *checkpoint {
+	if c == nil {
+		return nil
+	}
+	cloned := *c
+	cloned.StartKey = append([]byte(nil), c.StartKey...)
+	cloned.EndKey = append([]byte(nil), c.EndKey...)
+	return &cloned
+}
+
 // if a checkpoint stay in a time too long(3 min)
 // we should try to resolve lock for the range
 // to keep the RPO in 5 min.
@@ -187,6 +199,12 @@ func (c *CheckpointAdvancer) UpdateLastCheckpoint(p *checkpoint) {
 	c.lastCheckpointMu.Lock()
 	c.lastCheckpoint = p
 	c.lastCheckpointMu.Unlock()
+}
+
+func (c *CheckpointAdvancer) getLastCheckpointSnapshot() *checkpoint {
+	c.lastCheckpointMu.Lock()
+	defer c.lastCheckpointMu.Unlock()
+	return c.lastCheckpoint.clone()
 }
 
 // Config returns the current config.
@@ -275,6 +293,62 @@ func tsoBefore(n time.Duration) uint64 {
 
 func tsoAfter(ts uint64, n time.Duration) uint64 {
 	return oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(n))
+}
+
+func tsToLogTime(ts uint64) string {
+	if ts == 0 {
+		return ""
+	}
+	return oracle.GetTimeFromTS(ts).Format(time.RFC3339Nano)
+}
+
+func appendTSFields(fields []zap.Field, name string, ts uint64) []zap.Field {
+	fields = append(fields, zap.Uint64(name, ts))
+	if ts != 0 {
+		fields = append(fields, zap.String(name+"-time", tsToLogTime(ts)))
+	}
+	return fields
+}
+
+func appendCheckpointFields(fields []zap.Field, prefix string, cp *checkpoint) []zap.Field {
+	if cp == nil {
+		return append(fields, zap.Bool(prefix+"-checkpoint-exists", false))
+	}
+	fields = append(fields,
+		zap.Bool(prefix+"-checkpoint-exists", true),
+		logutil.Key(prefix+"-start-key", cp.StartKey),
+		logutil.Key(prefix+"-end-key", cp.EndKey),
+		zap.Stringer(prefix+"-resolve-lock-idle", time.Since(cp.resolveLockTime)),
+	)
+	return appendTSFields(fields, prefix+"-ts", cp.TS)
+}
+
+func appendResolveLockTargetsFields(fields []zap.Field, targets []spans.Valued) []zap.Field {
+	fields = append(fields, zap.Int("targets", len(targets)))
+	if len(targets) == 0 {
+		return fields
+	}
+
+	minTS, maxTS := targets[0].Value, targets[0].Value
+	samples := make([]string, 0, min(len(targets), resolveLockTargetSampleLimit))
+	for i, target := range targets {
+		if target.Value < minTS {
+			minTS = target.Value
+		}
+		if target.Value > maxTS {
+			maxTS = target.Value
+		}
+		if i < resolveLockTargetSampleLimit {
+			samples = append(samples, fmt.Sprintf("%s@%d", logutil.StringifyRange(target.Key), target.Value))
+		}
+	}
+	fields = appendTSFields(fields, "min-target-checkpoint", minTS)
+	fields = appendTSFields(fields, "max-target-checkpoint", maxTS)
+	fields = append(fields, zap.Strings("target-sample", samples))
+	if len(targets) > resolveLockTargetSampleLimit {
+		fields = append(fields, zap.Int("target-sample-omitted", len(targets)-resolveLockTargetSampleLimit))
+	}
+	return fields
 }
 
 func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
@@ -713,24 +787,40 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	// lastCheckpoint is not increased too long enough.
 	// assume the cluster has expired locks for whatever reasons.
-	var targets []spans.Valued
-	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() && c.inResolvingLock.CompareAndSwap(false, true) {
-		c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-			// when get locks here. assume these locks are not belong to same txn,
-			// but these locks' start ts are close to 1 minute. try resolve these locks at one time
-			vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
-				targets = append(targets, v)
-				return true
-			})
-		})
-		if len(targets) != 0 {
-			log.Info("Advancer starts to resolve locks", zap.Int("targets", len(targets)))
-			// use new context here to avoid timeout
-			ctx := context.Background()
-			c.asyncResolveLocksForRanges(ctx, targets)
+	lastCheckpoint := c.getLastCheckpointSnapshot()
+	if lastCheckpoint != nil && lastCheckpoint.needResolveLocks() {
+		fields := appendCheckpointFields([]zap.Field{
+			zap.String("category", "log backup advancer"),
+		}, "last", lastCheckpoint)
+		if !c.inResolvingLock.CompareAndSwap(false, true) {
+			log.Info("advancer skip resolve locks because previous round is still running", fields...)
 		} else {
-			// don't forget set state back
-			c.inResolvingLock.Store(false)
+			var targets []spans.Valued
+			resolveLockThresholdTS := tsoAfter(lastCheckpoint.TS, time.Minute)
+			fields = appendTSFields(fields, "resolve-lock-threshold-ts", resolveLockThresholdTS)
+			c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+				// when get locks here. assume these locks are not belong to same txn,
+				// but these locks' start ts are close to 1 minute. try resolve these locks at one time
+				if vsf == nil {
+					log.Warn("advancer cannot collect resolve lock targets because checkpoint tree is nil", fields...)
+					return
+				}
+				vsf.TraverseValuesLessThan(resolveLockThresholdTS, func(v spans.Valued) bool {
+					targets = append(targets, v)
+					return true
+				})
+			})
+			fields = appendResolveLockTargetsFields(fields, targets)
+			if len(targets) != 0 {
+				log.Info("advancer starts to resolve locks", fields...)
+				// use new context here to avoid timeout
+				ctx := context.Background()
+				c.asyncResolveLocksForRanges(ctx, lastCheckpoint, targets)
+			} else {
+				log.Info("advancer found no resolve lock targets", fields...)
+				// don't forget set state back
+				c.inResolvingLock.Store(false)
+			}
 		}
 	}
 	threshold := c.Config().GetDefaultStartPollThreshold()
@@ -772,22 +862,52 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	return errs
 }
 
-func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, targets []spans.Valued) {
+func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, checkpointSnapshot *checkpoint, targets []spans.Valued) {
 	// run in another goroutine
 	// do not block main tick here
 	go func() {
 		failpoint.Inject("AsyncResolveLocks", func() {})
+		start := time.Now()
 		maxTs := uint64(0)
 		for _, t := range targets {
 			maxTs = max(maxTs, t.Value)
 		}
+		fields := appendCheckpointFields([]zap.Field{
+			zap.String("category", "advancer"),
+			zap.String("uuid", "log backup advancer"),
+		}, "trigger", checkpointSnapshot)
+		fields = appendResolveLockTargetsFields(fields, targets)
+		fields = appendTSFields(fields, "resolve-lock-max-version", maxTs+1)
+		log.Info("advancer resolve locks worker started", fields...)
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
-			return tikv.ResolveLocksForRange(
+			rangeStart := time.Now()
+			rangeFields := append([]zap.Field{},
+				zap.String("category", "advancer"),
+				zap.String("uuid", "log backup advancer"),
+				logutil.Key("range-start-key", r.StartKey),
+				logutil.Key("range-end-key", r.EndKey),
+			)
+			rangeFields = appendTSFields(rangeFields, "resolve-lock-max-version", maxTs+1)
+			log.Info("advancer resolve locks range started", rangeFields...)
+			stat, err := tikv.ResolveLocksForRange(
 				ctx, c.env, maxTs+1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+			rangeFields = append(rangeFields,
+				zap.Int("completed-regions", stat.CompletedRegions),
+				zap.Int("failed-regions", stat.FailedRegions),
+				zap.Stringer("take", time.Since(rangeStart)),
+			)
+			if err != nil {
+				log.Warn("advancer resolve locks range failed", append(rangeFields, logutil.ShortError(err))...)
+				return stat, err
+			}
+			log.Info("advancer resolve locks range finished", rangeFields...)
+			return stat, nil
 		}
 		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup
+		var targetSuccesses atomic.Int64
+		var targetFailures atomic.Int64
 		for _, r := range targets {
 			targetRange := r
 			wg.Add(1)
@@ -799,23 +919,38 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 				// and it almost only include one region here. so set concurrency to 1.
 				runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
 					c.env.GetStore(), 1, handler)
+				targetFields := []zap.Field{
+					zap.String("category", "advancer"),
+					zap.String("uuid", "log backup advancer"),
+					logutil.Key("target-start-key", targetRange.Key.StartKey),
+					logutil.Key("target-end-key", targetRange.Key.EndKey),
+				}
+				targetFields = appendTSFields(targetFields, "target-checkpoint", targetRange.Value)
+				log.Info("advancer resolve locks target started", targetFields...)
+				targetStart := time.Now()
 				err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
+				targetFields = append(targetFields, zap.Stringer("take", time.Since(targetStart)))
 				if err != nil {
 					// wait for next tick
-					log.Warn("resolve locks failed, wait for next tick", zap.String("category", "advancer"),
-						zap.String("uuid", "log backup advancer"),
-						zap.Error(err))
+					log.Warn("resolve locks failed, wait for next tick", append(targetFields, logutil.ShortError(err))...)
+					targetFailures.Add(1)
+					return
 				}
+				targetSuccesses.Add(1)
+				log.Info("advancer resolve locks target finished", targetFields...)
 			})
 		}
 		wg.Wait()
-		log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
-			zap.String("uuid", "log backup advancer"),
-			logutil.Key("StartKey", c.lastCheckpoint.StartKey),
-			logutil.Key("EndKey", c.lastCheckpoint.EndKey),
-			zap.Int("targets", len(targets)))
+		finishFields := append(fields,
+			zap.Int64("target-successes", targetSuccesses.Load()),
+			zap.Int64("target-failures", targetFailures.Load()),
+			zap.Stringer("take", time.Since(start)),
+		)
+		log.Info("finish resolve locks for checkpoint", finishFields...)
 		c.lastCheckpointMu.Lock()
-		c.lastCheckpoint.resolveLockTime = time.Now()
+		if c.lastCheckpoint != nil {
+			c.lastCheckpoint.resolveLockTime = time.Now()
+		}
 		c.lastCheckpointMu.Unlock()
 		c.inResolvingLock.Store(false)
 	}()

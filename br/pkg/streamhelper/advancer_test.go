@@ -664,11 +664,17 @@ func TestResolveLock(t *testing.T) {
 	go func() {
 		tickErrCh <- adv.OnTick(ctx)
 	}()
+	tickFinished := false
 	select {
 	case <-resolveStarted:
 	case err := <-tickErrCh:
 		require.NoError(t, err)
-		require.Fail(t, "asyncResolveLocks finished before resolving locks")
+		tickFinished = true
+		select {
+		case <-resolveStarted:
+		case <-time.After(time.Second):
+			require.Fail(t, "timed out waiting for asyncResolveLocks to start")
+		}
 	case <-time.After(time.Second):
 		require.Fail(t, "timed out waiting for asyncResolveLocks to start")
 	}
@@ -676,11 +682,13 @@ func TestResolveLock(t *testing.T) {
 	require.Eventually(t, func() bool { return adv.GetInResolvingLock() },
 		time.Second, 50*time.Millisecond)
 	releaseResolve()
-	select {
-	case err := <-tickErrCh:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		require.Fail(t, "timed out waiting for advancer tick to finish")
+	if !tickFinished {
+		select {
+		case err := <-tickErrCh:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			require.Fail(t, "timed out waiting for advancer tick to finish")
+		}
 	}
 	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)

@@ -9,6 +9,8 @@ import (
 
 	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -17,6 +19,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -200,14 +203,108 @@ func newAdvancerLockResolver(store tikv.Storage) *AdvancerLockResolver {
 	}
 }
 
+func appendKeyLocationFields(fields []zap.Field, prefix string, loc *tikv.KeyLocation) []zap.Field {
+	if loc == nil {
+		return append(fields, zap.Bool(prefix+"-location-exists", false))
+	}
+	return append(fields,
+		zap.Bool(prefix+"-location-exists", true),
+		zap.Uint64(prefix+"-region-id", loc.Region.GetID()),
+		zap.Uint64(prefix+"-region-conf-ver", loc.Region.GetConfVer()),
+		zap.Uint64(prefix+"-region-ver", loc.Region.GetVer()),
+		logutil.Key(prefix+"-location-start-key", loc.StartKey),
+		logutil.Key(prefix+"-location-end-key", loc.EndKey),
+	)
+}
+
+func appendLockFields(fields []zap.Field, locks []*txnlock.Lock) []zap.Field {
+	fields = append(fields, zap.Int("locks", len(locks)))
+	if len(locks) == 0 {
+		return fields
+	}
+
+	minTxnID, maxTxnID := locks[0].TxnID, locks[0].TxnID
+	minTTL, maxTTL := locks[0].TTL, locks[0].TTL
+	lockSamples := make([]string, 0, min(len(locks), resolveLockTargetSampleLimit))
+	for i, lock := range locks {
+		if lock.TxnID < minTxnID {
+			minTxnID = lock.TxnID
+		}
+		if lock.TxnID > maxTxnID {
+			maxTxnID = lock.TxnID
+		}
+		if lock.TTL < minTTL {
+			minTTL = lock.TTL
+		}
+		if lock.TTL > maxTTL {
+			maxTTL = lock.TTL
+		}
+		if i < resolveLockTargetSampleLimit {
+			lockSamples = append(lockSamples, lock.String())
+		}
+	}
+	fields = append(fields,
+		logutil.Key("first-lock-key", locks[0].Key),
+		logutil.Key("last-lock-key", locks[len(locks)-1].Key),
+		zap.Uint64("min-lock-ttl", minTTL),
+		zap.Uint64("max-lock-ttl", maxTTL),
+		zap.Strings("lock-sample", lockSamples),
+	)
+	fields = appendTSFields(fields, "min-lock-txn-id", minTxnID)
+	fields = appendTSFields(fields, "max-lock-txn-id", maxTxnID)
+	if len(locks) > resolveLockTargetSampleLimit {
+		fields = append(fields, zap.Int("lock-sample-omitted", len(locks)-resolveLockTargetSampleLimit))
+	}
+	return fields
+}
+
+// ScanLocksInOneRegion scans locks and emits advancer-specific diagnostics.
+func (l *AdvancerLockResolver) ScanLocksInOneRegion(
+	bo *tikv.Backoffer, key []byte, maxVersion uint64, scanLimit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	start := time.Now()
+	fields := []zap.Field{
+		zap.String("category", "log backup advancer"),
+		zap.String("identifier", l.Identifier()),
+		logutil.Key("scan-start-key", key),
+		zap.Uint32("scan-limit", scanLimit),
+	}
+	fields = appendTSFields(fields, "scan-max-version", maxVersion)
+	locks, loc, err := l.BaseRegionLockResolver.ScanLocksInOneRegion(bo, key, maxVersion, scanLimit)
+	fields = appendKeyLocationFields(fields, "scan", loc)
+	fields = appendLockFields(fields, locks)
+	fields = append(fields, zap.Stringer("take", time.Since(start)))
+	if err != nil {
+		log.Warn("advancer resolve lock scan failed", append(fields, logutil.ShortError(err))...)
+		return nil, loc, err
+	}
+	if len(locks) == 0 {
+		log.Info("advancer resolve lock scan found no locks", fields...)
+	} else {
+		log.Info("advancer resolve lock scan found locks", fields...)
+	}
+	return locks, loc, nil
+}
+
 // ResolveLocksInOneRegion tries to resolve expired locks with this method.
 // It will check status of the txn. Resolve the lock if txn is expired, Or do nothing.
 func (l *AdvancerLockResolver) ResolveLocksInOneRegion(
 	bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+	start := time.Now()
+	fields := []zap.Field{
+		zap.String("category", "log backup advancer"),
+		zap.String("identifier", l.Identifier()),
+	}
+	fields = appendKeyLocationFields(fields, "resolve", loc)
+	fields = appendLockFields(fields, locks)
+	log.Info("advancer resolve lock batch started", fields...)
 	_, err := l.GetStore().GetLockResolver().ResolveLocks(bo, 0, locks)
 	if err != nil {
+		fields = append(fields, zap.Stringer("take", time.Since(start)))
+		log.Warn("advancer resolve lock batch failed", append(fields, logutil.ShortError(err))...)
 		return nil, err
 	}
+	fields = append(fields, zap.Stringer("take", time.Since(start)))
+	log.Info("advancer resolve lock batch finished", fields...)
 	return loc, nil
 }
 
