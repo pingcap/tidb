@@ -341,6 +341,12 @@ func (sp *singlePointAlloc) End() int64 {
 // Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
 	_, maxv, err := sp.Alloc(context.Background(), 0, 1, 1)
+	// Fix: handle MaxUint64 boundary case
+	// When maxv is MaxUint64 (-1 in int64), adding 1 results in 0.
+	// We should return an error instead of allowing 0 for unsigned types.
+	if sp.isUnsigned && maxv == -1 {
+		return 0, ErrAutoincReadFailed.GenWithStack("AUTO_INCREMENT has reached the maximum value for unsigned type")
+	}
 	return maxv + 1, err
 }
 
