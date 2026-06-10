@@ -67,7 +67,8 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	dst.Lock = src.Lock
 	dst.SetOutputNames(src.OutputNames())
 	dst.LockWaitTime = src.LockWaitTime
-	dst.Columns = src.Columns
+		dst.Columns = src.Columns
+	dst.MaskingExprs = src.MaskingExprs
 
 	// remaining fields are unnecessary to clone:
 	// cost, planCostInit, planCost, planCostVer2, accessCols
