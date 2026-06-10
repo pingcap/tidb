@@ -4073,7 +4073,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows demand, average RU, fill rate, and throttling together.",
+               "description": "Shows demand, actual grant, average RU, fill rate, and throttling together.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -4117,25 +4117,32 @@
                      "refId": "A"
                   },
                   {
+                     "expr": "rate(resource_manager_client_resource_group_actual_grant_tokens{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-actual-grant-1m",
+                     "refId": "B"
+                  },
+                  {
                      "expr": "resource_manager_client_resource_group_avg_ru_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-avg",
-                     "refId": "B"
+                     "refId": "C"
                   },
                   {
                      "expr": "resource_manager_client_resource_group_fill_rate{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-fill",
-                     "refId": "C"
+                     "refId": "D"
                   },
                   {
                      "expr": "resource_manager_client_resource_group_throttled{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-throttled",
-                     "refId": "D"
+                     "refId": "E"
                   }
                ],
                "thresholds": [ ],

@@ -1291,11 +1291,16 @@ local diagnosisDemandPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="short",
-  description="Shows demand, average RU, fill rate, and throttling together.",
+  description="Shows demand, actual grant, average RU, fill rate, and throttling together.",
 ).addTarget(
   prometheus.target(
     'resource_manager_client_resource_group_demand_ru_per_sec{' + diagnosisClientRCSelector + '}',
     legendFormat="{{instance}}-{{resource_group}}-demand",
+  )
+).addTarget(
+  prometheus.target(
+    'rate(resource_manager_client_resource_group_actual_grant_tokens{' + diagnosisClientRCSelector + '}[1m])',
+    legendFormat="{{instance}}-{{resource_group}}-actual-grant-1m",
   )
 ).addTarget(
   prometheus.target(
