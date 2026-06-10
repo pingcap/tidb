@@ -107,6 +107,12 @@ func newReadIndexExecutor(
 
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+	if r.isGlobalSort() {
+		// Multi-schema proxy jobs may not carry UseCloudStorage. Set it here
+		// before the framework starts detectAndHandleParamModifyLoop, which
+		// reads the flag concurrently via ResourceModified.
+		r.job.ReorgMeta.UseCloudStorage = true
+	}
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
 		if !r.isGlobalSort() {
