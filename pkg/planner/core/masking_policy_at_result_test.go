@@ -36,7 +36,7 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 		tk.MustExec("create masking policy p_having on t_having(val) as concat('[', val, ']') enable")
 
 		// HAVING should compare original values, not masked values
-		result := tk.MustQuery("select val, count(*) from t_having group by val having val > 'apple'")
+		result := tk.MustQuery("select val, count(*) from t_having group by val having val > 'apple' order by val")
 		result.Check(testkit.Rows("[banana] 1", "[cherry] 1"))
 
 		// This should return no rows because no value > 'zzzz'

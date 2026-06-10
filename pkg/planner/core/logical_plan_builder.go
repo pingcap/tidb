@@ -5158,13 +5158,12 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
 	// Set b.isCTE to true to ensure masking is skipped during CTE definition building.
 	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior.
+	// Note: we do NOT set b.buildingCTE here — that flag has a specific meaning for
+	// recursive CTE tracking and requires b.outerCTEs to be non-empty.
 	oldIsCTE := b.isCTE
-	oldBuildingCTE := b.buildingCTE
 	b.isCTE = true
-	b.buildingCTE = true
 	defer func() {
 		b.isCTE = oldIsCTE
-		b.buildingCTE = oldBuildingCTE
 	}()
 
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
