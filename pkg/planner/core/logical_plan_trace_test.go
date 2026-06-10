@@ -414,6 +414,8 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		require.NoError(t, err, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		// new join reorder doesn't support trace.
+		sctx.GetSessionVars().TiDBOptEnableAdvancedJoinReorder = false
 		sctx.GetSessionVars().AllowAggPushDown = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
