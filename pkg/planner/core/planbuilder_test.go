@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -1131,8 +1132,20 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "aaa"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+
 	for _, str := range []string{
 		"S3://bucket?External-id=abc",
+		"s3://bucket?external_id=abc",
+		"s3://bucket?external-id=aaa&external_id=abc",
 		"oss://bucket?External-id=abc",
 		"oSS://bucket?External-id=abc",
 	} {
@@ -1144,6 +1157,10 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
+		"S3://bucket?External-id=aaa",
+		"s3://bucket?external-id=aaa",
+		"s3://bucket?external_id=aaa",
+		"s3://bucket?external-id=aaa&external_id=aaa",
 		"s3://bucket",
 		"oss://bucket",
 	} {

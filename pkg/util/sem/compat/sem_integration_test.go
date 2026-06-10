@@ -58,8 +58,8 @@ func TestRestrictedSQL(t *testing.T) {
 			require.Equal(t, "allowed", u.Query().Get(s3like.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
-		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
-		tk.MustQuery("select * from test.t").Check(testkit.Rows())
+		tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'",
+			"is not supported when security enhanced mode is enabled")
 	})
 
 	t.Run("ALTER RESOURCE GROUP is not allowed", func(t *testing.T) {
