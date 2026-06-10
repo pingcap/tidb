@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/sync/errgroup"
@@ -1767,7 +1767,6 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 	}
 
 	fieldTypes := e.Children(0).RetFieldTypes()
-	typeCtx := e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	for bitPos, colID := range e.aggOutputColIDs {
 		if colID < 0 || colID >= input.NumCols() {
 			return nil, nil, 0, 0, errors.Errorf("agg output col %d out of input chunk range", colID)
@@ -1792,7 +1791,9 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 			oldCol,
 			newCol,
 			fieldTypes[colID],
-			typeCtx,
+			// TODO: Use the MV target column metadata for the not-null quick path once the
+			// aggregate output col ID to MV column offset mapping is tracked explicitly.
+			false,
 		); err != nil {
 			return nil, nil, 0, 0, err
 		}
@@ -1815,7 +1816,7 @@ func markUpdateTouchedRowsByColumn(
 	oldCol *chunk.Column,
 	newCol *chunk.Column,
 	ft *types.FieldType,
-	typeCtx types.Context,
+	notNull bool,
 ) error {
 	if ft == nil {
 		return errors.New("field type is nil when comparing aggregate outputs")
@@ -1827,261 +1828,23 @@ func markUpdateTouchedRowsByColumn(
 	bitByteOffset := updateBitPos >> 3
 	singleByteStride := updateTouchedStride == 1
 
-	switch ft.EvalType() {
-	case types.ETInt:
-		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			oldVals := oldCol.Uint64s()
-			newVals := newCol.Uint64s()
-			for updateOrdinal, rowIdx := range updateRows {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						updateChanged[updateOrdinal] = true
-						if singleByteStride {
-							updateTouchedBitmap[updateOrdinal] |= bitMask
-						} else {
-							updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-						}
-					}
-					continue
-				}
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-			}
-			return nil
+	setTouched := func(updateOrdinal int) {
+		updateChanged[updateOrdinal] = true
+		if singleByteStride {
+			updateTouchedBitmap[updateOrdinal] |= bitMask
+			return
 		}
-		oldVals := oldCol.Int64s()
-		newVals := newCol.Int64s()
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	case types.ETReal:
-		if ft.GetType() == mysql.TypeFloat {
-			oldVals := oldCol.Float32s()
-			newVals := newCol.Float32s()
-			for updateOrdinal, rowIdx := range updateRows {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						updateChanged[updateOrdinal] = true
-						if singleByteStride {
-							updateTouchedBitmap[updateOrdinal] |= bitMask
-						} else {
-							updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-						}
-					}
-					continue
-				}
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-			}
-			return nil
-		}
-		oldVals := oldCol.Float64s()
-		newVals := newCol.Float64s()
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	case types.ETDecimal:
-		oldVals := oldCol.Decimals()
-		newVals := newCol.Decimals()
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	case types.ETString:
-		// Keep update touched detection consistent with updateRecord:
-		// compare with binary collation instead of column collation.
-		binaryCollator := collate.GetBinaryCollator()
-		var oldDatum, newDatum types.Datum
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			chunkRowColDatum(oldCol, rowIdx, ft, &oldDatum)
-			chunkRowColDatum(newCol, rowIdx, ft, &newDatum)
-			cmp, err := newDatum.Compare(typeCtx, &oldDatum, binaryCollator)
-			if err != nil {
-				return err
-			}
-			if cmp != 0 {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	case types.ETDatetime, types.ETTimestamp:
-		oldVals := oldCol.Times()
-		newVals := newCol.Times()
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	case types.ETDuration:
-		oldVals := oldCol.GoDurations()
-		newVals := newCol.GoDurations()
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	case types.ETJson, types.ETVectorFloat32:
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					updateChanged[updateOrdinal] = true
-					if singleByteStride {
-						updateTouchedBitmap[updateOrdinal] |= bitMask
-					} else {
-						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-					}
-				}
-				continue
-			}
-			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-				updateChanged[updateOrdinal] = true
-				if singleByteStride {
-					updateTouchedBitmap[updateOrdinal] |= bitMask
-				} else {
-					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
-				}
-			}
-		}
-		return nil
-	default:
-		return errors.Errorf("unsupported eval type %d in aggregate change comparison", ft.EvalType())
+		updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
 	}
+	return executil.MarkTouchedRowsByColumn(
+		updateRows,
+		oldCol,
+		newCol,
+		ft,
+		notNull,
+		setTouched,
+		"aggregate change",
+	)
 }
 
 func chunkRowColDatum(col *chunk.Column, rowIdx int, ft *types.FieldType, d *types.Datum) {

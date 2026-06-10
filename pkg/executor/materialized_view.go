@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -589,283 +589,15 @@ func markMViewCompleteDeltaTouchedRowsByColumn(
 		}
 		updateTouchedBitmap[updateOrdinal*updateTouchedStride+compareCol.touchedByteIndex] |= compareCol.touchedBitMask
 	}
-
-	switch compareCol.fieldType.EvalType() {
-	case types.ETInt:
-		if mysql.HasUnsignedFlag(compareCol.fieldType.GetFlag()) {
-			oldVals := oldCol.Uint64s()
-			newVals := newCol.Uint64s()
-			if compareCol.notNull {
-				for updateOrdinal, rowIdx := range updateRows {
-					if oldVals[rowIdx] != newVals[rowIdx] {
-						setTouched(updateOrdinal)
-					}
-				}
-				return nil
-			}
-			for updateOrdinal, rowIdx := range updateRows {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						setTouched(updateOrdinal)
-					}
-					continue
-				}
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		oldVals := oldCol.Int64s()
-		newVals := newCol.Int64s()
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	case types.ETReal:
-		if compareCol.fieldType.GetType() == mysql.TypeFloat {
-			oldVals := oldCol.Float32s()
-			newVals := newCol.Float32s()
-			if compareCol.notNull {
-				for updateOrdinal, rowIdx := range updateRows {
-					if oldVals[rowIdx] != newVals[rowIdx] {
-						setTouched(updateOrdinal)
-					}
-				}
-				return nil
-			}
-			for updateOrdinal, rowIdx := range updateRows {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						setTouched(updateOrdinal)
-					}
-					continue
-				}
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		oldVals := oldCol.Float64s()
-		newVals := newCol.Float64s()
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	case types.ETDecimal:
-		oldVals := oldCol.Decimals()
-		newVals := newCol.Decimals()
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	case types.ETString:
-		binaryCollator := collate.GetBinaryCollator()
-		switch compareCol.fieldType.GetType() {
-		case mysql.TypeEnum:
-			if compareCol.notNull {
-				for updateOrdinal, rowIdx := range updateRows {
-					if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
-						setTouched(updateOrdinal)
-					}
-				}
-				return nil
-			}
-			for updateOrdinal, rowIdx := range updateRows {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						setTouched(updateOrdinal)
-					}
-					continue
-				}
-				if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		case mysql.TypeSet:
-			if compareCol.notNull {
-				for updateOrdinal, rowIdx := range updateRows {
-					if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
-						setTouched(updateOrdinal)
-					}
-				}
-				return nil
-			}
-			for updateOrdinal, rowIdx := range updateRows {
-				oldIsNull := oldCol.IsNull(rowIdx)
-				newIsNull := newCol.IsNull(rowIdx)
-				if oldIsNull || newIsNull {
-					if oldIsNull != newIsNull {
-						setTouched(updateOrdinal)
-					}
-					continue
-				}
-				if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	case types.ETDatetime, types.ETTimestamp:
-		oldVals := oldCol.Times()
-		newVals := newCol.Times()
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	case types.ETDuration:
-		oldVals := oldCol.GoDurations()
-		newVals := newCol.GoDurations()
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if oldVals[rowIdx] != newVals[rowIdx] {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if oldVals[rowIdx] != newVals[rowIdx] {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	case types.ETJson, types.ETVectorFloat32:
-		if compareCol.notNull {
-			for updateOrdinal, rowIdx := range updateRows {
-				if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-					setTouched(updateOrdinal)
-				}
-			}
-			return nil
-		}
-		for updateOrdinal, rowIdx := range updateRows {
-			oldIsNull := oldCol.IsNull(rowIdx)
-			newIsNull := newCol.IsNull(rowIdx)
-			if oldIsNull || newIsNull {
-				if oldIsNull != newIsNull {
-					setTouched(updateOrdinal)
-				}
-				continue
-			}
-			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
-				setTouched(updateOrdinal)
-			}
-		}
-		return nil
-	default:
-		return errors.Errorf("unsupported eval type %d in COMPLETE DELTA APPLY comparison", compareCol.fieldType.EvalType())
-	}
+	return executil.MarkTouchedRowsByColumn(
+		updateRows,
+		oldCol,
+		newCol,
+		compareCol.fieldType,
+		compareCol.notNull,
+		setTouched,
+		"COMPLETE DELTA APPLY",
+	)
 }
 
 // Next implements the Executor Next interface.

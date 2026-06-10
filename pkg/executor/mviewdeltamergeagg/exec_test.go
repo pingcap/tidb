@@ -1850,7 +1850,6 @@ func TestNoOpWhenAggValueUnchanged(t *testing.T) {
 }
 
 func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
-	sctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)
 	ft.SetCharset("utf8mb4")
 	ft.SetCollate("utf8mb4_general_ci")
@@ -1880,16 +1879,14 @@ func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
 		chk.Column(0),
 		chk.Column(1),
 		ft,
-		sctx.GetSessionVars().StmtCtx.TypeCtx(),
+		false,
 	)
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, true, false, true}, updateChanged)
 	require.Equal(t, []uint8{1, 1, 0, 1}, updateTouchedBitmap)
 }
 
-func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T) {
-	sctx := mock.NewContext()
-
+func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
 	enumFT := types.NewFieldType(mysql.TypeEnum)
 	enumFT.SetCharset("utf8mb4")
 	enumFT.SetCollate("utf8mb4_general_ci")
@@ -1908,7 +1905,7 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T)
 		enumChk.Column(0),
 		enumChk.Column(1),
 		enumFT,
-		sctx.GetSessionVars().StmtCtx.TypeCtx(),
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, []bool{false}, enumChanged)
@@ -1932,7 +1929,7 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T)
 		setChk.Column(0),
 		setChk.Column(1),
 		setFT,
-		sctx.GetSessionVars().StmtCtx.TypeCtx(),
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, []bool{false}, setChanged)

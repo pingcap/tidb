@@ -14,6 +14,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",
