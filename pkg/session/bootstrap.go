@@ -335,6 +335,11 @@ var (
 	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
 	}
+	// systemTablesOfExportJobsNextGenVersion contains system tables introduced in
+	// the export-jobs bootstrap version.
+	systemTablesOfExportJobsNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBExportJobsTableID, Name: "tidb_export_jobs", SQL: metadef.CreateTiDBExportJobsTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -354,6 +359,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
+	}},
+	{ver: meta.ExportJobsNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfExportJobsNextGenVersion},
 	}},
 }
 
