@@ -118,7 +118,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260521074709-0df8691a666e
+	github.com/tikv/client-go/v2 v2.0.8-0.20260610023945-a60836569d3e
 	github.com/tikv/pd/client v0.0.0-20260609141937-b01426f6b08b
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -351,7 +351,4 @@ replace (
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
-
-	// Adopt the PD client package restructure from tikv/client-go#1996 (pending merge).
-	github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20260609143156-0d2c8ac7d5cf
 )

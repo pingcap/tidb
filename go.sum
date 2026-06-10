@@ -67,8 +67,6 @@ github.com/DataDog/zstd v1.5.5 h1:oWf5W7GtOLgp6bciQYDmhHHjdhYkALu6S/5Ni9ZgSvQ=
 github.com/DataDog/zstd v1.5.5/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
 github.com/HdrHistogram/hdrhistogram-go v1.1.2 h1:5IcZpTvzydCQeHzK4Ef/D5rrSqwxob0t8PQPMybUNFM=
 github.com/HdrHistogram/hdrhistogram-go v1.1.2/go.mod h1:yDgFjdqOqDEKOvasDdhWNXYg9BVp4O+o5f6V/ehm6Oo=
-github.com/JmPotato/client-go/v2 v2.0.0-20260609143156-0d2c8ac7d5cf h1:XEXlxz2MnDKT19Hg+mwLeZ1fFFCGhbMwVBut3csju/k=
-github.com/JmPotato/client-go/v2 v2.0.0-20260609143156-0d2c8ac7d5cf/go.mod h1:NRDHnHwKBU5vbjZCc8Ax+HYI8nd1b0XhAVbBoWFOp/o=
 github.com/Masterminds/goutils v1.1.1 h1:5nUrii3FMTL5diU80unEVvNevw1nH4+ZV4DSLVJLSYI=
 github.com/Masterminds/goutils v1.1.1/go.mod h1:8cTjp+g8YejhMuvIA5y2vz3BpJxksy863GQaJW2MFNU=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
@@ -804,6 +802,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tikv/client-go/v2 v2.0.8-0.20260610023945-a60836569d3e h1:/w2aO75ApRbOhdr5Tp0I1qMxNdw2T38EEa7AvW4ShBo=
+github.com/tikv/client-go/v2 v2.0.8-0.20260610023945-a60836569d3e/go.mod h1:NRDHnHwKBU5vbjZCc8Ax+HYI8nd1b0XhAVbBoWFOp/o=
 github.com/tikv/pd/client v0.0.0-20260609141937-b01426f6b08b h1:F5B0hA1WnmrOXP+ix1j17mjIl6XWnVr9GWJW/H9Ip6Q=
 github.com/tikv/pd/client v0.0.0-20260609141937-b01426f6b08b/go.mod h1:KtMhV0wfNF4KGgeQSRacPAXVqjAKuLtqAaHEHhUhhUc=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
