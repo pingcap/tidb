@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 func init() {
@@ -618,20 +618,20 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 
 func TestSplitRangeForTable(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
+	opts := fakestorage.Options{
 		Scheme:     "http",
 		Host:       gcsHost,
 		Port:       gcsPort,
 		PublicHost: gcsHost,
 	}
-	server, err := fakestorage.NewServerWithOptions(opt)
+	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(t, err)
 
 	tk.MustExec("drop database if exists addindexlit;")

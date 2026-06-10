@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -51,7 +52,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 	wctx := ddl.NewLocalWorkerCtx(context.Background(), 1)
 	defer wctx.Cancel()
 	src := testutil.NewOperatorTestSource(ddl.TableScanTask{ID: 1, Start: startKey, End: endKey})
-	scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, srcChkPool, 1, 0, nil, nil)
+	scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, srcChkPool, 1, 0, &model.DDLReorgMeta{}, nil)
 	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 	operator.Compose[ddl.TableScanTask](src, scanOp)

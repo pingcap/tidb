@@ -1028,19 +1028,32 @@ IndexLookUp	0.03	root
   └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
 id	estRows	task	access object	operator info
-TableReader	9.99	root		data:Selection
-└─Selection	9.99	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, "4")))
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	9.99	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:id(d)	range:["4","4"], keep order:false, stats:pseudo
+└─Selection(Probe)	9.99	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
 EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
 id	estRows	task	access object	operator info
-TableReader	13.32	root		data:Selection
-└─Selection	13.32	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(or(eq(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 3)), or(eq(planner__core__indexmerge_path.t.b, "4"), eq(planner__core__indexmerge_path.t.c, 5)))
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	13.32	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["4","4"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[5,5], keep order:false, stats:pseudo
+└─Selection(Probe)	13.32	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	39.96	cop[tikv]	table:t	keep order:false, stats:pseudo
 EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
 id	estRows	task	access object	operator info
-TableReader	19.97	root		data:Selection
-└─Selection	19.97	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(or(eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.b, "4"))), or(eq(planner__core__indexmerge_path.t.c, 5), or(eq(planner__core__indexmerge_path.t.b, "12"), eq(planner__core__indexmerge_path.t.c, 13))))
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	19.97	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["4","4"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[5,5], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["12","12"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[13,13], keep order:false, stats:pseudo
+└─Selection(Probe)	19.97	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	59.91	cop[tikv]	table:t	keep order:false, stats:pseudo
 EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 id	estRows	task	access object	operator info
 IndexLookUp	0.05	root		

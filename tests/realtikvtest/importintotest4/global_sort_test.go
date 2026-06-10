@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 )
 
@@ -339,7 +339,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	})
 	dom, err := session.GetDomain(s.store)
 	require.NoError(s.T(), err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(s.T(), err)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)

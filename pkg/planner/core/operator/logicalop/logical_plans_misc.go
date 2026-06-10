@@ -165,6 +165,8 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 		case *DataSource:
 			validDs := false
 			indexMergeIsIntersection := false
+			// since CanPushToCopImpl is only used in physical enumeration of physical plan phase.
+			// we definitely here should use the specific PossibleAccessPaths for each DS alternative.
 			for _, path := range c.PossibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
