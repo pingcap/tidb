@@ -1672,6 +1672,31 @@ func TestS3StorageBucketRegion(t *testing.T) {
 	}
 }
 
+func TestS3StorageCustomAWSEndpointWithFIPSMode(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "ab")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "cd")
+	t.Setenv("AWS_SESSION_TOKEN", "ef")
+	t.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
+
+	s := createGetBucketRegionServer("us-west-2", 200, true)
+	defer s.Close()
+
+	es, err := New(context.Background(),
+		&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{
+			Region:         "us-west-2",
+			Bucket:         "bucket",
+			Prefix:         "prefix",
+			Provider:       "aws",
+			Endpoint:       s.URL,
+			ForcePathStyle: true,
+		}}},
+		&storeapi.Options{})
+	require.NoError(t, err)
+	ss, ok := es.(*Storage)
+	require.True(t, ok)
+	require.Equal(t, "us-west-2", ss.GetOptions().Region)
+}
+
 func TestRetryError(t *testing.T) {
 	var count int32 = 0
 	var errString string = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
