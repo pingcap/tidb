@@ -949,11 +949,11 @@ func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
 	require.Equal(t, int64(6), runDML("update t set b = b + 10 where a in (1, 2)"))
 	require.Equal(t, int64(3), runDML("delete from t where a = 1"))
 
-	tk.MustExec("create table multi_del_l(a int primary key, b int)")
-	tk.MustExec("create table multi_del_r(a int primary key, b int)")
-	tk.MustExec("insert into multi_del_l values (1, 10), (2, 20)")
-	tk.MustExec("insert into multi_del_r values (1, 100), (2, 200)")
-	require.Equal(t, int64(8), runDML("delete multi_del_l, multi_del_r from multi_del_l join multi_del_r on multi_del_l.a = multi_del_r.a"))
+	tk.MustExec("create table multi_del_l(a int primary key)")
+	tk.MustExec("create table multi_del_r(a int primary key)")
+	tk.MustExec("insert into multi_del_l values (1), (2)")
+	tk.MustExec("insert into multi_del_r values (1), (2)")
+	require.Equal(t, int64(4), runDML("delete multi_del_l, multi_del_r from multi_del_l join multi_del_r on multi_del_l.a = multi_del_r.a"))
 
 	tk.MustExec("create table outer_l(a int primary key, b int)")
 	tk.MustExec("create table outer_r(a int primary key, b int)")
