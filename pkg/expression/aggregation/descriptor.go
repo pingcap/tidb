@@ -188,6 +188,9 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 	case ast.AggFuncCount:
 		args := make([]expression.Expression, 0, 1)
 		if a.HasDistinct {
+			// This is hack. Actually, the input type is not a.Args for final agg,
+			// but the return type of partial agg.
+			// `args = a.Args` is just for getting correct final agg func.
 			args = a.Args
 		} else {
 			args = append(args, &expression.Column{
