@@ -17,8 +17,11 @@ package executor
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 var (
@@ -61,6 +64,27 @@ func deleteFromSet(set []string, value string) []string {
 		}
 	}
 	return set
+}
+
+const dmlChildChunkTargetBytes = 256 * 1024
+
+func newDMLChildChunk(dmlExec exec.Executor, fields []*types.FieldType) *chunk.Chunk {
+	initCap := estimateDMLChildChunkInitCap(fields, dmlExec.MaxChunkSize())
+	return dmlExec.NewChunkWithCapacity(fields, initCap, dmlExec.MaxChunkSize())
+}
+
+func estimateDMLChildChunkInitCap(fields []*types.FieldType, maxChunkSize int) int {
+	if maxChunkSize <= 1 {
+		return max(1, maxChunkSize)
+	}
+	rowWidth := 0
+	for _, field := range fields {
+		rowWidth += chunk.EstimateTypeWidth(field)
+	}
+	if rowWidth <= 0 {
+		return min(chunk.InitialCapacity, maxChunkSize)
+	}
+	return max(1, min(chunk.InitialCapacity, maxChunkSize, dmlChildChunkTargetBytes/rowWidth))
 }
 
 // batchRetrieverHelper is a helper for batch returning data with known total rows. This helps implementing memtable
