@@ -1052,7 +1052,7 @@ func collectFilters4MVIndex(
 				usedAsAccess[i] = true
 				found = true
 				// access filter type on mv col overrides normal col for the return value of this function
-				if accessTp == unspecifiedFilterTp || accessTp == eqOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp {
 					accessTp = tp
 				}
 				break
@@ -1207,7 +1207,7 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 
 const (
 	unspecifiedFilterTp int = iota
-	eqOnNonMVColTp
+	eqOrInOnNonMVColTp
 	multiValuesOROnMVColTp
 	multiValuesANDOnMVColTp
 	singleValueOnMVColTp
@@ -1301,7 +1301,23 @@ func checkAccessFilter4IdxCol(
 	}
 
 	// else: non virtual column
-	if sf.FuncName.L != ast.EQ { // only support EQ now
+	if sf.FuncName.L == ast.In {
+		args := sf.GetArgs()
+		if len(args) < 2 {
+			return false, unspecifiedFilterTp
+		}
+		c, isCol := args[0].(*expression.Column)
+		if !isCol || !c.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+			return false, unspecifiedFilterTp
+		}
+		for _, arg := range args[1:] {
+			if _, isCon := arg.(*expression.Constant); !isCon {
+				return false, unspecifiedFilterTp
+			}
+		}
+		return true, eqOrInOnNonMVColTp
+	}
+	if sf.FuncName.L != ast.EQ {
 		return false, unspecifiedFilterTp
 	}
 	args := sf.GetArgs()
@@ -1320,7 +1336,7 @@ func checkAccessFilter4IdxCol(
 		return false, unspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
-		return true, eqOnNonMVColTp
+		return true, eqOrInOnNonMVColTp
 	}
 	return false, unspecifiedFilterTp
 }

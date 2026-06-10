@@ -26,7 +26,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -74,7 +76,10 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	Store  kv.Storage
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
+	// TaskStore is kept temporarily while DXF task implementations migrate to TaskRuntime.
+	TaskStore kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
@@ -84,7 +89,7 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.No
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-		Store:     store,
+		TaskStore: store,
 	}
 }
 
@@ -255,8 +260,8 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 }
 
 // Init implements the TaskExecutor interface.
-func (*BaseTaskExecutor) Init(_ context.Context) error {
-	return nil
+func (e *BaseTaskExecutor) Init(_ context.Context) error {
+	return dxfutil.CheckTaskRuntime(e.TaskRuntime, e.GetTaskBase().Keyspace)
 }
 
 // Ctx returns the context of the task executor.

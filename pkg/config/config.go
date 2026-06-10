@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1068,13 +1069,16 @@ type Standby struct {
 // StarterParams contains Starter-only extension parameters.
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
-	ExportID string `toml:"export-id" json:"export-id"`
+	ExportID string `toml:"export-id" json:"export-id,omitempty"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
-	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
+	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier,omitempty"`
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
 	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
-	ManagerAddr string `toml:"manager-addr" json:"manager-addr"`
+	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
+	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
+	// Zero means unlimited.
+	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1619,6 +1623,9 @@ func (c *Config) Valid() error {
 	}
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	}
+	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")

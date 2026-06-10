@@ -565,6 +565,35 @@ func TestUpdateRUV2MetricsFromRUV2Bypass(t *testing.T) {
 	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
 }
 
+func TestExecutorMetricRecorderFastPath(t *testing.T) {
+	for _, label := range []string{
+		ruv2LabelBatchPointGetExec,
+		ruv2LabelPointGetExecutor,
+		ruv2LabelLimitExec,
+	} {
+		require.True(t, ResolveExecutorMetric(1, label).Available(), label)
+	}
+
+	require.False(t, ResolveExecutorMetric(1, "Unknown").Available())
+	require.False(t, ResolveExecutorMetric(2, "HashAggExec").Available())
+	require.False(t, ResolveExecutorMetric(3, "SortExec").Available())
+	require.False(t, ResolveExecutorMetric(0, ruv2LabelBatchPointGetExec).Available())
+
+	var zero ExecutorMetricRecorder
+	require.False(t, zero.Available())
+
+	fast := NewRUV2Metrics()
+	slow := NewRUV2Metrics()
+	ResolveExecutorMetric(1, ruv2LabelBatchPointGetExec).Record(fast, 7)
+	ResolveExecutorMetric(1, ruv2LabelPointGetExecutor).Record(fast, 3)
+	ResolveExecutorMetric(1, ruv2LabelLimitExec).Record(fast, 5)
+	slow.AddExecutorMetric(1, ruv2LabelBatchPointGetExec, 7)
+	slow.AddExecutorMetric(1, ruv2LabelPointGetExecutor, 3)
+	slow.AddExecutorMetric(1, ruv2LabelLimitExec, 5)
+
+	require.Equal(t, slow.executorL1.snapshot(), fast.executorL1.snapshot())
+}
+
 func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	weights := defaultRUV2WeightsForTest()
 	metrics := NewRUV2Metrics()

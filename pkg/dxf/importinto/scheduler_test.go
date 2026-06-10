@@ -19,16 +19,22 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 )
 
 type importIntoSuite struct {
@@ -37,6 +43,34 @@ type importIntoSuite struct {
 
 func TestImportInto(t *testing.T) {
 	suite.Run(t, &importIntoSuite{})
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	return runtime
+}
+
+func newSchedulerParamForTest(t *testing.T, store kv.Storage) scheduler.Param {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		se := utilmock.NewContext()
+		se.Store = store
+		return se, nil
+	}, nil, nil, nil)
+	t.Cleanup(sePool.Close)
+
+	return scheduler.Param{
+		TaskRuntime: newMockRuntime(ctrl, store, sePool),
+		TaskStore:   store,
+	}
 }
 
 func (s *importIntoSuite) enableFailPoint(path, term string) {
@@ -105,7 +139,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
+		}, newSchedulerParamForTest(s.T(), &StoreWithKS{ks: taskKS})),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
@@ -117,7 +151,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
+		}, newSchedulerParamForTest(s.T(), &StoreWithKS{ks: taskKS})),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
@@ -127,7 +161,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 			BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 				TaskBase: proto.TaskBase{Keyspace: taskKS},
 				Meta:     bytes,
-			}, scheduler.Param{TaskStore: &StoreWithKS{}}),
+			}, newSchedulerParamForTest(s.T(), &StoreWithKS{})),
 		}
 		s.ErrorContains(sch.Init(), "store keyspace mismatch with task")
 	}

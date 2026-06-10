@@ -957,7 +957,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
 	defer func() {
-		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
+		if logTaskBackend == nil || restoreErr != nil {
 			return
 		}
 		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
@@ -1307,10 +1307,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 	if cfg.CheckRequirements {
-		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
-			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
-		if err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient()); err != nil {
-			return errors.Trace(err)
+		// When `restore point`, we have already checked changefeed compatibility outside.
+		if cfg.piTRTaskInfo == nil {
+			log.Info("Checking incompatible TiCDC changefeeds before restoring.", zap.Uint64("restore-ts", backupMeta.EndVersion))
+			if err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)

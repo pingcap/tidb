@@ -1359,6 +1359,8 @@ func TestIssue41014(t *testing.T) {
 	tk.MustExec("alter table tai2 set tiflash replica 1")
 	tk.MustExec("alter table tai2 add index idx((lower(prilan)));")
 	tk.MustExec("set @@tidb_opt_distinct_agg_push_down = 1;")
+	// Keep the estimate stable; this regression checks that a physical plan can be found.
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 
 	tk.MustQuery("explain format='brief' select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("HashAgg 1.00 root  funcs:count(distinct test.tai1.aid)->Column#10",
