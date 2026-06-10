@@ -1220,7 +1220,7 @@ local diagnosisTiDBInstanceSelector = 'k8s_cluster="$k8s_cluster", tidb_cluster=
 local diagnosisClientRCSelector = diagnosisTiDBSelector + ', keyspace_name=~"$keyspace_name"';
 local diagnosisPDRCSelector = 'k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", keyspace_name=~"$keyspace_name"';
 
-local diagnosisSQLSymptomsRow = row.new(collapse=true, title="1. SQL Symptoms");
+local diagnosisSQLSymptomsRow = row.new(collapse=true, title="SQL Symptoms");
 local diagnosisQueryQPSPanel = graphPanel.new(
   title="Query QPS By TiDB",
   datasource=myDS,
@@ -1283,7 +1283,7 @@ local diagnosisRCQueueWaitPanel = graphPanel.new(
   )
 );
 
-local diagnosisRUDemandRow = row.new(collapse=true, title="2. RU Demand And Supply");
+local diagnosisRUDemandRow = row.new(collapse=true, title="RU Demand And Supply");
 
 local diagnosisDemandPanel = graphPanel.new(
   title="RU Demand, Grant And Fill Rate",
@@ -1324,7 +1324,7 @@ local diagnosisDemandPanel = graphPanel.new(
   )
 );
 
-local diagnosisClientRUConsumptionRow = row.new(collapse=true, title="3. Client RU Consumption");
+local diagnosisClientRUConsumptionRow = row.new(collapse=true, title="Client RU Consumption");
 local diagnosisRUConsumptionByTypePanel = graphPanel.new(
   title="RU Consumption By Type",
   datasource=myDS,
@@ -1421,7 +1421,7 @@ local diagnosisRUCostDistributionPanel = graphPanel.new(
   )
 );
 
-local diagnosisClientLimiterRow = row.new(collapse=true, title="4. Client Limiter And PD Requests");
+local diagnosisClientLimiterRow = row.new(collapse=true, title="Client Limiter And PD Requests");
 local diagnosisClientRequestWaitDurationPanel = graphPanel.new(
   title="Client Request Wait Duration",
   datasource=myDS,
@@ -1563,7 +1563,7 @@ local diagnosisTokenLatencyPanel = graphPanel.new(
   ],
 };
 
-local diagnosisPDAllocationRow = row.new(collapse=true, title="5. PD Allocation And Config");
+local diagnosisPDAllocationRow = row.new(collapse=true, title="PD Allocation And Config");
 local diagnosisServerAllocationPanel = graphPanel.new(
   title="Server Slots, Loan, And Trickle",
   datasource=myDS,

@@ -4225,7 +4225,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "1. SQL Symptoms",
+         "title": "SQL Symptoms",
          "titleSize": "h6",
          "type": "row"
       },
@@ -4452,7 +4452,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "2. RU Demand And Supply",
+         "title": "RU Demand And Supply",
          "titleSize": "h6",
          "type": "row"
       },
@@ -4844,7 +4844,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "3. Client RU Consumption",
+         "title": "Client RU Consumption",
          "titleSize": "h6",
          "type": "row"
       },
@@ -5176,7 +5176,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "4. Client Limiter And PD Requests",
+         "title": "Client Limiter And PD Requests",
          "titleSize": "h6",
          "type": "row"
       },
@@ -5482,7 +5482,7 @@
          "repeatIteration": null,
          "repeatRowId": null,
          "showTitle": true,
-         "title": "5. PD Allocation And Config",
+         "title": "PD Allocation And Config",
          "titleSize": "h6",
          "type": "row"
       }
