@@ -1073,14 +1073,25 @@ type Experimental struct {
 // HostedEmbedding is the config for TiDB Cloud hosted embedding provider (tidbcloud_free/ prefix in EMBED_TEXT).
 type HostedEmbedding struct {
 	// Enabled indicates whether the hosted embedding service is enabled.
-	// It only takes effect for nextgen kernels.
-	Enabled bool `toml:"enabled" json:"enabled"`
+	// It is only valid for Starter deploy mode and only takes effect for nextgen kernels.
+	Enabled bool `toml:"enabled" json:"enabled,omitempty"`
 
 	// APIEndpoint is the endpoint for the hosted embedding service.
-	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint"`
+	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint,omitempty"`
 
 	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
-	APIKeyPath string `toml:"api-key-path" json:"api-key-path"`
+	APIKeyPath string `toml:"api-key-path" json:"api-key-path,omitempty"`
+}
+
+func (c HostedEmbedding) configured() bool {
+	return c.Enabled || c.APIEndpoint != "" || c.APIKeyPath != ""
+}
+
+func isHostedEmbeddingDefined(metaData toml.MetaData) bool {
+	return metaData.IsDefined("hosted-embedding") ||
+		metaData.IsDefined("hosted-embedding", "enabled") ||
+		metaData.IsDefined("hosted-embedding", "api-endpoint") ||
+		metaData.IsDefined("hosted-embedding", "api-key-path")
 }
 
 // Standby is the config for standby mode.
@@ -1591,6 +1602,9 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
+	if isHostedEmbeddingDefined(metaData) && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1725,6 +1739,9 @@ func (c *Config) Valid() error {
 	}
 	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
+	}
+	if c.HostedEmbedding.configured() && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")
