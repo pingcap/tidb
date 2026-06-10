@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"maps"
 	"math"
 	"os"
 	"os/user"
@@ -284,8 +283,8 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
-	// ExtendedErrorMsgs maps error message regexps to configured suffixes for selected user-facing errors.
-	ExtendedErrorMsgs map[string]string `toml:"extended-error-msgs" json:"extended-error-msgs"`
+	// ErrorMessageExtensions appends configured suffixes to selected user-facing errors.
+	ErrorMessageExtensions []ErrorMessageExtension `toml:"error-msg-extension" json:"error-msg-extension"`
 
 	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
 	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
@@ -375,6 +374,13 @@ type Config struct {
 
 	// CSE contains columnar-store related configuration.
 	CSE CSE `toml:"cse" json:"cse"`
+}
+
+// ErrorMessageExtension configures a suffix for SQL errors matching Pattern.
+type ErrorMessageExtension struct {
+	Pattern string         `toml:"pattern" json:"pattern"`
+	Suffix  string         `toml:"suffix" json:"suffix"`
+	Regexp  *regexp.Regexp `toml:"-" json:"-"`
 }
 
 // RUV2Config is the configuration for RU v2 weight calculation.
@@ -1250,7 +1256,6 @@ var defaultConf = Config{
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
-	ExtendedErrorMsgs:          make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
@@ -1294,7 +1299,6 @@ var (
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
 	conf := defaultConf
-	conf.ExtendedErrorMsgs = maps.Clone(defaultConf.ExtendedErrorMsgs)
 	return &conf
 }
 
@@ -1307,6 +1311,7 @@ func GetGlobalConfig() *Config {
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
+	_ = config.prepareErrorMessageExtensions(true)
 	globalConf.Store(config)
 	TikvConfigLock.Lock()
 	defer TikvConfigLock.Unlock()
@@ -1547,8 +1552,8 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
-	if metaData.IsDefined("extended-error-msgs") && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("extended-error-msgs can only be configured when deploy-mode is starter")
+	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
@@ -1597,6 +1602,33 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+func (c *Config) prepareErrorMessageExtensions(ignoreInvalid bool) error {
+	for idx := range c.ErrorMessageExtensions {
+		extension := &c.ErrorMessageExtensions[idx]
+		extension.Regexp = nil
+		compiledRegexp, err := regexp.Compile(extension.Pattern)
+		if err != nil {
+			if ignoreInvalid {
+				continue
+			}
+			return fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+		}
+		extension.Regexp = compiledRegexp
+	}
+	sort.Slice(c.ErrorMessageExtensions, func(i, j int) bool {
+		left := c.ErrorMessageExtensions[i]
+		right := c.ErrorMessageExtensions[j]
+		if len(left.Pattern) != len(right.Pattern) {
+			return len(left.Pattern) > len(right.Pattern)
+		}
+		if left.Pattern != right.Pattern {
+			return left.Pattern < right.Pattern
+		}
+		return left.Suffix < right.Suffix
+	})
+	return nil
+}
+
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
@@ -1615,13 +1647,11 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if len(c.ExtendedErrorMsgs) > 0 && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("extended-error-msgs can only be configured when deploy-mode is starter")
+	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
-	for pattern := range c.ExtendedErrorMsgs {
-		if _, err := regexp.Compile(pattern); err != nil {
-			return fmt.Errorf("invalid extended-error-msgs regexp %q: %w", pattern, err)
-		}
+	if err := c.prepareErrorMessageExtensions(false); err != nil {
+		return err
 	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
@@ -1816,7 +1846,6 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
-	conf.ExtendedErrorMsgs = maps.Clone(defaultConf.ExtendedErrorMsgs)
 	if intest.InTest && kerneltype.IsNextGen() {
 		// In test mode, without reading a config file, we still assume the `GetGlobalConfig()` returns
 		// a valid config file. However, the "valid" nextgen config file should always have a keyspace name.

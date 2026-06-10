@@ -16,71 +16,35 @@ package errmsg
 
 import (
 	"fmt"
-	"regexp"
-	"sort"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-var regexpCache sync.Map
-
 // Extend appends a configured suffix to selected SQL errors in place.
-// It reads config.GetGlobalConfig().ExtendedErrorMsgs, sorts patterns on each
-// call by length descending and lexicographic order, and applies only the first
-// matching regexp. Invalid patterns are skipped because Config.Valid should have
-// rejected them before serving traffic.
+// It reads config.GetGlobalConfig().ErrorMessageExtensions, whose patterns are
+// compiled and sorted when the config is prepared, and applies only the first
+// matching regexp.
 func Extend(m *mysql.SQLError) {
 	if m == nil {
 		return
 	}
 
-	extendedMsgs := config.GetGlobalConfig().ExtendedErrorMsgs
-	if len(extendedMsgs) == 0 {
+	extensions := config.GetGlobalConfig().ErrorMessageExtensions
+	if len(extensions) == 0 {
 		return
 	}
 
-	patterns := make([]string, 0, len(extendedMsgs))
-	for pattern := range extendedMsgs {
-		patterns = append(patterns, pattern)
-	}
-	sort.Slice(patterns, func(i, j int) bool {
-		if len(patterns[i]) != len(patterns[j]) {
-			return len(patterns[i]) > len(patterns[j])
-		}
-		return patterns[i] < patterns[j]
-	})
-
-	for _, pattern := range patterns {
-		extendedMsg := extendedMsgs[pattern]
-		if extendedMsg == "" {
+	for _, extension := range extensions {
+		if extension.Suffix == "" || extension.Regexp == nil {
 			continue
 		}
-		re, err := compileRegexp(pattern)
-		if err != nil {
-			continue
-		}
-		if re.MatchString(m.Message) {
-			extendErrorMessage(m, extendedMsg)
+		if extension.Regexp.MatchString(m.Message) {
+			extendErrorMessage(m, extension.Suffix)
 			return
 		}
 	}
-}
-
-func compileRegexp(pattern string) (*regexp.Regexp, error) {
-	cachedRegexp, ok := regexpCache.Load(pattern)
-	if ok {
-		return cachedRegexp.(*regexp.Regexp), nil
-	}
-
-	compiledRegexp, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-	actual, _ := regexpCache.LoadOrStore(pattern, compiledRegexp)
-	return actual.(*regexp.Regexp), nil
 }
 
 func extendErrorMessage(m *mysql.SQLError, msg string) {

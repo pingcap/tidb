@@ -446,12 +446,13 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
-# extended-error-msgs appends configured messages to SQL errors matching regexps. When multiple
+# error-msg-extension appends configured messages to SQL errors matching regexps. When multiple
 # regexps match the same error, TiDB uses the longest regexp pattern first.
 # Only valid when deploy-mode is starter.
 # Example:
-# [extended-error-msgs]
-# "^Feature '.+' is not supported$" = "see the feature limitations for more details"
+# error-msg-extension = [
+#   { pattern = "^Feature '.+' is not supported$", suffix = "see the feature limitations for more details" },
+# ]
 
 # Map selected keyspace metadata entries to observability outputs.
 # Only valid when deploy-mode is starter.
