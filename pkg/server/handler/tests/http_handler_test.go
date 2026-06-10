@@ -664,11 +664,79 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		require.Equal(t, extension.StmtSuccess, records[2].tp)
 		require.Equal(t, extension.StmtSuccess, records[3].tp)
 		require.Contains(t, records[0].sql, "CREATE USER")
-		require.Contains(t, records[0].sql, "Passw0rd!")
+		require.Contains(t, records[0].sql, "******")
+		require.NotContains(t, records[0].sql, "Passw0rd!")
 		require.Contains(t, records[1].sql, "ALTER USER")
-		require.Contains(t, records[1].sql, "KXMF*ivNaLWd*oNhKC+REY2+")
+		require.Contains(t, records[1].sql, "******")
+		require.NotContains(t, records[1].sql, "KXMF*ivNaLWd*oNhKC+REY2+")
 		require.Contains(t, records[2].sql, "GRANT")
 		require.Contains(t, records[3].sql, "DROP USER")
+	})
+
+	t.Run("invalid create audit does not use synthetic user", func(t *testing.T) {
+		statusAPIAuditTestRecorder.Reset()
+		ts, client, _ := startUserAdminMTLSServer(t)
+
+		resp, err := client.Post(ts.StatusURL("/internal/v1/users"),
+			"application/json",
+			bytes.NewBufferString(`{"password":"Passw0rd!"}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		records := statusAPIAuditTestRecorder.Records()
+		require.Len(t, records, 1)
+		require.Equal(t, extension.StmtError, records[0].tp)
+		require.Equal(t, "STATUS API CREATE USER", records[0].sql)
+		require.NotContains(t, records[0].sql, "<unknown>")
+	})
+
+	t.Run("concurrent delete keeps one login capable user", func(t *testing.T) {
+		ts, client, db := startUserAdminMTLSServer(t)
+		_, err := db.Exec("CREATE USER 'delete_race_1'@'%' IDENTIFIED BY 'Passw0rd!'")
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE USER 'delete_race_2'@'%' IDENTIFIED BY 'Passw0rd!'")
+		require.NoError(t, err)
+		_, err = db.Exec("UPDATE mysql.user SET Account_locked = 'Y' WHERE User NOT IN ('delete_race_1', 'delete_race_2')")
+		require.NoError(t, err)
+
+		var loginCapableUsers int
+		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM mysql.user WHERE Account_locked = 'N'").Scan(&loginCapableUsers))
+		require.Equal(t, 2, loginCapableUsers)
+
+		start := make(chan struct{})
+		type deleteResult struct {
+			status int
+			err    error
+		}
+		results := make(chan deleteResult, 2)
+		deleteUser := func(username string) {
+			<-start
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL("/internal/v1/users/"+username), nil)
+			if err != nil {
+				results <- deleteResult{err: err}
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- deleteResult{err: err}
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			err = resp.Body.Close()
+			results <- deleteResult{status: resp.StatusCode, err: err}
+		}
+
+		go deleteUser("delete_race_1")
+		go deleteUser("delete_race_2")
+		close(start)
+
+		r1, r2 := <-results, <-results
+		require.NoError(t, r1.err)
+		require.NoError(t, r2.err)
+		require.ElementsMatch(t, []int{http.StatusNoContent, http.StatusConflict}, []int{r1.status, r2.status})
+		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM mysql.user WHERE Account_locked = 'N'").Scan(&loginCapableUsers))
+		require.Equal(t, 1, loginCapableUsers)
 	})
 
 	t.Run("only default host is managed", func(t *testing.T) {

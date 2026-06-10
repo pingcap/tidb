@@ -46,9 +46,15 @@ import (
 const (
 	internalUserParam     = "username"
 	defaultUserHost       = "%"
-	auditUnknownValue     = "<unknown>"
 	auditRedactedPassword = "******"
 	userAdminSessionAlias = "status-api"
+	userAdminDeleteLock   = "tidb_status_api_user_admin_delete"
+
+	auditCreateUserAction         = "STATUS API CREATE USER"
+	auditResetPasswordAction      = "STATUS API RESET PASSWORD"
+	auditDropUserAction           = "STATUS API DROP USER"
+	auditGrantRoleAction          = "STATUS API GRANT ROLE"
+	userAdminLockTimeoutInSeconds = 1
 )
 
 type resetPasswordRequest struct {
@@ -85,21 +91,21 @@ func NewUserResetPasswordHandler(store kv.Storage, cfg *config.Config) *UserRese
 // ServeHTTP implements http.Handler.
 func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	username := strings.TrimSpace(mux.Vars(req)[internalUserParam])
-	auditUser := auditValue(username)
+	auditStmt := buildAlterUserPasswordAuditSQL(username, defaultUserHost)
 	if req.Method != http.MethodPost {
 		err := errors.New("only POST is supported")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusMethodNotAllowed, err)
 		return
 	}
 	if err := requireMTLS(req, h.cfg); err != nil {
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusForbidden, err)
 		return
 	}
 	if username == "" {
 		err := errors.New("missing username")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
@@ -107,13 +113,13 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	var payload resetPasswordRequest
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil && err != io.EOF {
 		wrapped := errors.Wrap(err, "invalid request body")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), wrapped)
+		auditUserAdminStmt(req, auditStmt, wrapped)
 		WriteErrorWithCode(w, http.StatusBadRequest, wrapped)
 		return
 	}
 	if strings.TrimSpace(payload.NewPassword) == "" {
 		err := errors.New("missing new_password")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
@@ -121,7 +127,7 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
 	if err != nil {
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -129,24 +135,23 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 
 	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	if !exists {
 		err := errors.New("user not found")
-		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusNotFound, err)
 		return
 	}
 
-	stmtText := buildAlterUserPasswordSQL(username, defaultUserHost, payload.NewPassword)
 	if _, err := se.ExecuteInternal(ctx, "ALTER USER %?@%? IDENTIFIED BY %?", username, defaultUserHost, payload.NewPassword); err != nil {
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	auditUserAdminStmt(req, stmtText, nil)
+	auditUserAdminStmt(req, auditStmt, nil)
 
 	logutil.Logger(req.Context()).Info("internal user password reset", zap.String("user", username))
 
@@ -170,21 +175,21 @@ func NewUserDeleteHandler(store kv.Storage, cfg *config.Config) *UserDeleteHandl
 // ServeHTTP implements http.Handler.
 func (h UserDeleteHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	username := strings.TrimSpace(mux.Vars(req)[internalUserParam])
-	auditUser := auditValue(username)
+	auditStmt := buildDropUserAuditSQL(username)
 	if req.Method != http.MethodDelete {
 		err := errors.New("only DELETE is supported")
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusMethodNotAllowed, err)
 		return
 	}
 	if err := requireMTLS(req, h.cfg); err != nil {
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusForbidden, err)
 		return
 	}
 	if username == "" {
 		err := errors.New("missing username")
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
@@ -192,43 +197,49 @@ func (h UserDeleteHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
 	if err != nil {
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	defer se.Close()
+	if err := se.GetAdvisoryLock(userAdminDeleteLock, userAdminLockTimeoutInSeconds); err != nil {
+		err = errors.Annotate(err, "failed to acquire user admin delete lock")
+		auditUserAdminStmt(req, auditStmt, err)
+		WriteErrorWithCode(w, http.StatusConflict, err)
+		return
+	}
+	defer se.ReleaseAdvisoryLock(userAdminDeleteLock)
 
 	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	if !exists {
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), nil)
+		auditUserAdminStmt(req, auditStmt, nil)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	loginCapableUsers, err := countLoginCapableUsers(ctx, se)
 	if err != nil {
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	if loginCapableUsers <= 1 {
 		err := errors.New("user cannot be deleted: last user")
-		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusConflict, err)
 		return
 	}
 
-	stmtText := buildDropUserSQL(username, defaultUserHost)
 	if _, err := se.ExecuteInternal(ctx, "DROP USER %?@%?", username, defaultUserHost); err != nil {
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusConflict, err)
 		return
 	}
-	auditUserAdminStmt(req, stmtText, nil)
+	auditUserAdminStmt(req, auditStmt, nil)
 
 	logutil.Logger(req.Context()).Info("internal user deleted", zap.String("user", username))
 	w.WriteHeader(http.StatusNoContent)
@@ -247,15 +258,15 @@ func NewUserCreateHandler(store kv.Storage, cfg *config.Config) *UserCreateHandl
 
 // ServeHTTP implements http.Handler.
 func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	placeholderStmt := buildCreateUserSQL(auditUnknownValue, defaultUserHost, auditRedactedPassword)
+	auditStmt := auditCreateUserAction
 	if req.Method != http.MethodPost {
 		err := errors.New("only POST is supported")
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusMethodNotAllowed, err)
 		return
 	}
 	if err := requireMTLS(req, h.cfg); err != nil {
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusForbidden, err)
 		return
 	}
@@ -263,28 +274,25 @@ func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var payload createUserRequest
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil && err != io.EOF {
 		wrapped := errors.Wrap(err, "invalid request body")
-		auditUserAdminStmt(req, placeholderStmt, wrapped)
+		auditUserAdminStmt(req, auditStmt, wrapped)
 		WriteErrorWithCode(w, http.StatusBadRequest, wrapped)
 		return
 	}
 
 	username := strings.TrimSpace(payload.Username)
 	password := payload.Password
-	stmtText := buildCreateUserSQL(auditValue(username), defaultUserHost, auditRedactedPassword)
+	auditStmt = buildCreateUserAuditSQL(username, defaultUserHost)
 	if username == "" || strings.TrimSpace(password) == "" {
 		err := errors.New("missing username or password")
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
 
-	// username and password are valid; rebuild with real password so audit log can show it when redact=OFF
-	stmtText = buildCreateUserSQL(username, defaultUserHost, password)
-
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
 	if err != nil {
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -292,19 +300,19 @@ func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	if exists {
 		err := errors.New("user already exists")
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusConflict, err)
 		return
 	}
 
 	if _, err := se.ExecuteInternal(ctx, "CREATE USER %?@%? IDENTIFIED BY %?", username, defaultUserHost, password); err != nil {
-		auditUserAdminStmt(req, stmtText, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		if terror.ErrorEqual(err, variable.ErrNotValidPassword) {
 			WriteErrorWithCode(w, http.StatusBadRequest, err)
 			return
@@ -316,7 +324,7 @@ func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	auditUserAdminStmt(req, stmtText, nil)
+	auditUserAdminStmt(req, auditStmt, nil)
 
 	logutil.Logger(req.Context()).Info("internal user created", zap.String("user", username))
 
@@ -355,22 +363,21 @@ func NewUserRolesHandler(store kv.Storage, cfg *config.Config) *UserRolesHandler
 // ServeHTTP implements http.Handler.
 func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	username := strings.TrimSpace(mux.Vars(req)[internalUserParam])
-	auditUser := auditValue(username)
-	placeholderStmt := buildGrantRoleSQL(auditUnknownValue, defaultUserHost, auditUser, defaultUserHost)
+	auditStmt := auditGrantRoleAction
 	if req.Method != http.MethodPost {
 		err := errors.New("only POST is supported")
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusMethodNotAllowed, err)
 		return
 	}
 	if err := requireMTLS(req, h.cfg); err != nil {
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusForbidden, err)
 		return
 	}
 	if username == "" {
 		err := errors.New("missing username")
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
@@ -378,7 +385,7 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var payload bindRolesRequest
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil && err != io.EOF {
 		wrapped := errors.Wrap(err, "invalid request body")
-		auditUserAdminStmt(req, placeholderStmt, wrapped)
+		auditUserAdminStmt(req, auditStmt, wrapped)
 		WriteErrorWithCode(w, http.StatusBadRequest, wrapped)
 		return
 	}
@@ -388,22 +395,23 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	roles := normalizeRoleList(payload.Roles)
 	if len(roles) == 0 {
 		err := errors.New("roles must not be empty")
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
 	roleIdents, err := parseRoleList(roles)
 	if err != nil {
-		auditUserAdminStmt(req, placeholderStmt, err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
 	auditRoleName, auditRoleHost := roleIdents[0].name, roleIdents[0].host
+	auditStmt = buildGrantRoleSQL(auditRoleName, auditRoleHost, username, defaultUserHost)
 
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
 	if err != nil {
-		auditUserAdminStmt(req, buildGrantRoleSQL(auditRoleName, auditRoleHost, auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -411,13 +419,13 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
-		auditUserAdminStmt(req, buildGrantRoleSQL(auditRoleName, auditRoleHost, auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
 	if !exists {
 		err := errors.New("user not found")
-		auditUserAdminStmt(req, buildGrantRoleSQL(auditRoleName, auditRoleHost, auditUser, defaultUserHost), err)
+		auditUserAdminStmt(req, auditStmt, err)
 		WriteErrorWithCode(w, http.StatusNotFound, err)
 		return
 	}
@@ -535,23 +543,37 @@ func requireMTLS(_ *http.Request, cfg *config.Config) error {
 	return errors.New("client certificate invalid or missing (mTLS failure)")
 }
 
-func auditValue(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return auditUnknownValue
-	}
-	return value
-}
-
 func buildAlterUserPasswordSQL(username, host, password string) string {
 	return sqlescape.MustEscapeSQL("ALTER USER %?@%? IDENTIFIED BY %?", username, host, password)
+}
+
+func buildAlterUserPasswordAuditSQL(username, host string) string {
+	if strings.TrimSpace(username) == "" {
+		return auditResetPasswordAction
+	}
+	return buildAlterUserPasswordSQL(username, host, auditRedactedPassword)
 }
 
 func buildCreateUserSQL(username, host, password string) string {
 	return sqlescape.MustEscapeSQL("CREATE USER %?@%? IDENTIFIED BY %?", username, host, password)
 }
 
+func buildCreateUserAuditSQL(username, host string) string {
+	if strings.TrimSpace(username) == "" {
+		return auditCreateUserAction
+	}
+	return buildCreateUserSQL(username, host, auditRedactedPassword)
+}
+
 func buildDropUserSQL(username, host string) string {
 	return sqlescape.MustEscapeSQL("DROP USER %?@%?", username, host)
+}
+
+func buildDropUserAuditSQL(username string) string {
+	if strings.TrimSpace(username) == "" {
+		return auditDropUserAction
+	}
+	return buildDropUserSQL(username, defaultUserHost)
 }
 
 func buildGrantRoleSQL(roleName, roleHost, username, userHost string) string {
@@ -597,12 +619,9 @@ func parseStmtNode(sql string) ast.StmtNode {
 	if err != nil {
 		return nil
 	}
-	// Clear ByAuthString/ByHashString so that isPasswordStmt() in the audit extension
-	// returns false for HTTP API events. The audit log's isPasswordStmt guard exists to
-	// prevent real passwords from leaking via OriginalText(); for HTTP API calls the
-	// password in originalText is either '******' (early-exit paths) or the real password
-	// intentionally passed by the caller — in both cases the redact flag alone should
-	// control whether OriginalText() or SQLDigest() is used.
+	// Clear ByAuthString/ByHashString so that audit extensions can log the
+	// already-redacted HTTP API statement text instead of replacing it with only a
+	// digest. Real passwords must never be passed to auditUserAdminStmt.
 	switch n := stmt.(type) {
 	case *ast.CreateUserStmt:
 		for _, spec := range n.Specs {
