@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -100,6 +101,8 @@ type AccessPath struct {
 	Forced           bool
 	ForceKeepOrder   bool
 	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using current path with partial order optimization.
+	ForcePartialOrder bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
@@ -151,6 +154,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		Forced:                       path.Forced,
 		ForceKeepOrder:               path.ForceKeepOrder,
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
@@ -190,6 +194,19 @@ func (path *AccessPath) IsTiKVTablePath() bool {
 // IsTiFlashSimpleTablePath returns true if it's a TiFlash path and will not use any special indexes like vector index.
 func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 	return path.StoreType == kv.TiFlash && path.Index == nil
+}
+
+// IsFullScanRange checks whether this access path covers the full scan range without any
+// filtering that limits the scanned table or index ranges. For integer-handle table paths,
+// tableInfo is used to account for unsigned primary-key handle ranges.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	return ranger.HasFullRange(path.Ranges, unsignedIntHandle)
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.

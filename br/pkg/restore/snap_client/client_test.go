@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -164,6 +165,74 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 
 	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.EnsureNoUserTables()))
+}
+
+type oneSessionGlue struct {
+	glue.Glue
+
+	counter int
+}
+
+func (g *oneSessionGlue) CreateSession(store kv.Storage) (glue.Session, error) {
+	if g.counter == 0 {
+		g.counter = 1
+		return g.Glue.CreateSession(store)
+	}
+	return nil, errors.New("session already created")
+}
+
+func TestCreateDuplicateDatabaseForOneSession(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := &oneSessionGlue{Glue: gluetidb.New(), counter: 0}
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err := client.InitConnections(g, cluster.Storage)
+	require.Error(t, err)
+	require.Equal(t, "session already created", err.Error())
+
+	ctx := context.Background()
+	db := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}
+	require.False(t, db.IsReusedByPITR())
+	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	require.NoError(t, err)
+	require.False(t, db.IsReusedByPITR())
+	// continue to create the same database
+	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	require.NoError(t, err)
+	require.True(t, db.IsReusedByPITR())
+}
+
+func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err := client.InitConnections(g, cluster.Storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	db1 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_1")}}
+	db2 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_2")}}
+	db3 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_3")}}
+	require.False(t, db1.IsReusedByPITR())
+	require.False(t, db2.IsReusedByPITR())
+	require.False(t, db3.IsReusedByPITR())
+	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3})
+	require.NoError(t, err)
+	require.False(t, db1.IsReusedByPITR())
+	require.False(t, db2.IsReusedByPITR())
+	require.False(t, db3.IsReusedByPITR())
+	// continue to create the same databases
+	db4 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_4")}}
+	require.False(t, db4.IsReusedByPITR())
+	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3, db4})
+	require.NoError(t, err)
+	require.True(t, db1.IsReusedByPITR())
+	require.True(t, db2.IsReusedByPITR())
+	require.True(t, db3.IsReusedByPITR())
+	require.False(t, db4.IsReusedByPITR())
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {

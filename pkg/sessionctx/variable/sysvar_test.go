@@ -1804,6 +1804,9 @@ func TestTiDBHashJoinVersion(t *testing.T) {
 
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
+	sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
+	require.NotNil(t, sysVar)
+	require.Equal(t, "3", sysVar.Value)
 
 	tests := []struct {
 		name                string
@@ -1847,9 +1850,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			RunAutoAnalyze.Store(tt.autoAnalyze)
 			EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
 
-			sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
-			require.NotNil(t, sysVar)
-
 			_, err := sysVar.Validate(vars, tt.input, ScopeGlobal)
 			if tt.expectError {
 				require.Error(t, err)
@@ -1858,4 +1858,83 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
+	sv := GetSysVar(TiDBOptPartialOrderedIndexForTopN)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, TypeEnum, sv.Type)
+	require.Equal(t, "DISABLE", sv.Value)
+
+	vars := NewSessionVars(nil)
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := sv.Validate(vars, "COST", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "COST", val)
+
+	val, err = sv.Validate(vars, "cost", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "COST", val)
+
+	val, err = sv.Validate(vars, "DISABLE", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "DISABLE", val)
+
+	val, err = sv.Validate(vars, "disable", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "DISABLE", val)
+
+	_, err = sv.Validate(vars, "ON", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "OFF", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "1", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "0", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "true", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "false", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "2", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "-1", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "yes", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "no", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	err = sv.SetSessionFromHook(vars, "COST")
+	require.NoError(t, err)
+	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
+	require.True(t, vars.IsPartialOrderedIndexForTopNEnabled())
+
+	err = sv.SetSessionFromHook(vars, "DISABLE")
+	require.NoError(t, err)
+	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
+	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }

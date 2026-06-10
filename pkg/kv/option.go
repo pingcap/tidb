@@ -116,6 +116,8 @@ const (
 	SessionID
 	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
 	BackgroundGoroutineLifecycleHooks
+	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
+	PrewriteEncounterLockPolicy
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

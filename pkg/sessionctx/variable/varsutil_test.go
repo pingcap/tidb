@@ -92,6 +92,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -217,6 +218,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
 
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
+
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
 	err = v.SetSystemVar(TiDBMaxChunkSize, "2")
@@ -237,6 +243,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, DefTiDBOptIndexPruneThreshold, v.OptIndexPruneThreshold)
+	err = v.SetSystemVar(TiDBOptIndexPruneThreshold, "1")
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptIndexPruneThreshold)
 
 	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "OFF")
@@ -265,6 +276,14 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
+
+	require.Equal(t, DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(TiDBOptEnableAdvancedJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(TiDBOptEnableAdvancedJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
 	err = v.SetSystemVar(TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

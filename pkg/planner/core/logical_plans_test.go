@@ -1434,6 +1434,30 @@ func testNormalVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "flush stats_delta ttt",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.ttt, test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta *.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", plannererrors.ErrPrivilegeCheckFail, false, nil, false},
+			},
+		},
+		{
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"SYSTEM_VARIABLES_ADMIN"}, false},

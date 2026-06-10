@@ -308,6 +308,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	if err = checkColumnReferencedByPartialCondition(tblInfo, args.Column.Name); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	if args.ChangingColumn == nil {
 		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
 			job.State = model.JobStateCancelled
@@ -1463,6 +1468,10 @@ func GetModifiableColumnJob(
 	col := table.FindCol(t.Cols(), originalColName.L)
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
+	}
+	err = checkColumnReferencedByPartialCondition(t.Meta(), col.ColumnInfo.Name)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	newColName := specNewColumn.Name.Name
 	if newColName.L == model.ExtraHandleName.L {

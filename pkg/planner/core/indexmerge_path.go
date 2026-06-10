@@ -719,7 +719,7 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
 			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 			fixcontrol.Fix52869,
-			false,
+			true,
 		)
 		if !skipRangeScanCheck {
 			for i := 1; i < len(ds.PossibleAccessPaths); i++ {

@@ -204,6 +204,8 @@ type LogClient struct {
 	dom           *domain.Domain
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
+	// regionScanConcurrency controls max in-flight region scan requests to PD.
+	regionScanConcurrency uint
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -218,6 +220,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	checkRequirements bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -233,6 +236,11 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+}
+
+// SetCheckRequirements controls whether backup metadata compatibility checks are enforced.
+func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
+	rc.checkRequirements = checkRequirements
 }
 
 type restoreStatistics struct {
@@ -260,9 +268,15 @@ func NewLogClient(
 		pdHTTPClient:       pdHTTPCli,
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
+		checkRequirements:  true,
 		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
 		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
+}
+
+// SetRegionScanConcurrency sets max in-flight region scan requests during compacted SST restore.
+func (rc *LogClient) SetRegionScanConcurrency(c uint) {
+	rc.regionScanConcurrency = c
 }
 
 // Close a client.
@@ -570,7 +584,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	fileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
@@ -1641,6 +1655,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// WHERE CONDITION
+		if len(info.IndexInfo.ConditionExprString) > 0 {
+			addSQL.WriteString(" WHERE ")
+			addSQL.WriteString(info.IndexInfo.ConditionExprString)
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
