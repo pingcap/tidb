@@ -14,7 +14,6 @@ go_library(
     deps = [
         "//pkg/util",
         "@org_golang_x_exp//constraints",
-        "@org_golang_x_sync//errgroup",
     ],
 )
 
@@ -24,7 +23,7 @@ go_test(
     srcs = ["combinator_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         ":iter",
         "@com_github_stretchr_testify//require",

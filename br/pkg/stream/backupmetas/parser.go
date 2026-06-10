@@ -32,6 +32,11 @@ const (
 	NameMinBeginTsInDefaultCfTag byte = 'd'
 	NameMinTSTag                 byte = 'l'
 	NameMaxTSTag                 byte = 'u'
+	NameFlagsTag                 byte = 'p'
+)
+
+const (
+	flagHasDDLFiles = 1 << iota
 )
 
 var (
@@ -46,7 +51,18 @@ type ParsedName struct {
 	MinBeginTsInDefaultCf uint64
 	MinTS                 uint64
 	MaxTS                 uint64
+	Flags                 uint64
+
+	HasFlags bool
 }
+
+type ShiftTSStatus uint8
+
+const (
+	ShiftTSFound ShiftTSStatus = iota
+	ShiftTSNotFound
+	ShiftTSInvalidStats
+)
 
 func ParseName(fileName string) (ParsedName, error) {
 	switch {
@@ -57,6 +73,31 @@ func ParseName(fileName string) (ParsedName, error) {
 	default:
 		return ParsedName{}, errors.Errorf("invalid backupmeta file name format: %s", fileName)
 	}
+}
+
+func (parsedName *ParsedName) CalculateShiftTS(startTS uint64, restoreTS uint64) (uint64, ShiftTSStatus) {
+	if parsedName.MinTS > restoreTS || parsedName.MaxTS < startTS {
+		return 0, ShiftTSNotFound
+	}
+	if parsedName.MinBeginTsInDefaultCf == 0 || parsedName.MinBeginTsInDefaultCf > parsedName.MinTS {
+		return 0, ShiftTSInvalidStats
+	}
+	return parsedName.MinBeginTsInDefaultCf, ShiftTSFound
+}
+
+func (parsedName *ParsedName) HasDDLFiles() bool {
+	if !parsedName.HasFlags {
+		return true
+	}
+	return parsedName.Flags&flagHasDDLFiles != 0
+}
+
+// TryParseTaggedBackupMetaFileName parses the tagged backupmeta file-name format.
+func TryParseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
+	if !taggedBackupMetaPattern.MatchString(fileName) {
+		return ParsedName{}, errors.Errorf("invalid latest backupmeta file name format: %s", fileName)
+	}
+	return parseTaggedBackupMetaFileName(fileName)
 }
 
 func parseLegacyBackupMetaFileName(fileName string) (ParsedName, error) {
@@ -112,6 +153,8 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 		minBeginTsInDefaultCf uint64
 		minTs                 uint64
 		maxTs                 uint64
+		flags                 uint64
+		hasFlags              bool
 		seenTags              [256]bool
 	)
 	for pos := 0; pos < len(suffix); {
@@ -139,6 +182,9 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 			minTs = value
 		case NameMaxTSTag:
 			maxTs = value
+		case NameFlagsTag:
+			hasFlags = true
+			flags = value
 		}
 		pos += taggedMetaTagValueLen
 	}
@@ -156,6 +202,8 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 		MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
 		MinTS:                 minTs,
 		MaxTS:                 maxTs,
+		Flags:                 flags,
+		HasFlags:              hasFlags,
 	}, nil
 }
 

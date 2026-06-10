@@ -103,6 +103,10 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
+	// FlagFromReplicationStorage is used for PITR from the replication external storage
+	FlagReplicationStatusSubPrefix = "replication-status-sub-prefix"
+	// FlagRestorePhase is used for the restore phase of PITR
+	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -112,6 +116,8 @@ const (
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
+	// FlagRetainLatestMVCCVersion controls whether restore keeps only newest MVCC version from compacted SSTs.
+	FlagRetainLatestMVCCVersion = "retain-latest-mvcc-version"
 
 	FlagResetSysUsers = "reset-sys-users"
 
@@ -292,6 +298,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
+	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -309,6 +317,12 @@ type RestoreConfig struct {
 	// This is used for blocklist files to accurately mark when tables were created.
 	RestoreStartTS      uint64                      `json:"-" toml:"-"`
 	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
+
+	// for PITR from the replication external storage
+	ReplicationStatusSubPrefix string `json:"replication-status-sub-prefix" toml:"replication-status-sub-prefix"`
+	RestorePhase               uint64 `json:"restore-phase" toml:"restore-phase"`
+	FromReplicationStorage     bool   `json:"-" toml:"-"`
+	RestoreInPhase             bool   `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -373,6 +387,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagCheckpointStorage, "", "specify the external storage url where checkpoint data is saved, eg, s3://bucket/path/prefix")
+	flags.String(FlagReplicationStatusSubPrefix, "", "specify the sub prefix of the replication status")
+	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
@@ -396,6 +412,11 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().Bool(
+		FlagRetainLatestMVCCVersion,
+		false,
+		"restore compacted SSTs by retaining only the newest MVCC version, and require no user DML log files",
+	)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -434,6 +455,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -527,6 +551,24 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
+	cfg.ReplicationStatusSubPrefix, err = flags.GetString(FlagReplicationStatusSubPrefix)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStatusSubPrefix)
+	}
+	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
+	}
+	cfg.RestoreInPhase = flags.Changed(FlagRestorePhase) || cfg.RestorePhase > 0
+	if cfg.RestoreInPhase && cfg.RestorePhase != 1 && cfg.RestorePhase != 2 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
+			FlagRestorePhase)
+	}
+	if cfg.RestoreInPhase && !cfg.UseCheckpoint {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
+			FlagRestorePhase, flagUseCheckpoint)
+	}
+	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStatusSubPrefix) || len(cfg.ReplicationStatusSubPrefix) > 0
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -1056,6 +1098,20 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		return errors.Trace(restoreErr)
+	}
+
+	// For restore phase 1, we intentionally keep restore registration
+	// and checkpoint data for the subsequent phase 2 run.
+	if IsStreamRestore(cmdName) && cfg.RestorePhase == 1 {
+		if cfg.RestoreID != 0 {
+			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
+				log.Warn("failed to pause restore task from registry after restore phase 1",
+					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+			}
+		}
+		log.Info("restore phase 1 finished, paused restore task and kept checkpoint data",
+			zap.Uint64("restoreId", cfg.RestoreID))
+		return nil
 	}
 
 	// unregister if restore id is not 0
@@ -2685,7 +2741,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
+			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
 			if err != nil {
 				return errors.Trace(err)
 			}

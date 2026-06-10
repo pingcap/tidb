@@ -37,6 +37,7 @@ go_library(
         "//br/pkg/restore/utils",
         "//br/pkg/storage",
         "//br/pkg/stream",
+        "//br/pkg/stream/backupmetas",
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/utils/consts",

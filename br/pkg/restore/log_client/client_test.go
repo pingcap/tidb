@@ -771,6 +771,34 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+
+	files = []*backuppb.DataFileInfo{
+		{
+			Path: "write-put",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "write-delete",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Delete,
+		},
+		{
+			Path: "default-put",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "default-delete",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Delete,
+		},
+	}
+	defaultFiles, writeFiles := logclient.SeparateAndSortFilesByCF(files)
+	require.Len(t, defaultFiles, 1)
+	require.Equal(t, "default-put", defaultFiles[0].Path)
+	require.Len(t, writeFiles, 2)
+	require.Equal(t, 3, logclient.TEST_CountReadableMetaKVFiles(files))
 }
 
 func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logclient.LogIter {
@@ -2183,6 +2211,52 @@ type mockCompactedStrategy struct {
 
 func (m *mockCompactedStrategy) ShouldSplit() bool {
 	return m.AccumulateCount%m.expectSplitCount == 0
+}
+
+func TestCollectSSTFileSets(t *testing.T) {
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, nil)
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+	}
+
+	t.Run("skips ssts without rewrite rule", func(t *testing.T) {
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{
+			fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+			fakeSubCompactionWithOneSst(3, 100, 16*units.MiB, 300),
+		}), rules)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Equal(t, int64(1), fileSets[0].TableID)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+	})
+
+	t.Run("counts only ssts that still need restore", func(t *testing.T) {
+		var skippedKVs uint64
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, map[string]struct{}{
+			"1:200": {},
+		}, func(kvCount, _ uint64) {
+			skippedKVs += kvCount
+		})
+		ssts := fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200)
+		require.False(t, strategy.ShouldSkip(ssts))
+
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{ssts}), rules)
+		require.NoError(t, err)
+		require.Equal(t, uint64(200), skippedKVs)
+		require.Equal(t, int64(200), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+		require.Equal(t, "1:201", fileSets[0].SSTFiles[0].Name)
+	})
 }
 
 func TestCompactedSplitStrategy(t *testing.T) {
