@@ -15,10 +15,14 @@
 package streamhelper
 
 import (
+	"context"
 	"math/rand"
 	"time"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
@@ -47,5 +51,41 @@ func (c *CheckpointAdvancer) UpdateCheckPointLagLimit(limit time.Duration) {
 		c.UpdateConfig(cfg)
 	} else {
 		variable.AdvancerCheckPointLagLimit.Store(limit)
+	}
+}
+
+func (c *CheckpointAdvancer) ForceResolveLocksForTest() {
+	c.lastCheckpointMu.Lock()
+	defer c.lastCheckpointMu.Unlock()
+	if c.lastCheckpoint != nil {
+		c.lastCheckpoint.resolveLockTime = time.Now().Add(-4 * time.Minute)
+	}
+}
+
+func (c *CheckpointAdvancer) ResolveLockMaxVersionForTest() uint64 {
+	c.lastCheckpointMu.Lock()
+	lastCheckpoint := c.lastCheckpoint
+	c.lastCheckpointMu.Unlock()
+	if lastCheckpoint == nil {
+		return 0
+	}
+
+	maxTs := uint64(0)
+	c.checkpointsMu.Lock()
+	defer c.checkpointsMu.Unlock()
+	c.checkpoints.TraverseValuesLessThan(tsoAfter(lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
+		maxTs = max(maxTs, v.Value)
+		return true
+	})
+	return maxTs + 1
+}
+
+func SetGlobalCheckpointStorageFactoryForTest(
+	factory func(context.Context, *backuppb.StorageBackend, bool) (storage.ExternalStorage, error),
+) func() {
+	original := createGlobalCheckpointStorage
+	createGlobalCheckpointStorage = factory
+	return func() {
+		createGlobalCheckpointStorage = original
 	}
 }
