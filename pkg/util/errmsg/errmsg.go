@@ -23,15 +23,14 @@ import (
 )
 
 // Extend appends a configured suffix to selected SQL errors in place.
-// It reads config.GetGlobalConfig().ErrorMessageExtensions, whose patterns are
-// compiled and sorted when the config is prepared, and applies only the first
-// matching regexp.
+// It reads the immutable error message extension cache prepared from global
+// config, and applies only the first matching regexp.
 func Extend(m *mysql.SQLError) {
 	if m == nil {
 		return
 	}
 
-	extensions := config.GetGlobalConfig().ErrorMessageExtensions
+	extensions := config.GetErrorMessageExtensions()
 	if len(extensions) == 0 {
 		return
 	}

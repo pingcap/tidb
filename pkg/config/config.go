@@ -1293,7 +1293,8 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf atomic.Pointer[Config]
+	globalConf                     atomic.Pointer[Config]
+	preparedErrorMessageExtensions atomic.Pointer[[]ErrorMessageExtension]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1309,24 +1310,24 @@ func GetGlobalConfig() *Config {
 	return globalConf.Load()
 }
 
-// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
-func StoreGlobalConfig(config *Config) {
-	newConfig := config.cloneForStore()
-	_ = newConfig.prepareErrorMessageExtensions(true)
-	globalConf.Store(newConfig)
-	TikvConfigLock.Lock()
-	defer TikvConfigLock.Unlock()
-	cfg := *newConfig.GetTiKVConfig()
-	tikvcfg.StoreGlobalConfig(&cfg)
+// GetErrorMessageExtensions returns the prepared immutable error message extension matchers.
+func GetErrorMessageExtensions() []ErrorMessageExtension {
+	extensions := preparedErrorMessageExtensions.Load()
+	if extensions == nil {
+		return nil
+	}
+	return *extensions
 }
 
-func (c *Config) cloneForStore() *Config {
-	newConfig := *c
-	if len(c.ErrorMessageExtensions) > 0 {
-		newConfig.ErrorMessageExtensions = make([]ErrorMessageExtension, len(c.ErrorMessageExtensions))
-		copy(newConfig.ErrorMessageExtensions, c.ErrorMessageExtensions)
-	}
-	return &newConfig
+// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
+func StoreGlobalConfig(config *Config) {
+	extensions, _ := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
+	preparedErrorMessageExtensions.Store(&extensions)
+	globalConf.Store(config)
+	TikvConfigLock.Lock()
+	defer TikvConfigLock.Unlock()
+	cfg := *config.GetTiKVConfig()
+	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
 // removedConfig contains items that are no longer supported.
@@ -1612,28 +1613,29 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
-func (c *Config) prepareErrorMessageExtensions(ignoreInvalid bool) error {
-	for idx := range c.ErrorMessageExtensions {
-		extension := &c.ErrorMessageExtensions[idx]
+func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInvalid bool) ([]ErrorMessageExtension, error) {
+	preparedExtensions := make([]ErrorMessageExtension, 0, len(extensions))
+	for _, extension := range extensions {
 		extension.Regexp = nil
 		if strings.TrimSpace(extension.Pattern) == "" {
 			if ignoreInvalid {
 				continue
 			}
-			return fmt.Errorf("empty error-msg-extension pattern")
+			return nil, fmt.Errorf("empty error-msg-extension pattern")
 		}
 		compiledRegexp, err := regexp.Compile(extension.Pattern)
 		if err != nil {
 			if ignoreInvalid {
 				continue
 			}
-			return fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+			return nil, fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
 		}
 		extension.Regexp = compiledRegexp
+		preparedExtensions = append(preparedExtensions, extension)
 	}
-	sort.Slice(c.ErrorMessageExtensions, func(i, j int) bool {
-		left := c.ErrorMessageExtensions[i]
-		right := c.ErrorMessageExtensions[j]
+	sort.Slice(preparedExtensions, func(i, j int) bool {
+		left := preparedExtensions[i]
+		right := preparedExtensions[j]
 		if len(left.Pattern) != len(right.Pattern) {
 			return len(left.Pattern) > len(right.Pattern)
 		}
@@ -1642,7 +1644,7 @@ func (c *Config) prepareErrorMessageExtensions(ignoreInvalid bool) error {
 		}
 		return left.Suffix < right.Suffix
 	})
-	return nil
+	return preparedExtensions, nil
 }
 
 // Valid checks if this config is valid.
@@ -1666,7 +1668,7 @@ func (c *Config) Valid() error {
 	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
-	if err := c.prepareErrorMessageExtensions(false); err != nil {
+	if _, err := prepareErrorMessageExtensions(c.ErrorMessageExtensions, false); err != nil {
 		return err
 	}
 	if !c.Store.Valid() {

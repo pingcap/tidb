@@ -164,7 +164,7 @@ func TestExtendConcurrentWithStoreGlobalConfig(t *testing.T) {
 	publishedCfg := config.GetGlobalConfig()
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		<-start
@@ -178,6 +178,13 @@ func TestExtendConcurrentWithStoreGlobalConfig(t *testing.T) {
 		for range 1000 {
 			sqlErr := mysql.NewErrf(mysql.ErrUnknown, "%s", nil, "Access denied for user 'root.foo'@'127.0.0.1' (using password: YES)")
 			Extend(sqlErr)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := range 1000 {
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(i%2 == 0)
 		}
 	}()
 
