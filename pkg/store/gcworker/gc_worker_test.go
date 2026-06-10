@@ -1111,112 +1111,67 @@ func TestLeaderTick(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	t.Run("UnifiedGCStarterFastStartSkipsInitialWait", func(t *testing.T) {
+	t.Run("UnifiedGCNeedsToWait", func(t *testing.T) {
 		if kerneltype.IsClassic() {
 			t.Skip("starter deploy mode is only available in nextgen kernel")
 		}
-		// Starter mode in production uses a special wait rule:
-		// needsToWait() ignores gcWaitTime before the first unified GC job has
-		// finished, but only when intest.InTest is false. Seed gcLastRunTime far
-		// in the past so checkGCInterval passes, keep lastFinish as "just now",
-		// and force intest.InTest=false to verify that this production-only fast
-		// start path launches the first job immediately.
-		txnSafePointSyncWaitTime = 0
-		veryLong := gcDefaultLifeTime * 10
-		lastRunBeforeFastStart := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
-		err := s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeFastStart)
-		require.NoError(t, err)
-		s.gcWorker.lastFinish = time.Now()
 
 		originInTest := intest.InTest
-		intest.InTest = false
+		originDeployMode := deploymode.Get()
 		t.Cleanup(func() {
 			intest.InTest = originInTest
-		})
-		originDeployMode := deploymode.Get()
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		t.Cleanup(func() {
 			require.NoError(t, deploymode.Set(originDeployMode))
 		})
 
-		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
-		require.NoError(t, err)
-		select {
-		case err = <-s.gcWorker.done:
-		case <-time.After(time.Second * 10):
-			err = errors.New("receive from s.gcWorker.done timeout")
+		testCases := []struct {
+			name                  string
+			deployMode            deploymode.Mode
+			inTest                bool
+			hasFinishedFirstGCJob bool
+			expected              bool
+		}{
+			{
+				name:                  "starter still waits in intest",
+				deployMode:            deploymode.Starter,
+				inTest:                true,
+				hasFinishedFirstGCJob: false,
+				expected:              true,
+			},
+			{
+				name:                  "starter skips initial wait in production",
+				deployMode:            deploymode.Starter,
+				inTest:                false,
+				hasFinishedFirstGCJob: false,
+				expected:              false,
+			},
+			{
+				name:                  "starter waits after first gc job in production",
+				deployMode:            deploymode.Starter,
+				inTest:                false,
+				hasFinishedFirstGCJob: true,
+				expected:              true,
+			},
+			{
+				name:                  "premium still waits in production",
+				deployMode:            deploymode.Premium,
+				inTest:                false,
+				hasFinishedFirstGCJob: false,
+				expected:              true,
+			},
 		}
-		require.NoError(t, err)
 
-		// A successful run updates gcLastRunTime. This shows the first job was
-		// not blocked by gcWaitTime under the starter-only fast-start rule.
-		lastRunAfterFastStart, err := s.gcWorker.loadTime(gcLastRunTimeKey)
-		require.NoError(t, err)
-		require.NotNil(t, lastRunAfterFastStart)
-		require.True(t, lastRunAfterFastStart.After(lastRunBeforeFastStart))
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				intest.InTest = tc.inTest
+				require.NoError(t, deploymode.Set(tc.deployMode))
 
-		// After one unified GC job has finished, hasFinishedFirstGCJob=true makes
-		// starter mode honor gcWaitTime again, so a second immediate launch must
-		// stay blocked.
-		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
-		err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
-		require.NoError(t, err)
-		s.gcWorker.lastFinish = time.Now()
-		s.gcWorker.hasFinishedFirstGCJob = true
-		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
-		require.NoError(t, err)
-		select {
-		case err = <-s.gcWorker.done:
-			err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
-		case <-time.After(time.Second):
+				worker := &GCWorker{
+					lastFinish:            time.Now(),
+					hasFinishedFirstGCJob: tc.hasFinishedFirstGCJob,
+				}
+				require.Equal(t, tc.expected, worker.needsToWait())
+			})
 		}
-		require.NoError(t, err)
-		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
-		require.NoError(t, err)
-		require.NotNil(t, lastRunAfterWait)
-		require.Equal(t, lastRunBeforeWait.Unix(), lastRunAfterWait.Unix())
-	})
-
-	t.Run("UnifiedGCPremiumStillWaitsInitialTick", func(t *testing.T) {
-		if kerneltype.IsClassic() {
-			t.Skip("deploy mode is only available in nextgen kernel")
-		}
-		// Premium mode never uses the starter-only fast-start rule in
-		// needsToWait(). Even with intest.InTest forced to false, a recent
-		// lastFinish must still keep the very first unified GC tick waiting.
-		txnSafePointSyncWaitTime = 0
-		veryLong := gcDefaultLifeTime * 10
-		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
-		err := s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
-		require.NoError(t, err)
-		s.gcWorker.lastFinish = time.Now()
-		s.gcWorker.hasFinishedFirstGCJob = false
-
-		originInTest := intest.InTest
-		intest.InTest = false
-		t.Cleanup(func() {
-			intest.InTest = originInTest
-		})
-		originDeployMode := deploymode.Get()
-		require.NoError(t, deploymode.Set(deploymode.Premium))
-		t.Cleanup(func() {
-			require.NoError(t, deploymode.Set(originDeployMode))
-		})
-
-		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
-		require.NoError(t, err)
-		select {
-		case err = <-s.gcWorker.done:
-			err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
-		case <-time.After(time.Second):
-		}
-		require.NoError(t, err)
-
-		// gcLastRunTime staying unchanged proves the first job did not start.
-		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
-		require.NoError(t, err)
-		require.NotNil(t, lastRunAfterWait)
-		require.Equal(t, lastRunBeforeWait.Unix(), lastRunAfterWait.Unix())
 	})
 }
 
