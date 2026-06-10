@@ -357,6 +357,8 @@ func (m *Manager) release(targetKS string, holderID string) {
 // callers to use Acquire instead of GetOrCreate directly.
 func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 	interval := crossKSRuntimeSweepInterval
+	idleTimeout := crossKSRuntimeIdleTimeout
+	failpoint.InjectCall("mockRuntimeGCLoopConfig", &interval, &idleTimeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -365,7 +367,7 @@ func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+			m.sweepIdleRuntimes(idleTimeout)
 		}
 	}
 }
