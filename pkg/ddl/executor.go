@@ -6479,7 +6479,7 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	if stmt.OrReplace && stmt.IfNotExists {
 		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
 	}
-		if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
 		return err
 	}
 
