@@ -44,7 +44,7 @@ func TestImportTaskExecutor(t *testing.T) {
 
 	ctx := context.Background()
 	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
-	param.TaskRuntime = newImportSchedulerTestRuntime(ctrl, &StoreWithKS{}, nil)
+	param.TaskRuntime = newMockRuntime(ctrl, &StoreWithKS{}, nil)
 	executor := NewImportExecutor(
 		ctx,
 		&proto.Task{
@@ -83,7 +83,7 @@ func TestImportTaskExecutorUsesTaskRuntimeStoreWithoutExtraLookup(t *testing.T) 
 	ctx := context.Background()
 	taskStore := &StoreWithKS{ks: "task_ks"}
 	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
-	param.TaskRuntime = newImportSchedulerTestRuntime(ctrl, taskStore, nil)
+	param.TaskRuntime = newMockRuntime(ctrl, taskStore, nil)
 	executor := NewImportExecutor(
 		ctx,
 		&proto.Task{

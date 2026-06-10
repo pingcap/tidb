@@ -57,20 +57,27 @@ func newMockRuntime(
 	return runtime
 }
 
-func newSchedulerParamForTest(t *testing.T, store kv.Storage) scheduler.Param {
+func newSchedulerParamForTest(
+	t *testing.T,
+	taskMgr scheduler.TaskManager,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) scheduler.Param {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
-	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
-		se := utilmock.NewContext()
-		se.Store = store
-		return se, nil
-	}, nil, nil, nil)
-	t.Cleanup(sePool.Close)
-
-	return scheduler.Param{
-		TaskRuntime: newMockRuntime(ctrl, store, sePool),
+	if sePool == nil {
+		sePool = tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+			se := utilmock.NewContext()
+			se.Store = store
+			return se, nil
+		}, nil, nil, nil)
+		t.Cleanup(sePool.Close)
 	}
+
+	param := scheduler.NewParamForTest(taskMgr)
+	param.TaskRuntime = newMockRuntime(ctrl, store, sePool)
+	return param
 }
 
 func (s *importIntoSuite) enableFailPoint(path, term string) {
@@ -142,7 +149,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, newSchedulerParamForTest(s.T(), &StoreWithKS{ks: taskKS})),
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
@@ -154,7 +161,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, newSchedulerParamForTest(s.T(), &StoreWithKS{ks: taskKS})),
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
@@ -164,23 +171,10 @@ func (s *importIntoSuite) TestSchedulerInit() {
 			BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 				TaskBase: proto.TaskBase{Keyspace: taskKS},
 				Meta:     bytes,
-			}, newSchedulerParamForTest(s.T(), &StoreWithKS{})),
+			}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{}, nil)),
 		}
 		s.ErrorContains(sch.Init(), "store keyspace mismatch with task")
 	}
-}
-
-func newImportSchedulerTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool tidbutil.DestroyableSessionPool) *sqlsvrapimock.MockRuntime {
-	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
-	runtime.EXPECT().Store().Return(store).AnyTimes()
-	runtime.EXPECT().SysSessionPool().Return(sessPool).AnyTimes()
-	return runtime
-}
-
-func newImportSchedulerParamForTest(ctrl *gomock.Controller, taskMgr scheduler.TaskManager, store kv.Storage, sessPool tidbutil.DestroyableSessionPool) scheduler.Param {
-	param := scheduler.NewParamForTest(taskMgr)
-	param.TaskRuntime = newImportSchedulerTestRuntime(ctrl, store, sessPool)
-	return param
 }
 
 func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
@@ -197,7 +191,7 @@ func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
 	s.T().Cleanup(sessPool.Close)
 
 	taskKS := "user_keyspace"
-	param := newImportSchedulerParamForTest(ctrl, taskMgr, &StoreWithKS{ks: taskKS}, sessPool)
+	param := newSchedulerParamForTest(s.T(), taskMgr, &StoreWithKS{ks: taskKS}, sessPool)
 	sch := importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
