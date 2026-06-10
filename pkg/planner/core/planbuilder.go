@@ -6381,16 +6381,6 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the keyspace name as the S3 external ID.
-func checkNextGenS3PathWithSem(u *url.URL) error {
-	values := u.Query()
-	for k := range values {
-		lowerK := strings.ToLower(k)
-		if lowerK == storage.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
-=======
 // For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
 // disallow explicit S3 external ID unless it is the keyspace name. The keyspace
 // name is used as the S3 external ID.
@@ -6401,22 +6391,24 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	hasSecretAccessKey := false
 	hasRoleARN := false
 	for k, vs := range values {
-		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		normalizedK := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 		switch normalizedK {
-		case s3like.S3ExternalID:
+		case storage.S3ExternalID:
 			for _, v := range vs {
 				if v != expectedExternalID {
 					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 				}
 			}
-		case s3like.S3AccessKey:
+		case "access-key":
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
-		case s3like.S3SecretAccessKey:
+		case "secret-access-key":
 			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
-		case s3like.S3RoleARN:
+		case "role-arn":
 			hasRoleARN = hasRoleARN || values.Get(k) != ""
->>>>>>> 222da210ca6 (importinto: allow explicit external ID matching target value (#69045))
 		}
+	}
+	if (!hasAccessKey || !hasSecretAccessKey) && !hasRoleARN {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil

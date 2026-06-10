@@ -1111,18 +1111,6 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
-<<<<<<< HEAD
-	u, err := url.Parse("S3://bucket?External-id=abc")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
-
-	u, err = url.Parse("s3://bucket")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.NoError(t, err)
-=======
 	bak := config.GetGlobalKeyspaceName()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = "aaa"
@@ -1177,7 +1165,6 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
->>>>>>> 222da210ca6 (importinto: allow explicit external ID matching target value (#69045))
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
