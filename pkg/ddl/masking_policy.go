@@ -140,7 +140,7 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 		if args.Policy != nil {
 			policyName = args.Policy.Name
 		}
-		return ver, errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return ver, meta.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 
 	if err := validateMaskingPolicyTarget(jobCtx.stepCtx, jobCtx.infoCache, oldPolicy); err != nil {
@@ -181,7 +181,7 @@ func (w *worker) onDropMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver in
 	}
 	if policyInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("masking policy %s doesn't exist", args.PolicyName.O)
+		return ver, meta.ErrMaskingPolicyNotExists.GenWithStackByArgs(args.PolicyName.O)
 	}
 	policyInfo.State = model.StateNone
 	if err = w.deleteMaskingPolicyFromSysTable(jobCtx, policyInfo.ID); err != nil {

@@ -76,8 +76,11 @@ var dynamicPrivs = []string{
 	"RESTRICTED_SQL_ADMIN",            // Can execute restricted SQL statements
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
-	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
+		"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
+	"CREATE MASKING POLICY",           // Can create masking policy
+	"ALTER MASKING POLICY",            // Can alter masking policy
+	"DROP MASKING POLICY",             // Can drop masking policy
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
