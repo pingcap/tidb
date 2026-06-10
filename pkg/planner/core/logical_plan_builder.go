@@ -1574,9 +1574,6 @@ func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.Logic
 			)
 			continue
 		}
-		if err != nil {
-			return nil, err
-		}
 		if placeholder == nil {
 			continue
 		}
