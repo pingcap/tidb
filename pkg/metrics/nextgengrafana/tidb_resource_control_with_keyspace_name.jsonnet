@@ -1655,6 +1655,9 @@ local rowPos = { x: 0, y: 0, w: rowW, h: rowH };
 local leftPanelPos = { x: 0, y: 0, w: panelW, h: panelH };
 local rightPanelPos = { x: panelW, y: 0, w: panelW, h: panelH };
 local fullPanelPos = { x: 0, y: 0, w: rowW, h: panelH };
+local secondRowLeftPanelPos = { x: 0, y: panelH, w: panelW, h: panelH };
+local secondRowRightPanelPos = { x: panelW, y: panelH, w: panelW, h: panelH };
+local secondRowFullPanelPos = { x: 0, y: panelH, w: rowW, h: panelH };
 
 TiDBResourceControlDash
 .addPanel(
@@ -1730,7 +1733,7 @@ TiDBResourceControlDash
   diagnosisSQLSymptomsRow
   .addPanel(diagnosisQueryQPSPanel, gridPos=leftPanelPos)
   .addPanel(diagnosisSQLLatencyPanel, gridPos=rightPanelPos)
-  .addPanel(diagnosisRCQueueWaitPanel, gridPos=fullPanelPos),
+  .addPanel(diagnosisRCQueueWaitPanel, gridPos=secondRowFullPanelPos),
   gridPos=rowPos
 ).addPanel(
   diagnosisRUDemandRow
@@ -1741,19 +1744,19 @@ TiDBResourceControlDash
   diagnosisClientRUConsumptionRow
   .addPanel(diagnosisRUConsumptionByTypePanel, gridPos=leftPanelPos)
   .addPanel(diagnosisRUCostDistributionPanel, gridPos=rightPanelPos)
-  .addPanel(diagnosisResourceBytesPanel, gridPos=leftPanelPos)
-  .addPanel(diagnosisResourceCPUCostPanel, gridPos=rightPanelPos),
+  .addPanel(diagnosisResourceBytesPanel, gridPos=secondRowLeftPanelPos)
+  .addPanel(diagnosisResourceCPUCostPanel, gridPos=secondRowRightPanelPos),
   gridPos=rowPos
 ).addPanel(
   diagnosisClientLimiterRow
   .addPanel(diagnosisClientRequestWaitDurationPanel, gridPos=leftPanelPos)
   .addPanel(diagnosisClientRequestRetryFailureRatePanel, gridPos=rightPanelPos)
-  .addPanel(diagnosisTokenLatencyPanel, gridPos=fullPanelPos),
+  .addPanel(diagnosisTokenLatencyPanel, gridPos=secondRowFullPanelPos),
   gridPos=rowPos
 ).addPanel(
   diagnosisPDAllocationRow
   .addPanel(diagnosisServerAllocationPanel, gridPos=fullPanelPos)
-  .addPanel(diagnosisLimitConfigPanel, gridPos=leftPanelPos)
-  .addPanel(diagnosisLimitCausePanel, gridPos=rightPanelPos),
+  .addPanel(diagnosisLimitConfigPanel, gridPos=secondRowLeftPanelPos)
+  .addPanel(diagnosisLimitCausePanel, gridPos=secondRowRightPanelPos),
   gridPos=rowPos
 )
