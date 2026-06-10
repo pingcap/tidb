@@ -392,10 +392,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	// CRITICAL: Always include indexes specified in IndexMerge hints - index merge needs them to build partial paths
 	result = append(result, indexMergeIndexPaths...)
 
-	if maxToKeep <= 0 {
-		return result
-	}
-
 	added := make(map[*util.AccessPath]struct{}, len(tablePaths)+len(mvIndexPaths)+len(indexMergeIndexPaths))
 	for _, path := range tablePaths {
 		added[path] = struct{}{}

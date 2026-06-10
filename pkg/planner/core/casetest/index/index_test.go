@@ -350,38 +350,46 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 }
 
 func TestPartialIndexWithPlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
 
-	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
-	tk.MustExec("set @a = 123")
+		stmt := "select * from t where a = ?"
+		if cascades == "on" {
+			stmt = "select a from t where a = ?"
+		}
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", stmt))
+		tk.MustExec("set @a = 123")
 
-	// IS NOT NULL pre condition can use plan cache.
-	tk.MustExec("execute stmt using @a")
-	tk.MustExec("execute stmt using @a")
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
-	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		// IS NOT NULL pre condition can use plan cache.
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	// Normal pre condition can not use plan cache.
-	tk.MustExec("prepare stmt from 'select * from t where b = ?'")
-	tk.MustExec("set @a = 20")
-	tk.MustExec("execute stmt using @a")
-	tk.MustExec("execute stmt using @a")
-	tkProcess = tk.Session().ShowProcess()
-	ps[0] = tkProcess
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
-	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		// Normal pre condition can not use plan cache.
+		stmt = "select * from t where b = ?"
+		if cascades == "on" {
+			stmt = "select b from t where b = ?"
+		}
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", stmt))
+		tk.MustExec("set @a = 20")
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
 }
 
 func TestPartialIndexWithIndexPrune(t *testing.T) {
@@ -390,6 +398,11 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+		query := "explain select * from t use index(idx1) where a > 1"
+		if cascades == "on" {
+			query = "explain select a from t use index(idx1) where a > 1"
+		}
+		tk.MustQuery(query).CheckContain("idx1")
 
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
 

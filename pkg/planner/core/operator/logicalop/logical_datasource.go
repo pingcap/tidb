@@ -575,6 +575,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is := LogicalIndexScan{
 		Source:         ds,
 		IsDoubleRead:   false,
+		NotAlwaysValid: path.PartIdxCondNotAlwaysValid,
 		Index:          path.Index,
 		FullIdxCols:    path.FullIdxCols,
 		FullIdxColLens: path.FullIdxColLens,
@@ -599,18 +600,25 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 
 // Convert2Gathers builds logical TiKVSingleGathers from DataSource.
 func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
-	tg := ds.buildTableGather()
-	gathers = append(gathers, tg)
+	ds.CheckPartialIndexes()
 	for _, path := range ds.PossibleAccessPaths {
-		if !path.IsIntHandlePath {
-			path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
-				util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
-			if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
-				gathers = append(gathers, ds.buildIndexGather(path))
-			}
-			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
+		if path.IsTablePath() {
+			gathers = append(gathers, ds.buildTableGather())
+			continue
 		}
+		if path.IsIntHandlePath {
+			continue
+		}
+		path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+			util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
+		if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
+			gathers = append(gathers, ds.buildIndexGather(path))
+		}
+		// TODO: If index columns can not cover the schema, use IndexLookUpGather.
+	}
+	if len(gathers) == 0 {
+		gathers = append(gathers, ds.buildTableGather())
 	}
 	return gathers
 }

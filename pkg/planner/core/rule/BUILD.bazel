@@ -12,7 +12,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_pingcap_failpoint//:failpoint",
         "//pkg/expression",
         "//pkg/meta/model",
         "//pkg/planner/core/base",
@@ -21,5 +20,6 @@ go_library(
         "//pkg/planner/util",
         "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/optimizetrace",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )
