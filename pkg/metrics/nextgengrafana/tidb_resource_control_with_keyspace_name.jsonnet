@@ -1319,6 +1319,103 @@ local diagnosisDemandPanel = graphPanel.new(
   )
 );
 
+local diagnosisClientAccountingRow = row.new(collapse=true, title="Client accounting cost details");
+local diagnosisRUConsumptionByTypePanel = graphPanel.new(
+  title="RU Consumption By Type",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  description="Shows client-side consumed RU rate split by RRU and WRU.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_resource_group_consume_by_type{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group, type)',
+    legendFormat="{{instance}}-{{resource_group}}-{{type}}",
+  )
+);
+
+local diagnosisResourceBytesPanel = graphPanel.new(
+  title="Client Resource Bytes",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="Shows client-side read and write byte cost rates by resource group.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_resource_read_byte_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-read-bytes/s",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_resource_write_byte_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-write-bytes/s",
+  )
+);
+
+local diagnosisResourceCPUCostPanel = graphPanel.new(
+  title="Client CPU Cost",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="ms",
+  description="Shows client-side KV and SQL CPU cost rates by resource group.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_resource_kv_cpu_time_ms_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-kv-cpu-ms/s",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_resource_sql_cpu_time_ms_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-sql-cpu-ms/s",
+  )
+);
+
+local diagnosisRUCostDistributionPanel = graphPanel.new(
+  title="RU Cost Distribution",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  description="Shows the RU cost distribution for client accounting events.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_consume_bucket{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-p99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(resource_manager_client_token_request_consume_bucket{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-p90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_token_request_consume_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group) / sum(rate(resource_manager_client_token_request_consume_count{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-avg",
+  )
+);
+
 local diagnosisTokenRow = row.new(collapse=true, title="Token balance / throttled / token request latency");
 local diagnosisTokenBalancePanel = graphPanel.new(
   title="Token Balance And Throttle",
@@ -1571,6 +1668,13 @@ TiDBResourceControlDash
   diagnosisSQLLatencyRow
   .addPanel(diagnosisSQLLatencyPanel, gridPos=leftPanelPos)
   .addPanel(diagnosisDemandPanel, gridPos=rightPanelPos),
+  gridPos=rowPos
+).addPanel(
+  diagnosisClientAccountingRow
+  .addPanel(diagnosisRUConsumptionByTypePanel, gridPos=leftPanelPos)
+  .addPanel(diagnosisResourceBytesPanel, gridPos=rightPanelPos)
+  .addPanel(diagnosisResourceCPUCostPanel, gridPos=leftPanelPos)
+  .addPanel(diagnosisRUCostDistributionPanel, gridPos=rightPanelPos),
   gridPos=rowPos
 ).addPanel(
   diagnosisTokenRow
