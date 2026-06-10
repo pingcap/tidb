@@ -1115,10 +1115,12 @@ func TestLeaderTick(t *testing.T) {
 		if kerneltype.IsClassic() {
 			t.Skip("starter deploy mode is only available in nextgen kernel")
 		}
-		// In starter mode, the unified GC path is allowed to bypass gcWaitTime
-		// on the first eligible tick after startup. Seed gcLastRunTime far in the
-		// past so checkGCInterval passes, but keep lastFinish as "just now" to
-		// prove the first run is gated only by isNeedToWait().
+		// Starter mode in production uses a special wait rule:
+		// needsToWait() ignores gcWaitTime before the first unified GC job has
+		// finished, but only when intest.InTest is false. Seed gcLastRunTime far
+		// in the past so checkGCInterval passes, keep lastFinish as "just now",
+		// and force intest.InTest=false to verify that this production-only fast
+		// start path launches the first job immediately.
 		txnSafePointSyncWaitTime = 0
 		veryLong := gcDefaultLifeTime * 10
 		lastRunBeforeFastStart := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
@@ -1146,16 +1148,16 @@ func TestLeaderTick(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		// A successful run updates gcLastRunTime. This shows the worker started
-		// immediately instead of being blocked by gcWaitTime.
+		// A successful run updates gcLastRunTime. This shows the first job was
+		// not blocked by gcWaitTime under the starter-only fast-start rule.
 		lastRunAfterFastStart, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 		require.NoError(t, err)
 		require.NotNil(t, lastRunAfterFastStart)
 		require.True(t, lastRunAfterFastStart.After(lastRunBeforeFastStart))
 
-		// Once the first tick has finished, starter mode should fall back to the
-		// normal wait behavior and refuse to launch another unified GC job
-		// immediately.
+		// After one unified GC job has finished, hasFinishedFirstGCJob=true makes
+		// starter mode honor gcWaitTime again, so a second immediate launch must
+		// stay blocked.
 		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
 		err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
 		require.NoError(t, err)
@@ -1179,8 +1181,9 @@ func TestLeaderTick(t *testing.T) {
 		if kerneltype.IsClassic() {
 			t.Skip("deploy mode is only available in nextgen kernel")
 		}
-		// Premium mode never gets the fast-start exception. Even on the first
-		// tick, a recent lastFinish must still keep unified GC waiting.
+		// Premium mode never uses the starter-only fast-start rule in
+		// needsToWait(). Even with intest.InTest forced to false, a recent
+		// lastFinish must still keep the very first unified GC tick waiting.
 		txnSafePointSyncWaitTime = 0
 		veryLong := gcDefaultLifeTime * 10
 		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
@@ -1209,7 +1212,7 @@ func TestLeaderTick(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		// gcLastRunTime staying unchanged proves the job never started.
+		// gcLastRunTime staying unchanged proves the first job did not start.
 		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 		require.NoError(t, err)
 		require.NotNil(t, lastRunAfterWait)
