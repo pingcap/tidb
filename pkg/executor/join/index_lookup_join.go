@@ -238,7 +238,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.OuterCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.MaxChunkSize(), e.MaxChunkSize()),
+		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.InitCap(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.KeyOff2IdxOff,
 		stats:         innerStats,
@@ -451,19 +451,27 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			requiredRows = parentRequired
 		}
 	}
-	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
-	for requiredRows > task.outerResult.Len() {
-		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, maxChunkSize, maxChunkSize)
-		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
+	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
+	if nextChunkCap <= 0 {
+		nextChunkCap = chunk.InitialCapacity
+	}
+	for remainingRows := requiredRows - task.outerResult.Len(); remainingRows > 0; remainingRows = requiredRows - task.outerResult.Len() {
+		chkCap := min(nextChunkCap, remainingRows, maxChunkSize)
+		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, chkCap, maxChunkSize)
+		chk = chk.SetRequiredRows(remainingRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
 			return task, err
 		}
-		if chk.NumRows() == 0 {
+		rows := chk.NumRows()
+		if rows == 0 {
 			break
 		}
 
 		task.outerResult.Add(chk)
+		if rows >= chkCap && nextChunkCap < maxChunkSize {
+			nextChunkCap = min(nextChunkCap*2, maxChunkSize)
+		}
 	}
 	if task.outerResult.Len() == 0 {
 		return nil, nil
@@ -725,7 +733,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return err
 	}
 
-	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().InitChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {

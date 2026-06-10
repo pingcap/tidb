@@ -17,8 +17,11 @@ package executor
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 var (
@@ -61,6 +64,29 @@ func deleteFromSet(set []string, value string) []string {
 		}
 	}
 	return set
+}
+
+const dmlChildChunkTargetBytes = 256 * 1024
+
+// Use child InitCap as the upper bound, but reduce it for wide rows to avoid large upfront allocation.
+func newDMLChildChunk(dmlExec exec.Executor, fields []*types.FieldType, maxInitCap int) *chunk.Chunk {
+	maxChunkSize := dmlExec.MaxChunkSize()
+	initCap := estimateDMLChildChunkInitCap(fields, maxChunkSize, maxInitCap)
+	return dmlExec.NewChunkWithCapacity(fields, initCap, maxChunkSize)
+}
+
+func estimateDMLChildChunkInitCap(fields []*types.FieldType, maxChunkSize, maxInitCap int) int {
+	if maxChunkSize <= 0 || maxInitCap <= 0 {
+		return chunk.ZeroCapacity
+	}
+	rowWidth := 0
+	for _, field := range fields {
+		rowWidth += chunk.EstimateTypeWidth(field)
+	}
+	if rowWidth <= 0 {
+		return min(maxChunkSize, maxInitCap)
+	}
+	return max(1, min(maxChunkSize, maxInitCap, dmlChildChunkTargetBytes/rowWidth))
 }
 
 // batchRetrieverHelper is a helper for batch returning data with known total rows. This helps implementing memtable
