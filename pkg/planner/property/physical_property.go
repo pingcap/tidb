@@ -287,6 +287,42 @@ type PhysicalProperty struct {
 		*expression.VectorHelper
 		TopK uint32
 	}
+
+	// PartialOrderInfo is used for TopN's partial order optimization.
+	// When this field is not nil, it indicates that prefix index can be used
+	// to provide partial order for TopN.
+	PartialOrderInfo *PartialOrderInfo
+}
+
+// PartialOrderInfo records information needed for partial order optimization.
+// When PhysicalProperty.PartialOrderInfo is not nil, it indicates that
+// prefix index can be used to provide partial order.
+type PartialOrderInfo struct {
+	// SortItems are the ORDER BY columns from TopN.
+	SortItems []*SortItem
+}
+
+// AllSameOrder checks if all the items have same order.
+func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
+	if len(p.SortItems) == 0 {
+		return true, false
+	}
+	for i := 1; i < len(p.SortItems); i++ {
+		if p.SortItems[i].Desc != p.SortItems[i-1].Desc {
+			return
+		}
+	}
+	return true, p.SortItems[0].Desc
+}
+
+// PartialOrderMatchResult records the result of matching partial order property with an access path.
+type PartialOrderMatchResult struct {
+	// Matched indicates whether this path can provide partial order.
+	Matched bool
+	// PrefixCol is the last and only one prefix column in the matched index.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix length in bytes for prefix index.
+	PrefixLen int
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -388,12 +424,44 @@ func (p *PhysicalProperty) IsSortItemEmpty() bool {
 	return len(p.SortItems) == 0
 }
 
+// NeedKeepOrder returns whether the property requires maintaining order.
+func (p *PhysicalProperty) NeedKeepOrder() bool {
+	return !p.IsSortItemEmpty() || p.PartialOrderInfo != nil
+}
+
+// GetSortDescForKeepOrder returns the sort direction for keep-order scans.
+func (p *PhysicalProperty) GetSortDescForKeepOrder() bool {
+	if p.PartialOrderInfo != nil && len(p.PartialOrderInfo.SortItems) > 0 {
+		_, desc := p.PartialOrderInfo.AllSameOrder()
+		return desc
+	}
+	_, desc := p.AllSameOrder()
+	return desc
+}
+
+// GetSortItemsForKeepOrder returns the sort items used for keep-order scans.
+func (p *PhysicalProperty) GetSortItemsForKeepOrder() []SortItem {
+	if p.PartialOrderInfo != nil && len(p.PartialOrderInfo.SortItems) > 0 {
+		items := make([]SortItem, 0, len(p.PartialOrderInfo.SortItems))
+		for _, si := range p.PartialOrderInfo.SortItems {
+			items = append(items, *si)
+		}
+		return items
+	}
+	return p.SortItems
+}
+
 // HashCode calculates hash code for a PhysicalProperty object.
 func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
 	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
+	if p.PartialOrderInfo != nil {
+		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
+	} else {
+		hashcodeSize += 8
+	}
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.CanAddEnforcer {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
@@ -423,6 +491,19 @@ func (p *PhysicalProperty) HashCode() []byte {
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
+	if p.PartialOrderInfo != nil {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		for _, item := range p.PartialOrderInfo.SortItems {
+			p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+			if item.Desc {
+				p.hashcode = codec.EncodeInt(p.hashcode, 1)
+			} else {
+				p.hashcode = codec.EncodeInt(p.hashcode, 0)
+			}
+		}
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
 	return p.hashcode
 }
 
@@ -443,6 +524,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		PartialOrderInfo:      p.PartialOrderInfo,
 	}
 	return prop
 }

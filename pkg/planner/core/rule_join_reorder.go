@@ -280,6 +280,10 @@ type joinTypeWithExtMsg struct {
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
+		p, err := joinorder.Optimize(p)
+		return p, false, err
+	}
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)

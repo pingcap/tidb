@@ -84,11 +84,11 @@ func TestRedactExplain(t *testing.T) {
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
 		testkit.Rows(
-			"Limit_25 100.00 root  offset:‹100›, count:‹100›",
-			"└─HashJoin_27 200.00 root  CARTESIAN inner join",
-			"  ├─CTEFullScan_31(Build) 2.00 root CTE:cte data:CTE_0",
-			"  └─TableReader_33(Probe) 100.00 root  data:TableFullScan_32",
-			"    └─TableFullScan_32 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
+			"Limit_26 100.00 root  offset:‹100›, count:‹100›",
+			"└─HashJoin_28 200.00 root  CARTESIAN inner join",
+			"  ├─CTEFullScan_32(Build) 2.00 root CTE:cte data:CTE_0",
+			"  └─TableReader_34(Probe) 100.00 root  data:TableFullScan_33",
+			"    └─TableFullScan_33 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"CTE_0 2.00 root  Recursive CTE",
 			"├─Projection_16(Seed Part) 1.00 root  ‹1›->Column#2",
 			"│ └─TableDual_17 1.00 root  rows:1",
@@ -156,11 +156,12 @@ func TestRedactExplain(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
-		testkit.Rows("Limit_25 100.00 root  offset:?, count:?",
-			"└─HashJoin_27 200.00 root  CARTESIAN inner join",
-			"  ├─CTEFullScan_31(Build) 2.00 root CTE:cte data:CTE_0",
-			"  └─TableReader_33(Probe) 100.00 root  data:TableFullScan_32",
-			"    └─TableFullScan_32 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		testkit.Rows(
+			"Limit_26 100.00 root  offset:?, count:?",
+			"└─HashJoin_28 200.00 root  CARTESIAN inner join",
+			"  ├─CTEFullScan_32(Build) 2.00 root CTE:cte data:CTE_0",
+			"  └─TableReader_34(Probe) 100.00 root  data:TableFullScan_33",
+			"    └─TableFullScan_33 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"CTE_0 2.00 root  Recursive CTE",
 			"├─Projection_16(Seed Part) 1.00 root  ?->Column#2",
 			"│ └─TableDual_17 1.00 root  rows:1",

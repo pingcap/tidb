@@ -1107,6 +1107,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
@@ -1135,6 +1138,11 @@ type SessionVars struct {
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
+
+	// EnableCorrelateSubquery is an internal flag (not user-facing) toggled by the
+	// correlate alternative round to enable conversion of non-correlated semi-joins
+	// to correlated Apply during plan building.
+	EnableCorrelateSubquery bool
 
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
@@ -1607,7 +1615,8 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
-	OptPartialOrderedIndexForTopN bool
+	// Valid values: "DISABLE" and "COST".
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -1954,6 +1963,11 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 	}
 }
 
+// IsPartialOrderedIndexForTopNEnabled indicates whether partial ordered index optimization for TopN is enabled.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
+}
+
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
@@ -2202,6 +2216,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:        DefTiDBOptIndexPruneThreshold,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans: DefOptEnableAlternativeLogicalPlans,

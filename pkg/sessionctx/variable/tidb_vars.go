@@ -168,6 +168,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptIndexPruneThreshold is used to control the threshold for index pruning optimization.
+	TiDBOptIndexPruneThreshold = "tidb_opt_index_prune_threshold"
+
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
@@ -796,7 +799,11 @@ const (
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	// TODO: deprecated this variable to use a format like `tidb_enable_pd_follower_handle_region`.
 	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
+
+	// TiDBEnableBatchQueryRegion indicates whether to enable the batch query region feature.
+	TiDBEnableBatchQueryRegion = "tidb_enable_batch_query_region"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -1398,6 +1405,7 @@ const (
 	DefBroadcastJoinThresholdCount          = 10 * 1024
 	DefPreferBCJByExchangeDataSize          = false
 	DefTiDBOptimizerSelectivityLevel        = 0
+	DefTiDBOptIndexPruneThreshold           = 20
 	DefTiDBOptimizerEnableNewOFGB           = false
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
@@ -1489,6 +1497,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
 	DefPDEnableFollowerHandleRegion                   = false
+	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBRegardNULLAsPoint                          = true
@@ -1595,7 +1604,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
-	DefTiDBOptPartialOrderedIndexForTopN              = false
+	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
@@ -1724,6 +1733,7 @@ var (
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
+	EnableBatchQueryRegion               = atomic.NewBool(DefTiDBEnableBatchQueryRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
