@@ -687,7 +687,7 @@ type candidatePath struct {
 	// partialOrderMatchResult records whether this path can provide partial order using prefix index.
 	partialOrderMatchResult property.PartialOrderMatchResult
 	// matchWithAdvisorySortItems indicates the property matching used advisory
-	// sort items. Only relevant for IndexMerge.
+	// sort items (i.e. noSortItem && len(prop.AdvisorySortItems) > 0). Only relevant for IndexMerge.
 	matchWithAdvisorySortItems bool
 	// partialPathMatchResults stores each partial path's matchProperty result.
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
@@ -1415,6 +1415,7 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 
 func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
+
 	allSameOrder, _ := prop.AllSameOrder()
 	// When SortItems is empty and AdvisorySortItems is set, check which partial
 	// paths satisfy the advisory items for Limit pushdown.
@@ -2037,6 +2038,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
 	}
+
 	advisoryProp := prop
 	if candidate.matchWithAdvisorySortItems {
 		advisoryProp = prop.CloneEssentialFields()
@@ -2058,9 +2060,9 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 			partMatchPropResult = candidate.partialPathMatchResults[i]
 		}
 		effectiveProp := prop
+		// If matchWithAdvisorySortItems is true and this partial path can match the property,
+		// it means it actually matches the advisory property.
 		if candidate.matchWithAdvisorySortItems && partMatchPropResult.Matched() {
-			// If matchWithAdvisorySortItems is true and this partial path can
-			// match the property, it actually matches the advisory property.
 			effectiveProp = advisoryProp
 		}
 		if partPath.IsTablePath() {

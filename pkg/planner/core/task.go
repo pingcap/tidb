@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -1062,10 +1063,10 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
 		// Handle IndexMerge with advisory sort items when some (but not all)
 		// partial paths satisfy the sort order. When all paths satisfy, the
-		// existing Limit pushdown path gives a better plan.
+		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
 		if len(copTask.idxMergePartPlans) > 0 && !copTask.indexPlanFinished && !copTask.idxMergeIsIntersection &&
-			copTask.idxMergeMatchWithAdvisorySortItems &&
-			len(copTask.idxMergePartPlans) == len(copTask.idxMergePartPlansMatchResults) {
+			copTask.idxMergeMatchWithAdvisorySortItems {
+			intest.Assert(len(copTask.idxMergePartPlans) == len(copTask.idxMergePartPlansMatchResults))
 			allSatisfy := true
 			for _, result := range copTask.idxMergePartPlansMatchResults {
 				if !result.Matched() {
@@ -1150,7 +1151,7 @@ func estimateMaxXForPartialOrder(_ base.PlanContext, _ *CopTask) uint64 {
 }
 
 // handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
-// has advisory sort item matching info. It pushes Limit to partial paths that
+// has advisory sort items satisfaction info. It pushes Limit to partial paths that
 // satisfy the sort order and TopN to those that do not, then keeps a root TopN
 // for the final merge.
 func handleAdvisorySortItemsForIndexMerge(p *PhysicalTopN, copTask *CopTask) base.Task {

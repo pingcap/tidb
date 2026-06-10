@@ -252,12 +252,11 @@ type CopTask struct {
 	// idxMergeMatchWithAdvisorySortItems indicates the IndexMerge property matching
 	// used advisory sort items (i.e. no SortItems but AdvisorySortItems was set).
 	idxMergeMatchWithAdvisorySortItems bool
-	// idxMergePartPlansMatchResults stores each partial path's matchProperty
-	// result. Set by convertToIndexMergeScan. Length equals len(idxMergePartPlans)
+	// idxMergePartPlansMatchResults stores each partial path's matchProperty result.
+	// Set by convertToIndexMergeScan. Length equals len(idxMergePartPlans)
 	// or 0.
-	// 0 length may be caused by cases like Intersection type IndexMerge, which
-	// can't satisfy any order property. When its length is 0, it should be
-	// considered as all property.PropNotMatched.
+	// 0 length may be caused by cases like Intersection type IndexMerge, which can't satisfy any order property. When
+	// its length is 0, it should be considered as all property.PropNotMatched.
 	idxMergePartPlansMatchResults []property.PhysicalPropMatchResult
 
 	// rootTaskConds stores select conditions containing virtual columns.

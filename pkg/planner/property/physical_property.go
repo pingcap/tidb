@@ -294,8 +294,8 @@ type PhysicalProperty struct {
 	PartialOrderInfo *PartialOrderInfo
 
 	// AdvisorySortItems contains sort items that are preferred but not required.
-	// When SortItems is empty and AdvisorySortItems is not, DataSource can try
-	// to generate paths that satisfy these sort items, enabling Limit pushdown
+	// When SortItems is empty and AdvisorySortItems is not, DataSource can try to
+	// generate paths that satisfy these sort items, enabling Limit pushdown
 	// to partial paths of IndexMerge.
 	// Currently only set when TopN is directly above a DataSource.
 	AdvisorySortItems []SortItem

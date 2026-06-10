@@ -2268,9 +2268,9 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
 
-	// When TopN is directly above a DataSource, set AdvisorySortItems so that
-	// IndexMerge can prefer partial paths that satisfy the ORDER BY.
-	// This enables pushing Limit to ordered partial paths.
+	// The AdvisorySortItems optimization may not fully succeed (e.g. the global filter blocks the LIMIT pushdown),
+	// in this case, it may generate a plan with unnecessary `keep order: true`. So we add this plan as an extra
+	// candidate instead of replacing the original plan.
 	var advisorySortItems []property.SortItem
 	if _, ok := lt.Children()[0].(*logicalop.DataSource); ok && len(lt.ByItems) > 0 {
 		advisorySortItems = make([]property.SortItem, 0, len(lt.ByItems))
