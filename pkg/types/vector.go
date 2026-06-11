@@ -201,8 +201,12 @@ func PeekBytesAsVectorFloat32(b []byte) (n int, err error) {
 	}
 
 	elements := binary.LittleEndian.Uint32(b)
-	totalDataSize := elements*4 + 4
-	if len(b) < int(totalDataSize) {
+	// Compute the size in uint64 so a large element count cannot wrap the
+	// uint32 multiplication and slip past the length check below. Otherwise a
+	// crafted header could report a tiny size while Len()/Elements() still
+	// trust the oversized dimension and read out of bounds.
+	totalDataSize := uint64(elements)*4 + 4
+	if uint64(len(b)) < totalDataSize {
 		err = errors.Errorf("bad VectorFloat32 value (len=%d, expected=%d)", len(b), totalDataSize)
 		return
 	}
