@@ -87,7 +87,6 @@ func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 		"*executor.TableDualExec":       {level: 2, label: "TableDualExec", useCells: false},
 		"*executor.TableReaderExecutor": {level: 2, label: "TableReaderExecutor", useCells: false},
 		"*executor.UnionScanExec":       {level: 2, label: "UnionScanExec", useCells: false},
-		"*executor.WindowExec":          {level: 2, label: "WindowExec", useCells: false},
 		"*join.HashJoinV1Exec":          {level: 2, label: "HashJoinV1Exec", useCells: false},
 		"*join.HashJoinV2Exec":          {level: 2, label: "HashJoinV2Exec", useCells: false},
 		"*join.IndexLookUpJoin":         {level: 2, label: "IndexLookUpJoin", useCells: true},
@@ -96,6 +95,9 @@ func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 		"*join.MergeJoinExec":           {level: 2, label: "MergeJoinExec", useCells: false},
 		"*sortexec.SortExec":            {level: 3, label: "SortExec", useCells: true},
 		"*sortexec.TopNExec":            {level: 2, label: "TopNExec", useCells: true},
+		"*windows.OrderedWindowExec":    {level: 2, label: "WindowExec", useCells: false},
+		"*windows.PipelinedWindowExec":  {level: 2, label: "WindowExec", useCells: false},
+		"*windows.WindowExec":           {level: 2, label: "WindowExec", useCells: false},
 	}
 
 	for typ, expected := range cases {
@@ -108,6 +110,7 @@ func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 		"*executor.HashJoinExec",
 		"*executor.IndexLookUpJoin",
 		"*executor.SortExec",
+		"*executor.WindowExec",
 	} {
 		_, ok := ruv2ExecutorMetricByType(staleType)
 		require.False(t, ok, staleType)

@@ -136,7 +136,7 @@ func ruv2ExecutorMetricByType(execType string) (ruv2ExecutorMetric, bool) {
 		return ruv2ExecutorMetric{level: 2, label: "TableReaderExecutor", useCells: false}, true
 	case "*executor.UnionScanExec":
 		return ruv2ExecutorMetric{level: 2, label: "UnionScanExec", useCells: false}, true
-	case "*executor.WindowExec":
+	case "*windows.WindowExec", "*windows.PipelinedWindowExec", "*windows.OrderedWindowExec":
 		return ruv2ExecutorMetric{level: 2, label: "WindowExec", useCells: false}, true
 	case "*join.HashJoinV1Exec":
 		return ruv2ExecutorMetric{level: 2, label: "HashJoinV1Exec", useCells: false}, true
