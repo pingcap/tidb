@@ -1002,6 +1002,14 @@ func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (
 		return nil, nil, err
 	}
 
+	// The trivial plan fast path skips optimization entirely and would record
+	// almost no relevant vars/fixes; opt out of it the same way the plan
+	// variant generation does, restoring the flag since sctx is pooled.
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	origInExplainStmt := stmtCtx.InExplainStmt
+	stmtCtx.InExplainStmt = true
+	defer func() { stmtCtx.InExplainStmt = origInExplainStmt }()
+
 	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
@@ -1031,11 +1039,21 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 	}
 
 	// This path generates plan variants for EXPLAIN EXPLORE and binding
-	// suggestions; the consumer extracts hints from the result. Optimizer
-	// fast paths (point-get, trivial plan) bypass hint-bearing operators,
-	// so mark the statement as InExplainStmt to opt out of them and force
-	// the regular planner that produces richer plan metadata.
-	sctx.GetSessionVars().StmtCtx.InExplainStmt = true
+	// suggestions; the consumer extracts hints from the result. The trivial
+	// plan fast path bypasses hint-bearing operators, so mark the statement
+	// as InExplainStmt to opt out of it and force the regular planner that
+	// produces richer plan metadata. (Point-get fast-path plans are not
+	// gated by this flag.) Restore the flags before returning: sctx is a
+	// pooled session, and leaked explain semantics would change how later
+	// callers plan on it.
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	origInExplainStmt := stmtCtx.InExplainStmt
+	origIgnoreExplainIDSuffix := stmtCtx.IgnoreExplainIDSuffix
+	stmtCtx.InExplainStmt = true
+	defer func() {
+		stmtCtx.InExplainStmt = origInExplainStmt
+		stmtCtx.IgnoreExplainIDSuffix = origIgnoreExplainIDSuffix
+	}()
 
 	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {

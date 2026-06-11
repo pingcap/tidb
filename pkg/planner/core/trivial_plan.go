@@ -90,6 +90,11 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 	if len(tblName.PartitionNames) > 0 {
 		return nil, nil
 	}
+	// TABLESAMPLE needs the dedicated sampling executor; a plain table scan
+	// would silently return all rows.
+	if tblName.TableSample != nil {
+		return nil, nil
+	}
 
 	// Look up the already-resolved table info from the resolve context.
 	resolveCtx := node.GetResolveContext()
@@ -170,6 +175,12 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 		selectColIDs[i] = col.ID
 		selectedSet[col.ID] = struct{}{}
 	}
+	// Duplicate column references (SELECT a, a) would put the same column ID
+	// twice into the coprocessor scan, which TiKV does not support; the full
+	// planner deduplicates the scan and re-expands through a Projection.
+	if len(selectedSet) != schema.Len() {
+		return nil, nil
+	}
 
 	// Build the scan column set. It starts with SELECT cols in SELECT order so
 	// that the executor's sequential OutputOffsets (0, 1, 2, …) line up with
@@ -181,15 +192,41 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 	scanNames := make(types.NameSlice, 0, schema.Len())
 	for i, sCol := range schema.Columns {
 		colInfo := colInfoByID[sCol.ID]
-		scanColInfos = append(scanColInfos, colInfo)
-		scanCols = append(scanCols, colInfoToColumn(colInfo, i))
-		scanNames = append(scanNames, &types.FieldName{
+		if colInfo == nil {
+			// buildSchemaFromFields can resolve fields to columns that aren't
+			// public table columns (_tidb_rowid, tidb_row_checksum(), or a
+			// column in a DDL intermediate state). The full planner handles
+			// those correctly.
+			return nil, nil
+		}
+		fieldName := &types.FieldName{
 			DBName:      dbName,
 			OrigTblName: tblInfo.Name,
 			TblName:     tblAlias,
 			OrigColName: colInfo.Name,
 			ColName:     colInfo.Name,
-		})
+		}
+		scanCol := colInfoToColumn(colInfo, i)
+		// Fully qualify OrigName the way the normal planner does, so the plan
+		// normalizes to the same digest as the full planner's plan.
+		scanCol.OrigName = fieldName.String()
+		sCol.OrigName = scanCol.OrigName
+		scanColInfos = append(scanColInfos, colInfo)
+		scanCols = append(scanCols, scanCol)
+		scanNames = append(scanNames, fieldName)
+	}
+
+	// Warnings appended while probing the WHERE clause (expression rewrite,
+	// pushdown checks) must be rolled back when the fast path bails out
+	// afterwards, or the full planner re-derives them and the user sees
+	// duplicates.
+	sc := ctx.GetSessionVars().StmtCtx
+	warnStart := int(sc.WarningCount())
+	extraWarnStart := len(sc.GetExtraWarnings())
+	bailToFullPlanner := func() (base.Plan, types.NameSlice) {
+		sc.TruncateWarnings(warnStart)
+		sc.SetExtraWarnings(slices.Clone(sc.GetExtraWarnings()[:extraWarnStart]))
+		return nil, nil
 	}
 
 	// Process the WHERE clause (if any) and extend the scan column set with
@@ -221,15 +258,25 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 			if _, already := selectedSet[colInfo.ID]; already {
 				continue
 			}
-			scanColInfos = append(scanColInfos, colInfo)
-			scanCols = append(scanCols, colInfoToColumn(colInfo, len(scanCols)))
-			scanNames = append(scanNames, &types.FieldName{
+			fieldName := &types.FieldName{
 				DBName:      dbName,
 				OrigTblName: tblInfo.Name,
 				TblName:     tblAlias,
 				OrigColName: colInfo.Name,
 				ColName:     colInfo.Name,
-			})
+			}
+			scanCol := colInfoToColumn(colInfo, len(scanCols))
+			scanCol.OrigName = fieldName.String()
+			scanColInfos = append(scanColInfos, colInfo)
+			scanCols = append(scanCols, scanCol)
+			scanNames = append(scanNames, fieldName)
+		}
+
+		// Extra scan columns force a Projection inside the cop task (built
+		// further below); respect the session's projection-pushdown setting
+		// the same way the normal planner does.
+		if len(scanCols) > schema.Len() && !ctx.GetSessionVars().AllowProjectionPushDown {
+			return nil, nil
 		}
 
 		// Rewrite the WHERE clause against the scan schema; resulting Column
@@ -237,12 +284,21 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 		scanSchema := expression.NewSchema(scanCols...)
 		whereExpr, err := rewriteAstExprWithPlanCtx(ctx, sel.Where, scanSchema, scanNames, false)
 		if err != nil {
-			return nil, nil
+			return bailToFullPlanner()
 		}
 		if expression.ContainCorrelatedColumn(whereExpr) {
-			return nil, nil
+			return bailToFullPlanner()
 		}
 		conditions = expression.SplitCNFItems(whereExpr)
+
+		// A predicate that folded to a constant (e.g. WHERE 1=0 or WHERE
+		// NULL) should become TableDual or be eliminated entirely; only the
+		// full planner does that folding.
+		for _, cond := range conditions {
+			if _, isConst := cond.(*expression.Constant); isConst {
+				return bailToFullPlanner()
+			}
+		}
 
 		// PlanBuilder.buildSelection casts string-typed predicates (notably
 		// enum/set) to a numeric type so the runtime treats them as boolean.
@@ -268,7 +324,7 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 		// non-pushable conditions into a root-task Selection; the trivial path
 		// has no such split, so bail when anything isn't pushable.
 		if !expression.CanExprsPushDown(plannerutil.GetPushDownCtx(ctx), conditions, kv.TiKV) {
-			return nil, nil
+			return bailToFullPlanner()
 		}
 
 		for _, c := range expression.ExtractColumnsFromExpressions(conditions, nil) {
@@ -278,7 +334,7 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 
 	// Per-query gate: bail if any index could plausibly beat the table scan.
 	if mayUseIndex(tblInfo, refColIDs, selectColIDs) {
-		return nil, nil
+		return bailToFullPlanner()
 	}
 
 	// Row count estimate from stats cache (no synchronous loading).
@@ -294,7 +350,7 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 	if statsTbl != nil && !statsTbl.Pseudo && len(refColIDs) > 0 {
 		for colID := range refColIDs {
 			if _, loadNeeded, _ := statsTbl.ColumnIsLoadNeeded(colID, true); loadNeeded {
-				return nil, nil
+				return bailToFullPlanner()
 			}
 		}
 	}
@@ -450,48 +506,58 @@ func isTrivialTable(tblInfo *model.TableInfo) bool {
 //  1. The index's leading column is referenced by a predicate, enabling a
 //     range scan that reads fewer rows than the full table.
 //  2. The index covers every output column, enabling a covering scan that
-//     reads fewer bytes per row than the table scan.
+//     reads fewer bytes per row than the table scan. Secondary indexes
+//     implicitly store the handle, so handle columns count as covered.
 //
 // References to the primary key (handle or clustered) are treated like the
 // leading-column case, since they could similarly produce a range scan.
 func mayUseIndex(tblInfo *model.TableInfo, refColIDs map[int64]struct{}, selectColIDs []int64) bool {
+	// Collect the handle column IDs: an integer handle or the clustered-index
+	// columns. They are implicitly stored in every secondary index.
+	handleIDs := make(map[int64]struct{}, 1)
 	if tblInfo.PKIsHandle {
 		if pkCol := tblInfo.GetPkColInfo(); pkCol != nil {
-			if _, ok := refColIDs[pkCol.ID]; ok {
-				return true
+			handleIDs[pkCol.ID] = struct{}{}
+		}
+	} else if tblInfo.IsCommonHandle {
+		if pkIdx := tblInfo.GetPrimaryKey(); pkIdx != nil {
+			for _, c := range pkIdx.Columns {
+				handleIDs[tblInfo.Columns[c.Offset].ID] = struct{}{}
 			}
+		}
+	}
+	for id := range handleIDs {
+		if _, ok := refColIDs[id]; ok {
+			return true
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
-		if idx.Primary {
-			if tblInfo.IsCommonHandle {
-				for _, c := range idx.Columns {
-					if _, ok := refColIDs[tblInfo.Columns[c.Offset].ID]; ok {
-						return true
-					}
-				}
-			}
+		// The clustered primary index is the table itself and was handled
+		// above. A nonclustered primary key is a physical secondary index
+		// and is checked like any other index.
+		if idx.Primary && tblInfo.IsCommonHandle {
 			continue
 		}
 		leadingID := tblInfo.Columns[idx.Columns[0].Offset].ID
 		if _, ok := refColIDs[leadingID]; ok {
 			return true
 		}
-		if indexCoversCols(idx, tblInfo, selectColIDs) {
+		if indexCoversCols(idx, tblInfo, selectColIDs, handleIDs) {
 			return true
 		}
 	}
 	return false
 }
 
-// indexCoversCols reports whether every column ID in colIDs appears in idx.
+// indexCoversCols reports whether every column ID in colIDs appears in idx or
+// in the handle columns implicitly stored alongside every secondary index.
 // An empty colIDs set is treated as not covering, so that "SELECT 1 FROM t"
 // style queries (which buildSchemaFromFields already rejects today) wouldn't
 // be mis-classified as covering by accident.
-func indexCoversCols(idx *model.IndexInfo, tblInfo *model.TableInfo, colIDs []int64) bool {
+func indexCoversCols(idx *model.IndexInfo, tblInfo *model.TableInfo, colIDs []int64, handleIDs map[int64]struct{}) bool {
 	if len(colIDs) == 0 {
 		return false
 	}
@@ -500,9 +566,13 @@ func indexCoversCols(idx *model.IndexInfo, tblInfo *model.TableInfo, colIDs []in
 		idxIDs[tblInfo.Columns[c.Offset].ID] = struct{}{}
 	}
 	for _, id := range colIDs {
-		if _, ok := idxIDs[id]; !ok {
-			return false
+		if _, inIndex := idxIDs[id]; inIndex {
+			continue
 		}
+		if _, inHandle := handleIDs[id]; inHandle {
+			continue
+		}
+		return false
 	}
 	return true
 }

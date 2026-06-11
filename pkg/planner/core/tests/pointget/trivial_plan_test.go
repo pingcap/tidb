@@ -70,11 +70,13 @@ func TestTrivialPlan(t *testing.T) {
 	require.Equal(t, "1", rows[1][1])
 	requireTrivialPlan(t, tk, true)
 
-	// SELECT with duplicate column references.
+	// SELECT with duplicate column references — falls back: a scan request
+	// with repeated column IDs is not supported by TiKV, so the full planner
+	// must dedup the scan and re-expand via a Projection.
 	rows = tk.MustQuery("select a, a from t_simple").Sort().Rows()
 	require.Len(t, rows, 3)
 	require.Equal(t, rows[0][0], rows[0][1])
-	requireTrivialPlan(t, tk, true)
+	requireTrivialPlan(t, tk, false)
 
 	// Verify EXPLAIN shows a table scan plan (EXPLAIN uses normal optimizer).
 	tk.MustQuery("explain format = 'brief' select * from t_simple").Check(testkit.Rows(
@@ -152,6 +154,55 @@ func TestTrivialPlanFallback(t *testing.T) {
 	require.Len(t, rows, 3)
 	requireTrivialPlan(t, tk, false)
 	tk.MustExec("rollback")
+
+	// TABLESAMPLE — needs the dedicated sampling executor; the trivial plan
+	// would silently return all rows.
+	tk.MustQuery("select * from t_no_idx tablesample regions()")
+	requireTrivialPlan(t, tk, false)
+
+	// _tidb_rowid is a synthesized column on tables without a PK handle;
+	// the trivial path must not resolve it (and must not panic).
+	tk.MustExec("drop table if exists t_noh")
+	tk.MustExec("create table t_noh(a int, b int)")
+	tk.MustExec("insert into t_noh values(1, 10), (2, 20)")
+	rows = tk.MustQuery("select _tidb_rowid from t_noh").Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, false)
+
+	// tidb_row_checksum() is only valid in fast point plans; the full planner
+	// reports the proper error instead of a recovered runtime panic.
+	err := tk.ExecToErr("select tidb_row_checksum() from t_noh")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "runtime error")
+
+	// A WHERE clause that folds to a constant should become TableDual (or be
+	// eliminated) — only the full planner does that folding.
+	rows = tk.MustQuery("select * from t_no_idx where 1 = 0").Rows()
+	require.Len(t, rows, 0)
+	requireTrivialPlan(t, tk, false)
+	rows = tk.MustQuery("select * from t_no_idx where null").Rows()
+	require.Len(t, rows, 0)
+	requireTrivialPlan(t, tk, false)
+
+	// A nonclustered PK is physically a secondary index, so a range predicate
+	// on it could use an index range scan.
+	tk.MustExec("drop table if exists t_npk")
+	tk.MustExec("create table t_npk(a int, b int, primary key(a) nonclustered)")
+	tk.MustExec("insert into t_npk values(1, 10), (2, 20)")
+	rows = tk.MustQuery("select * from t_npk where a > 1").Rows()
+	require.Len(t, rows, 1)
+	requireTrivialPlan(t, tk, false)
+
+	// With projection pushdown disabled, the extra Projection (WHERE refs a
+	// column the SELECT doesn't) must not be embedded in the cop task.
+	tk.MustExec("set @@tidb_opt_projection_push_down = 0")
+	rows = tk.MustQuery("select a from t_no_idx where b > 5").Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, false)
+	tk.MustExec("set @@tidb_opt_projection_push_down = default")
+	rows = tk.MustQuery("select a from t_no_idx where b > 5").Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
 }
 
 // TestTrivialPlanWithSecondaryIndex covers cases where the table has secondary
@@ -171,10 +222,11 @@ func TestTrivialPlanWithSecondaryIndex(t *testing.T) {
 	require.Len(t, rows, 2)
 	requireTrivialPlan(t, tk, true)
 
-	// SELECT a only — idx_c does not contain a, so still not covering.
+	// SELECT a only — a is the int handle, implicitly stored in idx_c, so a
+	// covering index scan could win → fall back to the full optimizer.
 	rows = tk.MustQuery("select a from t_idx").Sort().Rows()
 	require.Len(t, rows, 2)
-	requireTrivialPlan(t, tk, true)
+	requireTrivialPlan(t, tk, false)
 
 	// SELECT a, b — idx_c is not covering (b is missing) → trivial plan.
 	rows = tk.MustQuery("select a, b from t_idx").Sort().Rows()
@@ -210,6 +262,24 @@ func TestTrivialPlanWithSecondaryIndex(t *testing.T) {
 	rows = tk.MustQuery("select * from t_two_idx where d > 1500").Rows()
 	require.Len(t, rows, 1)
 	requireTrivialPlan(t, tk, true)
+
+	// Common-handle table: secondary indexes implicitly store the clustered
+	// key, so idx_c covers a SELECT of primary-key columns → fall back.
+	tk.MustExec("create table t_ch(a varchar(10), b int, c int, d int, primary key(a, b) clustered, index idx_c(c))")
+	tk.MustExec("insert into t_ch values('x', 1, 100, 1000), ('y', 2, 200, 2000)")
+	rows = tk.MustQuery("select a, b from t_ch").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, false)
+
+	// d is in neither idx_c nor the clustered key → table scan still wins.
+	rows = tk.MustQuery("select a, d from t_ch").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// WHERE on a clustered key column — could become a range scan, so bail.
+	rows = tk.MustQuery("select d from t_ch where a = 'x'").Rows()
+	require.Len(t, rows, 1)
+	requireTrivialPlan(t, tk, false)
 }
 
 // TestTrivialPlanWithWhere covers WHERE clauses that don't enable any index.
@@ -261,6 +331,44 @@ func TestTrivialPlanWithWhere(t *testing.T) {
 	// Unknown column name — fall through; the full planner produces the error.
 	err := tk.ExecToErr("select * from t_w where nonexistent = 1")
 	require.Error(t, err)
+
+	// Bailing out after the WHERE rewrite must roll back warnings the rewrite
+	// appended, or the full planner re-derives them and the user sees
+	// duplicates. b is an index leading column, so the fast path rewrites the
+	// predicate (emitting a truncation warning) and then bails at the index
+	// gate; the warning count must match the pure full-planner run. The
+	// predicate is a non-equality comparison so the point-get fast path
+	// (which fixcontrol 52592 also disables, and which has its own
+	// pre-existing duplicate-warning behavior on equality probes) stays out
+	// of the measurement.
+	tk.MustExec("drop table if exists t_warn")
+	tk.MustExec("create table t_warn(a int primary key, b int, index idx_b(b))")
+	tk.MustExec("insert into t_warn values(1, 10)")
+	tk.MustExec("set @@tidb_opt_fix_control = '52592:ON'")
+	tk.MustQuery("select a from t_warn where b > '1abc'")
+	fullPlannerWarnings := len(tk.MustQuery("show warnings").Rows())
+	tk.MustExec("set @@tidb_opt_fix_control = default")
+	tk.MustQuery("select a from t_warn where b > '1abc'")
+	require.Len(t, tk.MustQuery("show warnings").Rows(), fullPlannerWarnings)
+
+	// The trivial plan must normalize to the same plan digest as the full
+	// planner's plan for the same statement, so digest-keyed tooling
+	// (statements_summary, plan replayer, bindings) can correlate them.
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = 0")
+	tk.MustExec("drop table if exists t_dig")
+	tk.MustExec("create table t_dig(a int primary key, b int)")
+	tk.MustExec("insert into t_dig values(1, 10), (2, 20)")
+	tk.MustQuery("select a from t_dig where b > 1")
+	trivialNorm, trivialDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	requireTrivialPlan(t, tk, true)
+	tk.MustExec("set @@tidb_opt_fix_control = '52592:ON'")
+	tk.MustQuery("select a from t_dig where b > 1")
+	fullNorm, fullDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	requireTrivialPlan(t, tk, false)
+	tk.MustExec("set @@tidb_opt_fix_control = default")
+	require.NotEmpty(t, trivialNorm)
+	require.Equal(t, fullNorm, trivialNorm)
+	require.Equal(t, fullDigest.String(), trivialDigest.String())
 }
 
 // TestTrivialPlanEnumPredicate guards against a regression where a WHERE
