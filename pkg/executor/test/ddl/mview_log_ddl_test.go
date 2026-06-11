@@ -280,13 +280,17 @@ func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t_add_mlog_invalid (a int, b int)")
+	tk.MustExec("create table t_add_mlog_invalid (a int, b int, c int)")
 	tk.MustExec("create materialized view log on t_add_mlog_invalid (a)")
 
 	tk.MustGetErrCode("alter materialized view log on t_add_mlog_invalid add column (a)", errno.ErrDupFieldName)
 	tk.MustGetErrCode("alter materialized view log on t_add_mlog_invalid add column (b, b)", errno.ErrDupFieldName)
 	tk.MustGetErrCode("alter materialized view log on t_add_mlog_invalid add column (missing_col)", errno.ErrBadField)
 	tk.MustGetErrCode("alter materialized view log on t_add_mlog_invalid add column (`_MLOG$_DML_TYPE`)", errno.ErrDupFieldName)
+	tk.MustGetErrMsg(
+		"alter materialized view log on t_add_mlog_invalid add column (b), add column (c)",
+		"[ddl:8200]Unsupported ALTER MATERIALIZED VIEW LOG with multiple ADD COLUMN actions",
+	)
 }
 
 // TestAlterMaterializedViewLogAddColumnPrivilege verifies that ADD COLUMN

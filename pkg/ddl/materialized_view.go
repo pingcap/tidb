@@ -572,6 +572,16 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
 	}
 
+	addColumnActionCount := 0
+	for _, action := range s.Actions {
+		if action.Tp == ast.AlterMaterializedViewLogActionAddColumn {
+			addColumnActionCount++
+		}
+	}
+	if addColumnActionCount > 1 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER MATERIALIZED VIEW LOG with multiple ADD COLUMN actions")
+	}
+
 	baseColMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
 	for _, col := range baseTable.Meta().Columns {
 		if col.State != model.StatePublic {
