@@ -188,25 +188,29 @@ func initUnfinishedPathsFromExpr(
 		// case 3: use the new logic if the previous logic didn't succeed to collect access filters that can build a
 		// valid range directly.
 		ret[i].idxColHasAccessFilter = make([]bool, len(idxCols))
-		// This gradual collector may only pick part of the OR branch before the
-		// top-level AND filters are merged in. Keep the original OR filter as a
-		// final Selection, matching master #58396, so this release-8.5 backport
-		// cannot drop predicates when #68962 enables IN in this path.
-		ret[i].needKeepFilter = true
+		// If every CNF item in this OR branch is collected as an access filter, the original OR branch does not need
+		// to be rechecked by a Selection, which means we don't need to set the `needKeepFilter` flag if we found that
+		// `collectedCNFItems` does not contain false after the loop.
+		collectedCNFItems := make([]bool, len(cnfItems))
 		for j, col := range idxCols {
-			for _, cnfItem := range cnfItems {
+			for k, cnfItem := range cnfItems {
+				if collectedCNFItems[k] {
+					continue
+				}
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
 					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].accessFilters = append(ret[i].accessFilters, cnfItem)
 					ret[i].idxColHasAccessFilter[j] = true
+					collectedCNFItems[k] = true
 					// Once we find one valid access filter for this column, we directly go to the next column without
 					// looking into other filters.
 					break
 				}
 			}
 		}
+		ret[i].needKeepFilter = ret[i].needKeepFilter || slices.Contains(collectedCNFItems, false)
 	}
 
 	validCnt := 0
@@ -376,7 +380,7 @@ func buildIntoAccessPath(
 				if err != nil || !ok || (isIntersection && len(paths) > 1) {
 					continue
 				}
-				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.idxColHasAccessFilter) > 0
+				needSelection = len(remainingFilters) > 0
 			} else {
 				// case 2: non-mv index
 				var usedMap []bool
