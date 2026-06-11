@@ -1100,25 +1100,6 @@ func TestTryRenewWithoutLeaseClockFails(t *testing.T) {
 	require.ErrorContains(t, err, "lease clock is required")
 }
 
-func TestTryRenewTxnIDMismatch(t *testing.T) {
-	ctx := context.Background()
-	strg, _ := createMockStorage(t)
-	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
-	require.NoError(t, err)
-	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
-
-	// Overwrite the lock file with a different TxnID, simulating that another
-	// process has reclaimed and re-acquired the lock.
-	hijacked := objstore.MakeLockMeta("hijacker")
-	hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
-	hijackedData, err := json.Marshal(hijacked)
-	require.NoError(t, err)
-	require.NoError(t, strg.WriteFile(ctx, physicalPath, hijackedData))
-
-	err = objstore.TESTTryRenew(ctx, lock)
-	require.ErrorIs(t, err, objstore.TESTRenewTxnIDMismatch)
-}
-
 func TestTryRenewLeaseExpired(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
@@ -1339,34 +1320,6 @@ func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
 			t.Fatal("renewal waited even though the proven lease was already below 2/3 TTL")
 		}
 	})
-}
-
-func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
-	ctx := context.Background()
-	strg, _ := createMockStorage(t)
-	defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 20*time.Millisecond, 3, 5*time.Millisecond)()
-
-	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", localLeaseClock())
-	require.NoError(t, err)
-	defer objstore.TESTStopRenewal(lock)
-	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
-
-	lostCh := make(chan struct{}, 1)
-	objstore.TESTStartRenewal(ctx, lock, func() { lostCh <- struct{}{} })
-
-	// Hijack the lock with a different TxnID.
-	hijacked := objstore.MakeLockMeta("hijacker")
-	hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
-	hijackedData, err := json.Marshal(hijacked)
-	require.NoError(t, err)
-	require.NoError(t, strg.WriteFile(ctx, physicalPath, hijackedData))
-
-	select {
-	case <-lostCh:
-		// expected
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("onLeaseLost was not invoked within the expected window after TxnID mismatch")
-	}
 }
 
 func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {

@@ -1342,11 +1342,15 @@ func TestLeaseLockTerminalReasonStableAfterLeaseLost(t *testing.T) {
 		defer objstore.TESTSetRenewalProofConstants(30*time.Millisecond, time.Millisecond)()
 
 		base, _ := createMockStorage(t)
-		storage := newDeleteRecordingStorage(base)
+		deleteRecorder := newDeleteRecordingStorage(base)
+		storage := newOperationBlockingStorage(deleteRecorder)
 		lock, err := objstore.TryLockRemoteWrite(parentCtx, storage, "v1/LOCK", "owner", localLeaseClock())
 		require.NoError(t, err)
 		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
+		storage.blockNextReads(physicalPath, 1)
 
+		// This is a defensive same-file corruption/hijack check. A real
+		// reclaim/re-acquire writes a new generated lock path instead.
 		audit := newCriticalSectionAudit(t.Name())
 		worker := startProtectedWorker(t, parentCtx, audit, "owner-a", "migration-write", lock.String())
 		step, ok := worker.requestStep(t)
@@ -1358,12 +1362,14 @@ func TestLeaseLockTerminalReasonStableAfterLeaseLost(t *testing.T) {
 			stopModelRenewal(cancel, lock, nil)
 		})
 
+		_ = waitOperationFinished(t, storage.readStarted, "renewal ReadFile start")
 		hijackerTxn := []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
 		hijacked := objstore.MakeLockMeta("hijacker")
 		hijacked.TxnID = hijackerTxn
 		hijackedData, err := json.Marshal(hijacked)
 		require.NoError(t, err)
 		require.NoError(t, base.WriteFile(parentCtx, physicalPath, hijackedData))
+		storage.releaseReads()
 
 		require.Equal(t, terminalLeaseLost, waitTerminalReason(t, recorder, "txn id mismatch"))
 		unlockErr := lock.Unlock(parentCtx)
@@ -1375,7 +1381,7 @@ func TestLeaseLockTerminalReasonStableAfterLeaseLost(t *testing.T) {
 		require.False(t, ok)
 		requireNoStepAfterAction(t, audit.snapshot(), "owner-a", "lost")
 		require.Equal(t, hijackerTxn, readLockMeta(t, base, physicalPath).TxnID)
-		requireNoDeleteSoon(t, storage.deleted, 30*time.Millisecond)
+		requireNoDeleteSoon(t, deleteRecorder.deleted, 30*time.Millisecond)
 		requireNoIntentWithPrefix(t, base, "v1/LOCK.WRIT.")
 	})
 
@@ -1830,38 +1836,6 @@ func TestLeaseLockRenewalObservationHangIsTransient(t *testing.T) {
 		require.Zero(t, storage.blockedReadCount())
 	})
 
-	t.Run("observation hang before detecting hijack", func(t *testing.T) {
-		parentCtx, cancel := context.WithCancel(context.Background())
-		defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 10*time.Millisecond, 8, 20*time.Millisecond)()
-		defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
-
-		base, _ := createMockStorage(t)
-		storage := newOperationBlockingStorage(base)
-		lock, err := objstore.TryLockRemoteWrite(parentCtx, storage, "v1/LOCK", "owner-a", localLeaseClock())
-		require.NoError(t, err)
-		physicalPath := requireSinglePathWithPrefix(t, base, "v1/LOCK.WRIT.")
-		storage.blockNextReads(physicalPath, 1)
-
-		audit := newCriticalSectionAudit(t.Name())
-		worker := startProtectedWorker(t, parentCtx, audit, "owner-a", "migration-write", lock.String())
-		startModelRenewal(t, parentCtx, lock, worker)
-		t.Cleanup(func() {
-			stopModelRenewal(cancel, lock, storage.releaseReads)
-		})
-
-		_ = waitOperationFinished(t, storage.readStarted, "renewal ReadFile start")
-		hijacked := objstore.MakeLockMeta("hijacker")
-		hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
-		hijackedData, err := json.Marshal(hijacked)
-		require.NoError(t, err)
-		require.NoError(t, base.WriteFile(parentCtx, physicalPath, hijackedData))
-
-		storage.releaseReads()
-		waitClosed(t, worker.lostCh(), "lease lost after hijack")
-		_, ok := worker.requestStep(t)
-		require.False(t, ok)
-		requireNoStepAfterAction(t, audit.snapshot(), "owner-a", "lost")
-	})
 }
 
 func TestLeaseLockRenewalAmbiguousWriteAndProofFailureStopProtectedWork(t *testing.T) {

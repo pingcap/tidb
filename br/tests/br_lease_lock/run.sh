@@ -117,6 +117,7 @@ find_single_lock_file() {
 read_expire_at_epoch_ns() {
     local lock_file=$1
     python3 - "$lock_file" <<'PY'
+import calendar
 import datetime
 import json
 import sys
@@ -125,9 +126,21 @@ with open(sys.argv[1], encoding="utf-8") as f:
     meta = json.load(f)
 expire_at = meta["expire_at"]
 if expire_at.endswith("Z"):
-    expire_at = expire_at[:-1] + "+00:00"
-dt = datetime.datetime.fromisoformat(expire_at)
-print(int(dt.timestamp() * 1_000_000_000))
+    timestamp = expire_at[:-1]
+    timezone = "+0000"
+elif len(expire_at) >= 6 and expire_at[-6] in ("+", "-") and expire_at[-3] == ":":
+    timestamp = expire_at[:-6]
+    timezone = expire_at[-6:-3] + expire_at[-2:]
+else:
+    raise ValueError("unsupported expire_at timestamp: {}".format(expire_at))
+
+parts = timestamp.split(".", 1)
+base = parts[0]
+fraction = parts[1] if len(parts) == 2 else ""
+nanosecond = int((fraction + "000000000")[:9])
+microsecond = (fraction + "000000")[:6]
+dt = datetime.datetime.strptime(base + "." + microsecond + timezone, "%Y-%m-%dT%H:%M:%S.%f%z")
+print(calendar.timegm(dt.utctimetuple()) * 1000000000 + nanosecond)
 PY
 }
 
