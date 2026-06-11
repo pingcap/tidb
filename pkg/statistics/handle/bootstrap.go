@@ -53,13 +53,25 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
-func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
+func (*Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
 	var (
 		physicalID    int64
 		maxPhysicalID int64
 	)
+	tableExists := func(physicalID int64) bool {
+		_, found := is.TableItemByID(physicalID)
+		if found {
+			return true
+		}
+		_, found = is.TableItemByPartitionID(physicalID)
+		return found
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
+		if !tableExists(physicalID) {
+			// The table corresponding to this physical ID has been dropped but the stats meta has not yet been garbage collected.
+			continue
+		}
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
@@ -99,7 +111,7 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(sctx, sql)
@@ -122,7 +134,7 @@ func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, tab
 		if req.NumRows() == 0 {
 			break
 		}
-		chunkMax := h.initStatsMeta4Chunk(cache, iter)
+		chunkMax := h.initStatsMeta4Chunk(is, cache, iter)
 		maxPhysicalID = max(maxPhysicalID, chunkMax)
 	}
 	return cache, maxPhysicalID, nil
@@ -836,15 +848,15 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
-func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) error {
+func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
 	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsLiteWithSession(ctx, sctx, tableIDs...)
+			return h.initStatsLiteWithSession(ctx, sctx, is, tableIDs...)
 		})
 	})
 }
 
-func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (err error) {
+func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
 	defer func() {
 		_, err1 := util.Exec(sctx, "commit")
 		if err == nil && err1 != nil {
@@ -857,7 +869,7 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, _, err := h.initStatsMeta(ctx, sctx, tableIDs...)
+	cache, _, err := h.initStatsMeta(ctx, sctx, is, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -926,7 +938,7 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
-	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, tableIDs...)
+	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, is, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
