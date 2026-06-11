@@ -73,7 +73,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dump.Uint16(buffer, columnTypeInfoCharsetID(d, column))
+	buffer = dump.Uint16(buffer, d.ColumnCharsetID(column.dumpCharset(), isStringColumnType(column.Type)))
 	buffer = dump.Uint32(buffer, column.dumpLength())
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))
@@ -145,6 +145,19 @@ func dumpType(tp byte) byte {
 	}
 }
 
+// toTextRow maps the serialization-relevant fields of Info onto the importable
+// textrow.ColumnInfo. It is the single home of the column.Info -> textrow.ColumnInfo
+// contract, so a new serialization attribute is added in lockstep.
+func (column *Info) toTextRow() textrow.ColumnInfo {
+	return textrow.ColumnInfo{
+		Type:    column.Type,
+		Charset: column.Charset,
+		Flag:    column.Flag,
+		Decimal: column.Decimal,
+		Table:   column.Table,
+	}
+}
+
 // DumpTextRow dumps a row to bytes. Each value is produced by the shared
 // textrow serializer and then length-encoded into the text protocol (NULL is
 // the 0xfb marker).
@@ -158,13 +171,7 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		val, err1 := textrow.AppendValueText(tmp[:0], row, i, textrow.ColumnInfo{
-			Type:    col.Type,
-			Charset: col.Charset,
-			Flag:    col.Flag,
-			Decimal: col.Decimal,
-			Table:   col.Table,
-		}, d)
+		val, err1 := textrow.AppendValueText(tmp[:0], row, i, col.toTextRow(), d)
 		if err1 != nil {
 			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", col.Type)
 		}

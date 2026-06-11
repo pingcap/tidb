@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package textrow holds the MySQL text-protocol value serializer shared by the
-// server (DumpTextRow) and the distributed exporter. AppendValueText produces
-// the raw per-value text; callers add their own framing (length-encoding for the
+// Package textrow holds the MySQL text-protocol value serializer. Today its only
+// consumer is the server (DumpTextRow); it is factored out as a low-level package
+// so an upcoming distributed exporter can reuse it. AppendValueText produces the
+// raw per-value text; callers add their own framing (length-encoding for the
 // protocol, CSV/SQL escaping for the exporter).
 package textrow
 
@@ -67,17 +68,9 @@ func AppendValueText(dst []byte, row chunk.Row, idx int, col ColumnInfo, enc *Re
 		}
 		return strconv.AppendInt(dst, row.GetInt64(idx), 10), nil
 	case mysql.TypeFloat:
-		prec := -1
-		if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-			prec = int(col.Decimal)
-		}
-		return AppendFormatFloat(dst, float64(row.GetFloat32(idx)), prec, 32), nil
+		return AppendFormatFloat(dst, float64(row.GetFloat32(idx)), floatPrec(col), 32), nil
 	case mysql.TypeDouble:
-		prec := types.UnspecifiedLength
-		if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-			prec = int(col.Decimal)
-		}
-		return AppendFormatFloat(dst, row.GetFloat64(idx), prec, 64), nil
+		return AppendFormatFloat(dst, row.GetFloat64(idx), floatPrec(col), 64), nil
 	case mysql.TypeNewDecimal:
 		return append(dst, hack.Slice(row.GetMyDecimal(idx).String())...), nil
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
@@ -108,13 +101,25 @@ func AppendValueText(dst []byte, row chunk.Row, idx int, col ColumnInfo, enc *Re
 	}
 }
 
+// floatPrec returns the precision used to format a float/double column: the
+// column's Decimal when it is a fixed precision carried on an expression result
+// (Table == ""), otherwise -1 for full precision. Real table columns keep full
+// precision, matching the text protocol.
+func floatPrec(col ColumnInfo) int {
+	if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
+		return int(col.Decimal)
+	}
+	return types.UnspecifiedLength
+}
+
 const (
 	expFormatBig     = 1e15
 	expFormatSmall   = 1e-15
 	defaultMySQLPrec = 5
 )
 
-// AppendFormatFloat appends a float64 to dst in MySQL format.
+// AppendFormatFloat appends fVal's MySQL-format text to in and returns the
+// extended slice.
 func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
 	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {

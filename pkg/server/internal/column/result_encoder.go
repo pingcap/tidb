@@ -26,21 +26,6 @@ type ResultEncoder = textrow.ResultEncoder
 // NewResultEncoder creates a new ResultEncoder.
 var NewResultEncoder = textrow.NewResultEncoder
 
-// columnTypeInfoCharsetID returns the charset ID for the column type info. It
-// stays in the server package because it depends on the server-only Info type.
-func columnTypeInfoCharsetID(d *ResultEncoder, info *Info) uint16 {
-	// Only replace the charset when @@character_set_results is valid and
-	// the target column is a non-binary string.
-	cs := info.dumpCharset()
-	if d.IsResultCharsetNull() || !isStringColumnType(info.Type) {
-		return cs
-	}
-	if cs == mysql.BinaryDefaultCollationID {
-		return mysql.BinaryDefaultCollationID
-	}
-	return uint16(mysql.CharsetNameToID(d.ResultCharsetName()))
-}
-
 func isStringColumnType(tp byte) bool {
 	switch tp {
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
