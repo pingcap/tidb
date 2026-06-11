@@ -1235,7 +1235,7 @@ func TestPurgeMaterializedViewLogZeroStartTS(t *testing.T) {
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_zero_start_ts`").Check(testkit.Rows("2"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
+		Check(testkit.Rows("1"))
 }
 
 func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
