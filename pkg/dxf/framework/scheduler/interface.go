@@ -187,9 +187,10 @@ type Param struct {
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskMgr TaskManager) Param {
+func NewParamForTest(taskMgr TaskManager, runtime sqlsvrapi.Runtime) Param {
 	return Param{
-		taskMgr: taskMgr,
+		taskMgr:     taskMgr,
+		TaskRuntime: runtime,
 	}
 }
 

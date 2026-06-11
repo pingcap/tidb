@@ -75,8 +75,7 @@ func newSchedulerParamForTest(
 		t.Cleanup(sePool.Close)
 	}
 
-	param := scheduler.NewParamForTest(taskMgr)
-	param.TaskRuntime = newMockRuntime(ctrl, store, sePool)
+	param := scheduler.NewParamForTest(taskMgr, newMockRuntime(ctrl, store, sePool))
 	return param
 }
 
@@ -131,9 +130,6 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 }
 
 func (s *importIntoSuite) TestSchedulerInit() {
-	ctrl := gomock.NewController(s.T())
-	defer ctrl.Finish()
-
 	meta := TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "",

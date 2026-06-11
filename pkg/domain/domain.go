@@ -853,8 +853,13 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
-	// only SYSTEM ks need this GC loop, user keyspace is only allowed to access
-	// SYSTEM ks, we can keep it alive.
+	// Only the SYSTEM keyspace domain runs this GC loop: user-keyspace domains
+	// only access the long-lived SYSTEM keyspace runtime, which is never evicted
+	// here.
+	// there are still calls to GetKSInfoCache/GetKSStore without holder ID, but
+	// they are only used in the path of creating session when the runtime is
+	// Acquired with a holder ID, so it's ok. we cannot remove those calls now
+	// as explained in the comments of GetKSStore.
 	if kv.IsSystemKS(do.store) {
 		do.wg.Run(func() {
 			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)

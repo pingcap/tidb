@@ -68,12 +68,6 @@ func newImportTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool *p
 	return runtime
 }
 
-func importSchedulerParamForTest(ctrl *gomock.Controller, taskMgr scheduler.TaskManager, store kv.Storage, sessPool *pools.ResourcePool) scheduler.Param {
-	param := scheduler.NewParamForTest(taskMgr)
-	param.TaskRuntime = newImportTestRuntime(ctrl, store, sessPool)
-	return param
-}
-
 func TestSchedulerExtLocalSort(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -131,7 +125,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(false, task, importSchedulerParamForTest(ctrl, manager, store, pool))
+	var taskMgr scheduler.TaskManager = manager
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -343,7 +338,8 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 	)
 	require.NoError(t, err)
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true, task, importSchedulerParamForTest(ctrl, mgr, store, pool))
+	var taskMgr scheduler.TaskManager = mgr
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 
 	require.NoError(t, ext.OnPrepare(ctx, d, task))
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
@@ -439,7 +435,8 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 		Error: errors.New("cancelled by user"),
 	}
 
-	ext := importinto.NewImportSchedulerForTest(false, task, importSchedulerParamForTest(ctrl, mgr, store, pool))
+	var taskMgr scheduler.TaskManager = mgr
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	require.NoError(t, ext.OnDone(ctx, nil, task))
 
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -536,7 +533,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true, task, importSchedulerParamForTest(ctrl, manager, store, pool))
+	var taskMgr scheduler.TaskManager = manager
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
