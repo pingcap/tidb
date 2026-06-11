@@ -286,6 +286,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	newIs := logicalop.LogicalIndexScan{
 		Source:         is.Source,
 		IsDoubleRead:   is.IsDoubleRead,
+		NotAlwaysValid: is.NotAlwaysValid,
 		EqCondCount:    res.EqCondCount,
 		AccessConds:    res.AccessConds,
 		Ranges:         res.Ranges,

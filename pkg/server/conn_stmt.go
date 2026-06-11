@@ -234,15 +234,6 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(fn)
-	defer cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(nil)
-
 	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
@@ -318,10 +309,10 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	clearConnectionAlive := func() {}
-	monitoringConnectionAlive := false
+	checkingConnectionAlive := false
 	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
-		monitoringConnectionAlive = shouldMonitorConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
-		if monitoringConnectionAlive {
+		checkingConnectionAlive = shouldInstallConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
+		if checkingConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}
@@ -332,7 +323,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	var lazy bool
 	if rs != nil {
-		if !monitoringConnectionAlive {
+		if !checkingConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}
