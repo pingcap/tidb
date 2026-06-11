@@ -54,6 +54,11 @@ func TestCheckCRRUpstreamStorage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(upstream.Close)
 
+	stateStore := buildResumeStateStore(upstream)
+	storageStore, ok := stateStore.(*storageResumeStateStore)
+	require.True(t, ok)
+	require.Equal(t, "crr-checkpoint/resume-state.json", storageStore.path)
+
 	err = checkCRRUpstreamStorage(ctx, upstream)
 	require.ErrorContains(t, err, "is not a log backup directory")
 	require.ErrorContains(t, err, metautil.LockFile)

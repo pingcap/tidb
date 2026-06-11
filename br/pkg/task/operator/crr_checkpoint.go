@@ -107,16 +107,7 @@ func NewCRRCheckpointService(
 	if downstreamStorage != nil {
 		resumeStateStorage = downstreamStorage
 	}
-	stateStore, err := buildResumeStateStore(resumeStateStorage, cfg.CRRConfig.StateStorageSubDir)
-	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
-		upstreamStorage.Close()
-		closeEtcdClient(etcdCli)
-		mgr.Close()
-		return nil, nil, err
-	}
+	stateStore := buildResumeStateStore(resumeStateStorage)
 	svc, err := service.New(
 		service.Deps{
 			PD:       env,
@@ -192,19 +183,11 @@ type storageResumeStateStore struct {
 
 func buildResumeStateStore(
 	storage storeapi.Storage,
-	subDir string,
-) (service.ResumeStateStore, error) {
-	if subDir == "" {
-		return nil, nil
-	}
-	path, err := service.GetStatusFileName(subDir)
-	if err != nil {
-		return nil, err
-	}
+) service.ResumeStateStore {
 	return &storageResumeStateStore{
 		storage: storage,
-		path:    path,
-	}, nil
+		path:    service.GetStatusFileName(),
+	}
 }
 
 func (s *storageResumeStateStore) LoadState(ctx context.Context) (*service.PersistentState, error) {
