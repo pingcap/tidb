@@ -2214,24 +2214,6 @@ func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit, sess
 	return count, offset, nil
 }
 
-func tryGetProcedureIntVariable(sessVars *variable.SessionVars, procedureVar *ast.ProcedureVar) (uint64, error) {
-	_, d, notFind := sessVars.GetProcedureVariable(procedureVar.Name.L)
-	if notFind {
-		return 0, plannererrors.ErrSpUndeclaredVar.GenWithStackByArgs(procedureVar.Name.O)
-	}
-	err := sessVars.AddUchangableName(procedureVar.Name.L)
-	if err != nil {
-		return 0, err
-	}
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.AddFlag(mysql.UnsignedFlag)
-	d, err = d.ConvertTo(sessVars.StmtCtx.TypeCtx(), tp)
-	if err != nil {
-		return 0, err
-	}
-	return d.GetUint64(), nil
-}
-
 func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
