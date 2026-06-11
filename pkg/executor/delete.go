@@ -132,9 +132,20 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 
 			if e.ignoreErr {
-				ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[tbl.Meta().ID], datumRow)
+				txn, err := e.Ctx().Txn(true)
 				if err != nil {
 					return err
+				}
+				sc := e.Ctx().GetSessionVars().StmtCtx
+				ignored := false
+				for _, fkc := range e.fkChecks[tbl.Meta().ID] {
+					ignored, err = fkc.checkIgnoreForDelete(ctx, sc, txn, datumRow)
+					if err != nil {
+						return err
+					}
+					if ignored {
+						break
+					}
 				}
 
 				// meets an error, skip this row.
@@ -243,13 +254,23 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 
 func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
-		var err error
+		txn, err := e.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		sc := e.Ctx().GetSessionVars().StmtCtx
+		var rowErr error
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
 			if e.ignoreErr {
 				var ignored bool
-				ignored, err = checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[id], val.handleVal)
-				if err != nil {
-					return false
+				for _, fkc := range e.fkChecks[id] {
+					ignored, rowErr = fkc.checkIgnoreForDelete(ctx, sc, txn, val.handleVal)
+					if rowErr != nil {
+						return false
+					}
+					if ignored {
+						break
+					}
 				}
 
 				// meets an error, skip this row.
@@ -258,11 +279,11 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 				}
 			}
 
-			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
-			return err == nil
+			rowErr = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
+			return rowErr == nil
 		})
-		if err != nil {
-			return err
+		if rowErr != nil {
+			return rowErr
 		}
 	}
 	return nil

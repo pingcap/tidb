@@ -246,15 +246,21 @@ func updateRecord(
 	}
 
 	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return false, false, err
+	}
 	if ignoreErr {
-		ignored, err := checkFKIgnoreErr(ctx, sctx, fkChecks, newData)
-		if err != nil {
-			return false, false, err
-		}
+		for _, fkc := range fkChecks {
+			ignored, err := fkc.checkIgnoreForUpdate(ctx, sc, txn, oldData, newData)
+			if err != nil {
+				return false, false, err
+			}
 
-		// meets an error, skip this row.
-		if ignored {
-			return false, true, nil
+			// meets an error, skip this row.
+			if ignored {
+				return false, true, nil
+			}
 		}
 	}
 
@@ -274,10 +280,6 @@ func updateRecord(
 
 	sc.AddTouchedRows(1)
 	pessimisticLazyCheck := getPessimisticLazyCheckMode(sessVars)
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return false, false, err
-	}
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
 		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
