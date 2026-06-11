@@ -643,23 +643,16 @@ func TestResolveLock(t *testing.T) {
 	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
 	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
-		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
-		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.rng.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.rng.EndKey}, Value: outsideUpperBoundTS})
 	})
 
 	require.NoError(t, adv.OnTick(ctx))
 
 	adv.ForceResolveLocksForTest()
-	env.maxTs = adv.ResolveLockMaxVersionForTest()
-	tickErrCh := make(chan error, 1)
-	go func() {
-		tickErrCh <- adv.OnTick(ctx)
-	}()
+	require.NoError(t, adv.OnTick(ctx))
 	select {
 	case <-resolveStarted:
-	case err := <-tickErrCh:
-		require.NoError(t, err)
-		require.Fail(t, "asyncResolveLocks finished before resolving locks")
 	case <-time.After(time.Second):
 		require.Fail(t, "timed out waiting for asyncResolveLocks to start")
 	}
@@ -667,12 +660,8 @@ func TestResolveLock(t *testing.T) {
 	require.Eventually(t, func() bool { return adv.GetInResolvingLock() },
 		time.Second, 50*time.Millisecond)
 	releaseResolve()
-	select {
-	case err := <-tickErrCh:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		require.Fail(t, "timed out waiting for advancer tick to finish")
-	}
+	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
+		time.Second, 50*time.Millisecond)
 	adv.TESTSetLastCheckpointToCurrentMin()
 	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
 	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
@@ -693,7 +682,7 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second)))
 	env := newTestEnv(c, t)
 
-	lockRegion := c.FindRegionByKey([]byte("01"))
+	lockRegion := c.findRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
 			Key:   []byte("011"),
@@ -706,7 +695,7 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 	firstMaxVersion := atomic.NewUint64(0)
 	secondMaxVersion := atomic.NewUint64(0)
 	thirdMaxVersion := atomic.NewUint64(0)
-	env.scanLocks = func(_ []byte, _ []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	env.scanLocks = func(_ []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 		switch scanLockCount.Inc() {
 		case 1:
 			firstMaxVersion.Store(maxVersion)
@@ -716,7 +705,7 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 			return nil, nil, errors.New("unexpected scanlock error: error:<locked:<primary_lock:\"011\" lock_version:1>>")
 		case 3:
 			thirdMaxVersion.Store(maxVersion)
-			return allLocks, &tikv.KeyLocation{Region: tikv.NewRegionVerID(lockRegion.ID, 0, 0)}, nil
+			return allLocks, &tikv.KeyLocation{Region: tikv.NewRegionVerID(lockRegion.id, 0, 0)}, nil
 		default:
 			return nil, nil, errors.Errorf("unexpected scan lock retry count %d", scanLockCount.Load())
 		}
@@ -738,8 +727,8 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(2 * time.Minute))
 	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
-		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
-		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.rng.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.rng.EndKey}, Value: outsideUpperBoundTS})
 	})
 
 	adv.TESTSetLastCheckpointToCurrentMin()
@@ -873,7 +862,7 @@ func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
 	c.SetCurrentTS(oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(10 * time.Second)))
 	env := newTestEnv(c, t)
 
-	lockRegion := c.FindRegionByKey([]byte("01"))
+	lockRegion := c.findRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
 			Key:   []byte("011"),
@@ -898,8 +887,8 @@ func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
 	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
 	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
-		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
-		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.rng.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.rng.EndKey}, Value: outsideUpperBoundTS})
 	})
 	adv.TESTSetLastCheckpointToCurrentMin()
 	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
@@ -910,7 +899,7 @@ func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
 		return resolveLockCount.Load() == 1 && !adv.GetInResolvingLock()
 	}, time.Second, time.Millisecond)
 
-	lockRegion.Locks = allLocks
+	lockRegion.locks = allLocks
 	adv.TESTTryResolveLocksForCheckpoint()
 	time.Sleep(adv.Config().GetResolveLockInterval() / 2)
 	require.Equal(t, int32(1), resolveLockCount.Load())

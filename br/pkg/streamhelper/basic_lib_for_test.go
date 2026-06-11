@@ -292,6 +292,10 @@ func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
 	return f.currentTS, nil
 }
 
+func (f *fakeCluster) SetCurrentTS(ts uint64) {
+	f.currentTS = ts
+}
+
 // RegionScan gets a list of regions, starts from the region that contains key.
 // Limit limits the maximum number of regions returned.
 func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {
@@ -657,7 +661,7 @@ type testEnv struct {
 	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
-	scanLocks    func(key []byte, endKey []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error)
+	scanLocks    func(key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error)
 
 	mu sync.Mutex
 	pd.Client
@@ -793,7 +797,7 @@ func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersio
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.scanLocks != nil {
-		return t.scanLocks(key, endKey, maxVersion)
+		return t.scanLocks(key, maxVersion)
 	}
 	if t.maxTs != 0 && t.maxTs != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.maxTs, maxVersion)
