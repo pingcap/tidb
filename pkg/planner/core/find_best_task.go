@@ -1486,6 +1486,12 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 }
 
 func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	tableFilters := removeCoveredIndexMergeTopLevelFilters(ds, path.TableFilters, path.PartialIndexPaths)
+	if len(tableFilters) != len(path.TableFilters) {
+		updatedPath := *path
+		updatedPath.TableFilters = tableFilters
+		path = &updatedPath
+	}
 	candidate := &candidatePath{path: path}
 
 	allSameOrder, _ := prop.AllSameOrder()
