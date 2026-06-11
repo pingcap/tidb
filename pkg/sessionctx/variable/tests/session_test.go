@@ -481,6 +481,7 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
 			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
 			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			WriteKeys:               cfg.RUV2.WriteKeys,
 			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
 			TxnCnt:                  cfg.RUV2.TxnCnt,
 		}, variable.NewSessionVars(nil).RUV2Weights())
