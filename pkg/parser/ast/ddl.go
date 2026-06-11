@@ -2032,7 +2032,8 @@ type AlterMaterializedViewLogAction struct {
 	node
 	Tp    AlterMaterializedViewLogActionType
 	Purge *MLogPurgeClause
-	Cols  []model.CIStr
+	// Cols contains the base-table column names involved in an ADD COLUMN action.
+	Cols []model.CIStr
 }
 
 type AlterMaterializedViewLogActionType int
@@ -2051,7 +2052,8 @@ func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
 		}
 		return n.Purge.Restore(ctx)
 	case AlterMaterializedViewLogActionAddColumn:
-		ctx.WriteKeyWord("ADD COLUMN (")
+		ctx.WriteKeyWord("ADD COLUMN ")
+		ctx.WritePlain("(")
 		for i, col := range n.Cols {
 			if i > 0 {
 				ctx.WritePlain(", ")

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -76,6 +77,10 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 			job.State = model.JobStateDone
 			return ver, nil
 		}
+		return ver, errors.Trace(err)
+	}
+	if err = refreshMLogAddedColumnFromBase(jobCtx.metaMut, job, tblInfo, columnInfo, colFromArgs); err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
@@ -150,6 +155,44 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func refreshMLogAddedColumnFromBase(
+	t *meta.Mutator,
+	job *model.Job,
+	mlogTblInfo *model.TableInfo,
+	columnInfo *model.ColumnInfo,
+	colFromArgs *model.ColumnInfo,
+) error {
+	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil || colFromArgs == nil {
+		return nil
+	}
+	if columnInfo != nil {
+		switch columnInfo.State {
+		case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly:
+		default:
+			return nil
+		}
+	}
+
+	baseTblInfo, err := t.GetTable(job.SchemaID, mlogTblInfo.MaterializedViewLog.BaseTableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if baseTblInfo == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"ALTER MATERIALIZED VIEW LOG with invalid base table metadata",
+		)
+	}
+	baseCol := model.FindColumnInfo(baseTblInfo.Columns, colFromArgs.Name.L)
+	if baseCol == nil || baseCol.State != model.StatePublic {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(colFromArgs.Name, baseTblInfo.Name)
+	}
+
+	ft := *baseCol.FieldType.Clone()
+	ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+	colFromArgs.FieldType = ft
+	return nil
 }
 
 func setMLogAddedColumnOriginDefault(colInfo *model.ColumnInfo) error {

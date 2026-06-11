@@ -192,6 +192,46 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 			"1 7 new 2026-01-02 memo U 1",
 			"1 7 old 2026-01-02 memo U -1",
 		))
+
+	tk.MustExec("create table t_add_mlog_atomic (id int, b int, c int)")
+	tk.MustExec("create materialized view log on t_add_mlog_atomic (id)")
+	cancelTK := testkit.NewTestKit(t, store)
+	cancelTK.MustExec("use test")
+	cancelTriggered := atomic.Bool{}
+	cancelDone := make(chan error, 1)
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *metamodel.Job) {
+		if !cancelTriggered.CompareAndSwap(false, true) {
+			return
+		}
+		if job.Type != metamodel.ActionMultiSchemaChange ||
+			job.SchemaName != "test" ||
+			job.TableName != "$mlog$t_add_mlog_atomic" ||
+			job.MultiSchemaInfo == nil ||
+			len(job.MultiSchemaInfo.SubJobs) != 2 ||
+			job.MultiSchemaInfo.SubJobs[1].SchemaState != metamodel.StateWriteReorganization {
+			cancelTriggered.Store(false)
+			return
+		}
+		errs, err := ddl.CancelJobs(context.Background(), cancelTK.Session(), []int64{job.ID})
+		if len(errs) > 0 && errs[0] != nil {
+			cancelDone <- errs[0]
+			return
+		}
+		cancelDone <- err
+	}))
+	err = tk.ExecToErr("alter materialized view log on t_add_mlog_atomic add column (b, c)")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated"))
+	require.ErrorContains(t, err, "Cancelled DDL job")
+	select {
+	case cancelErr := <-cancelDone:
+		require.NoError(t, cancelErr)
+	default:
+		require.FailNow(t, "expected mlog multi-column add cancellation")
+	}
+	showCreate = tk.MustQuery("show create materialized view log on t_add_mlog_atomic").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_add_mlog_atomic` (`id`)")
+	require.NotContains(t, showCreate, "`b`")
+	require.NotContains(t, showCreate, "`c`")
 }
 
 // TestAlterMaterializedViewLogAddColumnDefaultSemantics verifies the default
