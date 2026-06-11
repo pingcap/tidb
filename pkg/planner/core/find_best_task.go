@@ -1625,9 +1625,8 @@ func indexMergeTopLevelFilterCovered(
 	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), filter) {
 		return false
 	}
-	filterHash := filter.HashCode()
 	for _, path := range partialPaths {
-		if !indexMergePartialPathCoversFilter(ds, path, filter, filterHash) {
+		if !indexMergePartialPathCoversFilter(ds, path, filter) {
 			return false
 		}
 	}
@@ -1636,23 +1635,23 @@ func indexMergeTopLevelFilterCovered(
 
 func indexMergePartialPathCoversFilter(
 	ds *logicalop.DataSource,
-	path *util.AccessPath,
+	partialPath *util.AccessPath,
 	filter expression.Expression,
-	filterHash []byte,
 ) bool {
+	filterHash := filter.HashCode()
 	// Be conservative: only remove a filter when a normal index partial path
 	// carries the exact predicate in AccessConds. Filters handled by table/MV
 	// paths or by residual TableFilters still need the global Selection.
-	if path == nil || path.IsTablePath() || isMVIndexPath(path) {
+	if partialPath == nil || partialPath.IsTablePath() || isMVIndexPath(partialPath) {
 		return false
 	}
-	if !ds.IsIndexCoveringCondition(filter, path.FullIdxCols, path.FullIdxColLens) {
+	if !ds.IsIndexCoveringCondition(filter, partialPath.FullIdxCols, partialPath.FullIdxColLens) {
 		return false
 	}
-	if expressionContainsHash(path.TableFilters, filterHash) {
+	if expressionContainsHash(partialPath.TableFilters, filterHash) {
 		return false
 	}
-	return expressionContainsHash(path.AccessConds, filterHash)
+	return expressionContainsHash(partialPath.AccessConds, filterHash)
 }
 
 func expressionContainsHash(exprs []expression.Expression, hash []byte) bool {
