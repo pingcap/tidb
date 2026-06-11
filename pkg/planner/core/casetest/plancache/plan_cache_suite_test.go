@@ -2147,3 +2147,75 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 
 	tk.MustExec(`drop binding for select * from t where b=1`)
 }
+
+// TestPlanCacheStatsIndependentPlansSurviveAnalyze verifies that plans whose shape can
+// never be affected by statistics (PointGet, BatchPointGet, INSERT ... VALUES) exclude
+// the stats version from their plan cache key, so ANALYZE does not invalidate their
+// cached entries. Stats-dependent plans must still be invalidated, and a schema change
+// must reset the classification so invalidation resumes if the plan shape changes.
+func TestPlanCacheStatsIndependentPlansSurviveAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int primary key, b int, unique key idx_b(b))`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`set @@tidb_plan_cache_invalidation_on_fresh_stats = ON`)
+
+	// -- PointGet on the primary key: ANALYZE must NOT bust the cache. --
+	tk.MustExec(`prepare st_point from 'select * from t where a = ?'`)
+	tk.MustExec(`set @v1=1, @v2=2`)
+	tk.MustQuery(`execute st_point using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`execute st_point using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_point using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// -- BatchPointGet: ANALYZE must NOT bust the cache. --
+	tk.MustExec(`prepare st_batch from 'select * from t where a in (?, ?)'`)
+	tk.MustQuery(`execute st_batch using @v1, @v2`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`execute st_batch using @v1, @v2`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_batch using @v1, @v2`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// -- INSERT ... VALUES: ANALYZE must NOT bust the cache. --
+	tk.MustExec(`prepare st_insert from 'insert into t values (?, ?)'`)
+	tk.MustExec(`set @i1=101, @i2=102, @i3=103`)
+	tk.MustExec(`execute st_insert using @i1, @i1`)
+	tk.MustExec(`execute st_insert using @i2, @i2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st_insert using @i3, @i3`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// -- Control: a stats-dependent range query must still be invalidated by ANALYZE. --
+	tk.MustExec(`prepare st_range from 'select * from t where b >= ?'`)
+	tk.MustExec(`set @r=100`)
+	tk.MustQuery(`execute st_range using @r`).Sort().Check(testkit.Rows("101 101", "102 102", "103 103"))
+	tk.MustQuery(`execute st_range using @r`).Sort().Check(testkit.Rows("101 101", "102 102", "103 103"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_range using @r`).Sort().Check(testkit.Rows("101 101", "102 102", "103 103"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// -- Schema change resets the classification: a point get on a unique key that is
+	// later dropped becomes a stats-dependent scan, and ANALYZE must invalidate again. --
+	tk.MustExec(`prepare st_upoint from 'select * from t where b = ?'`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // survives while it is a point get
+	tk.MustExec(`alter table t drop index idx_b`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1")) // schema changed → replan as a scan
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	// The plan is stats-dependent again, so ANALYZE busts the cache.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}

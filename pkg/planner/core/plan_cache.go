@@ -157,6 +157,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// schema version like prepared plan cache key
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
+		// The plan shape may change under the new schema (e.g. a unique index was
+		// dropped, turning a point get into a stats-dependent scan), so the
+		// stats-independent classification must be re-derived from the new plan.
+		stmt.statsIndependent = false
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -256,6 +260,26 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		if !hit && !stmt.statsIndependent {
+			// A stats-independent plan for this statement may have been stored under a
+			// statsIndependent=true key, either by another session (instance plan cache)
+			// or by this statement before a stats update. Probe that key as well: a hit
+			// implies the plan is stats-independent, because such keys are only written
+			// when the stored plan was classified so (see the statsIndependent byte in
+			// newPlanCacheKeyWithMatchedBinding) and key equality means all other planning
+			// inputs match. On a miss the flag is re-derived from the new plan in
+			// generateNewPlan.
+			stmt.statsIndependent = true
+			probeKey, _, probeCacheable, _, probeErr := newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding, bindingMatched)
+			if probeErr == nil && probeCacheable {
+				plan, outputCols, stmtHints, hit = lookupPlanCache(ctx, sctx, probeKey, paramTypes)
+			}
+			if hit {
+				cacheKey = probeKey
+			} else {
+				stmt.statsIndependent = false
+			}
+		}
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
@@ -379,6 +403,22 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
+		if !stmt.statsIndependent && isPlanStatsIndependent(p, stmt.hasSubquery) {
+			// This plan's shape can never be affected by statistics, so exclude the stats
+			// version from its cache key: ANALYZE then no longer invalidates this entry.
+			// The key computed before optimization included the stats version hash, so it
+			// must be recomputed now that the flag is set. This happens at most once per
+			// statement (until a schema change resets the flag in planCachePreprocess).
+			stmt.statsIndependent = true
+			var cacheable bool
+			cacheKey, binding, cacheable, _, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+			if err != nil {
+				return nil, nil, err
+			}
+			// The key was cacheable before optimization with the same inputs, so it must
+			// still be cacheable here.
+			intest.Assert(cacheable)
+		}
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)
@@ -400,6 +440,26 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
+}
+
+// isPlanStatsIndependent reports whether this plan's shape can never be affected by
+// statistics changes. PointGet and BatchPointGet are chosen by deterministic rules
+// (a full match on the primary key or a unique key) rather than by cost, and
+// INSERT ... VALUES involves no access-path decision at all. Plans containing
+// subqueries are excluded because subquery plans are chosen by cost. For qualifying
+// plans the stats version hash is excluded from the plan cache key, so ANALYZE
+// doesn't needlessly invalidate their cached entries.
+func isPlanStatsIndependent(p base.Plan, hasSubquery bool) bool {
+	if hasSubquery {
+		return false
+	}
+	switch x := p.(type) {
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		return true
+	case *physicalop.Insert:
+		return x.SelectPlan == nil
+	}
+	return false
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
