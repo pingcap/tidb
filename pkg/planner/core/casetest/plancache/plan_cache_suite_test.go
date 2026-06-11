@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
@@ -2217,5 +2218,53 @@ func TestPlanCacheStatsIndependentPlansSurviveAnalyze(t *testing.T) {
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
 	// The plan is stats-dependent again, so ANALYZE busts the cache.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+// TestPlanCacheStatsIndependentSkipsStatsLoad verifies that replanning a statement whose
+// plan is known to be stats-independent does not trigger synchronous or asynchronous
+// statistics loading, and that the classification is re-derived in both directions when
+// a planning input outside the cache key (here fix control 52592, which disables the
+// point-get fast path) changes the plan shape to a stats-dependent one.
+func TestPlanCacheStatsIndependentSkipsStatsLoad(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tsl (a int primary key, b int)`)
+	tk.MustExec(`insert into tsl values (1,1),(2,2),(3,3)`)
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema='test' and table_name='tsl'`).Rows()[0][0].(string)
+
+	tk.MustExec(`prepare st from 'select * from tsl where a = ?'`)
+	tk.MustExec(`set @v=1`)
+	// First execution: point get via the fast path, classified stats-independent when
+	// stored. The classification is not known during its own optimization, so no skip yet.
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.SkipStatsLoad)
+
+	// Disable the point-get fast path so the next replan goes through the full optimizer
+	// (the path that triggers stats loading), flush the cache to force that replan, and
+	// drain any async-load items registered for this table so far.
+	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
+	tk.MustExec(`admin flush session plan_cache`)
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		if fmt.Sprintf("%d", item.TableID) == tblID {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+		}
+	}
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	// The replan ran under the stats-independent classification: the full optimizer must
+	// skip stats loading entirely and register no async-load items for this table.
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.SkipStatsLoad)
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		require.NotEqual(t, tblID, fmt.Sprintf("%d", item.TableID))
+	}
+
+	// With the fast path disabled, the full optimizer produced a stats-dependent plan (a
+	// range scan), so the classification must have flipped back when it was stored: the
+	// entry is reachable under the stats-inclusive key and ANALYZE invalidates it again.
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table tsl`)
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }

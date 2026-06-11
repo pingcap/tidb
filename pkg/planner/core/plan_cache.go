@@ -389,6 +389,12 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
+	if stmt.statsIndependent {
+		// The plan is known to be stats-independent from a previous execution, so this
+		// replanning (e.g. after cache eviction) cannot be influenced by statistics:
+		// don't trigger any sync/async stats loading for it.
+		stmtCtx.SkipStatsLoad = true
+	}
 	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
 	if err != nil {
 		return nil, nil, err
@@ -403,13 +409,16 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-		if !stmt.statsIndependent && isPlanStatsIndependent(p, stmt.hasSubquery) {
-			// This plan's shape can never be affected by statistics, so exclude the stats
-			// version from its cache key: ANALYZE then no longer invalidates this entry.
-			// The key computed before optimization included the stats version hash, so it
-			// must be recomputed now that the flag is set. This happens at most once per
-			// statement (until a schema change resets the flag in planCachePreprocess).
-			stmt.statsIndependent = true
+		if statsIndependent := isPlanStatsIndependent(p, stmt.hasSubquery); statsIndependent != stmt.statsIndependent {
+			// Re-derive the stats-independent classification from the plan we just built,
+			// in both directions. A stats-independent plan excludes the stats version from
+			// its cache key, so ANALYZE no longer invalidates its entry. The reverse
+			// transition matters for correctness: planning inputs that are not part of the
+			// cache key (e.g. tidb_opt_fix_control) can turn a formerly stats-independent
+			// statement into a stats-dependent plan, which must get the stats version back
+			// into its key so ANALYZE invalidates it again. The key computed before
+			// optimization used the old classification, so it must be recomputed.
+			stmt.statsIndependent = statsIndependent
 			var cacheable bool
 			cacheKey, binding, cacheable, _, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
 			if err != nil {
