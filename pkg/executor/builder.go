@@ -3802,7 +3802,7 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 
 func (b *executorBuilder) newDataReaderBuilderWithSnapshot(
 	p base.PhysicalPlan,
-	snapshot *plannercore.MVFullUpdateSnapshot,
+	snapshot *plannercore.DataReaderSnapshot,
 ) (*dataReaderBuilder, error) {
 	if snapshot == nil {
 		return nil, errors.New("snapshot is nil")

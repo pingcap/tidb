@@ -58,9 +58,9 @@ type ShowDDL struct {
 	baseSchemaProducer
 }
 
-// MVFullUpdateSnapshot binds a read ts with the snapshot infoschema resolved for that ts.
+// DataReaderSnapshot binds a read ts with the snapshot infoschema resolved for that ts.
 // It is statement-local runtime metadata and is not intended for persistence or serialization.
-type MVFullUpdateSnapshot struct {
+type DataReaderSnapshot struct {
 	TS         uint64
 	InfoSchema infoschema.InfoSchema
 }
@@ -602,7 +602,7 @@ type MViewDeltaMerge struct {
 	FullUpdateOutputMVOffsets []int `plan-cache-clone:"shallow"`
 	// FullUpdateSnapshot is the snapshot used to plan and execute FullUpdateInnerSource.
 	// It is only set for bounded FAST refresh that needs MIN/MAX full-update lookup.
-	FullUpdateSnapshot *MVFullUpdateSnapshot `plan-cache-clone:"shallow"`
+	FullUpdateSnapshot *DataReaderSnapshot `plan-cache-clone:"shallow"`
 
 	MVTableID   int64
 	BaseTableID int64

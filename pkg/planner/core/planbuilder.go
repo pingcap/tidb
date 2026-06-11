@@ -3981,7 +3981,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullUpdateKeyOff2IdxOff     []int
 			fullUpdateKeyResultColIdxes []int
 			fullUpdateOutputMVOffsets   []int
-			fullUpdateSnapshot          *MVFullUpdateSnapshot
+			fullUpdateSnapshot          *DataReaderSnapshot
 		)
 		if res.FullUpdateLookupTemplateSelect != nil {
 			if res.FullUpdateLookupColumnCount <= 0 {
@@ -4007,7 +4007,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 				if err != nil {
 					return nil, err
 				}
-				fullUpdateSnapshot = &MVFullUpdateSnapshot{
+				fullUpdateSnapshot = &DataReaderSnapshot{
 					TS:         toTS,
 					InfoSchema: ensureSessionExtendedInfoSchema(fullUpdateLookupIS),
 				}
