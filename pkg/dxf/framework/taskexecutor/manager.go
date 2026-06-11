@@ -352,7 +352,6 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		nodeRc:      m.getNodeResource(),
 		execID:      m.id,
 		TaskRuntime: taskRuntime,
-		TaskStore:   taskRuntime.Store(),
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {

@@ -369,7 +369,6 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		allocatedSlots: allocateSlots,
 		nodeRes:        sm.nodeRes,
 		TaskRuntime:    taskRuntime,
-		TaskStore:      taskRuntime.Store(),
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
