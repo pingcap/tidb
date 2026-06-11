@@ -26,7 +26,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -74,9 +76,9 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	// TaskStore is the store for task.Keyspace. It equals the instance store in
-	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
-	// it from the task keyspace.
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
+	// TaskStore is kept temporarily while DXF task implementations migrate to TaskRuntime.
 	TaskStore kv.Storage
 }
 
@@ -259,13 +261,7 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 
 // Init implements the TaskExecutor interface.
 func (e *BaseTaskExecutor) Init(_ context.Context) error {
-	if e.TaskStore.GetKeyspace() != e.GetTaskBase().Keyspace {
-		// shouldn't happen normally, but since keyspace mismatch might cause
-		// correctness error, we check it at runtime too.
-		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
-			e.TaskStore.GetKeyspace(), e.GetTaskBase().Keyspace))
-	}
-	return nil
+	return dxfutil.CheckTaskRuntime(e.TaskRuntime, e.GetTaskBase().Keyspace)
 }
 
 // Ctx returns the context of the task executor.

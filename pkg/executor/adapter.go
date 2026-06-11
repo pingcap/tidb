@@ -1653,7 +1653,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
-	a.recordInsertRows2Metrics()
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
@@ -1741,30 +1740,22 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func (a *ExecStmt) recordInsertRows2Metrics() {
-	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
+func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
+	if rowCount <= 0 || columnCount <= 0 {
+		return
+	}
+
+	rowsColMultiply := rowCount * columnCount
+	if rowCount > math.MaxInt64/columnCount {
+		rowsColMultiply = math.MaxInt64
+	}
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
+	}
 }
 
-func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
-	stmtCtx := sessVars.StmtCtx
-	if stmtCtx.StmtType != "Insert" {
-		return
-	}
-	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
-	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
-	if stmtCtx.InsertRowsAsRUV2Recorded {
-		return
-	}
-
-	affectedRows := stmtCtx.AffectedRows()
-	if affectedRows <= 0 {
-		return
-	}
-
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
-	}
-	stmtCtx.InsertRowsAsRUV2Recorded = true
+func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
+	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
 }
 
 // finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
@@ -1775,6 +1766,9 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
+
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)

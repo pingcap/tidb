@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -182,9 +183,9 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
-	// TaskStore is the store for task.Keyspace. It equals the instance store in
-	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
-	// it from the task keyspace.
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
+	// TaskStore is kept temporarily while DXF task implementations migrate to TaskRuntime.
 	TaskStore kv.Storage
 }
 
