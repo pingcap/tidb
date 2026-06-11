@@ -2267,6 +2267,26 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
+
+	// The AdvisorySortItems optimization may not fully succeed (e.g. the global filter blocks the LIMIT pushdown),
+	// in this case, it may generate a plan with unnecessary `keep order: true`. So we add this plan as an extra
+	// candidate instead of replacing the original plan.
+	var advisorySortItems []property.SortItem
+	if _, ok := lt.Children()[0].(*logicalop.DataSource); ok && len(lt.ByItems) > 0 {
+		advisorySortItems = make([]property.SortItem, 0, len(lt.ByItems))
+		for _, byItem := range lt.ByItems {
+			col, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				advisorySortItems = nil
+				break
+			}
+			advisorySortItems = append(advisorySortItems, property.SortItem{
+				Col:  col,
+				Desc: byItem.Desc,
+			})
+		}
+	}
+
 	if canUsePartialOrder4TopN(lt) {
 		ret = append(ret, getPhysTopNWithPartialOrderProperty(lt, prop)...)
 	}
@@ -2279,6 +2299,22 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
 		ret = append(ret, topN)
+
+		// The AdvisorySortItems optimization may not fully succeed, for
+		// example when the global filter blocks LIMIT pushdown. In that case,
+		// it may generate a plan with unnecessary keep order, so add this plan
+		// as an extra candidate instead of replacing the original plan.
+		if tp == property.CopMultiReadTaskType && len(advisorySortItems) > 0 {
+			resultProp = resultProp.CloneEssentialFields()
+			resultProp.AdvisorySortItems = advisorySortItems
+			topN := PhysicalTopN{
+				ByItems:     lt.ByItems,
+				PartitionBy: lt.PartitionBy,
+				Count:       lt.Count,
+				Offset:      lt.Offset,
+			}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+			ret = append(ret, topN)
+		}
 	}
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
