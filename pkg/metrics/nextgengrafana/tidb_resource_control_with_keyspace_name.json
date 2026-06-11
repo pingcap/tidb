@@ -4473,7 +4473,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows client-side consumed RU rate split by RRU and WRU.",
+               "description": "Shows client-side net consumed RU rate split by RRU and WRU.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -4510,7 +4510,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_client_resource_group_consume_by_type{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group, type)",
+                     "expr": "sum(rate(resource_manager_client_resource_group_consume_by_type{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\", direction=\"charge\"}[1m])) by (instance, resource_group, type) - sum(rate(resource_manager_client_resource_group_consume_by_type{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\", direction=\"refund\"}[1m])) by (instance, resource_group, type)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-{{type}}",
@@ -4659,7 +4659,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Shows client-side read and write byte cost rates by resource group.",
+               "description": "Shows client-side read byte and net write byte cost rates by resource group.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -4703,7 +4703,7 @@
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\"}[1m])) by (instance, resource_group)",
+                     "expr": "sum(rate(resource_manager_client_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\", direction=\"charge\"}[1m])) by (instance, resource_group) - sum(rate(resource_manager_client_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", keyspace_name=~\"$keyspace_name\", direction=\"refund\"}[1m])) by (instance, resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-write-bytes/s",

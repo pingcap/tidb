@@ -1336,10 +1336,10 @@ local diagnosisRUConsumptionByTypePanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="short",
-  description="Shows client-side consumed RU rate split by RRU and WRU.",
+  description="Shows client-side net consumed RU rate split by RRU and WRU.",
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_resource_group_consume_by_type{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group, type)',
+    'sum(rate(resource_manager_client_resource_group_consume_by_type{' + diagnosisClientRCSelector + ', direction="charge"}[1m])) by (instance, resource_group, type) - sum(rate(resource_manager_client_resource_group_consume_by_type{' + diagnosisClientRCSelector + ', direction="refund"}[1m])) by (instance, resource_group, type)',
     legendFormat="{{instance}}-{{resource_group}}-{{type}}",
   )
 );
@@ -1355,7 +1355,7 @@ local diagnosisResourceBytesPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="bytes",
-  description="Shows client-side read and write byte cost rates by resource group.",
+  description="Shows client-side read byte and net write byte cost rates by resource group.",
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_client_resource_read_byte_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
@@ -1363,7 +1363,7 @@ local diagnosisResourceBytesPanel = graphPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_resource_write_byte_sum{' + diagnosisClientRCSelector + '}[1m])) by (instance, resource_group)',
+    'sum(rate(resource_manager_client_resource_write_byte_sum{' + diagnosisClientRCSelector + ', direction="charge"}[1m])) by (instance, resource_group) - sum(rate(resource_manager_client_resource_write_byte_sum{' + diagnosisClientRCSelector + ', direction="refund"}[1m])) by (instance, resource_group)',
     legendFormat="{{instance}}-{{resource_group}}-write-bytes/s",
   )
 );
