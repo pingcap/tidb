@@ -714,7 +714,7 @@ const (
 		format VARCHAR(64) NOT NULL,
 		created_by VARCHAR(300) NOT NULL,
 		parameters text NOT NULL,
-		total_size bigint(64) NOT NULL DEFAULT 0,
+		exported_size bigint(64) NOT NULL DEFAULT 0,
 		status VARCHAR(64) NOT NULL,
 		step VARCHAR(64) NOT NULL,
 		summary text DEFAULT NULL,
