@@ -260,15 +260,21 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
-		if !hit && !stmt.statsIndependent {
-			// A stats-independent plan for this statement may have been stored under a
-			// statsIndependent=true key, either by another session (instance plan cache)
-			// or by this statement before a stats update. Probe that key as well: a hit
-			// implies the plan is stats-independent, because such keys are only written
-			// when the stored plan was classified so (see the statsIndependent byte in
-			// newPlanCacheKeyWithMatchedBinding) and key equality means all other planning
-			// inputs match. On a miss the flag is re-derived from the new plan in
-			// generateNewPlan.
+		if !hit && !stmt.statsIndependent && instancePlanCacheEnabled(ctx) && couldBeStatsIndependent(stmt) {
+			// Another session may have stored a stats-independent plan for this statement
+			// under a statsIndependent=true key in the shared instance plan cache. Probe
+			// that key as well: a hit implies the plan is stats-independent, because such
+			// keys are only written when the stored plan was classified so (see the
+			// statsIndependent byte in newPlanCacheKeyWithMatchedBinding) and key equality
+			// means all other planning inputs match. On a miss the flag is re-derived from
+			// the new plan in generateNewPlan.
+			//
+			// The extra key build and lookup are only paid on a miss (where they are
+			// dwarfed by the replan that follows), and only when adoption is possible at
+			// all: the session-level cache needs no probe since this statement's own flag
+			// already tracks everything this session stored, and couldBeStatsIndependent
+			// rules out statements that can never classify, so post-ANALYZE misses of
+			// ordinary stats-dependent queries don't probe.
 			stmt.statsIndependent = true
 			probeKey, _, probeCacheable, _, probeErr := newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding, bindingMatched)
 			if probeErr == nil && probeCacheable {
@@ -449,6 +455,24 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
+}
+
+// couldBeStatsIndependent cheaply rules out statements whose plan can never be classified
+// stats-independent, so the probe lookup in GetPlanFromPlanCache is only paid for actual
+// candidates. It must stay a superset of isPlanStatsIndependent: PointGet/BatchPointGet
+// roots only arise from single-table SELECTs without LIMIT, Insert without SelectPlan only
+// from INSERT ... VALUES, and subqueries disqualify classification entirely.
+func couldBeStatsIndependent(stmt *PlanCacheStmt) bool {
+	if stmt.hasSubquery || len(stmt.limits) > 0 || len(stmt.tables) != 1 {
+		return false
+	}
+	switch x := stmt.PreparedAst.Stmt.(type) {
+	case *ast.SelectStmt:
+		return true
+	case *ast.InsertStmt:
+		return x.Select == nil
+	}
+	return false
 }
 
 // isPlanStatsIndependent reports whether this plan's shape can never be affected by
