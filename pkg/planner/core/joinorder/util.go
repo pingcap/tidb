@@ -370,7 +370,35 @@ func FindAndRemovePlanByAstHint[T any](
 		queryBlockNames = *p
 	}
 
-	// Step 1: Direct match by table name
+	// Step 1: Match by query-block alias (subquery name)
+	// Do this before direct table-name matching so hint reading follows the same
+	// derived-table alias precedence used when generating hints.
+	matchIdx := -1
+	for i, joinGroup := range plans {
+		plan := getPlan(joinGroup)
+		blockOffset := plan.QueryBlockOffset()
+		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
+			blockName := queryBlockNames[blockOffset]
+			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
+			tableMatch := astTbl.TableName.L == blockName.TableName.L
+			if dbMatch && tableMatch {
+				if matchIdx != -1 {
+					intest.Assert(false, "leading subquery alias matches multiple join groups")
+					return zero, plans, false
+				}
+				matchIdx = i
+			}
+		}
+	}
+	if matchIdx != -1 {
+		// take the matched plan before slice manipulation. `append(plans[:matchIdx], ...)`
+		// may overwrite `plans[matchIdx]` due to shared backing arrays.
+		matched := plans[matchIdx]
+		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
+		return matched, newPlans, true
+	}
+
+	// Step 2: Direct match by table name
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
 		tableAlias := util.ExtractJoinHintTableAlias(plan, plan.QueryBlockOffset())
@@ -396,33 +424,6 @@ func FindAndRemovePlanByAstHint[T any](
 				return joinGroup, newPlans, true
 			}
 		}
-	}
-
-	// Step 2: Match by query-block alias (subquery name)
-	// Only execute this step if no direct table name match was found
-	matchIdx := -1
-	for i, joinGroup := range plans {
-		plan := getPlan(joinGroup)
-		blockOffset := plan.QueryBlockOffset()
-		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
-			blockName := queryBlockNames[blockOffset]
-			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
-			tableMatch := astTbl.TableName.L == blockName.TableName.L
-			if dbMatch && tableMatch {
-				if matchIdx != -1 {
-					intest.Assert(false, "leading subquery alias matches multiple join groups")
-					return zero, plans, false
-				}
-				matchIdx = i
-			}
-		}
-	}
-	if matchIdx != -1 {
-		// take the matched plan before slice manipulation. `append(plans[:matchIdx], ...)`
-		// may overwrite `plans[matchIdx]` due to shared backing arrays.
-		matched := plans[matchIdx]
-		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
-		return matched, newPlans, true
 	}
 
 	return zero, plans, false
