@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -626,6 +627,52 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
 	logutil.DDLLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
 	return errors.Trace(err)
+}
+
+// SubmitJobsToTable allocates global IDs for the given DDL jobs and inserts
+// them into mysql.tidb_ddl_job using the provided session pool.
+//
+// The session pool determines which keyspace the jobs target. The target
+// keyspace's DDL owner picks up and executes the jobs asynchronously.
+//
+// etcdCli is optional. If non-nil, a notification is sent to the target
+// keyspace's DDL owner via etcd after insertion, avoiding the delay of
+// waiting for the owner's polling ticker. If nil, the owner will pick up
+// the job on its next polling cycle.
+//
+// This is the low-level submission path for cross-keyspace DDL operations.
+// It is fire-and-forget: it returns after the jobs are inserted but does not
+// wait for the DDL owner to execute them.
+func SubmitJobsToTable(ctx context.Context, sessPool util.SessionPool, etcdCli *clientv3.Client, jobWs []*JobWrapper) error {
+	if len(jobWs) == 0 {
+		return nil
+	}
+	for _, jobW := range jobWs {
+		setJobStateToQueueing(jobW.Job)
+	}
+
+	se, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(se)
+
+	ddlSe := sess.NewSession(se.(sessionctx.Context))
+	count := getRequiredGIDCount(jobWs)
+	if err := genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
+		assignGIDsForJobs(jobWs, ids)
+		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
+	}); err != nil {
+		return err
+	}
+
+	// Notify the target keyspace's DDL owner that new jobs are available.
+	if etcdCli != nil {
+		if err := ddlutil.PutKVToEtcd(ctx, etcdCli, 1, addingDDLJobNotifyKey, "0"); err != nil {
+			logutil.DDLLogger().Info("notify new cross-KS DDL job failed", zap.Error(err))
+		}
+	}
+	return nil
 }
 
 func makeStringForIDs(ids []int64) string {

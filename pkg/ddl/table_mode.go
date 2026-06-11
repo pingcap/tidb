@@ -15,10 +15,14 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // onAlterTableMode should only be called by alterTableMode, will call updateVersionAndTableInfo
@@ -97,4 +101,34 @@ func AlterTableMode(de Executor, sctx sessionctx.Context, mode model.TableMode, 
 		TableID:   tableID,
 	}
 	return de.AlterTableMode(sctx, args)
+}
+
+// SubmitAlterTableModeJob submits an AlterTableMode DDL job to the target
+// keyspace via SubmitJobsToTable. This is used for cross-keyspace scenarios
+// where the caller (e.g., system keyspace scheduler) needs to change a table's
+// mode in a different keyspace (e.g., user keyspace).
+//
+// schemaName and tableName should be lowercase (`.L`) to match InvolvingSchemaInfo conventions.
+func SubmitAlterTableModeJob(ctx context.Context, sessPool util.SessionPool, etcdCli *clientv3.Client, mode model.TableMode, schemaID, tableID int64, schemaName, tableName string) error {
+	job := &model.Job{
+		Version:    model.JobVersion2,
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		SchemaName: schemaName,
+		Type:       model.ActionAlterTableMode,
+		BinlogInfo: &model.HistoryInfo{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schemaName,
+				Table:    tableName,
+			},
+		},
+	}
+	args := &model.AlterTableModeArgs{
+		TableMode: mode,
+		SchemaID:  schemaID,
+		TableID:   tableID,
+	}
+	jobW := NewJobWrapperWithArgs(job, args, false)
+	return SubmitJobsToTable(ctx, sessPool, etcdCli, []*JobWrapper{jobW})
 }

@@ -36,7 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -61,26 +64,8 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	defer redactSensitiveInfo(task, taskMeta)
 
-	if kerneltype.IsClassic() {
-		taskManager, err := storage.GetTaskManager()
-		if err != nil {
-			return err
-		}
-		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-		}); err != nil {
-			// If the table is not found, it means the table has been either
-			// dropped or truncated. In such cases, the table mode has already
-			// been reset to normal, so we can ignore this error.
-			if !goerrors.Is(err, infoschema.ErrTableNotExists) {
-				return err
-			}
-
-			logutil.BgLogger().Warn(
-				"table not found during import cleanup, skip altering table mode",
-				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
-			)
-		}
+	if err = resetTableModeOnCleanup(ctx, task, taskMeta); err != nil {
+		return err
 	}
 
 	failpoint.InjectCall("mockCleanupError", &err)
@@ -144,6 +129,69 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 		}
 	}
 	return handle.SendRowAndSizeMeterData(ctx, task, int64(rowCount), int64(dataKVSize), int64(indexKVSize), logger)
+}
+
+func resetTableModeOnCleanup(ctx context.Context, task *proto.Task, taskMeta *TaskMeta) error {
+	if kerneltype.IsClassic() {
+		taskManager, err := storage.GetTaskManager()
+		if err != nil {
+			return err
+		}
+		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+		}); err != nil {
+			if !goerrors.Is(err, infoschema.ErrTableNotExists) {
+				return err
+			}
+			logutil.BgLogger().Warn(
+				"table not found during import cleanup, skip altering table mode",
+				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
+			)
+		}
+		return nil
+	}
+
+	// Next-gen: submit via cross-KS session pool.
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	var (
+		sessPool util.SessionPool
+		etcdCli  *clientv3.Client
+	)
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		sessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
+		if err2 != nil {
+			return err2
+		}
+		taskKSStore, err2 := se.GetSQLServer().GetKSStore(task.Keyspace)
+		if err2 != nil {
+			return err2
+		}
+		etcdCli, _ = store.NewEtcdCli(taskKSStore)
+		return nil
+	}); err != nil {
+		return errors.Annotatef(err, "failed to get cross keyspace session pool for %s", task.Keyspace)
+	}
+	if etcdCli != nil {
+		defer func() {
+			_ = etcdCli.Close()
+		}()
+	}
+
+	if err = ddl.SubmitAlterTableModeJob(ctx, sessPool, etcdCli, model.TableModeNormal,
+		taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID, taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L); err != nil {
+		if !goerrors.Is(err, infoschema.ErrTableNotExists) {
+			return err
+		}
+		logutil.BgLogger().Warn(
+			"table not found during import cleanup, skip altering table mode",
+			zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
+		)
+	}
+	return nil
 }
 
 func init() {

@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -76,6 +78,14 @@ func TestOnUserKeyspace(t *testing.T) {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	require.NoError(t, err)
 	userTK.MustQuery("select * from t").Check(testkit.Rows(resultSlice...))
+
+	// Verify table mode was set back to normal after import.
+	tblInfoAfterImport, err := runtimes["keyspace1"].Dom.InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("cross_ks"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeNormal, tblInfoAfterImport.Meta().Mode,
+		"table mode should be reset to normal after import completes")
+
 	taskKey := importinto.TaskKey(int64(jobID))
 	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
 	require.NoError(t, err)
