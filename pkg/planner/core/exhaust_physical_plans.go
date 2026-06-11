@@ -938,7 +938,7 @@ func buildIndexJoinInner2IndexScan(
 		// on mvi, it will return many index rows which breaks handle-unique attribute here.
 		//
 		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
-		if !isMVIndexPath(path) {
+		if !path.IsIndexJoinUnapplicable() {
 			return true // not a MVIndex path, it can successfully be index join probe side.
 		}
 		return false
@@ -1218,6 +1218,7 @@ func constructInnerIndexScanTask(
 		physicalTableID:  ds.PhysicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.GetPKIsHandleCol(),
+		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	cop := &CopTask{
 		indexPlan:   is,

@@ -140,6 +140,12 @@ func generateNormalIndexPartialPaths4DNF(
 ) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
 	paths = make([]*util.AccessPath, 0, len(dnfItems))
 	usedMap = make([]bool, len(dnfItems))
+	candidatePaths = slices.DeleteFunc(candidatePaths, func(path *util.AccessPath) bool {
+		return path.Index != nil && path.Index.HasCondition()
+	})
+	if len(candidatePaths) == 0 {
+		return nil, false, usedMap
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for offset, item := range dnfItems {
 		cnfItems := expression.SplitCNFItems(item)

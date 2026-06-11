@@ -2905,6 +2905,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		physicalTableID:  ds.PhysicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.GetPKIsHandleCol(),
+		NotAlwaysValid:   s.NotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	is.SetStats(stats)
 	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
@@ -3406,6 +3407,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		pkIsHandleCol:    ds.GetPKIsHandleCol(),
 		constColsByCond:  path.ConstCols,
 		prop:             prop,
+		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
