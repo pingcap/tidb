@@ -369,6 +369,8 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	originAutoAnalyze := tk.MustQuery("select @@global.tidb_enable_auto_analyze").Rows()[0][0].(string)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze=%q", originAutoAnalyze))
+	// Disable auto analyze to ensure that stats are not automatically collected
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	originTableFullScanCostFactor := tk.MustQuery("select @@session.tidb_opt_table_full_scan_cost_factor").Rows()[0][0].(string)
 	defer tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_table_full_scan_cost_factor=%s", originTableFullScanCostFactor))
 
