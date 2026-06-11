@@ -791,7 +791,7 @@ func (t *testEnv) putTask() {
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.maxTs != maxVersion {
+	if t.maxTs != 0 && t.maxTs != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.maxTs, maxVersion)
 	}
 	for _, r := range t.regions {

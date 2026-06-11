@@ -92,6 +92,12 @@ type CheckpointAdvancer struct {
 	subscriberMu sync.Mutex
 }
 
+// Keep resolve-lock ScanLock maxVersion well behind very recent transactions.
+// client-go's default lock TTL is 3000ms; use 2x TTL here so ScanLock avoids
+// active memory locks that may trigger the locked error described in
+// https://github.com/pingcap/tidb/issues/57134.
+const resolveLockMaxVersionRecentMargin = 6 * time.Second
+
 // HasTask returns whether the advancer has been bound to a task.
 func (c *CheckpointAdvancer) HasTask() bool {
 	c.taskMu.Lock()
@@ -117,6 +123,9 @@ type checkpoint struct {
 
 	// It's better to use PD timestamp in future, for now
 	// use local time to decide the time to resolve lock is ok.
+	// It is refreshed when this checkpoint is created and after a successful
+	// resolve-lock round for the same checkpoint, so ScanLock is throttled by
+	// the configured flush interval.
 	resolveLockTime time.Time
 }
 
@@ -148,14 +157,12 @@ func (c *checkpoint) equal(o *checkpoint) bool {
 		bytes.Equal(c.EndKey, o.EndKey) && c.TS == o.TS
 }
 
-// if a checkpoint stay in a time too long(3 min)
-// we should try to resolve lock for the range
-// to keep the RPO in 5 min.
-func (c *checkpoint) needResolveLocks() bool {
+// if a checkpoint stays unchanged for too long, try to resolve locks for the range.
+func (c *checkpoint) needResolveLocks(interval time.Duration) bool {
 	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
 		failpoint.Return(val.(bool))
 	})
-	return time.Since(c.resolveLockTime) > 3*time.Minute
+	return time.Since(c.resolveLockTime) > interval
 }
 
 // NewTiDBCheckpointAdvancer creates a checkpoint advancer with the env in the TiDB node.
@@ -269,8 +276,11 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 }
 
 func tsoBefore(n time.Duration) uint64 {
-	now := time.Now()
-	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
+	return tsoBeforeFrom(time.Now(), n)
+}
+
+func tsoBeforeFrom(now time.Time, n time.Duration) uint64 {
+	return oracle.GoTimeToTS(now.Add(-n))
 }
 
 func tsoAfter(ts uint64, n time.Duration) uint64 {
@@ -711,28 +721,8 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 }
 
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
-	// lastCheckpoint is not increased too long enough.
-	// assume the cluster has expired locks for whatever reasons.
-	var targets []spans.Valued
-	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() && c.inResolvingLock.CompareAndSwap(false, true) {
-		c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-			// when get locks here. assume these locks are not belong to same txn,
-			// but these locks' start ts are close to 1 minute. try resolve these locks at one time
-			vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
-				targets = append(targets, v)
-				return true
-			})
-		})
-		if len(targets) != 0 {
-			log.Info("Advancer starts to resolve locks", zap.Int("targets", len(targets)))
-			// use new context here to avoid timeout
-			ctx := context.Background()
-			c.asyncResolveLocksForRanges(ctx, targets)
-		} else {
-			// don't forget set state back
-			c.inResolvingLock.Store(false)
-		}
-	}
+	c.tryResolveLocksForCheckpoint()
+
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("Subscriber meet error, would polling the checkpoint.", zap.String("category", "log backup advancer"),
@@ -743,6 +733,69 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	return c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
 		return c.CalculateGlobalCheckpointLight(cx, threshold)
 	})
+}
+
+func (c *CheckpointAdvancer) tryResolveLocksForCheckpoint() {
+	// lastCheckpoint is not increased for long enough.
+	// assume the cluster has expired locks for whatever reasons.
+	resolveLockInterval := c.Config().GetResolveLockInterval()
+	checkpointToResolve := c.checkpointToResolve(resolveLockInterval)
+	if checkpointToResolve == nil ||
+		!c.inResolvingLock.CompareAndSwap(false, true) {
+		return
+	}
+	now := time.Now()
+	safeMaxVersion := tsoBeforeFrom(now, resolveLockMaxVersionRecentMargin)
+	targetUpperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, resolveLockInterval, now)
+	maxVersion := resolveLockMaxVersion(targetUpperBound, safeMaxVersion)
+	if maxVersion <= checkpointToResolve.TS {
+		log.Info("skip resolving locks because maxVersion is not greater than checkpoint",
+			zap.Uint64("checkpoint", checkpointToResolve.TS),
+			zap.Duration("resolve-lock-interval", resolveLockInterval),
+			zap.Uint64("target-upper-bound", targetUpperBound),
+			zap.Uint64("safe-max-version", safeMaxVersion),
+			zap.Uint64("max-version", maxVersion))
+		c.inResolvingLock.Store(false)
+		return
+	}
+	targets := c.resolveLockTargetsForCheckpoint(checkpointToResolve, targetUpperBound)
+	if len(targets) != 0 {
+		log.Info("Advancer starts to resolve locks",
+			zap.Int("targets", len(targets)),
+			zap.Duration("resolve-lock-interval", resolveLockInterval),
+			zap.Uint64("target-upper-bound", targetUpperBound),
+			zap.Uint64("safe-max-version", safeMaxVersion),
+			zap.Uint64("max-version", maxVersion))
+		// use new context here to avoid timeout
+		ctx := context.Background()
+		c.asyncResolveLocksForRanges(ctx, targets, checkpointToResolve, resolveLockInterval, targetUpperBound, safeMaxVersion, maxVersion)
+	} else {
+		// don't forget set state back
+		c.inResolvingLock.Store(false)
+	}
+}
+
+func (c *CheckpointAdvancer) checkpointToResolve(resolveLockInterval time.Duration) *checkpoint {
+	c.lastCheckpointMu.Lock()
+	defer c.lastCheckpointMu.Unlock()
+	if c.lastCheckpoint == nil || !c.lastCheckpoint.needResolveLocks(resolveLockInterval) {
+		return nil
+	}
+	return c.lastCheckpoint
+}
+
+func (c *CheckpointAdvancer) resolveLockTargetsForCheckpoint(checkpointToResolve *checkpoint, upperBound uint64) []spans.Valued {
+	var targets []spans.Valued
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		if vsf == nil || vsf.MinValue() != checkpointToResolve.TS {
+			return
+		}
+		vsf.TraverseValuesLessThan(upperBound, func(v spans.Valued) bool {
+			targets = append(targets, v)
+			return true
+		})
+	})
+	return targets
 }
 
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
@@ -772,22 +825,48 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	return errs
 }
 
-func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, targets []spans.Valued) {
+func resolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval time.Duration, now time.Time) uint64 {
+	upperBound := checkpointTS + 1
+	if resolveLockInterval <= 0 {
+		return upperBound
+	}
+	if flushedBefore := tsoBeforeFrom(now, resolveLockInterval); flushedBefore > upperBound {
+		upperBound = flushedBefore
+	}
+	if checkpointWindow := tsoAfter(checkpointTS, resolveLockInterval/3); checkpointWindow > upperBound {
+		upperBound = checkpointWindow
+	}
+	return upperBound
+}
+
+func resolveLockMaxVersion(targetUpperBound uint64, safeMaxVersion uint64) uint64 {
+	if safeMaxVersion > 0 && safeMaxVersion < targetUpperBound {
+		return safeMaxVersion
+	}
+	return targetUpperBound
+}
+
+func (c *CheckpointAdvancer) asyncResolveLocksForRanges(
+	ctx context.Context,
+	targets []spans.Valued,
+	checkpointToResolve *checkpoint,
+	resolveLockInterval time.Duration,
+	targetUpperBound uint64,
+	safeMaxVersion uint64,
+	maxVersion uint64,
+) {
 	// run in another goroutine
 	// do not block main tick here
 	go func() {
 		failpoint.Inject("AsyncResolveLocks", func() {})
-		maxTs := uint64(0)
-		for _, t := range targets {
-			maxTs = max(maxTs, t.Value)
-		}
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return tikv.ResolveLocksForRange(
-				ctx, c.env, maxTs+1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+				ctx, c.env, maxVersion, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 		}
 		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup
+		var meetError atomic.Bool
 		for _, r := range targets {
 			targetRange := r
 			wg.Add(1)
@@ -802,6 +881,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 				err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
 				if err != nil {
 					// wait for next tick
+					meetError.Store(true)
 					log.Warn("resolve locks failed, wait for next tick", zap.String("category", "advancer"),
 						zap.String("uuid", "log backup advancer"),
 						zap.Error(err))
@@ -811,14 +891,28 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		wg.Wait()
 		log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
 			zap.String("uuid", "log backup advancer"),
-			logutil.Key("StartKey", c.lastCheckpoint.StartKey),
-			logutil.Key("EndKey", c.lastCheckpoint.EndKey),
+			logutil.Key("StartKey", checkpointToResolve.StartKey),
+			logutil.Key("EndKey", checkpointToResolve.EndKey),
+			zap.Uint64("checkpoint", checkpointToResolve.TS),
+			zap.Duration("resolve-lock-interval", resolveLockInterval),
+			zap.Uint64("target-upper-bound", targetUpperBound),
+			zap.Uint64("safe-max-version", safeMaxVersion),
+			zap.Uint64("max-version", maxVersion),
 			zap.Int("targets", len(targets)))
-		c.lastCheckpointMu.Lock()
-		c.lastCheckpoint.resolveLockTime = time.Now()
-		c.lastCheckpointMu.Unlock()
+		c.updateResolveLockTimeAfterResolving(checkpointToResolve, meetError.Load())
 		c.inResolvingLock.Store(false)
 	}()
+}
+
+func (c *CheckpointAdvancer) updateResolveLockTimeAfterResolving(checkpointToResolve *checkpoint, meetError bool) {
+	if meetError {
+		return
+	}
+	c.lastCheckpointMu.Lock()
+	defer c.lastCheckpointMu.Unlock()
+	if c.lastCheckpoint != nil && c.lastCheckpoint.equal(checkpointToResolve) {
+		c.lastCheckpoint.resolveLockTime = time.Now()
+	}
 }
 
 func (c *CheckpointAdvancer) TEST_registerCallbackForSubscriptions(f func()) int {
