@@ -1091,6 +1091,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
 
+		// for cancel materialized view job JOBID
+		{"cancel materialized view refresh job", false, ""},
+		{"cancel materialized view refresh job 1", true, "CANCEL MATERIALIZED VIEW REFRESH JOB 1"},
+		{"cancel materialized view log purge job", false, ""},
+		{"cancel materialized view log purge job 1", true, "CANCEL MATERIALIZED VIEW LOG PURGE JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},

@@ -3996,6 +3996,16 @@ const (
 	ImportIntoCancel ImportIntoActionTp = "cancel"
 )
 
+// CancelMaterializedViewJobType identifies which materialized-view job family a CANCEL statement targets.
+type CancelMaterializedViewJobType uint8
+
+const (
+	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
+	CancelMaterializedViewJobTypeRefresh CancelMaterializedViewJobType = iota + 1
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
+	CancelMaterializedViewJobTypeLogPurge
+)
+
 // ImportIntoActionStmt represent CANCEL IMPORT INTO JOB statement.
 // will support pause/resume/drop later.
 type ImportIntoActionStmt struct {
@@ -4015,6 +4025,31 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// CancelMaterializedViewJobStmt represent CANCEL MATERIALIZED VIEW ... JOB statement.
+type CancelMaterializedViewJobStmt struct {
+	stmtNode
+	Tp    CancelMaterializedViewJobType
+	JobID int64
+}
+
+func (n *CancelMaterializedViewJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case CancelMaterializedViewJobTypeRefresh:
+		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW REFRESH JOB ")
+	case CancelMaterializedViewJobTypeLogPurge:
+		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", n.Tp)
+	}
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }

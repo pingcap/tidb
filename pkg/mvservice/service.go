@@ -104,6 +104,7 @@ const (
 	defaultMVHistoryGCRetention  = 365 * 24 * time.Hour
 	defaultMVTaskRetryBase       = 10 * time.Second
 	defaultMVTaskRetryMax        = 120 * time.Second
+	manualCancelBackoffDelay     = 2 * time.Minute
 	mvRefreshAlertScanInterval   = 30 * time.Second
 	maxNextScheduleTs            = 9e18
 
@@ -457,6 +458,30 @@ func (t *MVService) runtimeLogFields() []zap.Field {
 func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err error) {
 	defer t.notifier.Wake()
 	if err != nil {
+		if isMVTaskCanceledManually(err) {
+			m.retryCount.Store(0)
+			nextRetryAt := mvsNow().Add(manualCancelBackoffDelay)
+			applied, appliedNext, backoffErr := t.mh.TryBackoffRefreshManualCancel(t.ctx, t.sysSessionPool, m.ID, nextRetryAt)
+			if backoffErr != nil {
+				fields := append(t.runtimeLogFields(),
+					zap.Int64("mview_id", m.ID),
+					zap.Time("manual_cancel_backoff_at", nextRetryAt),
+					zap.Error(backoffErr),
+				)
+				logutil.BgLogger().Warn("refresh MV manual cancel backoff persist failed, forcing metadata refetch", fields...)
+			}
+			if applied {
+				if appliedNext.IsZero() {
+					t.removeMVTask(m)
+					return
+				}
+				t.rescheduleMVSuccess(m, appliedNext)
+				return
+			}
+			t.lastMetaFetchMillis.Store(0)
+			t.removeMVTask(m)
+			return
+		}
 		retryCount := m.retryCount.Add(1)
 		retryDelay := t.retryDelay(retryCount)
 		nextRetryAt := mvsNow().Add(retryDelay)
@@ -483,6 +508,30 @@ func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err er
 func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err error) {
 	defer t.notifier.Wake()
 	if err != nil {
+		if isMVTaskCanceledManually(err) {
+			l.retryCount.Store(0)
+			nextRetryAt := mvsNow().Add(manualCancelBackoffDelay)
+			applied, appliedNext, backoffErr := t.mh.TryBackoffPurgeManualCancel(t.ctx, t.sysSessionPool, l.ID, nextRetryAt)
+			if backoffErr != nil {
+				fields := append(t.runtimeLogFields(),
+					zap.Int64("mvlog_id", l.ID),
+					zap.Time("manual_cancel_backoff_at", nextRetryAt),
+					zap.Error(backoffErr),
+				)
+				logutil.BgLogger().Warn("purge MV log manual cancel backoff persist failed, forcing metadata refetch", fields...)
+			}
+			if applied {
+				if appliedNext.IsZero() {
+					t.removeMVLogTask(l)
+					return
+				}
+				t.rescheduleMVLogSuccess(l, appliedNext)
+				return
+			}
+			t.lastMetaFetchMillis.Store(0)
+			t.removeMVLogTask(l)
+			return
+		}
 		retryCount := l.retryCount.Add(1)
 		retryDelay := t.retryDelay(retryCount)
 		nextRetryAt := mvsNow().Add(retryDelay)
