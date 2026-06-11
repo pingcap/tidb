@@ -187,21 +187,40 @@ func initUnfinishedPathsFromExpr(
 
 		// case 3: use the new logic if the previous logic didn't succeed to collect access filters that can build a
 		// valid range directly.
+<<<<<<< HEAD
 		ret[i].idxColHasAccessFilter = make([]bool, len(idxCols))
+=======
+		ret[i].idxColHasUsableFilter = make([]bool, len(idxCols))
+		// If every CNF item in this OR branch is collected as an access filter, the original OR branch does not need
+		// to be rechecked by a Selection, which means we don't need to set the `needKeepFilter` flag if we found that
+		// `collectedCNFItems` does not contain false after the loop.
+		collectedCNFItems := make([]bool, len(cnfItems))
+>>>>>>> 432e7a44614 (planner: remove redundant filters for nested OR IndexMerge (#69057))
 		for j, col := range idxCols {
-			for _, cnfItem := range cnfItems {
+			for k, cnfItem := range cnfItems {
+				if collectedCNFItems[k] {
+					continue
+				}
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
+<<<<<<< HEAD
 					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].accessFilters = append(ret[i].accessFilters, cnfItem)
 					ret[i].idxColHasAccessFilter[j] = true
+=======
+					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
+					ret[i].idxColHasUsableFilter[j] = true
+					collectedCNFItems[k] = true
+>>>>>>> 432e7a44614 (planner: remove redundant filters for nested OR IndexMerge (#69057))
 					// Once we find one valid access filter for this column, we directly go to the next column without
 					// looking into other filters.
 					break
 				}
 			}
 		}
+		ret[i].needKeepFilter = ret[i].needKeepFilter || slices.Contains(collectedCNFItems, false)
 	}
 
 	validCnt := 0
