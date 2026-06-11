@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	exeerrors "github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
@@ -1384,7 +1385,7 @@ func isCountStarOrOne(arg ast.ExprNode) bool {
 }
 
 func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	return hasPrefixCoveringGroupByColumns(baseTableInfo, groupByCols, "", false)
+	return mviewutil.HasIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, "", false)
 }
 
 func hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(
@@ -1392,66 +1393,7 @@ func hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(
 	groupByCols []string,
 	excludedIndexName string,
 ) bool {
-	return hasPrefixCoveringGroupByColumns(baseTableInfo, groupByCols, excludedIndexName, true)
-}
-
-func hasPrefixCoveringGroupByColumns(
-	baseTableInfo *model.TableInfo,
-	groupByCols []string,
-	excludedIndexName string,
-	requireVisiblePublic bool,
-) bool {
-	prefixLen := len(groupByCols)
-	if prefixLen == 0 {
-		return false
-	}
-	groupBySet := make(map[string]struct{}, prefixLen)
-	for _, col := range groupByCols {
-		groupBySet[col] = struct{}{}
-	}
-
-	if baseTableInfo.PKIsHandle && prefixLen == 1 && excludedIndexName != strings.ToLower(mysql.PrimaryKeyName) {
-		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
-			if _, ok := groupBySet[pkCol.Name.L]; ok {
-				return true
-			}
-		}
-	}
-
-	for _, idx := range baseTableInfo.Indices {
-		if idx == nil || len(idx.Columns) < prefixLen {
-			continue
-		}
-		if requireVisiblePublic && (idx.State != model.StatePublic || idx.Invisible) {
-			continue
-		}
-		if excludedIndexName != "" && idx.Name.L == excludedIndexName {
-			continue
-		}
-		matched := make(map[string]struct{}, prefixLen)
-		ok := true
-		for i := 0; i < prefixLen; i++ {
-			idxCol := idx.Columns[i]
-			if idxCol.Length > 0 {
-				ok = false
-				break
-			}
-			name := idxCol.Name.L
-			if _, exists := groupBySet[name]; !exists {
-				ok = false
-				break
-			}
-			if _, exists := matched[name]; exists {
-				ok = false
-				break
-			}
-			matched[name] = struct{}{}
-		}
-		if ok && len(matched) == prefixLen {
-			return true
-		}
-	}
-	return false
+	return mviewutil.HasIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, excludedIndexName, true)
 }
 
 func analyzeStoredMaterializedViewQuery(

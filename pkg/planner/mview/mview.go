@@ -33,6 +33,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
 const (
@@ -56,54 +57,7 @@ const (
 // for MIN/MAX full-update lookup: either PK-is-handle on the single group key, or a public visible
 // index whose leading columns cover all group-by columns without prefix length.
 func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	if baseTableInfo == nil {
-		return false
-	}
-	prefixLen := len(groupByCols)
-	if prefixLen == 0 {
-		return false
-	}
-	groupBySet := make(map[string]struct{}, prefixLen)
-	for _, col := range groupByCols {
-		groupBySet[strings.ToLower(col)] = struct{}{}
-	}
-
-	if baseTableInfo.PKIsHandle && prefixLen == 1 {
-		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
-			if _, ok := groupBySet[pkCol.Name.L]; ok {
-				return true
-			}
-		}
-	}
-
-	for _, idx := range baseTableInfo.Indices {
-		if idx == nil || idx.Invisible || idx.State != model.StatePublic || len(idx.Columns) < prefixLen {
-			continue
-		}
-		matched := make(map[string]struct{}, prefixLen)
-		ok := true
-		for i := 0; i < prefixLen; i++ {
-			idxCol := idx.Columns[i]
-			if idxCol.Length > 0 {
-				ok = false
-				break
-			}
-			name := idxCol.Name.L
-			if _, exists := groupBySet[name]; !exists {
-				ok = false
-				break
-			}
-			if _, exists := matched[name]; exists {
-				ok = false
-				break
-			}
-			matched[name] = struct{}{}
-		}
-		if ok && len(matched) == prefixLen {
-			return true
-		}
-	}
-	return false
+	return mviewutil.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
 }
 
 // SQL construction overview:

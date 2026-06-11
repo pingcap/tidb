@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mviewutil",
+    srcs = ["index.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/mviewutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/mysql",
+    ],
+)

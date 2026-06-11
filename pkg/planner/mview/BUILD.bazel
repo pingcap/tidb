@@ -19,6 +19,7 @@ go_library(
         "//pkg/planner/util",
         "//pkg/table/tables",
         "//pkg/util/hint",
+        "//pkg/util/mviewutil",
         "@com_github_pingcap_errors//:errors",
     ],
 )
