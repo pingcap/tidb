@@ -51,7 +51,7 @@ type partialResult4SumDistinctFloat64 struct {
 }
 
 type partialResult4SumDistinctDecimal struct {
-	valSet set.StringToDecimalSetWithMemoryUsage
+	valSet set.StringToDecimalMapWithMemoryUsage
 }
 
 type baseSumAggFunc struct {

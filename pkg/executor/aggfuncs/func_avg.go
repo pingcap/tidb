@@ -223,7 +223,7 @@ func (*avgPartial4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 type partialResult4AvgDistinctDecimal struct {
-	valSet set.StringToDecimalSetWithMemoryUsage
+	valSet set.StringToDecimalMapWithMemoryUsage
 }
 
 type baseAvgDistinct struct {

@@ -178,11 +178,13 @@ func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpd
 			buffer.WriteString(e.sep)
 		}
 		buffer.WriteString(val)
-	}
-
-	err := e.truncatePartialResultIfNeed(sctx, buffer)
-	if err != nil {
-		return err
+		if e.maxLen > 0 && uint64(buffer.Len()) > e.maxLen {
+			err := e.truncatePartialResultIfNeed(sctx, buffer)
+			if err != nil {
+				return err
+			}
+			break
+		}
 	}
 
 	chk.AppendString(e.ordinal, buffer.String())
@@ -316,7 +318,7 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	valsBuf           *bytes.Buffer
-	valSet            set.StringToStringSetWithMemoryUsage
+	valSet            set.StringToStringMapWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
