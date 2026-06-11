@@ -1634,7 +1634,6 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	checkUpgraded()
-	dom.Close()
 
 	// Create the reset session while the current domain is still alive; sessions
 	// bound to a closed domain can fail schema validation on commit.
