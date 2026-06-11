@@ -65,6 +65,41 @@ func sessionFactory(t *testing.T, dom *domain.Domain) func() session.Session {
 	}
 }
 
+type sessionWithTimeout struct {
+	session.Session
+	closeCh chan struct{}
+	once    sync.Once
+}
+
+func (s *sessionWithTimeout) Close() {
+	s.once.Do(func() {
+		s.Session.Close()
+		close(s.closeCh)
+	})
+}
+
+func sessionFactoryWithTimeout(t *testing.T, dom *domain.Domain, timeout time.Duration) func() session.Session {
+	pool := dom.SysSessionPool()
+
+	return func() session.Session {
+		se, err := ttlworker.GetSessionForTest(pool)
+		require.NoError(t, err)
+
+		seWithTimeout := &sessionWithTimeout{
+			Session: se,
+			closeCh: make(chan struct{}),
+		}
+		go func() {
+			select {
+			case <-seWithTimeout.closeCh:
+			case <-time.After(timeout):
+				require.Fail(t, "session is not closed before timeout")
+			}
+		}()
+		return seWithTimeout
+	}
+}
+
 func TestGetSession(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1731,43 +1766,65 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.Format(time.DateTime))))
 }
 
-func TestIterationOfRunningJob(t *testing.T) {
+func testIterationOfRunningJobWithTimeout(t *testing.T, sessionTimeout time.Duration, tableCount int64, sleepPerTable time.Duration) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
-	sessionFactory := sessionFactory(t, dom)
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 
 	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
 
-	se := sessionFactory()
-	defer se.Close()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
-	for tableID := int64(0); tableID < 100; tableID++ {
-		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
-		m.InfoSchemaCache().Tables[testTable.ID] = testTable
+	for tableID := int64(0); tableID < tableCount; tableID++ {
+		func() {
+			se := sessionFactory()
+			defer se.Close()
 
-		jobID := uuid.NewString()
-		_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
-		require.NoError(t, err)
-		sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
-		rows, err := se.ExecuteSQL(ctx, sql, args...)
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		status, err := cache.RowToTableStatus(se, rows[0])
-		require.NoError(t, err)
-		require.Equal(t, jobID, status.CurrentJobID)
-		require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+			testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+			m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
-		// update the owner id
-		_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
-		require.NoError(t, err)
+			jobID := uuid.NewString()
+			_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+			require.NoError(t, err)
+			sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
+			rows, err := se.ExecuteSQL(ctx, sql, args...)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			status, err := cache.RowToTableStatus(se, rows[0])
+			require.NoError(t, err)
+			require.Equal(t, jobID, status.CurrentJobID)
+			require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+
+			// update the owner id
+			_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
+			require.NoError(t, err)
+
+			if sleepPerTable > 0 {
+				time.Sleep(sleepPerTable)
+			}
+		}()
 	}
-	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	func() {
+		se := sessionFactory()
+		defer se.Close()
+		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	}()
 
-	require.Len(t, m.RunningJobs(), 100)
+	require.Len(t, m.RunningJobs(), int(tableCount))
 	m.CheckNotOwnJob()
 
 	// Now all the jobs should have been removed
 	require.Len(t, m.RunningJobs(), 0)
+}
+
+func TestIterationOfRunningJob(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		testIterationOfRunningJobWithTimeout(t, time.Minute, 100, 0)
+	})
+	t.Run("session-timeout", func(t *testing.T) {
+		// Keep the timeout short enough to catch accidental long-lived session reuse,
+		// but leave headroom for slower CI hosts.
+		testIterationOfRunningJobWithTimeout(t, 3*time.Second, 100, 40*time.Millisecond)
+	})
 }
 
 func TestTTLSummaryForTimeoutJob(t *testing.T) {
