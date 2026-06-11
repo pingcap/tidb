@@ -518,6 +518,12 @@ c = 1 and
 json_contains(j, '[4,5]') and
 d not like '%test%';
 
+# TestIndexMergeINInORList
+drop table if exists t1;
+create table t1(a int, b int, c int, d int, e int, index iea(e,a), index ieb(e,b), index iec(e,c), index ied(e,d));
+explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5));
+explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5)) limit 3;
+
 # TestIndexMergeAdvisorySortItems
 # When one partial path can keep order (a=1 on idx_ac) and another cannot (b>5 on idx_bc),
 # Limit should be pushed to the ordered partial path and TopN to the unordered one.
