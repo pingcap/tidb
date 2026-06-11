@@ -5,7 +5,10 @@ package streamhelper_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -15,11 +18,14 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -70,6 +76,240 @@ func TestTick(t *testing.T) {
 		require.NoError(t, adv.OnTick(ctx))
 		require.Equal(t, env.getCheckpoint(), cp)
 	}
+}
+
+type countingStorage struct {
+	storage.ExternalStorage
+	closeCount *atomic.Int32
+}
+
+func (s *countingStorage) Close() {
+	s.closeCount.Inc()
+	s.ExternalStorage.Close()
+}
+
+type writeFailStorage struct {
+	storage.ExternalStorage
+	onWrite func()
+}
+
+func (s writeFailStorage) WriteFile(context.Context, string, []byte) error {
+	if s.onWrite != nil {
+		s.onWrite()
+	}
+	return errors.New("injected external storage error")
+}
+
+type writeBlockStorage struct {
+	storage.ExternalStorage
+	onWriteDone func(error)
+}
+
+func (s writeBlockStorage) WriteFile(ctx context.Context, _ string, _ []byte) error {
+	<-ctx.Done()
+	err := ctx.Err()
+	if s.onWriteDone != nil {
+		s.onWriteDone(err)
+	}
+	return err
+}
+
+type writeRecordStorage struct {
+	storage.ExternalStorage
+	writeCount *atomic.Int32
+}
+
+func (s writeRecordStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	s.writeCount.Inc()
+	return s.ExternalStorage.WriteFile(ctx, name, data)
+}
+
+func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	createCount := atomic.NewInt32(0)
+	closeCount := atomic.NewInt32(0)
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storage.ExternalStorage, error) {
+			createCount.Inc()
+			storage, err := storage.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return &countingStorage{ExternalStorage: storage, closeCount: closeCount}, nil
+		})
+	defer restoreFactory()
+
+	env := newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(1), createCount.Load())
+
+	_ = c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(1), createCount.Load())
+
+	checkpoint := c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(1), createCount.Load())
+
+	data, err := os.ReadFile(filepath.Join(storageDir, "v1", "global_checkpoint", "central_global.ts"))
+	require.NoError(t, err)
+	require.Len(t, data, 8)
+	require.Equal(t, checkpoint, binary.LittleEndian.Uint64(data))
+	require.Equal(t, float64(checkpoint), promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+
+	adv.OnStop()
+	require.Equal(t, int32(1), closeCount.Load())
+}
+
+func TestTickIgnoresGlobalCheckpointStorageFailure(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	gcBlockedBeforeWrite := atomic.NewBool(false)
+	var env *testEnv
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storage.ExternalStorage, error) {
+			storage, err := storage.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeFailStorage{
+				ExternalStorage: storage,
+				onWrite: func() {
+					gcBlockedBeforeWrite.Store(env.serviceGCSafePointSet)
+				},
+			}, nil
+		})
+	defer restoreFactory()
+
+	env = newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+
+	checkpoint := c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, checkpoint, env.getCheckpoint())
+	require.True(t, env.serviceGCSafePointSet)
+	require.Equal(t, checkpoint-1, env.serviceGCSafePoint)
+	require.True(t, gcBlockedBeforeWrite.Load())
+	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+}
+
+func TestTickDoesNotWriteGlobalCheckpointToStorageWhenBlockGCFailed(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	writeCount := atomic.NewInt32(0)
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storage.ExternalStorage, error) {
+			storage, err := storage.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeRecordStorage{ExternalStorage: storage, writeCount: writeCount}, nil
+		})
+	defer restoreFactory()
+
+	env := newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+
+	checkpoint := c.advanceCheckpoints()
+	env.serviceGCSafePoint = checkpoint
+	require.ErrorContains(t, adv.OnTick(ctx), "failed to update service GC safe point")
+	require.Equal(t, int32(0), writeCount.Load())
+	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+}
+
+func TestTickTimesOutGlobalCheckpointStorageWrite(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	writeErrCh := make(chan error, 1)
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storage.ExternalStorage, error) {
+			storage, err := storage.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeBlockStorage{
+				ExternalStorage: storage,
+				onWriteDone: func(err error) {
+					writeErrCh <- err
+				},
+			}, nil
+		})
+	defer restoreFactory()
+
+	env := newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(cfg *config.CommandConfig) {
+		cfg.TickDuration = 200 * time.Millisecond
+	})
+	adv.StartTaskListener(ctx)
+
+	checkpoint := c.advanceCheckpoints()
+	start := time.Now()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Less(t, time.Since(start), time.Second)
+	require.Equal(t, checkpoint, env.getCheckpoint())
+	require.True(t, env.serviceGCSafePointSet)
+	require.Equal(t, checkpoint-1, env.serviceGCSafePoint)
+	select {
+	case err := <-writeErrCh:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		require.Fail(t, "timed out waiting for external storage write timeout")
+	}
+	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
 }
 
 func TestWithFailure(t *testing.T) {
@@ -344,12 +584,6 @@ func TestResolveLock(t *testing.T) {
 			fmt.Println(c)
 		}
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
-	// make sure asyncResolveLocks stuck in optionalTick later.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks", `pause`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
-	}()
 
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
@@ -378,16 +612,29 @@ func TestResolveLock(t *testing.T) {
 
 	// ensure resolve locks triggered and collect all locks from scan locks
 	resolveLockRef := atomic.NewBool(false)
+	resolveStarted := make(chan struct{})
+	allowResolve := make(chan struct{})
+	var resolveOnce sync.Once
+	var allowResolveOnce sync.Once
+	releaseResolve := func() {
+		allowResolveOnce.Do(func() {
+			close(allowResolve)
+		})
+	}
+	defer releaseResolve()
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
-		resolveLockRef.Store(true)
+		resolveOnce.Do(func() {
+			close(resolveStarted)
+		})
+		<-allowResolve
 		// The third lock has skipped, because it's less than max version.
 		require.ElementsMatch(t, locks, allLocks[:2])
+		resolveLockRef.Store(true)
 		return loc, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 
-	maxTargetTs := uint64(0)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	coll.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
 		adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
@@ -400,7 +647,6 @@ func TestResolveLock(t *testing.T) {
 				}
 			}
 			s.Merge(spans.Valued{Key: kr, Value: u})
-			maxTargetTs = max(maxTargetTs, u)
 		})
 	})
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
@@ -410,12 +656,40 @@ func TestResolveLock(t *testing.T) {
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 
-	env.maxTs = maxTargetTs + 1
-	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
+	require.NoError(t, adv.OnTick(ctx))
+
+	adv.ForceResolveLocksForTest()
+	env.maxTs = adv.ResolveLockMaxVersionForTest()
+	tickErrCh := make(chan error, 1)
+	go func() {
+		tickErrCh <- adv.OnTick(ctx)
+	}()
+	tickFinished := false
+	select {
+	case <-resolveStarted:
+	case err := <-tickErrCh:
+		require.NoError(t, err)
+		tickFinished = true
+		select {
+		case <-resolveStarted:
+		case <-time.After(time.Second):
+			require.Fail(t, "timed out waiting for asyncResolveLocks to start")
+		}
+	case <-time.After(time.Second):
+		require.Fail(t, "timed out waiting for asyncResolveLocks to start")
+	}
+	// now the lock state must be true, because asyncResolveLocks is blocked in resolveLocks.
+	require.Eventually(t, func() bool { return adv.GetInResolvingLock() },
 		time.Second, 50*time.Millisecond)
-	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
-	require.True(t, adv.GetInResolvingLock())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks"))
+	releaseResolve()
+	if !tickFinished {
+		select {
+		case err := <-tickErrCh:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			require.Fail(t, "timed out waiting for advancer tick to finish")
+		}
+	}
 	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)
 	// state must set to false after tick
