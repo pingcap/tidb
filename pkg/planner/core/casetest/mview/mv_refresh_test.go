@@ -339,6 +339,9 @@ func TestBuildRefreshMVFastAsOfTimestampPlanWithMinMaxCarriesFullUpdateSnapshot(
 	tk.MustExec("create table t_mv_refresh_asof_plan (a int not null, b int not null, key idx_a(a))")
 	tk.MustExec("create materialized view log on t_mv_refresh_asof_plan (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_refresh_asof_plan (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_plan group by a")
+	tk.MustExec(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', 'All versions after safe point can be accessed. (DO NOT EDIT)')
+ON DUPLICATE KEY
+	UPDATE variable_value = '20060102-15:04:05 -0700', comment = 'All versions after safe point can be accessed. (DO NOT EDIT)'`)
 	tk.MustExec("begin")
 	defer tk.MustExec("rollback")
 
