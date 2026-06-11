@@ -40,16 +40,21 @@ go_test(
     name = "autoid_test",
     timeout = "short",
     srcs = [
+        "autoid_service_test.go",
         "autoid_test.go",
         "bench_test.go",
         "main_test.go",
         "memid_test.go",
         "seq_autoid_test.go",
     ],
+    embed = [":autoid"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 10,
+=======
+    shard_count = 14,
+>>>>>>> 2b73570233d (pkg/meta/autoid: fix autoid client blocking on canceled context (#68125))
     deps = [
-        ":autoid",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
@@ -62,7 +67,15 @@ go_test(
         "//pkg/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/autoid",
         "@com_github_stretchr_testify//require",
+<<<<<<< HEAD
+=======
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+>>>>>>> 2b73570233d (pkg/meta/autoid: fix autoid client blocking on canceled context (#68125))
         "@org_uber_go_goleak//:goleak",
     ],
 )
