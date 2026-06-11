@@ -1294,9 +1294,8 @@ func TestMaterializedViewRefreshFastMinMaxRequiresSupportingIndex(t *testing.T) 
 	tk.MustExec("insert into t_mv_fast_minmax_noidx values (1, 1, 10), (2, 1, 20)")
 	tk.MustExec("refresh materialized view mv_fast_minmax_noidx complete")
 
-	tk.MustExec("alter table t_mv_fast_minmax_noidx alter index idx_a invisible")
-	err := tk.ExecToErr("refresh materialized view mv_fast_minmax_noidx fast")
-	require.ErrorContains(t, err, "refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
+	err := tk.ExecToErr("alter table t_mv_fast_minmax_noidx alter index idx_a invisible")
+	require.ErrorContains(t, err, "Unsupported ALTER INDEX INVISIBLE on base table index idx_a required by materialized view mv_fast_minmax_noidx for MIN/MAX fast refresh")
 }
 
 func TestMaterializedViewRefreshFastNullableAggregatesWithDuplicateCountExpr(t *testing.T) {
