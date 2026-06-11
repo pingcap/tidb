@@ -34,6 +34,9 @@ func TestExtendByRegex(t *testing.T) {
 		{Pattern: `^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details"},
 		{Pattern: `^Feature '.+' is not supported when security enhanced mode is enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details"},
 		{Pattern: `^Error message\.$`, Suffix: "suffix."},
+		{Pattern: `^Error message without period$`, Suffix: "suffix"},
+		{Pattern: `^Error message with multiple periods\.\.\.$`, Suffix: "suffix..."},
+		{Pattern: `^Error message with empty suffix$`, Suffix: ""},
 	}
 	config.StoreGlobalConfig(&newCfg)
 	t.Cleanup(func() {
@@ -89,6 +92,21 @@ func TestExtendByRegex(t *testing.T) {
 			name:     "message ending with period",
 			message:  "Error message.",
 			expected: "Error message, suffix.",
+		},
+		{
+			name:     "message and suffix without period",
+			message:  "Error message without period",
+			expected: "Error message without period, suffix.",
+		},
+		{
+			name:     "message and suffix ending with multiple periods",
+			message:  "Error message with multiple periods...",
+			expected: "Error message with multiple periods, suffix.",
+		},
+		{
+			name:     "empty suffix",
+			message:  "Error message with empty suffix",
+			expected: "Error message with empty suffix",
 		},
 	}
 

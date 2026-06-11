@@ -196,6 +196,16 @@ error-msg-extension = [
 	}, conf.ErrorMessageExtensions)
 
 	require.Empty(t, NewConfig().ErrorMessageExtensions)
+
+	originGlobalConfig := GetGlobalConfig()
+	StoreGlobalConfig(conf)
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+	})
+	preparedExtensions := GetErrorMessageExtensions()
+	require.NotEmpty(t, preparedExtensions)
+	preparedExtensions[0].Suffix = ""
+	require.NotEmpty(t, GetErrorMessageExtensions()[0].Suffix)
 }
 
 func TestErrorMessageExtensionInvalidRegexp(t *testing.T) {

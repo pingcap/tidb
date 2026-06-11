@@ -22,9 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-// Extend appends a configured suffix to selected SQL errors in place.
-// It reads the immutable error message extension cache prepared from global
-// config, and applies only the first matching regexp.
+// Extend appends a configured suffix to selected SQL errors by mutating m.Message in place.
+// It reads the prepared matcher snapshot from config.GetErrorMessageExtensions
+// and applies only the first matching regexp. Suffixes are joined in the fixed
+// ", suffix." format used for starter guidance messages.
 func Extend(m *mysql.SQLError) {
 	if m == nil {
 		return
@@ -47,5 +48,5 @@ func Extend(m *mysql.SQLError) {
 }
 
 func extendErrorMessage(m *mysql.SQLError, msg string) {
-	m.Message = fmt.Sprintf("%s, %s.", strings.TrimSuffix(m.Message, "."), strings.TrimSuffix(msg, "."))
+	m.Message = fmt.Sprintf("%s, %s.", strings.TrimRight(m.Message, "."), strings.TrimRight(msg, "."))
 }

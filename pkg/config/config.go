@@ -25,6 +25,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -284,6 +285,7 @@ type Config struct {
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 	// ErrorMessageExtensions appends configured suffixes to selected user-facing errors.
+	// Patterns should be anchored and specific because they are matched against every SQL error sent to clients.
 	ErrorMessageExtensions []ErrorMessageExtension `toml:"error-msg-extension" json:"error-msg-extension"`
 
 	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
@@ -378,9 +380,10 @@ type Config struct {
 
 // ErrorMessageExtension configures a suffix for SQL errors matching Pattern.
 type ErrorMessageExtension struct {
-	Pattern string         `toml:"pattern" json:"pattern"`
-	Suffix  string         `toml:"suffix" json:"suffix"`
-	Regexp  *regexp.Regexp `toml:"-" json:"-"`
+	Pattern string `toml:"pattern" json:"pattern"`
+	Suffix  string `toml:"suffix" json:"suffix"`
+	// Regexp is populated internally when the global config is published. Do not set it manually.
+	Regexp *regexp.Regexp `toml:"-" json:"-"`
 }
 
 // RUV2Config is the configuration for RU v2 weight calculation.
@@ -1310,18 +1313,21 @@ func GetGlobalConfig() *Config {
 	return globalConf.Load()
 }
 
-// GetErrorMessageExtensions returns the prepared immutable error message extension matchers.
+// GetErrorMessageExtensions returns a copy of the prepared error message extension matchers.
 func GetErrorMessageExtensions() []ErrorMessageExtension {
 	extensions := preparedErrorMessageExtensions.Load()
 	if extensions == nil {
 		return nil
 	}
-	return *extensions
+	return slices.Clone(*extensions)
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	extensions, _ := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
+	extensions, err := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
+	if err != nil {
+		logutil.BgLogger().Warn("skip invalid error message extension config", zap.Error(err))
+	}
 	preparedErrorMessageExtensions.Store(&extensions)
 	globalConf.Store(config)
 	TikvConfigLock.Lock()
@@ -1615,17 +1621,26 @@ func (c *Config) Load(confFile string) error {
 
 func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInvalid bool) ([]ErrorMessageExtension, error) {
 	preparedExtensions := make([]ErrorMessageExtension, 0, len(extensions))
+	var firstErr error
 	for _, extension := range extensions {
 		extension.Regexp = nil
 		if strings.TrimSpace(extension.Pattern) == "" {
 			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("empty error-msg-extension pattern")
+				}
 				continue
 			}
 			return nil, fmt.Errorf("empty error-msg-extension pattern")
 		}
+		// Go's regexp package uses the RE2 engine, so operator-configured
+		// patterns cannot trigger catastrophic backtracking in the error path.
 		compiledRegexp, err := regexp.Compile(extension.Pattern)
 		if err != nil {
 			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+				}
 				continue
 			}
 			return nil, fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
@@ -1644,7 +1659,7 @@ func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInv
 		}
 		return left.Suffix < right.Suffix
 	})
-	return preparedExtensions, nil
+	return preparedExtensions, firstErr
 }
 
 // Valid checks if this config is valid.
