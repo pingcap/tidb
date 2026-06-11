@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 )
 
@@ -48,4 +49,35 @@ func (c *CheckpointAdvancer) UpdateCheckPointLagLimit(limit time.Duration) {
 	} else {
 		vardef.AdvancerCheckPointLagLimit.Store(limit)
 	}
+}
+
+func (c *CheckpointAdvancer) TESTResolveLockTargetCount() int {
+	c.lastCheckpointMu.Lock()
+	checkpointToResolve := c.lastCheckpoint
+	c.lastCheckpointMu.Unlock()
+	if checkpointToResolve == nil {
+		return 0
+	}
+	upperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, c.Config().GetResolveLockInterval(), time.Now())
+	return len(c.resolveLockTargetsForCheckpoint(checkpointToResolve, upperBound))
+}
+
+func (c *CheckpointAdvancer) TESTSetLastCheckpointToCurrentMin() {
+	var p *checkpoint
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		p = newCheckpointWithSpan(vsf.Min())
+	})
+	c.UpdateLastCheckpoint(p)
+}
+
+func (c *CheckpointAdvancer) TESTTryResolveLocksForCheckpoint() {
+	c.tryResolveLocksForCheckpoint()
+}
+
+func TESTResolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval time.Duration, now time.Time) uint64 {
+	return resolveLockTargetUpperBound(checkpointTS, resolveLockInterval, now)
+}
+
+func TESTResolveLockMaxVersion(targetUpperBound uint64, safeMaxVersion uint64) uint64 {
+	return resolveLockMaxVersion(targetUpperBound, safeMaxVersion)
 }

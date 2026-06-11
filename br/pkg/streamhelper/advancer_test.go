@@ -3,7 +3,6 @@
 package streamhelper_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -355,16 +354,10 @@ func TestResolveLock(t *testing.T) {
 			fmt.Println(c)
 		}
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
-	// make sure asyncResolveLocks stuck in optionalTick later.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks", `pause`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
-	}()
 
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
-	minCheckpoint := c.advanceCheckpoints()
+	minCheckpoint := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
 	env := newTestEnv(c, t)
 
 	lockRegion := c.FindRegionByKey([]byte("01"))
@@ -391,47 +384,142 @@ func TestResolveLock(t *testing.T) {
 	resolveLockRef := atomic.NewBool(false)
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 		resolveLockRef.Store(true)
-		// The third lock has skipped, because it's less than max version.
+		// Locks close to the current checkpoint should be scanned in one round.
 		require.ElementsMatch(t, locks, allLocks[:2])
 		return loc, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
 	adv.StartTaskListener(ctx)
 
-	maxTargetTs := uint64(0)
-	coll := streamhelper.NewClusterCollector(ctx, env)
-	coll.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
-		adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
-			for _, lock := range allLocks {
-				// if there is any lock key in the range
-				if bytes.Compare(kr.StartKey, lock.Key) <= 0 && (bytes.Compare(lock.Key, kr.EndKey) < 0 || len(kr.EndKey) == 0) {
-					// mock lock behavior, do not update checkpoint
-					s.Merge(spans.Valued{Key: kr, Value: minCheckpoint})
-					return
-				}
-			}
-			s.Merge(spans.Valued{Key: kr, Value: u})
-			maxTargetTs = max(maxTargetTs, u)
-		})
+	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
 	})
-	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
-	require.NoError(t, err)
-	r, err := coll.Finish(ctx)
-	require.NoError(t, err)
-	require.Len(t, r.FailureSubRanges, 0)
-	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 
-	env.MaxTS = maxTargetTs + 1
-	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
-		time.Second, 50*time.Millisecond)
-	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
-	require.True(t, adv.GetInResolvingLock())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks"))
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+	adv.TESTTryResolveLocksForCheckpoint()
 	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)
 	// state must set to false after tick
 	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
 		8*time.Second, 50*time.Microsecond)
+}
+
+func TestResolveLockMaxVersion(t *testing.T) {
+	checkpointTime := time.Unix(100, 0)
+	checkpointTS := oracle.GoTimeToTS(checkpointTime)
+	resolveLockInterval := 30 * time.Second
+
+	require.Equal(t,
+		oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)),
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(35*time.Second)))
+	require.Equal(t,
+		oracle.GoTimeToTS(checkpointTime.Add(30*time.Second)),
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(time.Minute)))
+	require.Equal(t,
+		checkpointTS+1,
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, 0, checkpointTime.Add(time.Minute)))
+
+	targetUpperBound := oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second))
+	require.Equal(t,
+		targetUpperBound,
+		streamhelper.TESTResolveLockMaxVersion(targetUpperBound, oracle.GoTimeToTS(checkpointTime.Add(40*time.Second))))
+	require.Equal(t,
+		oracle.GoTimeToTS(checkpointTime.Add(24*time.Second)),
+		streamhelper.TESTResolveLockMaxVersion(targetUpperBound, oracle.GoTimeToTS(checkpointTime.Add(24*time.Second))))
+}
+
+func TestResolveLockTargetsUseUpperBound(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	ctx := context.Background()
+	env := newTestEnv(c, t)
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 10 * time.Second
+	})
+	adv.StartTaskListener(ctx)
+
+	checkpointTime := time.Now().Add(-25 * time.Second)
+	checkpointTS := oracle.GoTimeToTS(checkpointTime)
+	withinUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(6 * time.Second))
+	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(8 * time.Second))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: checkpointTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}, Value: withinUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: []byte("b")}, Value: outsideUpperBoundTS})
+	})
+
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 2, adv.TESTResolveLockTargetCount())
+}
+
+func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		if t.Failed() {
+			fmt.Println(c)
+		}
+	}()
+
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx := context.Background()
+	minCheckpoint := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
+	env := newTestEnv(c, t)
+
+	lockRegion := c.FindRegionByKey([]byte("01"))
+	allLocks := []*txnlock.Lock{
+		{
+			Key:   []byte("011"),
+			TxnID: minCheckpoint,
+		},
+	}
+	c.LockRegion(lockRegion, allLocks)
+
+	resolveLockCount := atomic.NewInt32(0)
+	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+		require.ElementsMatch(t, locks, allLocks)
+		resolveLockCount.Inc()
+		return loc, nil
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
+	adv.StartTaskListener(ctx)
+
+	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+	})
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+
+	adv.TESTTryResolveLocksForCheckpoint()
+	require.Eventually(t, func() bool {
+		return resolveLockCount.Load() == 1 && !adv.GetInResolvingLock()
+	}, time.Second, time.Millisecond)
+
+	lockRegion.Locks = allLocks
+	adv.TESTTryResolveLocksForCheckpoint()
+	time.Sleep(adv.Config().GetResolveLockInterval() / 2)
+	require.Equal(t, int32(1), resolveLockCount.Load())
+
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+	adv.TESTTryResolveLocksForCheckpoint()
+	require.Eventually(t, func() bool {
+		return resolveLockCount.Load() == 2 && !adv.GetInResolvingLock()
+	}, time.Second, time.Millisecond)
 }
 
 func TestOwnerDropped(t *testing.T) {

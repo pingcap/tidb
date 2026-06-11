@@ -73,7 +73,7 @@ go_test(
     embed = [":streamhelper"],
     flaky = True,
     race = "on",
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",

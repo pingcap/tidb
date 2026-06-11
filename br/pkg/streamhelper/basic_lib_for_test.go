@@ -246,7 +246,7 @@ func (t *testEnv) ScanLocksInOneRegion(
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.MaxTS != maxVersion {
+	if t.MaxTS != 0 && t.MaxTS != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.MaxTS, maxVersion)
 	}
 	for _, r := range t.RegionList() {
