@@ -72,7 +72,7 @@ func HasIndexWithPrefixCoveringColumns(
 		}
 		matched := make(map[string]struct{}, prefixLen)
 		ok := true
-		for i := 0; i < prefixLen; i++ {
+		for i := range prefixLen {
 			idxCol := idx.Columns[i]
 			if idxCol.Length > 0 {
 				ok = false
