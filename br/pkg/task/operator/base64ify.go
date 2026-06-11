@@ -20,7 +20,7 @@ func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
 		return err
 	}
 
-	store, err := objstore.New(ctx, s, &storeapi.Options{
+	store, err := storage.New(ctx, s, &storage.ExternalStorageOptions{
 		SendCredentials:          cfg.LoadCerd,
 		CheckS3ObjectLockOptions: true,
 	})
