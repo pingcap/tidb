@@ -260,6 +260,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 	prometheus.MustRegister(FairLockingUsageCount)
 	prometheus.MustRegister(MemoryLimit)
+	prometheus.MustRegister(LogBackupCurrentLastRegionID)
+	prometheus.MustRegister(LogBackupCurrentLastRegionLeaderStoreID)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
