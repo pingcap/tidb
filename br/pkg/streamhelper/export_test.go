@@ -15,12 +15,14 @@
 package streamhelper
 
 import (
+	"context"
 	"math/rand"
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
@@ -58,7 +60,11 @@ func (c *CheckpointAdvancer) TESTResolveLockTargetCount() int {
 	if checkpointToResolve == nil {
 		return 0
 	}
-	upperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, c.Config().GetResolveLockInterval(), time.Now())
+	currentTS, err := c.env.FetchCurrentTS(context.Background())
+	if err != nil {
+		return 0
+	}
+	upperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, c.getResolveLockInterval(), currentTS)
 	return len(c.resolveLockTargetsForCheckpoint(checkpointToResolve, upperBound))
 }
 
@@ -71,11 +77,19 @@ func (c *CheckpointAdvancer) TESTSetLastCheckpointToCurrentMin() {
 }
 
 func (c *CheckpointAdvancer) TESTTryResolveLocksForCheckpoint() {
-	c.tryResolveLocksForCheckpoint()
+	c.tryResolveLocksForCheckpoint(context.Background())
+}
+
+func (c *CheckpointAdvancer) TESTRefreshLogBackupFlushInterval(ctx context.Context) {
+	c.refreshLogBackupFlushInterval(ctx)
+}
+
+func (c *CheckpointAdvancer) TESTResolveLockInterval() time.Duration {
+	return c.getResolveLockInterval()
 }
 
 func TESTResolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval time.Duration, now time.Time) uint64 {
-	return resolveLockTargetUpperBound(checkpointTS, resolveLockInterval, now)
+	return resolveLockTargetUpperBound(checkpointTS, resolveLockInterval, oracle.GoTimeToTS(now))
 }
 
 func TESTResolveLockMaxVersion(targetUpperBound uint64, safeMaxVersion uint64) uint64 {

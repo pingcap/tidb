@@ -97,6 +97,7 @@ type testEnv struct {
 	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+	scanLocks    func(key []byte, endKey []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error)
 
 	mu sync.Mutex
 	pd.Client
@@ -246,6 +247,9 @@ func (t *testEnv) ScanLocksInOneRegion(
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.scanLocks != nil {
+		return t.scanLocks(key, endKey, maxVersion)
+	}
 	if t.MaxTS != 0 && t.MaxTS != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.MaxTS, maxVersion)
 	}
