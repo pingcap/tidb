@@ -49,6 +49,8 @@ func TestDDLVisitorCover(t *testing.T) {
 		{&CreateMaterializedViewLogStmt{Table: &TableName{}, Purge: &MLogPurgeClause{Immediate: true}}, 0, 0},
 		{&AlterMaterializedViewStmt{ViewName: &TableName{}, Actions: []*AlterMaterializedViewAction{{Tp: AlterMaterializedViewActionComment}}}, 0, 0},
 		{&AlterMaterializedViewLogStmt{Table: &TableName{}, Actions: []*AlterMaterializedViewLogAction{{Tp: AlterMaterializedViewLogActionPurge, Purge: &MLogPurgeClause{Immediate: true}}}}, 0, 0},
+		// Covers AST visitor traversal for ALTER MATERIALIZED VIEW LOG ADD COLUMN.
+		{&AlterMaterializedViewLogStmt{Table: &TableName{}, Actions: []*AlterMaterializedViewLogAction{{Tp: AlterMaterializedViewLogActionAddColumn}}}, 0, 0},
 		{&DropMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},
 		{&DropMaterializedViewLogStmt{Table: &TableName{}}, 0, 0},
 		{&AlterTableSpec{}, 0, 0},

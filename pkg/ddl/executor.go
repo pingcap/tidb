@@ -2362,6 +2362,9 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
+	if mlogInvolving := buildMaterializedViewLogBaseInvolvingSchemaInfo(e.ctx, e.infoCache.GetLatest(), schema.Name.L, t.Meta()); len(mlogInvolving) > 0 {
+		involvingSchemaInfo = append(involvingSchemaInfo, mlogInvolving...)
+	}
 	for _, j := range subJobs {
 		if j.Type == model.ActionAddForeignKey {
 			ref := j.JobArgs.(*model.AddForeignKeyArgs).FkInfo
@@ -2582,6 +2585,9 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	if involving := buildMaterializedViewLogInvolvingSchemaInfo(e.ctx, e.infoCache.GetLatest(), schema.Name.L, tbInfo); len(involving) > 0 {
+		job.InvolvingSchemaInfo = involving
 	}
 
 	args := &model.TableColumnArgs{

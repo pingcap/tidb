@@ -5608,6 +5608,10 @@ AlterMaterializedViewLogAction:
 		}
 		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: next}}
 	}
+|	"ADD" ColumnKeywordOpt '(' ColumnList ')'
+	{
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionAddColumn, Cols: $4.([]model.CIStr)}
+	}
 
 DropMaterializedViewStmt:
 	"DROP" "MATERIALIZED" "VIEW" TableName
