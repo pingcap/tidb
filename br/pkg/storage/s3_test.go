@@ -1523,7 +1523,6 @@ func TestTryLockRemoteRootPathPrefix(t *testing.T) {
 			Sse:          "sse",
 			StorageClass: "sc",
 		},
-		nil,
 	)
 	defer controller.Finish()
 
