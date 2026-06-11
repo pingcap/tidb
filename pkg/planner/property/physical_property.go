@@ -292,6 +292,13 @@ type PhysicalProperty struct {
 	// When this field is not nil, it indicates that prefix index can be used
 	// to provide partial order for TopN.
 	PartialOrderInfo *PartialOrderInfo
+
+	// AdvisorySortItems contains sort items that are preferred but not required.
+	// When SortItems is empty and AdvisorySortItems is not, DataSource can try to
+	// generate paths that satisfy these sort items, enabling Limit pushdown
+	// to partial paths of IndexMerge.
+	// Currently only set when TopN is directly above a DataSource.
+	AdvisorySortItems []SortItem
 }
 
 // PartialOrderInfo records information needed for partial order optimization.
@@ -456,7 +463,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8 + (16+8)*len(p.AdvisorySortItems) + 8
 	if p.PartialOrderInfo != nil {
 		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
 	} else {
@@ -504,6 +511,15 @@ func (p *PhysicalProperty) HashCode() []byte {
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
+	// Encode AdvisorySortItems into the physical property's hashcode.
+	for _, item := range p.AdvisorySortItems {
+		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+		if item.Desc {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
+	}
 	return p.hashcode
 }
 
@@ -525,6 +541,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
 		PartialOrderInfo:      p.PartialOrderInfo,
+		AdvisorySortItems:     p.AdvisorySortItems,
 	}
 	return prop
 }
@@ -555,6 +572,9 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 		sum += sortItem.MemoryUsage()
 	}
 	for _, sortItem := range p.SortItemsForPartition {
+		sum += sortItem.MemoryUsage()
+	}
+	for _, sortItem := range p.AdvisorySortItems {
 		sum += sortItem.MemoryUsage()
 	}
 	for _, mppCol := range p.MPPPartitionCols {

@@ -65,12 +65,6 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
-}
-
 // LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
 // building a logical plan from AST.
 type LogicalPlanBuildState struct {
@@ -81,6 +75,7 @@ type LogicalPlanBuildState struct {
 	lockTableIDs         map[int64]struct{}
 	tblInfo2UnionScan    map[*model.TableInfo]bool
 	useDynamicPruneMode  bool
+	viewDepth            int32
 	colRefFromUpdatePlan intset.FastIntSet
 	// plan cache related stuff
 	planCacheUseCache    bool
@@ -88,6 +83,12 @@ type LogicalPlanBuildState struct {
 	planCacheUnqualified string
 	planCacheForce       bool
 	planCacheAlwaysWarn  bool
+}
+
+type jsonSQLWarn struct {
+	Level  string        `json:"level"`
+	SQLErr *terror.Error `json:"err,omitempty"`
+	Msg    string        `json:"msg,omitempty"`
 }
 
 // ReferenceCount indicates the reference count of StmtCtx.
@@ -293,6 +294,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu *stmtCtxMu
 
@@ -471,6 +473,10 @@ type StatementContext struct {
 	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
 	// round already produced a same-order index join candidate for a decorrelated Apply.
 	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
+	// build round encountered a non-correlated IN subquery eligible for the
+	// correlate-to-Apply alternative.
+	AlternativeLogicalPlanPreferCorrelate bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -609,6 +615,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		lockTableIDs:         maps.Clone(sc.LockTableIDs),
 		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		viewDepth:            sc.ViewDepth,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
 		planCacheUseCache:    planCacheUseCache,
 		planCacheType:        planCacheType,
@@ -628,6 +635,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
 	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ViewDepth = state.viewDepth
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
@@ -638,6 +646,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanPreferCorrelate = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -650,6 +659,13 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
 // has already produced a same-order index join candidate for a decorrelated Apply.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
+// build round encountered a non-correlated IN subquery that is eligible for
+// the correlate-to-Apply alternative.
+func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
+	sc.AlternativeLogicalPlanPreferCorrelate = true
 }
 
 // CtxID returns the context id of the statement
