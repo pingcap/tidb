@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -281,12 +280,10 @@ type joinTypeWithExtMsg struct {
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
-	failpoint.Inject("enableCDCJoinReorder", func(val failpoint.Value) {
-		if val.(bool) {
-			p2, err := joinorder.Optimize(p)
-			failpoint.Return(p2, false, err)
-		}
-	})
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
+		p, err := joinorder.Optimize(p)
+		return p, false, err
+	}
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)

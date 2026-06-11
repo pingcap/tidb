@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,7 +66,6 @@ func TestCDCJoinReorder(t *testing.T) {
 	// Phase 2: Enable CD-C algorithm, then verify both the plan and the
 	// result correctness for every case.
 	tk.MustExec("set @@tidb_opt_enable_advanced_join_reorder = 1")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
 
 	for i, sql := range input {
 		testdata.OnRecord(func() {
