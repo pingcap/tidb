@@ -3197,18 +3197,15 @@ Trigger	Tables	To use triggers
 Create tablespace	Server Admin	To create/alter/drop tablespaces
 Update	Tables	To update existing rows
 Usage	Server Admin	No privileges - allow connect only
-ALTER MASKING POLICY	Server Admin	
-BACKUP_ADMIN	Server Admin		
+BACKUP_ADMIN	Server Admin	
 RESTORE_ADMIN	Server Admin	
 SYSTEM_USER	Server Admin	
 SYSTEM_VARIABLES_ADMIN	Server Admin	
 ROLE_ADMIN	Server Admin	
 CONNECTION_ADMIN	Server Admin	
-CREATE MASKING POLICY	Server Admin	
-PLACEMENT_ADMIN	Server Admin		
+PLACEMENT_ADMIN	Server Admin	
 DASHBOARD_CLIENT	Server Admin	
-DROP MASKING POLICY	Server Admin	
-RESTRICTED_TABLES_ADMIN	Server Admin		
+RESTRICTED_TABLES_ADMIN	Server Admin	
 RESTRICTED_STATUS_ADMIN	Server Admin	
 RESTRICTED_VARIABLES_ADMIN	Server Admin	
 RESTRICTED_USER_ADMIN	Server Admin	
@@ -3220,6 +3217,9 @@ RESOURCE_GROUP_ADMIN	Server Admin
 RESOURCE_GROUP_USER	Server Admin	
 TRAFFIC_CAPTURE_ADMIN	Server Admin	
 TRAFFIC_REPLAY_ADMIN	Server Admin	
+CREATE MASKING POLICY	Server Admin	
+ALTER MASKING POLICY	Server Admin	
+DROP MASKING POLICY	Server Admin	
 show table status;
 Name	Engine	Version	Row_format	Rows	Avg_row_length	Data_length	Max_data_length	Index_length	Data_free	Auto_increment	Create_time	Update_time	Check_time	Collation	Checksum	Create_options	Comment
 t	InnoDB	10	Compact	0	0	0	0	0	0	NULL	0	NULL	NULL	utf8mb4_bin			
