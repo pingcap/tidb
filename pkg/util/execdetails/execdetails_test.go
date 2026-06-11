@@ -45,6 +45,7 @@ func defaultRUV2WeightsForTest() RUV2Weights {
 		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
 		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
 		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		WriteKeys:               cfg.WriteKeys,
 		SessionParserTotal:      cfg.SessionParserTotal,
 		TxnCnt:                  cfg.TxnCnt,
 	}
@@ -382,6 +383,8 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	metrics.AddPlanDeriveStatsPaths(23)
 	metrics.AddResourceManagerReadCnt(29)
 	metrics.AddResourceManagerWriteCnt(31)
+	metrics.AddWriteKeys(3)
+	metrics.AddWriteSize(66)
 	metrics.AddSessionParserTotal(37)
 	metrics.AddTxnCnt(41)
 	metrics.AddTiKVKVEngineCacheMiss(43)
@@ -397,10 +400,12 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	tikvRU := float64(157258)
 	tiflashRU := float64(24680)
 	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
-	require.InEpsilon(t, 40.2906903357, tidbRU, 0.01)
+	require.InEpsilon(t, 42.2851783309, tidbRU, 0.01)
 	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
 	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
-	require.InEpsilon(t, 181978.2906903357, totalRU, 0.01)
+	require.InEpsilon(t, 181980.2851783309, totalRU, 0.01)
+	require.Equal(t, int64(3), metrics.WriteKeys())
+	require.Equal(t, int64(66), metrics.WriteSize())
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -435,6 +440,34 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 		})
 		require.LessOrEqual(t, allocs, 1.0)
 	})
+}
+
+func TestUpdateRUV2MetricsFromCommitDetails(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	weights := defaultRUV2WeightsForTest()
+	beforeRU := metrics.CalculateRUValues(weights)
+
+	UpdateRUV2MetricsFromCommitDetails(metrics, &util.CommitDetails{
+		WriteKeys: 3,
+		WriteSize: 66,
+	})
+
+	require.Equal(t, int64(3), metrics.WriteKeys())
+	require.Equal(t, int64(66), metrics.WriteSize())
+	require.InEpsilon(t, beforeRU+float64(3)*weights.WriteKeys*weights.RUScale, metrics.CalculateRUValues(weights), 0.01)
+
+	detail := FormatRUV2Metrics(metrics, weights, 0, 0)
+	require.Contains(t, detail, "write_keys:3")
+	require.Contains(t, detail, "write_size:66")
+
+	bypassed := NewRUV2Metrics()
+	bypassed.SetBypass(true)
+	UpdateRUV2MetricsFromCommitDetails(bypassed, &util.CommitDetails{
+		WriteKeys: 1,
+		WriteSize: 2,
+	})
+	require.Zero(t, bypassed.WriteKeys())
+	require.Zero(t, bypassed.WriteSize())
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {

@@ -61,7 +61,11 @@ go_test(
     ],
     embed = [":metrics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 5,
+=======
+    shard_count = 9,
+>>>>>>> 36ffa17e887 (executor: fix RU v2 executor accounting (#68578))
     deps = [
         "//pkg/parser/terror",
         "//pkg/statistics/handle/cache",
