@@ -4017,9 +4017,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 				ctx,
 				fullUpdateLookupIS,
 				res.BaseTableID,
-				res.FullUpdateLookupTemplateSelect,
-				res.FullUpdateLookupMVOffsets,
-				res.GroupKeyMVOffsets,
+				res.GroupKeyBaseCols,
 			); err != nil {
 				return nil, err
 			}
@@ -4131,69 +4129,19 @@ func validateMVFullUpdateSupportingIndex(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	baseTableID int64,
-	lookupSel *ast.SelectStmt,
-	outputMVOffsets []int,
-	groupKeyMVOffsets []int,
+	groupKeyBaseCols []string,
 ) error {
-	if lookupSel == nil {
-		return errors.New("mview full-update lookup template: lookup select is nil")
+	if len(groupKeyBaseCols) == 0 {
+		return errors.New("mview full-update lookup template: group key base columns are empty")
 	}
 	baseTable, ok := is.TableByID(ctx, baseTableID)
 	if !ok || baseTable == nil {
 		return errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
 	}
-	groupKeyBaseCols, err := extractMVFullUpdateGroupKeyBaseCols(lookupSel, outputMVOffsets, groupKeyMVOffsets)
-	if err != nil {
-		return err
-	}
 	if !mview.HasVisibleIndexWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols) {
 		return errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
 	}
 	return nil
-}
-
-func extractMVFullUpdateGroupKeyBaseCols(
-	lookupSel *ast.SelectStmt,
-	outputMVOffsets []int,
-	groupKeyMVOffsets []int,
-) ([]string, error) {
-	if lookupSel == nil || lookupSel.Fields == nil {
-		return nil, errors.New("mview full-update lookup template: lookup select fields are nil")
-	}
-	if len(lookupSel.Fields.Fields) != len(outputMVOffsets) {
-		return nil, errors.Errorf(
-			"mview full-update lookup template: unexpected field count: got %d, expected %d",
-			len(lookupSel.Fields.Fields),
-			len(outputMVOffsets),
-		)
-	}
-	groupKeySet := make(map[int]struct{}, len(groupKeyMVOffsets))
-	for _, mvOffset := range groupKeyMVOffsets {
-		groupKeySet[mvOffset] = struct{}{}
-	}
-	groupKeyBaseCols := make([]string, 0, len(groupKeyMVOffsets))
-	for i, mvOffset := range outputMVOffsets {
-		if _, ok := groupKeySet[mvOffset]; !ok {
-			continue
-		}
-		colExpr, ok := lookupSel.Fields.Fields[i].Expr.(*ast.ColumnNameExpr)
-		if !ok {
-			return nil, errors.Errorf(
-				"mview full-update lookup template: field %d for group key mv offset %d is not a column",
-				i,
-				mvOffset,
-			)
-		}
-		groupKeyBaseCols = append(groupKeyBaseCols, colExpr.Name.Name.L)
-	}
-	if len(groupKeyBaseCols) != len(groupKeyMVOffsets) {
-		return nil, errors.Errorf(
-			"mview full-update lookup template: extracted %d group key base columns, expected %d",
-			len(groupKeyBaseCols),
-			len(groupKeyMVOffsets),
-		)
-	}
-	return groupKeyBaseCols, nil
 }
 
 // extractMVFullUpdateLookupTemplate extracts executor-facing lookup metadata from the optimized

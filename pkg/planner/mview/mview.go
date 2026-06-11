@@ -115,6 +115,8 @@ type BuildResult struct {
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
 	GroupKeyMVOffsets []int
+	// GroupKeyBaseCols stores base-table column names for GroupKeyMVOffsets in the same order.
+	GroupKeyBaseCols []string
 
 	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
 	// Build returns error when MV definition does not include COUNT(*).
@@ -645,6 +647,10 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
+	groupKeyBaseCols, err := groupKeyBaseColNamesAtOffsets(local.MVSelect, local.groupKeyOffs)
+	if err != nil {
+		return nil, err
+	}
 
 	res := &BuildResult{
 		MergeSourceSelect:              mergeSel,
@@ -659,6 +665,7 @@ func buildFromLocal(
 		DeltaColumnCount:               len(deltaColumns),
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
+		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
 		AggInfos:                       outAggInfos,
 	}
@@ -1903,6 +1910,18 @@ func groupKeyBaseColExprAtOffset(mvSel *ast.SelectStmt, mvOffset int) (*ast.Colu
 	}
 	// Return a stripped (unqualified) column name expression.
 	return colExpr(col.Name.Name.O), nil
+}
+
+func groupKeyBaseColNamesAtOffsets(mvSel *ast.SelectStmt, groupKeyOffsets []int) ([]string, error) {
+	groupKeyBaseCols := make([]string, 0, len(groupKeyOffsets))
+	for _, mvOffset := range groupKeyOffsets {
+		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
+		if err != nil {
+			return nil, err
+		}
+		groupKeyBaseCols = append(groupKeyBaseCols, baseColExpr.Name.Name.L)
+	}
+	return groupKeyBaseCols, nil
 }
 
 func dbNameByTableID(is infoschema.InfoSchema, tableID int64) (pmodel.CIStr, error) {
