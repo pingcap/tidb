@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	lightningtikv "github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -54,6 +55,9 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	sd "github.com/tikv/pd/client/servicediscovery"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -92,6 +96,24 @@ func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 type mockStorageWithPDClient struct {
 	mockHelperStorage
 	pdClient pd.Client
+}
+
+type mockPlacementInfoSchema struct {
+	infoschema.InfoSchema
+	bundles map[int64]*placement.Bundle
+}
+
+func (m mockPlacementInfoSchema) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
+	bundle, ok := m.bundles[id]
+	return bundle, ok
+}
+
+func (m mockPlacementInfoSchema) AllPlacementBundles() []*placement.Bundle {
+	bundles := make([]*placement.Bundle, 0, len(m.bundles))
+	for _, bundle := range m.bundles {
+		bundles = append(bundles, bundle)
+	}
+	return bundles
 }
 
 func (s mockStorageWithPDClient) GetPDClient() pd.Client {
@@ -136,7 +158,8 @@ type blockSamplePredictionKV struct {
 }
 
 type blockSamplePredictionSnapshot struct {
-	kvs []blockSamplePredictionKV
+	kvs            []blockSamplePredictionKV
+	iteratorConfig blockSamplePredictionIteratorConfig
 }
 
 func (s blockSamplePredictionSnapshot) Get(_ context.Context, key kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
@@ -153,7 +176,12 @@ func (s blockSamplePredictionSnapshot) Iter(key kv.Key, upperBound kv.Key) (kv.I
 	idx, _ := slices.BinarySearchFunc(s.kvs, key, func(item blockSamplePredictionKV, target kv.Key) int {
 		return bytes.Compare(item.key, target)
 	})
-	return &blockSamplePredictionIterator{kvs: s.kvs, idx: idx, upperBound: upperBound}, nil
+	return &blockSamplePredictionIterator{
+		kvs:            s.kvs,
+		idx:            idx,
+		upperBound:     upperBound,
+		iteratorConfig: s.iteratorConfig,
+	}, nil
 }
 
 func (s blockSamplePredictionSnapshot) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
@@ -178,12 +206,21 @@ func (s blockSamplePredictionSnapshot) BatchGet(ctx context.Context, keys []kv.K
 func (s blockSamplePredictionSnapshot) SetOption(opt int, val any) {}
 
 type blockSamplePredictionIterator struct {
-	kvs        []blockSamplePredictionKV
-	idx        int
-	upperBound kv.Key
+	kvs            []blockSamplePredictionKV
+	idx            int
+	upperBound     kv.Key
+	iteratorConfig blockSamplePredictionIteratorConfig
+}
+
+type blockSamplePredictionIteratorConfig struct {
+	onValid func()
+	onNext  func()
 }
 
 func (it *blockSamplePredictionIterator) Valid() bool {
+	if it.iteratorConfig.onValid != nil {
+		it.iteratorConfig.onValid()
+	}
 	if it.idx >= len(it.kvs) {
 		return false
 	}
@@ -205,6 +242,9 @@ func (it *blockSamplePredictionIterator) Value() []byte {
 }
 
 func (it *blockSamplePredictionIterator) Next() error {
+	if it.iteratorConfig.onNext != nil {
+		it.iteratorConfig.onNext()
+	}
 	it.idx++
 	return nil
 }
@@ -328,6 +368,57 @@ func (c mockServiceClient) NeedRetry(*pdpb.Error, error) bool {
 	return false
 }
 
+type retryAwareServiceClient struct {
+	conn        *grpc.ClientConn
+	isLeader    bool
+	forwardHost string
+}
+
+func (c retryAwareServiceClient) GetURL() string { return c.forwardHost }
+func (c retryAwareServiceClient) GetClientConn() *grpc.ClientConn {
+	return c.conn
+}
+func (c retryAwareServiceClient) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
+	if c.isLeader || c.forwardHost == "" {
+		return ctx
+	}
+	return metadata.NewOutgoingContext(ctx, metadata.Pairs("pd-forwarded-host", c.forwardHost))
+}
+func (c retryAwareServiceClient) IsConnectedToLeader() bool { return c.isLeader }
+func (c retryAwareServiceClient) Available() bool           { return true }
+func (c retryAwareServiceClient) NeedRetry(pdErr *pdpb.Error, err error) bool {
+	if c.isLeader {
+		return false
+	}
+	return err != nil || pdErr != nil
+}
+
+type sequencedServiceDiscovery struct {
+	mockServiceDiscovery
+	serviceClients []sd.ServiceClient
+	idx            int
+}
+
+func (d *sequencedServiceDiscovery) GetServiceClient() sd.ServiceClient {
+	if len(d.serviceClients) == 0 {
+		return nil
+	}
+	if d.idx >= len(d.serviceClients) {
+		return d.serviceClients[len(d.serviceClients)-1]
+	}
+	client := d.serviceClients[d.idx]
+	d.idx++
+	return client
+}
+
+func (d *sequencedServiceDiscovery) GetServiceClientByKind(sd.APIKind) sd.ServiceClient {
+	return d.GetServiceClient()
+}
+
+func (d *sequencedServiceDiscovery) GetAllServiceClients() []sd.ServiceClient {
+	return append([]sd.ServiceClient(nil), d.serviceClients...)
+}
+
 type mockPDServer struct {
 	pdpb.UnimplementedPDServer
 	store *metapb.Store
@@ -374,6 +465,38 @@ func newMockPDStoreStatsClient(t *testing.T, store *metapb.Store, stats *pdpb.St
 	}
 }
 
+type retryMockPDServer struct {
+	pdpb.UnimplementedPDServer
+	store *metapb.Store
+	stats *pdpb.StoreStats
+
+	mu             sync.Mutex
+	callCount      int
+	forwardedHosts []string
+}
+
+func (s *retryMockPDServer) GetStore(ctx context.Context, _ *pdpb.GetStoreRequest) (*pdpb.GetStoreResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	host := ""
+	if hosts := md.Get("pd-forwarded-host"); len(hosts) > 0 {
+		host = hosts[0]
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forwardedHosts = append(s.forwardedHosts, host)
+	s.callCount++
+	if s.callCount == 1 {
+		return nil, status.Error(codes.Unavailable, "retry on follower")
+	}
+
+	return &pdpb.GetStoreResponse{
+		Header: &pdpb.ResponseHeader{},
+		Store:  s.store,
+		Stats:  s.stats,
+	}, nil
+}
+
 func expectedRegionRange(tableID int64) ([]byte, []byte) {
 	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(tableID)
 	return mockCodec{}.EncodeRegionRange(tableStart, tableEnd)
@@ -385,6 +508,20 @@ func tablePDRegionForTest(t *testing.T, store helper.Storage, physicalID int64, 
 	start, end := store.GetCodec().EncodeRegionRange(tableStart, tableEnd)
 	return pdhttp.RegionInfo{
 		ID:              physicalID,
+		StartKey:        hex.EncodeToString(start),
+		EndKey:          hex.EncodeToString(end),
+		ApproximateKeys: approximateKeys,
+	}
+}
+
+func tablePDRegionRangeForTest(t *testing.T, store helper.Storage, physicalID int64, startHandle, endHandle int64, approximateKeys int64) pdhttp.RegionInfo {
+	t.Helper()
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
+	startKey := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(startHandle))
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(endHandle))
+	start, end := store.GetCodec().EncodeRegionRange(startKey, endKey)
+	return pdhttp.RegionInfo{
+		ID:              startHandle,
 		StartKey:        hex.EncodeToString(start),
 		EndKey:          hex.EncodeToString(end),
 		ApproximateKeys: approximateKeys,
@@ -561,6 +698,7 @@ func TestPredictTiKVIndexBytesBlockSample(t *testing.T) {
 	physicalTbl := blockSamplePredictionTableForTest()
 	idxInfo := physicalTbl.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
+	indexes := physicalTbl.Indices()
 
 	rowKVs := make([]blockSamplePredictionKV, 0, 16)
 	for i := 1; i <= 16; i++ {
@@ -570,69 +708,263 @@ func TestPredictTiKVIndexBytesBlockSample(t *testing.T) {
 		return bytes.Compare(a.key, b.key)
 	})
 
-	pdCli := &mockPDHTTPClient{
-		regionInfos: []*pdhttp.RegionsInfo{
-			{
-				Count: 1,
-				Regions: []pdhttp.RegionInfo{
-					tablePDRegionForTest(t, mockHelperStorage{codec: mockCodec{}}, physicalTbl.GetPhysicalID(), 16),
+	newReorgInfo := func() *reorgInfo {
+		return &reorgInfo{
+			Job: &model.Job{
+				ID:        9527,
+				ReorgMeta: &model.DDLReorgMeta{},
+			},
+			elements: []*meta.Element{
+				{ID: idxInfo.ID, TypeKey: meta.IndexElementKey},
+			},
+		}
+	}
+
+	t.Run("single-region happy path", func(t *testing.T) {
+		pdCli := &mockPDHTTPClient{
+			regionInfos: []*pdhttp.RegionsInfo{
+				{
+					Count: 1,
+					Regions: []pdhttp.RegionInfo{
+						tablePDRegionForTest(t, mockHelperStorage{codec: mockCodec{}}, physicalTbl.GetPhysicalID(), 16),
+					},
 				},
 			},
-		},
-	}
-	workerStore := blockSamplePredictionTestStore{
-		codec:          mockCodec{},
-		pdCli:          pdCli,
-		snapshot:       blockSamplePredictionSnapshot{kvs: rowKVs},
-		currentVersion: kv.Version{Ver: 404411537129996288},
-	}
-	w := &worker{
-		ddlCtx: &ddlCtx{
-			store: workerStore,
-		},
-	}
-	sctx := mock.NewContext()
+		}
+		workerStore := blockSamplePredictionTestStore{
+			codec:          mockCodec{},
+			pdCli:          pdCli,
+			snapshot:       blockSamplePredictionSnapshot{kvs: rowKVs},
+			currentVersion: kv.Version{Ver: 404411537129996288},
+		}
+		w := &worker{
+			ddlCtx: &ddlCtx{
+				store: workerStore,
+			},
+		}
+		sctx := mock.NewContext()
 
-	result, err := w.predictTiKVIndexBytesBlockSample(context.Background(), sctx, physicalTbl, &reorgInfo{
-		Job: &model.Job{
-			ID:        9527,
-			ReorgMeta: &model.DDLReorgMeta{},
-		},
-		elements: []*meta.Element{
-			{ID: idxInfo.ID, TypeKey: meta.IndexElementKey},
-		},
+		result, err := w.predictTiKVIndexBytesBlockSample(context.Background(), sctx, physicalTbl, newReorgInfo())
+		require.NoError(t, err)
+		require.False(t, result.UseStats)
+		require.Equal(t, 1, result.SampledRegionCount)
+		require.Equal(t, 16, result.SampledRowCount)
+		require.Zero(t, result.ReadErrorCount)
+		require.Positive(t, result.PredictedBytes)
+		require.Positive(t, result.MVCCOverheadBytes)
+		require.GreaterOrEqual(t, result.EncodedKeySharedPrefixAvgBytes, 0.0)
+		require.GreaterOrEqual(t, result.RawKeySharedPrefixAvgBytes, 0.0)
+		require.Positive(t, result.RawKeyLengthAvgBytes)
+		require.Equal(t, 1, pdCli.callCount)
 	})
-	require.NoError(t, err)
-	require.False(t, result.UseStats)
-	require.Equal(t, 1, result.SampledRegionCount)
-	require.Equal(t, 16, result.SampledRowCount)
-	require.Zero(t, result.ReadErrorCount)
-	require.Positive(t, result.PredictedBytes)
-	require.Positive(t, result.MVCCOverheadBytes)
-	require.GreaterOrEqual(t, result.EncodedKeySharedPrefixAvgBytes, 0.0)
-	require.GreaterOrEqual(t, result.RawKeySharedPrefixAvgBytes, 0.0)
-	require.Positive(t, result.RawKeyLengthAvgBytes)
-	require.Equal(t, 1, pdCli.callCount)
+
+	t.Run("region listing stays within first page window", func(t *testing.T) {
+		firstPage := make([]pdhttp.RegionInfo, 0, samplePredictionRegionListWindow)
+		for i := 0; i < samplePredictionRegionListWindow; i++ {
+			firstPage = append(firstPage, tablePDRegionRangeForTest(
+				t,
+				mockHelperStorage{codec: mockCodec{}},
+				physicalTbl.GetPhysicalID(),
+				int64(i*16),
+				int64((i+1)*16),
+				16,
+			))
+		}
+		secondPage := make([]pdhttp.RegionInfo, 0, 16)
+		for i := 0; i < 16; i++ {
+			offset := samplePredictionRegionListWindow + i
+			secondPage = append(secondPage, tablePDRegionRangeForTest(
+				t,
+				mockHelperStorage{codec: mockCodec{}},
+				physicalTbl.GetPhysicalID(),
+				int64(offset*16),
+				int64((offset+1)*16),
+				16,
+			))
+		}
+
+		pdCli := &mockPDHTTPClient{
+			regionInfos: []*pdhttp.RegionsInfo{
+				{Count: samplePredictionRegionListWindow, Regions: firstPage},
+				{Count: int64(len(secondPage)), Regions: secondPage},
+			},
+		}
+		w := &worker{
+			ddlCtx: &ddlCtx{
+				store: blockSamplePredictionTestStore{
+					codec: mockCodec{},
+					pdCli: pdCli,
+				},
+			},
+		}
+
+		tasks, readErrors, err := w.buildSamplePredictionRegionTasks(
+			context.Background(),
+			9527,
+			"block sample prediction",
+			[]samplePredictionPhysicalTable{{
+				physicalTbl: physicalTbl,
+				indexes:     indexes,
+				rowCount:    4096,
+			}},
+			12345,
+		)
+		require.NoError(t, err)
+		require.Zero(t, readErrors)
+		require.Len(t, tasks, samplePredictionMaxRegionCount)
+		require.Equal(t, 1, pdCli.callCount)
+		require.Equal(t, samplePredictionRegionListWindow, pdCli.firstLimit)
+	})
+
+	t.Run("timeout before region loop returns without read errors", func(t *testing.T) {
+		scanCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		w := &worker{}
+		_, _, _, _, _, sampledRegions, sampledRows, readErrors, err := w.estimateBlockSampleBytesPerRow(
+			scanCtx,
+			NewReorgContext(),
+			mock.NewContext(),
+			[]samplePredictionRegionTask{{
+				samplePredictionPhysicalTable: samplePredictionPhysicalTable{
+					physicalTbl: physicalTbl,
+					indexes:     indexes,
+					rowCount:    1,
+				},
+				region: samplePredictionRegion{
+					StartKey:        kv.Key("a"),
+					EndKey:          kv.Key("b"),
+					ApproximateKeys: 1,
+				},
+			}},
+			404411537129996288,
+			12345,
+		)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, sampledRegions)
+		require.Zero(t, sampledRows)
+		require.Zero(t, readErrors)
+	})
+
+	t.Run("timeout returns immediately without counting read errors", func(t *testing.T) {
+		pdCli := &mockPDHTTPClient{
+			regionInfos: []*pdhttp.RegionsInfo{
+				{
+					Count: 1,
+					Regions: []pdhttp.RegionInfo{
+						tablePDRegionForTest(t, mockHelperStorage{codec: mockCodec{}}, physicalTbl.GetPhysicalID(), 16),
+					},
+				},
+			},
+		}
+
+		scanCtx, cancel := context.WithCancel(context.Background())
+		cancelAfterFirstAdvance := sync.Once{}
+		workerStore := blockSamplePredictionTestStore{
+			codec: mockCodec{},
+			pdCli: pdCli,
+			snapshot: blockSamplePredictionSnapshot{
+				kvs: rowKVs,
+				iteratorConfig: blockSamplePredictionIteratorConfig{
+					onNext: func() {
+						cancelAfterFirstAdvance.Do(cancel)
+					},
+				},
+			},
+			currentVersion: kv.Version{Ver: 404411537129996288},
+		}
+		w := &worker{
+			ddlCtx: &ddlCtx{
+				store: workerStore,
+			},
+		}
+		sctx := mock.NewContext()
+
+		result, err := w.predictTiKVIndexBytesBlockSample(scanCtx, sctx, physicalTbl, newReorgInfo())
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, result.ReadErrorCount)
+		require.Zero(t, result.SampledRegionCount)
+		require.Zero(t, result.SampledRowCount)
+	})
 }
 
 func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
-	store := &metapb.Store{Id: 1}
-	stats := &pdpb.StoreStats{
-		StoreId:   1,
-		Capacity:  1024,
-		Available: 960,
-		UsedSize:  321,
-	}
-	pdCli := newMockPDStoreStatsClient(t, store, stats, nil)
+	t.Run("uses raw used size", func(t *testing.T) {
+		store := &metapb.Store{Id: 1}
+		stats := &pdpb.StoreStats{
+			StoreId:   1,
+			Capacity:  1024,
+			Available: 960,
+			UsedSize:  321,
+		}
+		pdCli := newMockPDStoreStatsClient(t, store, stats, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), mockPDRPCTimeout)
-	defer cancel()
-	got, err := collectTiKVStoreCapacityFromStoreStats(ctx, pdCli, store)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, got.StoreID)
-	require.EqualValues(t, 1024, got.TotalBytes)
-	require.EqualValues(t, 960, got.AvailableBytes)
-	require.EqualValues(t, 321, got.UsedBytes)
+		ctx, cancel := context.WithTimeout(context.Background(), mockPDRPCTimeout)
+		defer cancel()
+		got, err := collectTiKVStoreCapacityFromStoreStats(ctx, pdCli, store)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, got.StoreID)
+		require.EqualValues(t, 1024, got.TotalBytes)
+		require.EqualValues(t, 960, got.AvailableBytes)
+		require.EqualValues(t, 321, got.UsedBytes)
+	})
+
+	t.Run("retry rebuilds request context", func(t *testing.T) {
+		store := &metapb.Store{Id: 1}
+		stats := &pdpb.StoreStats{
+			StoreId:   1,
+			Capacity:  1024,
+			Available: 960,
+			UsedSize:  321,
+		}
+
+		listener := bufconn.Listen(1024 * 1024)
+		server := grpc.NewServer()
+		pdServer := &retryMockPDServer{store: store, stats: stats}
+		pdpb.RegisterPDServer(server, pdServer)
+		go func() {
+			_ = server.Serve(listener)
+		}()
+		t.Cleanup(func() {
+			server.Stop()
+		})
+
+		dialCtx, cancelDial := context.WithTimeout(context.Background(), mockPDRPCTimeout)
+		defer cancelDial()
+		conn, err := grpc.DialContext(dialCtx, "bufnet",
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}),
+			grpc.WithInsecure(),
+			grpc.WithBlock())
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, conn.Close())
+		})
+
+		serviceDiscovery := &sequencedServiceDiscovery{
+			serviceClients: []sd.ServiceClient{
+				retryAwareServiceClient{conn: conn, isLeader: false, forwardHost: "follower-forward"},
+				retryAwareServiceClient{conn: conn, isLeader: true},
+			},
+		}
+		pdCli := mockPDStoreStatsClient{
+			clusterID:        1,
+			serviceDiscovery: serviceDiscovery,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), mockPDRPCTimeout)
+		defer cancel()
+		got, err := collectTiKVStoreCapacityFromStoreStats(ctx, pdCli, store)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, got.StoreID)
+		pdServer.mu.Lock()
+		forwardedHosts := append([]string(nil), pdServer.forwardedHosts...)
+		callCount := pdServer.callCount
+		pdServer.mu.Unlock()
+		require.Equal(t, 2, callCount)
+		require.Equal(t, []string{"follower-forward", ""}, forwardedHosts)
+	})
 }
 
 func TestObservedTiKVUsageTaskTiming(t *testing.T) {
@@ -849,9 +1181,34 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.EqualValues(t, 2, tiKVReplicaCountFromBundle(partitionedBundle, 100))
 	})
 
-	t.Run("representative replica physical ID uses global index before first partition", func(t *testing.T) {
+	t.Run("partitioned local index replica scaling uses row-count weights", func(t *testing.T) {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		intType.AddFlag(mysql.NotNullFlag)
+		buildPartitionBundle := func(physicalID int64, count int) *placement.Bundle {
+			startKeyHex, endKeyHex := placementBundleRuleKeyRangeHex(physicalID)
+			return &placement.Bundle{
+				Rules: []*pdhttp.Rule{
+					{Role: pdhttp.Voter, Count: count, StartKeyHex: startKeyHex, EndKeyHex: endKeyHex},
+				},
+			}
+		}
 		tblInfo := &model.TableInfo{
-			ID: 100,
+			ID:    100,
+			Name:  ast.NewCIStr("tp"),
+			State: model.StatePublic,
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Name: ast.NewCIStr("a"), Offset: 0, State: model.StatePublic, FieldType: *intType},
+			},
+			Indices: []*model.IndexInfo{
+				{
+					ID:    2,
+					Name:  ast.NewCIStr("idx_a"),
+					State: model.StatePublic,
+					Columns: []*model.IndexColumn{
+						{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength},
+					},
+				},
+			},
 			Partition: &model.PartitionInfo{
 				Enable: true,
 				Definitions: []model.PartitionDefinition{
@@ -860,13 +1217,99 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 				},
 			},
 		}
-		localIdx := &model.IndexInfo{ID: 1}
-		globalIdx := &model.IndexInfo{ID: 2, Global: true}
+		partitionedTbl := tables.MockTableFromMeta(tblInfo).(table.PartitionedTable)
+		firstPartition := partitionedTbl.GetPartition(101)
+		secondPartition := partitionedTbl.GetPartition(102)
+		sctx := mock.NewContext()
+		sctx.SetInfoSchema(mockPlacementInfoSchema{
+			InfoSchema: infoschema.MockInfoSchema([]*model.TableInfo{tblInfo}),
+			bundles: map[int64]*placement.Bundle{
+				101: buildPartitionBundle(101, 3),
+				102: buildPartitionBundle(102, 10),
+			},
+		})
+		w := &worker{}
 
-		require.EqualValues(t, 101, representativeAddIndexTiKVReplicaPhysicalID(tblInfo, []*model.IndexInfo{localIdx}))
-		require.EqualValues(t, 100, representativeAddIndexTiKVReplicaPhysicalID(tblInfo, []*model.IndexInfo{globalIdx}))
-		require.EqualValues(t, 100, representativeAddIndexTiKVReplicaPhysicalID(tblInfo, []*model.IndexInfo{localIdx, globalIdx}))
-		require.EqualValues(t, 100, representativeAddIndexTiKVReplicaPhysicalID(&model.TableInfo{ID: 100}, []*model.IndexInfo{localIdx}))
+		replicaCount, source, physicalID, weightedReplicaRows := w.resolveAddIndexTiKVReplicaScaling(
+			context.Background(),
+			sctx,
+			partitionedTbl,
+			[]samplePredictionPhysicalTable{
+				{physicalTbl: firstPartition, indexes: firstPartition.Indices(), rowCount: 100},
+				{physicalTbl: secondPartition, indexes: secondPartition.Indices(), rowCount: 900},
+			},
+		)
+		require.EqualValues(t, 10, replicaCount)
+		require.Equal(t, tikvReplicaCountSourceInfoSchemaPlacementBundle, source)
+		require.Zero(t, physicalID)
+		require.EqualValues(t, 9300, weightedReplicaRows)
+		require.EqualValues(t, 9300, scalePredictedBytesByWeightedReplicaRows(1000, 1000, weightedReplicaRows))
+	})
+
+	t.Run("partitioned global index keeps table-level replica scaling", func(t *testing.T) {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		intType.AddFlag(mysql.NotNullFlag)
+		buildBundle := func(physicalID int64, count int) *placement.Bundle {
+			startKeyHex, endKeyHex := placementBundleRuleKeyRangeHex(physicalID)
+			return &placement.Bundle{
+				Rules: []*pdhttp.Rule{
+					{Role: pdhttp.Voter, Count: count, StartKeyHex: startKeyHex, EndKeyHex: endKeyHex},
+				},
+			}
+		}
+		tblInfo := &model.TableInfo{
+			ID:    200,
+			Name:  ast.NewCIStr("tp_global"),
+			State: model.StatePublic,
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Name: ast.NewCIStr("a"), Offset: 0, State: model.StatePublic, FieldType: *intType},
+			},
+			Indices: []*model.IndexInfo{
+				{
+					ID:     2,
+					Name:   ast.NewCIStr("idx_a_global"),
+					State:  model.StatePublic,
+					Global: true,
+					Columns: []*model.IndexColumn{
+						{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength},
+					},
+				},
+			},
+			Partition: &model.PartitionInfo{
+				Enable: true,
+				Definitions: []model.PartitionDefinition{
+					{ID: 201},
+					{ID: 202},
+				},
+			},
+		}
+		partitionedTbl := tables.MockTableFromMeta(tblInfo).(table.PartitionedTable)
+		firstPartition := partitionedTbl.GetPartition(201)
+		secondPartition := partitionedTbl.GetPartition(202)
+		sctx := mock.NewContext()
+		sctx.SetInfoSchema(mockPlacementInfoSchema{
+			InfoSchema: infoschema.MockInfoSchema([]*model.TableInfo{tblInfo}),
+			bundles: map[int64]*placement.Bundle{
+				200: buildBundle(200, 2),
+				201: buildBundle(201, 5),
+				202: buildBundle(202, 8),
+			},
+		})
+		w := &worker{}
+
+		replicaCount, source, physicalID, weightedReplicaRows := w.resolveAddIndexTiKVReplicaScaling(
+			context.Background(),
+			sctx,
+			partitionedTbl,
+			[]samplePredictionPhysicalTable{
+				{physicalTbl: firstPartition, indexes: firstPartition.Indices(), rowCount: 100},
+				{physicalTbl: secondPartition, indexes: secondPartition.Indices(), rowCount: 900},
+			},
+		)
+		require.EqualValues(t, 2, replicaCount)
+		require.Equal(t, tikvReplicaCountSourceInfoSchemaPlacementBundle, source)
+		require.EqualValues(t, 200, physicalID)
+		require.EqualValues(t, 2000, weightedReplicaRows)
 	})
 
 	t.Run("PD max replicas parsing and collection", func(t *testing.T) {
@@ -895,6 +1338,9 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 		require.EqualValues(t, 300, scalePredictedBytesByReplicaCount(100, 3))
 		require.EqualValues(t, 100, scalePredictedBytesByReplicaCount(100, 1))
 		require.Equal(t, uint64(math.MaxUint64), scalePredictedBytesByReplicaCount(math.MaxUint64, 2))
+		require.EqualValues(t, 320, scalePredictedBytesByWeightedReplicaRows(100, 10, 32))
+		require.EqualValues(t, 0, scalePredictedBytesByWeightedReplicaRows(100, 0, 32))
+		require.Equal(t, uint64(math.MaxUint64), scalePredictedBytesByWeightedReplicaRows(math.MaxUint64, 1, 2))
 	})
 
 	t.Run("virtual column filler populates generated column values", func(t *testing.T) {
