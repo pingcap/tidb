@@ -69,3 +69,50 @@ func TestNextIOAccAddInputCountsRowsWithZeroCols(t *testing.T) {
 		require.True(t, needNextIOAcc(false, parentAcc, 1))
 	})
 }
+
+func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
+	cases := map[string]ruv2ExecutorMetric{
+		"*aggregate.HashAggExec":        {level: 2, label: "HashAggExec", useCells: false},
+		"*aggregate.StreamAggExec":      {level: 3, label: "StreamAggExec", useCells: false},
+		"*executor.BatchPointGetExec":   {level: 1, label: "BatchPointGetExec", useCells: true},
+		"*executor.ExpandExec":          {level: 2, label: "ExpandExec", useCells: false},
+		"*executor.IndexLookUpExecutor": {level: 2, label: "IndexLookUpExecutor", useCells: false},
+		"*executor.IndexReaderExecutor": {level: 2, label: "IndexReaderExecutor", useCells: false},
+		"*executor.LimitExec":           {level: 1, label: "LimitExec", useCells: true},
+		"*executor.MemTableReaderExec":  {level: 2, label: "MemTableReaderExec", useCells: false},
+		"*executor.PointGetExecutor":    {level: 1, label: "PointGetExecutor", useCells: true},
+		"*executor.ProjectionExec":      {level: 2, label: "ProjectionExec", useCells: true},
+		"*executor.SelectLockExec":      {level: 2, label: "SelectLockExec", useCells: true},
+		"*executor.SelectionExec":       {level: 2, label: "SelectionExec", useCells: false},
+		"*executor.TableDualExec":       {level: 2, label: "TableDualExec", useCells: false},
+		"*executor.TableReaderExecutor": {level: 2, label: "TableReaderExecutor", useCells: false},
+		"*executor.UnionScanExec":       {level: 2, label: "UnionScanExec", useCells: false},
+		"*join.HashJoinV1Exec":          {level: 2, label: "HashJoinV1Exec", useCells: false},
+		"*join.HashJoinV2Exec":          {level: 2, label: "HashJoinV2Exec", useCells: false},
+		"*join.IndexLookUpJoin":         {level: 2, label: "IndexLookUpJoin", useCells: true},
+		"*join.IndexLookUpMergeJoin":    {level: 2, label: "IndexLookUpMergeJoin", useCells: true},
+		"*join.IndexNestedLoopHashJoin": {level: 2, label: "IndexNestedLoopHashJoin", useCells: true},
+		"*join.MergeJoinExec":           {level: 2, label: "MergeJoinExec", useCells: false},
+		"*sortexec.SortExec":            {level: 3, label: "SortExec", useCells: true},
+		"*sortexec.TopNExec":            {level: 2, label: "TopNExec", useCells: true},
+		"*windows.OrderedWindowExec":    {level: 2, label: "WindowExec", useCells: false},
+		"*windows.PipelinedWindowExec":  {level: 2, label: "WindowExec", useCells: false},
+		"*windows.WindowExec":           {level: 2, label: "WindowExec", useCells: false},
+	}
+
+	for typ, expected := range cases {
+		actual, ok := ruv2ExecutorMetricByType(typ)
+		require.True(t, ok, typ)
+		require.Equal(t, expected, actual)
+	}
+
+	for _, staleType := range []string{
+		"*executor.HashJoinExec",
+		"*executor.IndexLookUpJoin",
+		"*executor.SortExec",
+		"*executor.WindowExec",
+	} {
+		_, ok := ruv2ExecutorMetricByType(staleType)
+		require.False(t, ok, staleType)
+	}
+}
