@@ -101,22 +101,22 @@ func TestJoinWithNullEQ(t *testing.T) {
 	tk.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
 	tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
 	tk.MustQuery("explain select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
-		"HashJoin_17 6393.60 root  semi join, equal:[nulleq(test.t1.id, test.t1.id)]",
-		"├─HashJoin_28(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"│ ├─TableReader_35(Build) 9990.00 root  data:Selection_34",
-		"│ │ └─Selection_34 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"│ │   └─TableFullScan_33 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"│ └─TableReader_32(Probe) 9990.00 root  data:Selection_31",
-		"│   └─Selection_31 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"│     └─TableFullScan_30 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─HashAgg_18(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
-		"  └─HashJoin_19 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"    ├─TableReader_26(Build) 9990.00 root  data:Selection_25",
-		"    │ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"    │   └─TableFullScan_24 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"    └─TableReader_23(Probe) 9990.00 root  data:Selection_22",
-		"      └─Selection_22 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"        └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		"HashJoin_15 6393.60 root  semi join, equal:[nulleq(test.t1.id, test.t1.id)]",
+		"├─HashJoin_26(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"│ ├─TableReader_33(Build) 9990.00 root  data:Selection_32",
+		"│ │ └─Selection_32 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"│ │   └─TableFullScan_31 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"│ └─TableReader_30(Probe) 9990.00 root  data:Selection_29",
+		"│   └─Selection_29 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"│     └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─HashAgg_16(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
+		"  └─HashJoin_17 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"    ├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"    │ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
+		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 	// https://github.com/pingcap/tidb/issues/60322
 	tk.MustExec("CREATE TABLE tt0(c0 BOOL );")
@@ -127,16 +127,16 @@ func TestJoinWithNullEQ(t *testing.T) {
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
-		"HashJoin_14 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
-		"├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
-		"│ └─TableFullScan_25 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-		"└─HashJoin_18(Probe) 12500.00 root  left outer join, equal:[eq(Column#8, Column#9)]",
-		"  ├─Projection_19(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
-		"  │ └─TableReader_21 10000.00 root  data:TableFullScan_20",
-		"  │   └─TableFullScan_20 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
-		"  └─Projection_22(Probe) 10000.00 root  0->Column#5, 0->Column#9",
-		"    └─TableReader_24 10000.00 root  data:TableFullScan_23",
-		"      └─TableFullScan_23 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
+		"HashJoin_13 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
+		"├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
+		"│ └─TableFullScan_24 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
+		"└─HashJoin_17(Probe) 12500.00 root  left outer join, equal:[eq(Column#8, Column#9)]",
+		"  ├─Projection_18(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
+		"  │ └─TableReader_20 10000.00 root  data:TableFullScan_19",
+		"  │   └─TableFullScan_19 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
+		"  └─Projection_21(Probe) 10000.00 root  0->Column#5, 0->Column#9",
+		"    └─TableReader_23 10000.00 root  data:TableFullScan_22",
+		"      └─TableFullScan_22 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
