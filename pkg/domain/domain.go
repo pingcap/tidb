@@ -1585,6 +1585,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
+	adv.SetLogBackupFlushIntervalGetter(streamhelper.NewTiDBLogBackupFlushIntervalGetter(pdClient))
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
 	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)

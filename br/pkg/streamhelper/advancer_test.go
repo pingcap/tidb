@@ -587,6 +587,7 @@ func TestResolveLock(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
 	minCheckpoint := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
+	c.SetCurrentTS(oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(10 * time.Second)))
 	env := newTestEnv(c, t)
 
 	lockRegion := c.findRegionByKey([]byte("01"))
@@ -683,6 +684,83 @@ func TestResolveLock(t *testing.T) {
 		8*time.Second, 50*time.Microsecond)
 }
 
+func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx := context.Background()
+	checkpointTime := time.Now().Add(-30 * time.Second)
+	minCheckpoint := oracle.GoTimeToTS(checkpointTime)
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second)))
+	env := newTestEnv(c, t)
+
+	lockRegion := c.FindRegionByKey([]byte("01"))
+	allLocks := []*txnlock.Lock{
+		{
+			Key:   []byte("011"),
+			TxnID: oracle.GoTimeToTS(checkpointTime.Add(time.Millisecond)),
+		},
+	}
+	c.LockRegion(lockRegion, allLocks)
+
+	scanLockCount := atomic.NewInt32(0)
+	firstMaxVersion := atomic.NewUint64(0)
+	secondMaxVersion := atomic.NewUint64(0)
+	thirdMaxVersion := atomic.NewUint64(0)
+	env.scanLocks = func(_ []byte, _ []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+		switch scanLockCount.Inc() {
+		case 1:
+			firstMaxVersion.Store(maxVersion)
+			return nil, nil, errors.New("unexpected scanlock error: error:<locked:<primary_lock:\"011\" lock_version:1>>")
+		case 2:
+			secondMaxVersion.Store(maxVersion)
+			return nil, nil, errors.New("unexpected scanlock error: error:<locked:<primary_lock:\"011\" lock_version:1>>")
+		case 3:
+			thirdMaxVersion.Store(maxVersion)
+			return allLocks, &tikv.KeyLocation{Region: tikv.NewRegionVerID(lockRegion.ID, 0, 0)}, nil
+		default:
+			return nil, nil, errors.Errorf("unexpected scan lock retry count %d", scanLockCount.Load())
+		}
+	}
+
+	resolveLockCount := atomic.NewInt32(0)
+	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+		resolveLockCount.Inc()
+		require.ElementsMatch(t, locks, allLocks)
+		return loc, nil
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
+	adv.StartTaskListener(ctx)
+
+	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(2 * time.Minute))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+	})
+
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+	adv.TESTTryResolveLocksForCheckpoint()
+	require.Eventually(t, func() bool { return resolveLockCount.Load() >= 1 },
+		8*time.Second, 50*time.Microsecond)
+	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
+		8*time.Second, 50*time.Microsecond)
+	require.Equal(t, int32(3), scanLockCount.Load())
+	require.Greater(t, firstMaxVersion.Load(), secondMaxVersion.Load())
+	require.Greater(t, secondMaxVersion.Load(), minCheckpoint)
+	require.Equal(t,
+		oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(adv.Config().GetResolveLockInterval()/3)),
+		secondMaxVersion.Load())
+	require.Greater(t, secondMaxVersion.Load(), thirdMaxVersion.Load())
+	require.Greater(t, thirdMaxVersion.Load(), minCheckpoint)
+	require.Equal(t, minCheckpoint+(secondMaxVersion.Load()-minCheckpoint)/2, thirdMaxVersion.Load())
+}
+
 func TestResolveLockMaxVersion(t *testing.T) {
 	checkpointTime := time.Unix(100, 0)
 	checkpointTS := oracle.GoTimeToTS(checkpointTime)
@@ -707,6 +785,55 @@ func TestResolveLockMaxVersion(t *testing.T) {
 		streamhelper.TESTResolveLockMaxVersion(targetUpperBound, oracle.GoTimeToTS(checkpointTime.Add(24*time.Second))))
 }
 
+func TestResolveLockIntervalUsesTiKVFlushInterval(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	env := newTestEnv(c, t)
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
+	require.Equal(t, 100*time.Millisecond, adv.TESTResolveLockInterval())
+
+	adv.SetLogBackupFlushIntervalGetter(func(context.Context) (time.Duration, error) {
+		return 180 * time.Millisecond, nil
+	})
+	adv.TESTRefreshLogBackupFlushInterval(context.Background())
+	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
+
+	adv.SetLogBackupFlushIntervalGetter(func(context.Context) (time.Duration, error) {
+		return 0, errors.New("tikv config is temporarily unavailable")
+	})
+	adv.TESTRefreshLogBackupFlushInterval(context.Background())
+	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
+}
+
+func TestGetLogBackupFlushIntervalFromTiKVConfig(t *testing.T) {
+	flushInterval, err := streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
+		context.Background(),
+		func(_ context.Context, collect func([]byte) error) error {
+			if err := collect([]byte(`{"log-backup":{"flush-interval":"20s"}}`)); err != nil {
+				return err
+			}
+			return collect([]byte(`{"log-backup":{"flush-interval":"30s"}}`))
+		})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, flushInterval)
+
+	_, err = streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
+		context.Background(),
+		func(_ context.Context, collect func([]byte) error) error {
+			return collect([]byte(`{"log-backup":{"enable":true}}`))
+		})
+	require.ErrorContains(t, err, "log-backup.flush-interval is not found")
+
+	_, err = streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
+		context.Background(),
+		func(context.Context, func([]byte) error) error {
+			return nil
+		})
+	require.ErrorContains(t, err, "no TiKV config found")
+}
+
 func TestResolveLockTargetsUseUpperBound(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	ctx := context.Background()
@@ -718,6 +845,7 @@ func TestResolveLockTargetsUseUpperBound(t *testing.T) {
 	adv.StartTaskListener(ctx)
 
 	checkpointTime := time.Now().Add(-25 * time.Second)
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(25 * time.Second)))
 	checkpointTS := oracle.GoTimeToTS(checkpointTime)
 	withinUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(6 * time.Second))
 	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(8 * time.Second))
@@ -742,6 +870,7 @@ func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
 	minCheckpoint := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
+	c.SetCurrentTS(oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(10 * time.Second)))
 	env := newTestEnv(c, t)
 
 	lockRegion := c.FindRegionByKey([]byte("01"))
