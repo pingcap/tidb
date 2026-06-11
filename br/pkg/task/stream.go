@@ -1793,6 +1793,12 @@ func restoreStream(
 	}
 
 	if cfg.ProtectTables {
+		// RestoreKVFiles can advance schema metadata directly. Wait before
+		// reading InfoSchema to find the restored tables to unprotect.
+		if err = waitUntilSchemaReload(ctx, client); err != nil {
+			return errors.Trace(err)
+		}
+
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
 		})
