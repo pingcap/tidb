@@ -528,13 +528,6 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 			return rewriteResult{}, errors.Trace(err)
 		}
 
-		if rawWriteCFValue.IsDelete() {
-			return rewriteResult{
-				NewValue: value,
-				Deleted:  true,
-				Put:      false,
-			}, nil
-		}
 		if rawWriteCFValue.IsRollback() {
 			return rewriteResult{
 				NewValue: value,
@@ -542,9 +535,18 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 				Put:      false,
 			}, nil
 		}
+
+		rawWriteCFValue.MarkPhysicalImportTxnSource()
+		if rawWriteCFValue.IsDelete() {
+			return rewriteResult{
+				NewValue: rawWriteCFValue.EncodeTo(),
+				Deleted:  true,
+				Put:      false,
+			}, nil
+		}
 		if !rawWriteCFValue.HasShortValue() {
 			return rewriteResult{
-				NewValue: value,
+				NewValue: rawWriteCFValue.EncodeTo(),
 				Put:      true,
 			}, nil
 		}

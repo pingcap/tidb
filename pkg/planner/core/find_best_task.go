@@ -1278,17 +1278,6 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, nil, false, property.PropNotMatched
 	}
-<<<<<<< HEAD
-=======
-
-	// check if any of the partial paths is not cacheable.
-	notCachableReason := ""
-	for _, p := range determinedIndexPartialPaths {
-		if p.NoncacheableReason != "" {
-			notCachableReason = p.NoncacheableReason
-			break
-		}
-	}
 
 	// Some top-level AND filters have already been used to build every chosen partial path.
 	// For example, `a = 1 AND (b = 2 OR c = 3)` for index (a,b) and (a,c) doesn't need any global Selection.
@@ -1296,18 +1285,12 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// guaranteed by all partial paths.
 	tableFilters := removeCoveredIndexMergeTopLevelFilters(ds, path.TableFilters, determinedIndexPartialPaths)
 
->>>>>>> 432e7a44614 (planner: remove redundant filters for nested OR IndexMerge (#69057))
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
-<<<<<<< HEAD
-		TableFilters: path.TableFilters,
-=======
-		TableFilters:       tableFilters,
-		NoncacheableReason: notCachableReason,
->>>>>>> 432e7a44614 (planner: remove redundant filters for nested OR IndexMerge (#69057))
+		TableFilters: tableFilters,
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
@@ -1384,7 +1367,7 @@ func indexMergeTopLevelFilterCovered(
 	filter expression.Expression,
 	partialPaths []*util.AccessPath,
 ) bool {
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), filter) {
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{filter}) {
 		return false
 	}
 	for _, path := range partialPaths {
@@ -1407,7 +1390,7 @@ func indexMergePartialPathCoversFilter(
 	if partialPath == nil || partialPath.IsTablePath() || isMVIndexPath(partialPath) {
 		return false
 	}
-	if !ds.IsIndexCoveringCondition(filter, partialPath.FullIdxCols, partialPath.FullIdxColLens) {
+	if !isIndexCoveringCondition(ds, filter, partialPath.FullIdxCols, partialPath.FullIdxColLens) {
 		return false
 	}
 	if expressionContainsHash(partialPath.TableFilters, filterHash) {
