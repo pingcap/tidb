@@ -24,6 +24,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"math/rand"
 	"os"
 	"slices"
@@ -130,6 +131,7 @@ const (
 	tikvReplicaCountSourceInfoSchemaPlacementBundle = "infoschema_placement_bundle"
 	tikvReplicaCountSourcePDMaxReplicas             = "pd_replicate_config_max_replicas"
 	tikvReplicaCountSourceFallbackDefault           = "fallback_default_3"
+	tikvReplicaCountSourceMixedLookup               = "mixed_lookup_sources"
 
 	observedTiKVUsagePhaseTaskEnd = "task_end"
 	ingestedSSTBytesSourceClassic = "classic"
@@ -3335,13 +3337,23 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				}
 				if predictionOK {
 					blockSampleSingleReplicaPredictedBytes = blockSamplePrediction.PredictedBytes
-					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID, err = w.resolveAddIndexTiKVReplicaCount(precheckCtx, w.sess.Session(), t, reorgInfo)
-					if err != nil {
-						skipPrediction("tikv-replica-count", err)
-					} else {
-						blockSamplePrediction.PredictedBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.PredictedBytes, tikvReplicaCount)
-						blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.MVCCOverheadBytes, tikvReplicaCount)
-					}
+					var weightedReplicaRows uint64
+					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID, weightedReplicaRows = w.resolveAddIndexTiKVReplicaScaling(
+						precheckCtx,
+						w.sess.Session(),
+						t,
+						blockSamplePrediction.physicalTables,
+					)
+					blockSamplePrediction.PredictedBytes = scalePredictedBytesByWeightedReplicaRows(
+						blockSamplePrediction.PredictedBytes,
+						blockSamplePrediction.totalRowCount,
+						weightedReplicaRows,
+					)
+					blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByWeightedReplicaRows(
+						blockSamplePrediction.MVCCOverheadBytes,
+						blockSamplePrediction.totalRowCount,
+						weightedReplicaRows,
+					)
 				}
 			}
 			if cancelPrecheck != nil {
@@ -3708,10 +3720,6 @@ func getPDStoreStats(ctx context.Context, pdCli pdStoreStatsClient, storeID uint
 	if serviceDiscovery == nil {
 		return nil, errors.New("pd service discovery unavailable")
 	}
-	serviceClient := serviceDiscovery.GetServiceClient()
-	if serviceClient == nil || serviceClient.GetClientConn() == nil {
-		return nil, errors.New("pd grpc client unavailable")
-	}
 	req := &pdpb.GetStoreRequest{
 		Header: &pdpb.RequestHeader{
 			ClusterId:       pdCli.GetClusterID(ctx),
@@ -3720,15 +3728,22 @@ func getPDStoreStats(ctx context.Context, pdCli pdStoreStatsClient, storeID uint
 		},
 		StoreId: storeID,
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, pdStoreStatsRequestTimeout)
-	defer cancel()
-	reqCtx = serviceClient.BuildGRPCTargetContext(reqCtx, true)
-	resp, err := pdpb.NewPDClient(serviceClient.GetClientConn()).GetStore(reqCtx, req)
+	doRequest := func(serviceClient sd.ServiceClient) (*pdpb.GetStoreResponse, error) {
+		if serviceClient == nil || serviceClient.GetClientConn() == nil {
+			return nil, errors.New("pd grpc client unavailable")
+		}
+		reqCtx, cancel := context.WithTimeout(ctx, pdStoreStatsRequestTimeout)
+		defer cancel()
+		reqCtx = serviceClient.BuildGRPCTargetContext(reqCtx, true)
+		return pdpb.NewPDClient(serviceClient.GetClientConn()).GetStore(reqCtx, req)
+	}
+
+	serviceClient := serviceDiscovery.GetServiceClient()
+	resp, err := doRequest(serviceClient)
 	if needRetryPDStoreStats(serviceClient, resp, err) {
 		serviceClient = serviceDiscovery.GetServiceClient()
 		if serviceClient != nil && serviceClient.GetClientConn() != nil {
-			reqCtx = serviceClient.BuildGRPCTargetContext(reqCtx, true)
-			resp, err = pdpb.NewPDClient(serviceClient.GetClientConn()).GetStore(reqCtx, req)
+			resp, err = doRequest(serviceClient)
 		}
 	}
 	if err != nil {
@@ -3993,56 +4008,120 @@ func remainingTiKVBytes(availableBytes, predictBytes uint64) uint64 {
 	return availableBytes - predictBytes
 }
 
-func (w *worker) resolveAddIndexTiKVReplicaCount(
+func (w *worker) resolveAddIndexTiKVReplicaScaling(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	tbl table.Table,
-	reorgInfo *reorgInfo,
-) (uint64, string, int64, error) {
-	if reorgInfo == nil {
-		return 0, "", 0, errors.New("reorg info is nil")
-	}
+	physicalTables []samplePredictionPhysicalTable,
+) (replicaCount uint64, source string, physicalID int64, weightedReplicaRows uint64) {
 	tblInfo := tbl.Meta()
-	targetIndexes, err := collectBackfillIndexes(tblInfo, reorgInfo)
-	if err != nil {
-		return 0, "", 0, err
-	}
-	if len(targetIndexes) == 0 {
-		return 0, "", 0, errors.New("no backfill indexes found")
-	}
-
-	physicalID := representativeAddIndexTiKVReplicaPhysicalID(tblInfo, targetIndexes)
-	if is := sctx.GetLatestInfoSchema(); is != nil {
-		if bundle, ok := is.PlacementBundleByPhysicalTableID(physicalID); ok {
-			if replicaCount := tiKVReplicaCountFromBundle(bundle, physicalID); replicaCount > 0 {
-				return replicaCount, tikvReplicaCountSourceInfoSchemaPlacementBundle, physicalID, nil
+	var (
+		fallbackLoaded       bool
+		fallbackReplicaCount uint64
+		fallbackSource       string
+	)
+	resolveReplicaCount := func(physicalID int64) (uint64, string) {
+		if is := sctx.GetLatestInfoSchema(); is != nil {
+			if replicaCount, ok := tiKVReplicaCountFromInfoSchemaBundle(is, tblInfo, physicalID); ok {
+				return replicaCount, tikvReplicaCountSourceInfoSchemaPlacementBundle
 			}
 		}
-		if physicalID != tblInfo.ID {
-			if bundle, ok := is.PlacementBundleByPhysicalTableID(tblInfo.ID); ok {
-				if replicaCount := tiKVReplicaCountFromBundle(bundle, physicalID); replicaCount > 0 {
-					return replicaCount, tikvReplicaCountSourceInfoSchemaPlacementBundle, physicalID, nil
-				}
+		if !fallbackLoaded {
+			fallbackLoaded = true
+			if replicaCount, err := collectPDMaxReplicas(ctx, w.store); err == nil && replicaCount > 0 {
+				fallbackReplicaCount = replicaCount
+				fallbackSource = tikvReplicaCountSourcePDMaxReplicas
+			} else {
+				fallbackReplicaCount = defaultTiKVReplicaCount
+				fallbackSource = tikvReplicaCountSourceFallbackDefault
 			}
 		}
+		return fallbackReplicaCount, fallbackSource
+	}
+	if len(physicalTables) == 0 {
+		return defaultTiKVReplicaCount, tikvReplicaCountSourceFallbackDefault, tblInfo.ID, 0
+	}
+	if addIndexTargetsGlobal(physicalTables) {
+		replicaCount, source = resolveReplicaCount(tblInfo.ID)
+		weightedReplicaRows = saturatingMulUint64(uint64(max(totalSamplePredictionPhysicalTableRowCount(physicalTables), 0)), replicaCount)
+		return replicaCount, source, tblInfo.ID, weightedReplicaRows
 	}
 
-	if replicaCount, err := collectPDMaxReplicas(ctx, w.store); err == nil && replicaCount > 0 {
-		return replicaCount, tikvReplicaCountSourcePDMaxReplicas, physicalID, nil
+	var (
+		totalRowCount    int64
+		mixedSource      bool
+		singlePhysicalID int64
+	)
+	for _, physicalTable := range physicalTables {
+		if physicalTable.rowCount <= 0 {
+			continue
+		}
+		totalRowCount += physicalTable.rowCount
+		singlePhysicalID = physicalTable.physicalTbl.GetPhysicalID()
+		tableReplicaCount, tableSource := resolveReplicaCount(physicalTable.physicalTbl.GetPhysicalID())
+		if source == "" {
+			source = tableSource
+		} else if source != tableSource {
+			mixedSource = true
+		}
+		weightedReplicaRows = saturatingAddUint64(
+			weightedReplicaRows,
+			saturatingMulUint64(uint64(physicalTable.rowCount), tableReplicaCount),
+		)
 	}
-	return defaultTiKVReplicaCount, tikvReplicaCountSourceFallbackDefault, physicalID, nil
+	if totalRowCount <= 0 {
+		return defaultTiKVReplicaCount, tikvReplicaCountSourceFallbackDefault, tblInfo.ID, 0
+	}
+	if mixedSource {
+		source = tikvReplicaCountSourceMixedLookup
+	}
+	if len(physicalTables) > 1 {
+		singlePhysicalID = 0
+	}
+	return effectiveReplicaCountFromWeightedRows(totalRowCount, weightedReplicaRows), source, singlePhysicalID, weightedReplicaRows
 }
 
-func representativeAddIndexTiKVReplicaPhysicalID(tblInfo *model.TableInfo, targetIndexes []*model.IndexInfo) int64 {
-	for _, idxInfo := range targetIndexes {
-		if idxInfo != nil && idxInfo.Global {
-			return tblInfo.ID
+func addIndexTargetsGlobal(physicalTables []samplePredictionPhysicalTable) bool {
+	for _, physicalTable := range physicalTables {
+		for _, idx := range physicalTable.indexes {
+			if idx != nil && idx.Meta().Global {
+				return true
+			}
 		}
 	}
-	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-		return pi.Definitions[0].ID
+	return false
+}
+
+func totalSamplePredictionPhysicalTableRowCount(physicalTables []samplePredictionPhysicalTable) int64 {
+	var totalRowCount int64
+	for _, physicalTable := range physicalTables {
+		if physicalTable.rowCount > 0 {
+			totalRowCount += physicalTable.rowCount
+		}
 	}
-	return tblInfo.ID
+	return totalRowCount
+}
+
+func tiKVReplicaCountFromInfoSchemaBundle(
+	is interface {
+		PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
+	},
+	tblInfo *model.TableInfo,
+	physicalID int64,
+) (uint64, bool) {
+	if bundle, ok := is.PlacementBundleByPhysicalTableID(physicalID); ok {
+		if replicaCount := tiKVReplicaCountFromBundle(bundle, physicalID); replicaCount > 0 {
+			return replicaCount, true
+		}
+	}
+	if physicalID != tblInfo.ID {
+		if bundle, ok := is.PlacementBundleByPhysicalTableID(tblInfo.ID); ok {
+			if replicaCount := tiKVReplicaCountFromBundle(bundle, physicalID); replicaCount > 0 {
+				return replicaCount, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func tiKVReplicaCountFromBundle(bundle *placement.Bundle, physicalID int64) uint64 {
@@ -4186,6 +4265,13 @@ func scalePredictedBytesByReplicaCount(predictedBytes, replicaCount uint64) uint
 	return saturatingMulUint64(predictedBytes, replicaCount)
 }
 
+func scalePredictedBytesByWeightedReplicaRows(predictedBytes uint64, totalRowCount int64, weightedReplicaRows uint64) uint64 {
+	if predictedBytes == 0 || totalRowCount <= 0 || weightedReplicaRows == 0 {
+		return 0
+	}
+	return saturatingMulDivCeilUint64(predictedBytes, weightedReplicaRows, uint64(totalRowCount))
+}
+
 func saturatingMulUint64(value, factor uint64) uint64 {
 	if value == 0 || factor == 0 {
 		return 0
@@ -4194,6 +4280,45 @@ func saturatingMulUint64(value, factor uint64) uint64 {
 		return math.MaxUint64
 	}
 	return value * factor
+}
+
+func saturatingAddUint64(left, right uint64) uint64 {
+	if math.MaxUint64-left < right {
+		return math.MaxUint64
+	}
+	return left + right
+}
+
+func saturatingMulDivCeilUint64(value, factor, divisor uint64) uint64 {
+	if value == 0 || factor == 0 {
+		return 0
+	}
+	if divisor == 0 {
+		return math.MaxUint64
+	}
+	hi, lo := bits.Mul64(value, factor)
+	if hi >= divisor {
+		return math.MaxUint64
+	}
+	quotient, remainder := bits.Div64(hi, lo, divisor)
+	if remainder == 0 {
+		return quotient
+	}
+	if quotient == math.MaxUint64 {
+		return math.MaxUint64
+	}
+	return quotient + 1
+}
+
+func effectiveReplicaCountFromWeightedRows(totalRowCount int64, weightedReplicaRows uint64) uint64 {
+	if totalRowCount <= 0 || weightedReplicaRows == 0 {
+		return 0
+	}
+	replicaCount := weightedReplicaRows / uint64(totalRowCount)
+	if weightedReplicaRows%uint64(totalRowCount) != 0 {
+		replicaCount++
+	}
+	return max(replicaCount, uint64(1))
 }
 
 func appendBlockSamplePredictionLogFields(
@@ -4251,7 +4376,11 @@ func addIndexTiKVSpacePrecheckLogFields(
 }
 
 const (
-	samplePredictionMaxRegionCount       = 5
+	samplePredictionMaxRegionCount = 5
+	// samplePredictionRegionListWindow caps PD region listing to the first 128
+	// regions per selected physical table. We then random-sample from that
+	// bounded window instead of scanning every region in the table.
+	samplePredictionRegionListWindow     = 128
 	blockSamplePredictionProbeRows       = 10
 	blockSamplePredictionMaxRows         = 2048
 	blockSamplePredictionMaxLogicalBytes = 4 * units.MiB
@@ -4286,6 +4415,12 @@ type sampleTiKVIndexPredictionResult struct {
 	EncodedKeySharedPrefixAvgBytes float64
 	RawKeySharedPrefixAvgBytes     float64
 	RawKeyLengthAvgBytes           float64
+
+	// physicalTables and totalRowCount are used only by submission-time precheck
+	// so replica-aware scaling can reuse the row-count weights already gathered
+	// for block sampling without re-reading partition stats.
+	physicalTables []samplePredictionPhysicalTable
+	totalRowCount  int64
 }
 
 type samplePredictionPhysicalTable struct {
@@ -4333,6 +4468,8 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	if totalRowCount <= 0 {
 		return result, nil
 	}
+	result.physicalTables = physicalTables
+	result.totalRowCount = totalRowCount
 	jobCtx := w.jobContext(reorgInfo.Job.ID, reorgInfo.Job.ReorgMeta)
 	currentVer, err := getValidCurrentVersion(w.store)
 	if err != nil {
@@ -4356,6 +4493,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	}
 
 	predictedAvgBytesPerRow, mvccAvgBytesPerRow, encodedKeySharedPrefixAvg, rawKeySharedPrefixAvg, rawKeyLengthAvg, sampledRegions, sampledRows, readErrors, err := w.estimateBlockSampleBytesPerRow(
+		ctx,
 		jobCtx,
 		sctx,
 		regionTasks,
@@ -4385,6 +4523,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 }
 
 func (w *worker) estimateBlockSampleBytesPerRow(
+	scanCtx context.Context,
 	jobCtx *ReorgContext,
 	sctx sessionctx.Context,
 	regionTasks []samplePredictionRegionTask,
@@ -4415,9 +4554,15 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 		scopeSampleCounts = make(map[sampledIndexKVScope]int)
 	)
 	for _, task := range regionTasks {
+		if err := context.Cause(scanCtx); err != nil {
+			return 0, 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, err
+		}
 		skipRows := blockSamplePredictionSkipRows(task.region, rnd)
-		rowCnt, logicalBytes, kvs, err := w.sampleBlockIndexKVsFromRegion(jobCtx, sctx, task.physicalTbl, task.indexes, task.region, snapshotTS, skipRows)
+		rowCnt, logicalBytes, kvs, err := w.sampleBlockIndexKVsFromRegion(scanCtx, jobCtx, sctx, task.physicalTbl, task.indexes, task.region, snapshotTS, skipRows)
 		if err != nil {
+			if isContextDoneError(err) {
+				return 0, 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, err
+			}
 			readErrorCount++
 			logutil.DDLLogger().Warn("failed to block-sample add-index prediction rows from region",
 				zap.Int64("physicalID", task.physicalTbl.GetPhysicalID()),
@@ -4463,6 +4608,7 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 }
 
 func (w *worker) sampleBlockIndexKVsFromRegion(
+	scanCtx context.Context,
 	jobCtx *ReorgContext,
 	sctx sessionctx.Context,
 	physicalTbl table.PhysicalTable,
@@ -4486,8 +4632,11 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 	targetRows := blockSamplePredictionProbeRows
 	logicalByteLimit := int64(0)
 	kvs := make([]sampledIndexKV, 0, blockSamplePredictionProbeRows*len(indexes))
-	err = iterateSnapshotKeys(jobCtx, w.store, kv.PriorityLow, physicalTbl.RecordPrefix(), snapshotTS, region.StartKey, region.EndKey,
+	err = iterateSnapshotKeysWithContext(scanCtx, jobCtx, w.store, kv.PriorityLow, physicalTbl.RecordPrefix(), snapshotTS, region.StartKey, region.EndKey,
 		func(handle kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
+			if err := context.Cause(scanCtx); err != nil {
+				return false, err
+			}
 			if bytes.Compare(rowKey, region.EndKey) >= 0 {
 				return false, nil
 			}
@@ -4529,6 +4678,104 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 		return 0, 0, kvs, nil
 	}
 	return rowCount, totalBytes, kvs, nil
+}
+
+// iterateSnapshotKeysWithContext mirrors iterateSnapshotKeys for submission-time
+// block sampling, but it also checks scanCtx at iterator boundaries so the
+// precheck can stop quickly once its time budget is exhausted.
+func iterateSnapshotKeysWithContext(
+	scanCtx context.Context,
+	reorgCtx *ReorgContext,
+	store kv.Storage,
+	priority int,
+	keyPrefix kv.Key,
+	version uint64,
+	startKey kv.Key,
+	endKey kv.Key,
+	fn recordIterFunc,
+) error {
+	if err := context.Cause(scanCtx); err != nil {
+		return err
+	}
+
+	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
+	var firstKey kv.Key
+	if startKey == nil {
+		firstKey = keyPrefix
+	} else {
+		firstKey = startKey
+	}
+
+	var upperBound kv.Key
+	if endKey == nil {
+		upperBound = keyPrefix.PrefixNext()
+	} else {
+		upperBound = endKey.PrefixNext()
+	}
+
+	ver := kv.Version{Ver: version}
+	snap := store.GetSnapshot(ver)
+	snap.SetOption(kv.Priority, priority)
+	snap.SetOption(kv.RequestSourceInternal, true)
+	snap.SetOption(kv.RequestSourceType, reorgCtx.ddlJobSourceType())
+	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
+	if tagger := reorgCtx.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		snap.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	snap.SetOption(kv.ResourceGroupName, reorgCtx.resourceGroupName)
+
+	it, err := snap.Iter(firstKey, upperBound)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	for it.Valid() {
+		if err := context.Cause(scanCtx); err != nil {
+			return err
+		}
+		if !it.Key().HasPrefix(keyPrefix) {
+			break
+		}
+
+		var handle kv.Handle
+		if isRecord {
+			handle, err = tablecodec.DecodeRowKey(it.Key())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		more, err := fn(handle, it.Key(), it.Value())
+		if !more || err != nil {
+			return errors.Trace(err)
+		}
+		if err := context.Cause(scanCtx); err != nil {
+			return err
+		}
+
+		err = nextUntilWithContext(scanCtx, it, util.RowKeyPrefixFilter(it.Key()))
+		if err != nil {
+			if kv.ErrNotExist.Equal(err) {
+				break
+			}
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+func nextUntilWithContext(scanCtx context.Context, it kv.Iterator, fn kv.FnKeyCmp) error {
+	for it.Valid() && !fn(it.Key()) {
+		if err := context.Cause(scanCtx); err != nil {
+			return err
+		}
+		if err := it.Next(); err != nil {
+			return err
+		}
+	}
+	return context.Cause(scanCtx)
 }
 
 type samplePredictionVirtualColumnFiller struct {
@@ -5264,14 +5511,22 @@ func (w *worker) buildSamplePredictionRegionTasks(
 ) ([]samplePredictionRegionTask, int, error) {
 	// For partitioned tables, precheck should still stay cheap. We first allocate the
 	// fixed region-sample budget across physical tables using row-count weights, then
-	// list regions only for the selected physical tables.
+	// list regions only for the selected physical tables. Each physical table samples
+	// randomly from the first samplePredictionRegionListWindow regions so PD paging
+	// cost stays bounded during submission-time precheck.
 	selections := pickSamplePredictionPhysicalTables(physicalTables, seed)
 	tasks := make([]samplePredictionRegionTask, 0, samplePredictionMaxRegionCount)
 	readErrorCount := 0
 	for _, selection := range selections {
+		if err := context.Cause(ctx); err != nil {
+			return tasks, readErrorCount, err
+		}
 		physicalID := selection.physicalTbl.GetPhysicalID()
-		regions, err := listSamplePredictionRegions(ctx, w.store, physicalID)
+		regions, err := listSamplePredictionRegions(ctx, w.store, physicalID, samplePredictionRegionListWindow)
 		if err != nil {
+			if isContextDoneError(err) {
+				return tasks, readErrorCount, err
+			}
 			readErrorCount++
 			logutil.DDLLogger().Warn("failed to list "+logLabel+" regions for add-index task",
 				zap.Int64("jobID", jobID),
@@ -5294,13 +5549,13 @@ func (w *worker) buildSamplePredictionRegionTasks(
 	return tasks, readErrorCount, nil
 }
 
-func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
+func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64, maxRegions int) ([]samplePredictionRegion, error) {
 	hStore, pdCli, err := pdHTTPClientFromStorage(store)
 	if err != nil {
 		return nil, err
 	}
 	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
-	regionInfos, err := listTableRegionsWithClient(ctx, pdCli, hStore, physicalID, 0)
+	regionInfos, err := listTableRegionsWithClient(ctx, pdCli, hStore, physicalID, maxRegions)
 	if err != nil {
 		return nil, err
 	}
