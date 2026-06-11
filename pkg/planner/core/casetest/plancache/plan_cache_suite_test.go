@@ -2245,6 +2245,7 @@ func TestPlanCacheStatsIndependentSkipsStatsLoad(t *testing.T) {
 	// (the path that triggers stats loading), flush the cache to force that replan, and
 	// drain any async-load items registered for this table so far.
 	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
+	defer tk.MustExec(`set @@tidb_opt_fix_control = ""`)
 	tk.MustExec(`admin flush session plan_cache`)
 	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
 		if fmt.Sprintf("%d", item.TableID) == tblID {
