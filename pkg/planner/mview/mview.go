@@ -33,6 +33,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
 const (
@@ -52,6 +53,13 @@ const (
 	diffNewRowPrefix = "__mvd_n_"
 )
 
+// HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has a usable key layout
+// for MIN/MAX full-update lookup: either PK-is-handle on the single group key, or a public visible
+// index whose leading columns cover all group-by columns without prefix length.
+func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
+	return mviewutil.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+}
+
 // SQL construction overview:
 //   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
 //   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
@@ -59,10 +67,11 @@ const (
 //      [all delta payload columns][all MV columns][optional rowid handle].
 // The executor consumes this one merged source stream and applies aggregate-specific update rules by offset.
 
-// BuildOptions defines the commit-ts lower bound (FromTS, +inf) used to read incremental mv-log rows.
-// Upper bound is provided by statement snapshot ts (for_update_ts at execution time).
+// BuildOptions defines the commit-ts window used to read incremental mv-log rows.
+// When ToTS is zero, no explicit upper bound is added and statement snapshot ts still acts as the read horizon.
 type BuildOptions struct {
 	FromTS uint64
+	ToTS   uint64
 }
 
 // BuildResult is the merge source produced by Build.
@@ -106,6 +115,8 @@ type BuildResult struct {
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
 	GroupKeyMVOffsets []int
+	// GroupKeyBaseCols stores base-table column names for GroupKeyMVOffsets in the same order.
+	GroupKeyBaseCols []string
 
 	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
 	// Build returns error when MV definition does not include COUNT(*).
@@ -636,6 +647,10 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
+	groupKeyBaseCols, err := groupKeyBaseColNamesAtOffsets(local.MVSelect, local.groupKeyOffs)
+	if err != nil {
+		return nil, err
+	}
 
 	res := &BuildResult{
 		MergeSourceSelect:              mergeSel,
@@ -650,6 +665,7 @@ func buildFromLocal(
 		DeltaColumnCount:               len(deltaColumns),
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
+		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
 		AggInfos:                       outAggInfos,
 	}
@@ -1264,6 +1280,9 @@ func buildMLogDeltaSelect(
 	buildMLogWhere := func() (ast.ExprNode, error) {
 		tsCol := colExpr(model.ExtraCommitTSName.L)
 		var where ast.ExprNode = binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", ""))
+		if opt.ToTS > 0 {
+			where = andExpr(where, binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")))
+		}
 		if mvSel.Where != nil {
 			mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
 			if err != nil {
@@ -1891,6 +1910,18 @@ func groupKeyBaseColExprAtOffset(mvSel *ast.SelectStmt, mvOffset int) (*ast.Colu
 	}
 	// Return a stripped (unqualified) column name expression.
 	return colExpr(col.Name.Name.O), nil
+}
+
+func groupKeyBaseColNamesAtOffsets(mvSel *ast.SelectStmt, groupKeyOffsets []int) ([]string, error) {
+	groupKeyBaseCols := make([]string, 0, len(groupKeyOffsets))
+	for _, mvOffset := range groupKeyOffsets {
+		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
+		if err != nil {
+			return nil, err
+		}
+		groupKeyBaseCols = append(groupKeyBaseCols, baseColExpr.Name.Name.L)
+	}
+	return groupKeyBaseCols, nil
 }
 
 func dbNameByTableID(is infoschema.InfoSchema, tableID int64) (pmodel.CIStr, error) {

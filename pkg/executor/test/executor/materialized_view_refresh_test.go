@@ -30,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
@@ -42,6 +44,18 @@ func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
 	rs, err := tk.Session().ExecuteInternal(ctx, sql)
 	require.NoError(t, err)
 	require.Nil(t, rs)
+}
+
+func mustSetMockGCSafePoint(t *testing.T, tk *testkit.TestKit, safePoint time.Time) {
+	t.Helper()
+
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := safePoint.UTC().Format("20060102-15:04:05 -0700")
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 }
 
 func requireRowsContainPrefix(t *testing.T, rows [][]any, prefix string) {
@@ -67,6 +81,19 @@ func waitMVTaskCancelWatcherRequested(t *testing.T, watchNamePrefix string) <-ch
 		}
 	})
 	return requestedCh
+}
+
+func requireRowsContainSubstring(t *testing.T, rows [][]any, substr string) {
+	t.Helper()
+
+	for _, row := range rows {
+		for _, col := range row {
+			if strings.Contains(fmt.Sprintf("%v", col), substr) {
+				return
+			}
+		}
+	}
+	require.Failf(t, "substring not found", "substring=%s rows=%v", substr, rows)
 }
 
 func requireRefreshTiFlashSessionVarsApplied(
@@ -618,6 +645,617 @@ func TestMaterializedViewRefreshFastUpdatesStatsModifyCount(t *testing.T) {
 		Check(testkit.Rows("3 2"))
 }
 
+func TestMaterializedViewRefreshAsOfTimestampRejectsNonFastSyntax(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_asof_nonfast (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_nonfast (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_nonfast (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_nonfast group by a")
+
+	err := tk.ExecToErr("refresh materialized view mv_refresh_asof_nonfast complete as of timestamp '2021-04-15 00:00:00'")
+	require.ErrorContains(t, err, "You have an error in your SQL syntax")
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampOuterSemantics(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_fast (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_asof_fast values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_fast (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_fast (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_fast group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_fast'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	fromTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	fromTSO := oracle.GoTimeToTS(fromTime)
+	mustSetMockGCSafePoint(t, tk, fromTime.Add(-time.Hour))
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		fromTSO,
+		mvID,
+	))
+
+	// Make the MV stale so the no-op path proves we did not accidentally run a normal FAST refresh.
+	tk.MustExec("insert into t_mv_refresh_asof_fast values (3, 30)")
+	tk.MustQuery("select a, s, cnt from mv_refresh_asof_fast order by a").Check(testkit.Rows(
+		"1 10 1",
+		"2 20 1",
+	))
+	histCountBeforeNoOp := tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mvID,
+	)).Rows()[0][0]
+
+	fromLiteral := fromTime.Format("2006-01-02 15:04:05.000")
+	olderLiteral := fromTime.Add(-time.Millisecond).Format("2006-01-02 15:04:05.000")
+	newerLiteral := fromTime.Add(time.Millisecond).Format("2006-01-02 15:04:05.000")
+	newerTSO := oracle.GoTimeToTS(fromTime.Add(time.Millisecond))
+
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_fast fast as of timestamp '%s'",
+		fromLiteral,
+	))
+	tk.MustQuery("select a, s, cnt from mv_refresh_asof_fast order by a").Check(testkit.Rows(
+		"1 10 1",
+		"2 20 1",
+	))
+	tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(strconv.FormatUint(fromTSO, 10)))
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(fmt.Sprintf("%v", histCountBeforeNoOp)))
+
+	err = tk.ExecToErr(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_fast fast as of timestamp '%s'",
+		olderLiteral,
+	))
+	require.ErrorContains(t, err, "target tso")
+	require.ErrorContains(t, err, "older than LAST_SUCCESS_READ_TSO")
+	olderTSO := oracle.GoTimeToTS(fromTime.Add(-time.Millisecond))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		olderTSO,
+		mvID,
+	)).Check(testkit.Rows("failed bounded fast manual 1 1"))
+
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_fast fast as of timestamp '%s'",
+		newerLiteral,
+	))
+	tk.MustQuery("select a, s, cnt from mv_refresh_asof_fast order by a").Check(testkit.Rows(
+		"1 10 1",
+		"2 20 1",
+	))
+	tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(strconv.FormatUint(newerTSO, 10)))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = %d from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		newerTSO,
+		mvID,
+	)).Check(testkit.Rows("success bounded fast manual 1"))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampAdvancesWatermarkInWindows(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_window (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_window (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_window (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_window group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_window'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	initialTSRow := tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Rows()
+	require.Len(t, initialTSRow, 1)
+	initialTSO, err := strconv.ParseUint(fmt.Sprintf("%v", initialTSRow[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, initialTSO)
+
+	tk.MustExec("insert into t_mv_refresh_asof_window values (1, 10)")
+	firstTargetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilFirstTarget := time.Until(firstTargetTime.Add(20 * time.Millisecond))
+	if sleepUntilFirstTarget > 0 {
+		time.Sleep(sleepUntilFirstTarget)
+	}
+	tk.MustExec("insert into t_mv_refresh_asof_window values (2, 20)")
+
+	secondTargetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilSecondTarget := time.Until(secondTargetTime.Add(20 * time.Millisecond))
+	if sleepUntilSecondTarget > 0 {
+		time.Sleep(sleepUntilSecondTarget)
+	}
+
+	mustSetMockGCSafePoint(t, tk, firstTargetTime.Add(-time.Hour))
+
+	firstTargetTSO := oracle.GoTimeToTS(firstTargetTime)
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_window fast as of timestamp '%s'",
+		firstTargetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	tk.MustQuery("select a, s, cnt from mv_refresh_asof_window order by a").Check(testkit.Rows(
+		"1 10 1",
+	))
+	tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(strconv.FormatUint(firstTargetTSO, 10)))
+
+	secondTargetTSO := oracle.GoTimeToTS(secondTargetTime)
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_window fast as of timestamp '%s'",
+		secondTargetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	tk.MustQuery("select a, s, cnt from mv_refresh_asof_window order by a").Check(testkit.Rows(
+		"1 10 1",
+		"2 20 1",
+	))
+	tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(strconv.FormatUint(secondTargetTSO, 10)))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_READ_TSO from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 2",
+		mvID,
+	)).Check(testkit.Rows(
+		strconv.FormatUint(secondTargetTSO, 10),
+		strconv.FormatUint(firstTargetTSO, 10),
+	))
+	require.Less(t, initialTSO, firstTargetTSO)
+	require.Less(t, firstTargetTSO, secondTargetTSO)
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampTracksAutomaticMethod(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_internal (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_asof_internal values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_internal (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_internal (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_internal group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_internal'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	fromTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	fromTSO := oracle.GoTimeToTS(fromTime)
+	mustSetMockGCSafePoint(t, tk, fromTime.Add(-time.Hour))
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		fromTSO,
+		mvID,
+	))
+
+	targetTime := fromTime.Add(time.Millisecond)
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustExecInternal(t, tk, fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_internal fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = %d from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		targetTSO,
+		mvID,
+	)).Check(testkit.Rows("success bounded fast auto 1"))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampEarlyFailureWritesHistReadTSO(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_early_fail (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_asof_early_fail values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_early_fail (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_early_fail (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_early_fail group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_early_fail'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	targetTime := time.Now().UTC().Add(-time.Minute).Truncate(time.Millisecond)
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+
+	const failpointName = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist"
+	require.NoError(t, failpoint.Enable(failpointName, `return("mock as-of early refresh failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	err = tk.ExecToErr(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_early_fail fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	require.Error(t, err)
+	require.ErrorContains(t, err, "mock as-of early refresh failure")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		targetTSO,
+		mvID,
+	)).Check(testkit.Rows("failed bounded fast manual 1 1 1"))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampDryRunUsesRefreshInfoWindow(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_dry_run (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_dry_run (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_dry_run (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_dry_run group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_dry_run'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	lastSuccessTSORow := tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Rows()
+	require.Len(t, lastSuccessTSORow, 1)
+	lastSuccessTSO, err := strconv.ParseUint(fmt.Sprintf("%v", lastSuccessTSORow[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, lastSuccessTSO)
+
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+
+	rows := tk.MustQuery(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_dry_run fast as of timestamp '%s' dry run",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	)).Rows()
+	requireRowsContainSubstring(t, rows, "_tidb_commit_ts")
+	requireRowsContainSubstring(t, rows, strconv.FormatUint(lastSuccessTSO, 10))
+	requireRowsContainSubstring(t, rows, strconv.FormatUint(targetTSO, 10))
+}
+
+func TestMaterializedViewRefreshFastDryRunWithoutAsOfDoesNotRequireTargetTSOValidation(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_dry_run_no_asof (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_dry_run_no_asof values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_dry_run_no_asof (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_dry_run_no_asof (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_dry_run_no_asof group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_dry_run_no_asof'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	lastSuccessTSORow := tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Rows()
+	require.Len(t, lastSuccessTSORow, 1)
+	lastSuccessTSO, err := strconv.ParseUint(fmt.Sprintf("%v", lastSuccessTSORow[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, lastSuccessTSO)
+
+	rows := tk.MustQuery("refresh materialized view mv_refresh_dry_run_no_asof fast dry run").Rows()
+	requireRowsContainSubstring(t, rows, "_tidb_commit_ts")
+	requireRowsContainSubstring(t, rows, strconv.FormatUint(lastSuccessTSO, 10))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampDryRunRejectsOlderThanLastSuccessTSO(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_dry_run_old (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_dry_run_old (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_dry_run_old (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_dry_run_old group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_dry_run_old'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	lastSuccessTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	lastSuccessTSO := oracle.GoTimeToTS(lastSuccessTime)
+	targetTime := lastSuccessTime.Add(-time.Second)
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		lastSuccessTSO,
+		mvID,
+	))
+
+	err = tk.QueryToErr(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_dry_run_old fast as of timestamp '%s' dry run",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	require.ErrorContains(t, err, fmt.Sprintf(
+		"refresh materialized view fast as of timestamp: target tso %d is older than LAST_SUCCESS_READ_TSO %d",
+		targetTSO,
+		lastSuccessTSO,
+	))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampDryRunAllowsTooOldGCSafePointWithoutTargetSnapshot(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_dry_run_gc (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_dry_run_gc (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_dry_run_gc (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_dry_run_gc group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_dry_run_gc'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	fromTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	fromTSO := oracle.GoTimeToTS(fromTime)
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		fromTSO,
+		mvID,
+	))
+	tk.MustExec("insert into t_mv_refresh_asof_dry_run_gc values (1, 10)")
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(time.Second))
+
+	rows := tk.MustQuery(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_dry_run_gc fast as of timestamp '%s' dry run",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	)).Rows()
+	requireRowsContainSubstring(t, rows, "_tidb_commit_ts")
+	requireRowsContainSubstring(t, rows, strconv.FormatUint(fromTSO, 10))
+	requireRowsContainSubstring(t, rows, strconv.FormatUint(targetTSO, 10))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampAllowsTooOldGCSafePointWithoutTargetSnapshot(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_gc (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_gc (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_gc (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_gc group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_gc'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	fromTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	fromTSO := oracle.GoTimeToTS(fromTime)
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		fromTSO,
+		mvID,
+	))
+	tk.MustExec("insert into t_mv_refresh_asof_gc values (1, 10)")
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(time.Second))
+
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_gc fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	tk.MustQuery("select a, s, cnt from mv_refresh_asof_gc").Check(testkit.Rows("1 10 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(strconv.FormatUint(targetTSO, 10)))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = %d from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		targetTSO,
+		mvID,
+	)).Check(testkit.Rows("success bounded fast manual 1"))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampDryRunRejectsTooOldGCSafePointWithMinMax(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_dry_run_gc_minmax (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_dry_run_gc_minmax (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_dry_run_gc_minmax (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_dry_run_gc_minmax group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_dry_run_gc_minmax'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	fromTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	fromTSO := oracle.GoTimeToTS(fromTime)
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		fromTSO,
+		mvID,
+	))
+	tk.MustExec("insert into t_mv_refresh_asof_dry_run_gc_minmax values (1, 10)")
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(time.Second))
+
+	err = tk.QueryToErr(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_dry_run_gc_minmax fast as of timestamp '%s' dry run",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	require.True(t, terror.ErrorEqual(err, variable.ErrSnapshotTooOld), "err %v", err)
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampRejectsTooOldGCSafePointWithMinMax(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_refresh_asof_gc_minmax (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_gc_minmax (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_gc_minmax (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_gc_minmax group by a")
+
+	mvIDRow := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_gc_minmax'").Rows()
+	require.Len(t, mvIDRow, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRow[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	fromTime := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	fromTSO := oracle.GoTimeToTS(fromTime)
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d",
+		fromTSO,
+		mvID,
+	))
+	tk.MustExec("insert into t_mv_refresh_asof_gc_minmax values (1, 10)")
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(time.Second))
+
+	err = tk.ExecToErr(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_gc_minmax fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	require.True(t, terror.ErrorEqual(err, variable.ErrSnapshotTooOld), "err %v", err)
+	tk.MustQuery("select * from mv_refresh_asof_gc_minmax").Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf(
+		"select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows(strconv.FormatUint(fromTSO, 10)))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		targetTSO,
+		mvID,
+	)).Check(testkit.Rows("failed bounded fast manual 1 1"))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampMinMaxUsesTargetSnapshotData(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+
+	tk.MustExec("create table t_mv_refresh_asof_minmax_data (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_minmax_data (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_minmax_data (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_minmax_data group by a")
+
+	tk.MustExec("insert into t_mv_refresh_asof_minmax_data values (1, 10), (1, 20), (1, 30)")
+	tk.MustExec("refresh materialized view mv_refresh_asof_minmax_data complete")
+	tk.MustQuery("select * from mv_refresh_asof_minmax_data").Check(testkit.Rows("1 3 30 10"))
+
+	tk.MustExec("delete from t_mv_refresh_asof_minmax_data where a = 1 and b = 30")
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	tk.MustExec("insert into t_mv_refresh_asof_minmax_data values (1, 100)")
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_minmax_data fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	tk.MustQuery("select * from mv_refresh_asof_minmax_data").Check(testkit.Rows("1 2 20 10"))
+	tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_minmax_data')").
+		Check(testkit.Rows(strconv.FormatUint(targetTSO, 10)))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampMinMaxUsesTargetSnapshotSchema(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+
+	tk.MustExec("create table t_mv_refresh_asof_minmax_schema (a int not null, b int not null, key idx_ab(a, b))")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_minmax_schema (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_minmax_schema (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_minmax_schema group by a")
+
+	tk.MustExec("insert into t_mv_refresh_asof_minmax_schema values (1, 10), (1, 20), (1, 30)")
+	tk.MustExec("refresh materialized view mv_refresh_asof_minmax_schema complete")
+	tk.MustQuery("select * from mv_refresh_asof_minmax_schema").Check(testkit.Rows("1 3 30 10"))
+
+	tk.MustExec("delete from t_mv_refresh_asof_minmax_schema where a = 1 and b = 30")
+	targetBeforeInvisible := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilBeforeInvisible := time.Until(targetBeforeInvisible.Add(20 * time.Millisecond))
+	if sleepUntilBeforeInvisible > 0 {
+		time.Sleep(sleepUntilBeforeInvisible)
+	}
+	tk.MustExec("create index idx_a on t_mv_refresh_asof_minmax_schema (a)")
+	tk.MustExec("alter table t_mv_refresh_asof_minmax_schema alter index idx_ab invisible")
+	mustSetMockGCSafePoint(t, tk, targetBeforeInvisible.Add(-time.Hour))
+
+	targetBeforeInvisibleTSO := oracle.GoTimeToTS(targetBeforeInvisible)
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_minmax_schema fast as of timestamp '%s'",
+		targetBeforeInvisible.Format("2006-01-02 15:04:05.000"),
+	))
+	tk.MustQuery("select * from mv_refresh_asof_minmax_schema").Check(testkit.Rows("1 2 20 10"))
+	tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_minmax_schema')").
+		Check(testkit.Rows(strconv.FormatUint(targetBeforeInvisibleTSO, 10)))
+
+	tk.MustExec("delete from t_mv_refresh_asof_minmax_schema where a = 1 and b = 20")
+	targetAfterInvisible := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilAfterInvisible := time.Until(targetAfterInvisible.Add(20 * time.Millisecond))
+	if sleepUntilAfterInvisible > 0 {
+		time.Sleep(sleepUntilAfterInvisible)
+	}
+	mustSetMockGCSafePoint(t, tk, targetAfterInvisible.Add(-time.Hour))
+
+	targetAfterInvisibleTSO := oracle.GoTimeToTS(targetAfterInvisible)
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_asof_minmax_schema fast as of timestamp '%s'",
+		targetAfterInvisible.Format("2006-01-02 15:04:05.000"),
+	))
+	tk.MustQuery("select * from mv_refresh_asof_minmax_schema").Check(testkit.Rows("1 1 10 10"))
+	tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_asof_minmax_schema')").
+		Check(testkit.Rows(strconv.FormatUint(targetAfterInvisibleTSO, 10)))
+}
+
 func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -642,6 +1280,22 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 		"1 2 20 10",
 		"2 2 12 8",
 	))
+}
+
+func TestMaterializedViewRefreshFastMinMaxRequiresSupportingIndex(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mv_fast_minmax_noidx (id int not null primary key, a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_fast_minmax_noidx (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_minmax_noidx (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_mv_fast_minmax_noidx group by a")
+
+	tk.MustExec("insert into t_mv_fast_minmax_noidx values (1, 1, 10), (2, 1, 20)")
+	tk.MustExec("refresh materialized view mv_fast_minmax_noidx complete")
+
+	err := tk.ExecToErr("alter table t_mv_fast_minmax_noidx alter index idx_a invisible")
+	require.ErrorContains(t, err, "Unsupported ALTER INDEX INVISIBLE on base table index idx_a required by materialized view mv_fast_minmax_noidx for MIN/MAX fast refresh")
 }
 
 func TestMaterializedViewRefreshFastNullableAggregatesWithDuplicateCountExpr(t *testing.T) {
@@ -787,6 +1441,44 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
 		Check(testkit.Rows("success complete delta apply manual 1 1 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
+		Check(testkit.Rows("0"))
+}
+
+func TestMaterializedViewRefreshFinalizeSuccessFailureWithCleanupErrorDoesNotRewriteFailedHist(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+
+	const finalizeFailpoint = "github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError"
+	require.NoError(t, failpoint.Enable(finalizeFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(finalizeFailpoint))
+	}()
+	const releaseLockFailpoint = "github.com/pingcap/tidb/pkg/executor/mockReleaseMVRefreshAdvisoryLockFullyCount"
+	require.NoError(t, failpoint.Enable(releaseLockFailpoint, "return(0)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(releaseLockFailpoint))
+	}()
+
+	err = tk.ExecToErr("refresh materialized view mv complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "advisory lock cleanup invariant violated")
+
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_ENDTIME is null, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
+		Check(testkit.Rows("running 1 1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'failed'", mviewID)).
 		Check(testkit.Rows("0"))
 }
 
@@ -1293,6 +1985,59 @@ func TestMaterializedViewRefreshCompleteDeltaApplyRollbackOnError(t *testing.T) 
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
 	require.Len(t, reasonRow, 1)
 	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "Duplicate")
+}
+
+func TestMaterializedViewRefreshEarlyFailureWritesHist(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	histCountBefore := tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mviewID,
+	)).Rows()
+	require.Len(t, histCountBefore, 1)
+	require.Len(t, histCountBefore[0], 1)
+	histCountBeforeVal, err := strconv.Atoi(fmt.Sprintf("%v", histCountBefore[0][0]))
+	require.NoError(t, err)
+
+	const failpointName = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist"
+	require.NoError(t, failpoint.Enable(failpointName, `return("mock early refresh failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	err = tk.ExecToErr("refresh materialized view mv complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "mock early refresh failure")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows(fmt.Sprintf("%d", histCountBeforeVal+1)))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("failed complete delta apply manual 1 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'",
+		mviewID,
+	)).Check(testkit.Rows("0"))
+	reasonRow := tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Rows()
+	require.Len(t, reasonRow, 1)
+	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "mock early refresh failure")
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {

@@ -473,9 +473,17 @@ func (b *executorBuilder) buildMViewDeltaMergeMinMaxRecompute(
 		)
 	}
 
-	readerBuilder, err := b.newDataReaderBuilder(v.FullUpdateInnerSource)
-	if err != nil {
-		return nil, err
+	var readerBuilder *dataReaderBuilder
+	if v.FullUpdateSnapshot != nil {
+		readerBuilder, err = b.newDataReaderBuilderWithSnapshot(v.FullUpdateInnerSource, v.FullUpdateSnapshot)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		readerBuilder, err = b.newDataReaderBuilder(v.FullUpdateInnerSource)
+		if err != nil {
+			return nil, err
+		}
 	}
 	templateRanges := v.FullUpdateIndexRanges.Range()
 	clonedTemplateRanges := make([]*ranger.Range, len(templateRanges))

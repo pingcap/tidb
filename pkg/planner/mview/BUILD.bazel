@@ -19,6 +19,7 @@ go_library(
         "//pkg/planner/util",
         "//pkg/table/tables",
         "//pkg/util/hint",
+        "//pkg/util/mviewutil",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -35,6 +36,7 @@ go_test(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
