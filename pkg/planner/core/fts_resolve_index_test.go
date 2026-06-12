@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,6 +58,19 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 	}()
 
 	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		var input []struct {
+			SQL       string
+			RedactLog bool
+		}
+		var output []struct {
+			SQL       string
+			RedactLog bool
+			Plan      []string
+		}
+		ftsResolveIndexSuiteData := core.GetFTSResolveIndexSuiteData()
+		ftsResolveIndexSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		require.Equal(t, len(input), len(output))
+
 		tiflash := infosync.NewMockTiFlash()
 		infosync.SetMockTiFlash(tiflash)
 		defer func() {
@@ -70,47 +85,27 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 		tk.MustExec("alter table fts_t set tiflash replica 1")
 		testkit.SetTiFlashReplica(t, dom, "test", "fts_t")
 
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:hello IN test.fts_t.title",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckNotContain([]string{
-			"ftsIndex:hello IN test.fts_t.title->",
-			"_FTS_SCORE",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select id, fts_match_word('hello', title) as score from fts_t where fts_match_word('hello', title) order by score desc limit 10").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:hello IN test.fts_t.title->_FTS_SCORE",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10").CheckNotContain("ftsIndex:top10")
-		tk.MustQuery("explain format = 'plan_tree' select fts_match_word('hello', title) from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:hello IN test.fts_t.title->_FTS_SCORE",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select fts_match_word('hello', title), id from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE",
-		})
-		tk.MustExec("set global tidb_redact_log=ON")
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").MultiCheckContain([]string{
-			"tiflash]",
-			"ftsIndex:? IN test.fts_t.title",
-		})
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").CheckNotContain("ftsIndex:? IN test.fts_t.title->")
-		tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").CheckNotContain("ftsIndex:hello")
+		for i, tt := range input {
+			redactLog := "OFF"
+			if tt.RedactLog {
+				redactLog = "ON"
+			}
+			tk.MustExec("set global tidb_redact_log=" + redactLog)
+			testdata.OnRecord(func() {
+				output[i].SQL = tt.SQL
+				output[i].RedactLog = tt.RedactLog
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + tt.SQL).Rows())
+			})
+			require.Equal(t, tt.SQL, output[i].SQL)
+			require.Equal(t, tt.RedactLog, output[i].RedactLog)
+			tk.MustQuery("explain format = 'plan_tree' " + tt.SQL).Check(testkit.Rows(output[i].Plan...))
+		}
 		tk.MustExec("set global tidb_redact_log=OFF")
 
 		tk.MustContainErrMsg("explain select fts_match_word('hello', title) from fts_t", "'FTS_MATCH_WORD()' in SELECT requires a matching 'FTS_MATCH_WORD()' in WHERE")
 		tk.MustContainErrMsg("explain select fts_match_word('hello', title) * 2 from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must not be wrapped in expressions")
 		tk.MustContainErrMsg("explain select fts_match_word('world', title) from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must match the one in WHERE")
+		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title) and fts_match_word('world', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
 		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
 		tk.MustContainErrMsg("explain select * from fts_t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
 	})
