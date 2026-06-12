@@ -121,6 +121,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 
 	s3Opts = append(s3Opts, func(o *s3.Options) {
 		o.Logger = newLogger(logger)
+		o.DisableLogOutputChecksumValidationSkipped = true
 		// These logs will be printed when log level is `DEBUG`.
 		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
 	})
