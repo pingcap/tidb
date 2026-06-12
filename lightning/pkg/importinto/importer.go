@@ -75,16 +75,28 @@ func WithOrchestrator(orchestrator JobOrchestrator) ImporterOption {
 	}
 }
 
+// WithStripS3ExternalIDForImportSQL strips explicit S3 external ID from IMPORT INTO
+// SQL resource parameters. The original source directory is kept unchanged for
+// Lightning's own storage access. Enable it only for callers that need to keep
+// compatibility with older IMPORT INTO planners that reject explicit S3 external ID;
+// newer planners can accept an explicit external ID matching the target value.
+func WithStripS3ExternalIDForImportSQL() ImporterOption {
+	return func(i *Importer) {
+		i.stripS3ExternalIDForImportSQL = true
+	}
+}
+
 // Importer is the implementation of LightningImporter for the 'import into' backend.
 type Importer struct {
-	cfg             *config.Config
-	db              *sql.DB
-	sdk             importsdk.SDK
-	logger          log.Logger
-	cpMgr           CheckpointManager
-	orchestrator    JobOrchestrator
-	groupKey        string
-	progressUpdater ProgressUpdater
+	cfg                           *config.Config
+	db                            *sql.DB
+	sdk                           importsdk.SDK
+	logger                        log.Logger
+	cpMgr                         CheckpointManager
+	orchestrator                  JobOrchestrator
+	groupKey                      string
+	progressUpdater               ProgressUpdater
+	stripS3ExternalIDForImportSQL bool
 }
 
 // NewImporter creates a new Importer.
@@ -149,7 +161,11 @@ func NewImporter(
 }
 
 func (i *Importer) buildOrchestrator() JobOrchestrator {
-	submitter := NewJobSubmitter(i.sdk, i.cfg, i.groupKey, i.logger.With(zap.String("component", "submitter")))
+	jobSubmitterOpts := make([]JobSubmitterOption, 0, 1)
+	if i.stripS3ExternalIDForImportSQL {
+		jobSubmitterOpts = append(jobSubmitterOpts, WithJobSubmitterStripS3ExternalIDForImportSQL())
+	}
+	submitter := NewJobSubmitter(i.sdk, i.cfg, i.groupKey, i.logger.With(zap.String("component", "submitter")), jobSubmitterOpts...)
 
 	return NewJobOrchestrator(OrchestratorConfig{
 		Submitter:         submitter,
