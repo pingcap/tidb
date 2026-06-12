@@ -371,8 +371,8 @@ SET GLOBAL tidb_enable_resource_control='on';
 drop RESOURCE GROUP if exists rg1;
 drop RESOURCE GROUP if exists rg2;
 drop user if exists user1;
--- error 8249
 SET RESOURCE GROUP rg1;
+SELECT CURRENT_RESOURCE_GROUP();
 CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
 
 create user user1;
