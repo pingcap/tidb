@@ -608,6 +608,8 @@ const (
 
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
+	// TiDBEnableStrictNotNullCheck is used to control whether to enable strict not-null check for single-row insert in non-strict mode.
+	TiDBEnableStrictNotNullCheck = "tidb_enable_strict_not_null_check"
 
 	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
 	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
@@ -1445,6 +1447,7 @@ const (
 	DefEnableWindowFunction                 = true
 	DefEnablePipelinedWindowFunction        = true
 	DefEnableStrictDoubleTypeCheck          = true
+	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
