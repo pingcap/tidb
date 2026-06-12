@@ -25,14 +25,12 @@ go_library(
 go_test(
     name = "column_test",
     timeout = "short",
-    srcs = [
-        "column_test.go",
-        "result_encoder_test.go",
-    ],
+    srcs = ["column_test.go"],
     embed = [":column"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 4,
     deps = [
+        "//pkg/format/textrow",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/server/internal/util",

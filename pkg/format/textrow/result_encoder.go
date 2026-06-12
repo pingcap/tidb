@@ -53,6 +53,8 @@ type ResultEncoder struct {
 
 	buffer *bytes.Buffer
 
+	scratch []byte
+
 	// chsName and encoding are unchanged after the initialization from
 	// session variable @@character_set_results.
 	chsName string
@@ -68,6 +70,7 @@ func NewResultEncoder(chs string) *ResultEncoder {
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
 		buffer:   &bytes.Buffer{},
+		scratch:  make([]byte, 0, 48),
 		isBinary: chs == charset.CharsetBin,
 		isNull:   len(chs) == 0,
 	}
@@ -79,6 +82,7 @@ func NewResultEncoder(chs string) *ResultEncoder {
 // re-allocate a temporary buffer on every call.
 func (d *ResultEncoder) Clean() {
 	d.buffer = nil
+	d.scratch = nil
 }
 
 // UpdateDataEncoding updates the data encoding.

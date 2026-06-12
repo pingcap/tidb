@@ -23,9 +23,12 @@ go_library(
 go_test(
     name = "textrow_test",
     timeout = "short",
-    srcs = ["textrow_test.go"],
+    srcs = [
+        "result_encoder_test.go",
+        "textrow_test.go",
+    ],
     flaky = True,
-    shard_count = 2,
+    shard_count = 4,
     deps = [
         ":textrow",
         "//pkg/parser/charset",

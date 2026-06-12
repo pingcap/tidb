@@ -45,18 +45,18 @@ type Info struct {
 }
 
 // Dump dumps Info to bytes.
-func (column *Info) Dump(buffer []byte, d *ResultEncoder) []byte {
+func (column *Info) Dump(buffer []byte, d *textrow.ResultEncoder) []byte {
 	return column.dump(buffer, d, false)
 }
 
 // DumpWithDefault dumps Info to bytes, including column defaults. This is used for ComFieldList responses.
-func (column *Info) DumpWithDefault(buffer []byte, d *ResultEncoder) []byte {
+func (column *Info) DumpWithDefault(buffer []byte, d *textrow.ResultEncoder) []byte {
 	return column.dump(buffer, d, true)
 }
 
-func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []byte {
+func (column *Info) dump(buffer []byte, d *textrow.ResultEncoder, withDefault bool) []byte {
 	if d == nil {
-		d = NewResultEncoder(charset.CharsetUTF8MB4)
+		d = textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
 	nameDump, orgnameDump := hack.Slice(column.Name), hack.Slice(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
@@ -145,9 +145,7 @@ func dumpType(tp byte) byte {
 	}
 }
 
-// toTextRow maps the serialization-relevant fields of Info onto the importable
-// textrow.ColumnInfo. It is the single home of the column.Info -> textrow.ColumnInfo
-// contract, so a new serialization attribute is added in lockstep.
+// toTextRow maps the serialization-relevant fields of Info onto the ColumnInfo.
 func (column *Info) toTextRow() textrow.ColumnInfo {
 	return textrow.ColumnInfo{
 		Type:    column.Type,
@@ -161,30 +159,28 @@ func (column *Info) toTextRow() textrow.ColumnInfo {
 // DumpTextRow dumps a row to bytes. Each value is produced by the shared
 // textrow serializer and then length-encoded into the text protocol (NULL is
 // the 0xfb marker).
-func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder) ([]byte, error) {
+func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *textrow.ResultEncoder) ([]byte, error) {
 	if d == nil {
-		d = NewResultEncoder(charset.CharsetUTF8MB4)
+		d = textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
-	tmp := make([]byte, 0, 20)
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		val, err1 := textrow.AppendValueText(tmp[:0], row, i, col.toTextRow(), d)
+		val, err1 := textrow.FormatValueText(row, i, col.toTextRow(), d)
 		if err1 != nil {
 			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", col.Type)
 		}
-		tmp = val
 		buffer = dump.LengthEncodedString(buffer, val)
 	}
 	return buffer, nil
 }
 
 // DumpBinaryRow dumps a row to bytes.
-func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder) ([]byte, error) {
+func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *textrow.ResultEncoder) ([]byte, error) {
 	if d == nil {
-		d = NewResultEncoder(charset.CharsetUTF8MB4)
+		d = textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)

@@ -15,16 +15,8 @@
 package column
 
 import (
-	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
-
-// ResultEncoder encodes a column value to a byte slice. The implementation lives
-// in pkg/format/textrow so it can be shared with the distributed exporter.
-type ResultEncoder = textrow.ResultEncoder
-
-// NewResultEncoder creates a new ResultEncoder.
-var NewResultEncoder = textrow.NewResultEncoder
 
 func isStringColumnType(tp byte) bool {
 	switch tp {

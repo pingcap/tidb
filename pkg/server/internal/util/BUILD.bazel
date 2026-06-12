@@ -10,7 +10,6 @@ go_library(
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
         "//pkg/config",
-        "//pkg/format/textrow",
         "//pkg/parser/charset",
     ],
 )
@@ -21,6 +20,6 @@ go_test(
     srcs = ["util_test.go"],
     embed = [":util"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )

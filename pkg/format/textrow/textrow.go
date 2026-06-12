@@ -14,7 +14,7 @@
 
 // Package textrow holds the MySQL text-protocol value serializer. Today its only
 // consumer is the server (DumpTextRow); it is factored out as a low-level package
-// so an upcoming distributed exporter can reuse it. AppendValueText produces the
+// so an upcoming distributed exporter can reuse it. FormatValueText produces the
 // raw per-value text; callers add their own framing (length-encoding for the
 // protocol, CSV/SQL escaping for the exporter).
 package textrow
@@ -32,16 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
-// ErrInvalidType is returned by AppendValueText for a column type it cannot
+// ErrInvalidType is returned by FormatValueText for a column type it cannot
 // serialize. Callers may wrap it with their own error identity.
 var ErrInvalidType = errors.New("invalid column type for text serialization")
 
-// ColumnInfo carries the per-column attributes the value formatter needs. It is
-// the importable subset of the server's column.Info.
+// ColumnInfo carries the per-column attributes the value formatter needs.
 type ColumnInfo struct {
-	// Table is empty for expression results and non-empty for real table
-	// columns; it gates the float/double precision override, matching the text
-	// protocol.
 	Table   string
 	Charset uint16
 	Flag    uint16
@@ -49,53 +45,55 @@ type ColumnInfo struct {
 	Type    uint8
 }
 
-// AppendValueText appends the text representation of row[idx] to dst and returns
-// the extended slice. The value is charset-encoded via enc for string-like types
-// but carries no length prefix. The caller handles NULL (row.IsNull(idx)).
-func AppendValueText(dst []byte, row chunk.Row, idx int, col ColumnInfo, enc *ResultEncoder) ([]byte, error) {
+// FormatValueText returns the text representation of row[idx], charset-encoded via
+// enc for string-like types and without a length prefix. The result is backed by
+// enc's internal buffers and must be consumed before the next call. The caller
+// handles NULL (row.IsNull(idx)).
+func FormatValueText(row chunk.Row, idx int, col ColumnInfo, enc *ResultEncoder) ([]byte, error) {
+	tmp := enc.scratch[:0]
 	switch col.Type {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
-		return strconv.AppendInt(dst, row.GetInt64(idx), 10), nil
+		return strconv.AppendInt(tmp, row.GetInt64(idx), 10), nil
 	case mysql.TypeYear:
 		year := row.GetInt64(idx)
 		if year == 0 {
-			return append(dst, '0', '0', '0', '0'), nil
+			return append(tmp, '0', '0', '0', '0'), nil
 		}
-		return strconv.AppendInt(dst, year, 10), nil
+		return strconv.AppendInt(tmp, year, 10), nil
 	case mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(uint(col.Flag)) {
-			return strconv.AppendUint(dst, row.GetUint64(idx), 10), nil
+			return strconv.AppendUint(tmp, row.GetUint64(idx), 10), nil
 		}
-		return strconv.AppendInt(dst, row.GetInt64(idx), 10), nil
+		return strconv.AppendInt(tmp, row.GetInt64(idx), 10), nil
 	case mysql.TypeFloat:
-		return AppendFormatFloat(dst, float64(row.GetFloat32(idx)), floatPrec(col), 32), nil
+		return AppendFormatFloat(tmp, float64(row.GetFloat32(idx)), floatPrec(col), 32), nil
 	case mysql.TypeDouble:
-		return AppendFormatFloat(dst, row.GetFloat64(idx), floatPrec(col), 64), nil
+		return AppendFormatFloat(tmp, row.GetFloat64(idx), floatPrec(col), 64), nil
 	case mysql.TypeNewDecimal:
-		return append(dst, hack.Slice(row.GetMyDecimal(idx).String())...), nil
+		return hack.Slice(row.GetMyDecimal(idx).String()), nil
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		enc.UpdateDataEncoding(col.Charset)
-		return append(dst, enc.EncodeData(row.GetBytes(idx))...), nil
+		return enc.EncodeData(row.GetBytes(idx)), nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return append(dst, hack.Slice(row.GetTime(idx).String())...), nil
+		return hack.Slice(row.GetTime(idx).String()), nil
 	case mysql.TypeDuration:
 		dur := row.GetDuration(idx, int(col.Decimal))
-		return append(dst, hack.Slice(dur.String())...), nil
+		return hack.Slice(dur.String()), nil
 	case mysql.TypeEnum:
 		enc.UpdateDataEncoding(col.Charset)
-		return append(dst, enc.EncodeData(hack.Slice(row.GetEnum(idx).String()))...), nil
+		return enc.EncodeData(hack.Slice(row.GetEnum(idx).String())), nil
 	case mysql.TypeSet:
 		enc.UpdateDataEncoding(col.Charset)
-		return append(dst, enc.EncodeData(hack.Slice(row.GetSet(idx).String()))...), nil
+		return enc.EncodeData(hack.Slice(row.GetSet(idx).String())), nil
 	case mysql.TypeJSON:
 		// The collation of JSON type is always binary.
 		// To compatible with MySQL, here we treat it as utf-8.
 		enc.UpdateDataEncoding(mysql.DefaultCollationID)
-		return append(dst, enc.EncodeData(hack.Slice(row.GetJSON(idx).String()))...), nil
+		return enc.EncodeData(hack.Slice(row.GetJSON(idx).String())), nil
 	case mysql.TypeTiDBVectorFloat32:
 		enc.UpdateDataEncoding(mysql.DefaultCollationID)
-		return append(dst, enc.EncodeData(hack.Slice(row.GetVectorFloat32(idx).String()))...), nil
+		return enc.EncodeData(hack.Slice(row.GetVectorFloat32(idx).String())), nil
 	default:
 		return nil, ErrInvalidType
 	}
@@ -123,7 +121,7 @@ const (
 func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
 	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
-		return []byte{'0'}
+		return append(in, '0')
 	}
 	isEFormat := false
 	if bitSize == 32 {

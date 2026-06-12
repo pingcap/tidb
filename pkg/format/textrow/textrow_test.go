@@ -15,6 +15,7 @@
 package textrow_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,15 +31,15 @@ import (
 // appendValue is a tiny helper: build a one-column row from a datum and format it.
 func appendValue(t *testing.T, col textrow.ColumnInfo, enc *textrow.ResultEncoder, d types.Datum) []byte {
 	row := chunk.MutRowFromDatums([]types.Datum{d}).ToRow()
-	got, err := textrow.AppendValueText(nil, row, 0, col, enc)
+	got, err := textrow.FormatValueText(row, 0, col, enc)
 	require.NoError(t, err)
 	return got
 }
 
-// TestAppendValueText asserts the per-value text bytes (the value that sits
+// TestFormatValueText asserts the per-value text bytes (the value that sits
 // inside DumpTextRow's length-encoding) match the proven server output for each
 // type. Expected values mirror server/internal/column TestDumpTextValue.
-func TestAppendValueText(t *testing.T) {
+func TestFormatValueText(t *testing.T) {
 	utf8 := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 
 	// signed / unsigned integer
@@ -115,9 +116,191 @@ func TestAppendValueText(t *testing.T) {
 		textrow.ColumnInfo{Type: mysql.TypeJSON}, utf8, js)))
 }
 
-func TestAppendValueTextInvalidType(t *testing.T) {
+func TestFormatValueTextInvalidType(t *testing.T) {
 	utf8 := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow()
-	_, err := textrow.AppendValueText(nil, row, 0, textrow.ColumnInfo{Type: mysql.TypeGeometry}, utf8)
+	_, err := textrow.FormatValueText(row, 0, textrow.ColumnInfo{Type: mysql.TypeGeometry}, utf8)
 	require.Error(t, err)
+}
+
+func TestAppendFormatFloat(t *testing.T) {
+	infVal, _ := strconv.ParseFloat("+Inf", 64)
+	tests := []struct {
+		fVal    float64
+		out     string
+		prec    int
+		bitSize int
+	}{
+		{
+			99999999999999999999,
+			"1e20",
+			-1,
+			64,
+		},
+		{
+			1e15,
+			"1e15",
+			-1,
+			64,
+		},
+		{
+			9e14,
+			"900000000000000",
+			-1,
+			64,
+		},
+		{
+			-9999999999999999,
+			"-1e16",
+			-1,
+			64,
+		},
+		{
+			999999999999999,
+			"999999999999999",
+			-1,
+			64,
+		},
+		{
+			0.000000000000001,
+			"0.000000000000001",
+			-1,
+			64,
+		},
+		{
+			0.0000000000000009,
+			"9e-16",
+			-1,
+			64,
+		},
+		{
+			-0.0000000000000009,
+			"-9e-16",
+			-1,
+			64,
+		},
+		{
+			0.11111,
+			"0.111",
+			3,
+			64,
+		},
+		{
+			0.11111,
+			"0.111",
+			3,
+			64,
+		},
+		{
+			0.1111111111111111111,
+			"0.11111111",
+			-1,
+			32,
+		},
+		{
+			0.1111111111111111111,
+			"0.1111111111111111",
+			-1,
+			64,
+		},
+		{
+			0.0000000000000009,
+			"9e-16",
+			3,
+			64,
+		},
+		{
+			0,
+			"0",
+			-1,
+			64,
+		},
+		{
+			-340282346638528860000000000000000000000,
+			"-3.40282e38",
+			-1,
+			32,
+		},
+		{
+			-34028236,
+			"-34028236.00",
+			2,
+			32,
+		},
+		{
+			-17976921.34,
+			"-17976921.34",
+			2,
+			64,
+		},
+		{
+			-3.402823466e+38,
+			"-3.40282e38",
+			-1,
+			32,
+		},
+		{
+			-1.7976931348623157e308,
+			"-1.7976931348623157e308",
+			-1,
+			64,
+		},
+		{
+			10.0e20,
+			"1e21",
+			-1,
+			32,
+		},
+		{
+			1e20,
+			"1e20",
+			-1,
+			32,
+		},
+		{
+			10.0,
+			"10",
+			-1,
+			32,
+		},
+		{
+			999999986991104,
+			"1e15",
+			-1,
+			32,
+		},
+		{
+			1e15,
+			"1e15",
+			-1,
+			32,
+		},
+		{
+			infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			-infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			1e14,
+			"100000000000000",
+			-1,
+			64,
+		},
+		{
+			1e308,
+			"1e308",
+			-1,
+			64,
+		},
+	}
+	for _, tc := range tests {
+		require.Equal(t, tc.out, string(textrow.AppendFormatFloat(nil, tc.fVal, tc.prec, tc.bitSize)))
+	}
 }

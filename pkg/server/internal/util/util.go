@@ -41,7 +41,6 @@ import (
 	"net/http"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
@@ -156,12 +155,6 @@ func LengthEncodedIntSize(n uint64) int {
 	}
 
 	return 9
-}
-
-// AppendFormatFloat appends a float64 to dst in MySQL format. The implementation
-// lives in pkg/format/textrow so it can be shared with the distributed exporter.
-func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
-	return textrow.AppendFormatFloat(in, fVal, prec, bitSize)
 }
 
 // CorsHandler adds Cors Header if `cors` config is set.
