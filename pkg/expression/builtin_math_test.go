@@ -607,6 +607,9 @@ func TestConv(t *testing.T) {
 		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
 		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
 		require.Equal(t, uint(0), tp.GetFlag())
+		// MySQL defines CONV_MAX_LENGTH = 64U + 1U (64 digits plus possible '-')
+		// See: https://github.com/mysql/mysql-server/blob/trunk/sql/item_strfunc.h
+		require.Equal(t, 65, tp.GetFlen())
 
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {

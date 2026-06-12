@@ -597,8 +597,8 @@ func (s *InferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"ceiling(18446744073709551615)", mysql.TypeLonglong, charset.CharsetBin, mysql.NotNullFlag | mysql.UnsignedFlag | mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"ceiling(18446744073709551615.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 23, 0},
 
-		{"conv(c_char, c_int_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
-		{"conv(c_int_d, c_int_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
+		{"conv(c_char, c_int_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 65, types.UnspecifiedLength},
+		{"conv(c_int_d, c_int_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 65, types.UnspecifiedLength},
 
 		{"abs(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"abs(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
