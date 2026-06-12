@@ -20,8 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -29,12 +31,38 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
+
+func newSessionPoolForStore(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+	t.Helper()
+
+	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		se := utilmock.NewContext()
+		se.Store = sessionStore
+		return se, nil
+	}, nil, nil, nil)
+	t.Cleanup(sePool.Close)
+	return sePool
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	if sePool != nil {
+		runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	}
+	return runtime
+}
 
 func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager, ctrl *gomock.Controller) *BaseScheduler {
 	ctx := context.Background()
@@ -47,6 +75,38 @@ func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager,
 		allocatedSlots: allocatedSlots,
 	})
 	return sch
+}
+
+func TestBaseSchedulerInitChecksTaskRuntime(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	task := &proto.Task{TaskBase: proto.TaskBase{
+		ID:       1,
+		Key:      "task",
+		Type:     proto.TaskTypeExample,
+		Keyspace: "task_ks",
+	}}
+
+	taskStore := &storeWithKS{ks: task.Keyspace}
+	sch := NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(ctrl, taskStore, newSessionPoolForStore(t, taskStore)),
+	})
+	require.NoError(t, sch.Init())
+
+	sch = NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
+	})
+	require.ErrorContains(t, sch.Init(), "store keyspace mismatch with task")
+
+	sch = NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(
+			ctrl,
+			taskStore,
+			newSessionPoolForStore(t, &storeWithKS{ks: "session_ks"}),
+		),
+	})
+	require.ErrorContains(t, sch.Init(), "invalid task runtime with mismatched keyspace")
 }
 
 func TestSchedulerOnNextStage(t *testing.T) {

@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dxfutil",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/dxfutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/framework/storage",
+        "//pkg/sessionctx",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "dxfutil_test",
+    timeout = "short",
+    srcs = ["util_test.go"],
+    embed = [":dxfutil"],
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//pkg/domain/sqlsvrapi/mock",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/util",
+        "//pkg/util/mock",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)
