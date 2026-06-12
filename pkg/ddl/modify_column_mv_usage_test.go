@@ -17,6 +17,9 @@ package ddl
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +32,26 @@ func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
 	require.Empty(t, usage.unsupportedReason)
 	require.Equal(t, []int{0}, usage.directOutputOffsets)
 	require.True(t, usage.isGroupKey)
+}
+
+func TestFieldTypeForMVRelatedColumnClearsBaseOnlyFlags(t *testing.T) {
+	oldRelatedFT := parser_types.NewFieldType(mysql.TypeLong)
+	oldRelatedFT.AddFlag(mysql.UniqueKeyFlag)
+	oldRelatedCol := &model.ColumnInfo{FieldType: *oldRelatedFT}
+
+	baseNewFT := parser_types.NewFieldType(mysql.TypeLonglong)
+	baseNewFT.AddFlag(mysql.NotNullFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag |
+		mysql.PreventNullInsertFlag | mysql.GeneratedColumnFlag | mysql.PriKeyFlag)
+	baseNewCol := &model.ColumnInfo{FieldType: *baseNewFT}
+
+	newFieldType := fieldTypeForMVRelatedColumn(oldRelatedCol, baseNewCol)
+	require.True(t, mysql.HasNotNullFlag(newFieldType.GetFlag()))
+	require.True(t, mysql.HasUniKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPriKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasAutoIncrementFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasOnUpdateNowFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPreventNullInsertFlag(newFieldType.GetFlag()))
+	require.Zero(t, newFieldType.GetFlag()&mysql.GeneratedColumnFlag)
 }
 
 func TestAnalyzeMVColumnUsageGroupByOrdinal(t *testing.T) {

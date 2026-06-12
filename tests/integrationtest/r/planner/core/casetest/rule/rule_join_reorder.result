@@ -2927,7 +2927,7 @@ explain format = 'brief' select /*+ leading(t3) */ * from t2 left join (t1 left 
 id	estRows	task	access object	operator info
 HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─HashJoin(Build)	39960.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
-│ ├─PartitionUnion(Build)	29970.00	root		
+│ ├─PartitionUnion(Build)	29970.00	root
 │ │ ├─TableReader	9990.00	root		data:Selection
 │ │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
 │ │ │   └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p0	keep order:false, stats:pseudo
@@ -2937,7 +2937,7 @@ HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule
 │ │ └─TableReader	9990.00	root		data:Selection
 │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
 │ │     └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p2	keep order:false, stats:pseudo
-│ └─PartitionUnion(Probe)	39960.00	root		
+│ └─PartitionUnion(Probe)	39960.00	root
 │   ├─TableReader	9990.00	root		data:Selection
 │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p0	keep order:false, stats:pseudo
@@ -2950,7 +2950,7 @@ HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule
 │   └─TableReader	9990.00	root		data:Selection
 │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │       └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	50000.00	root		
+└─PartitionUnion(Probe)	50000.00	root
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
   ├─TableReader	10000.00	root		data:TableFullScan
@@ -2967,7 +2967,7 @@ explain format = 'brief' select /*+ leading(t2, t1, t3) */ * from t2 left join (
 id	estRows	task	access object	operator info
 HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─HashJoin(Build)	39960.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
-│ ├─PartitionUnion(Build)	29970.00	root		
+│ ├─PartitionUnion(Build)	29970.00	root
 │ │ ├─TableReader	9990.00	root		data:Selection
 │ │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
 │ │ │   └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p0	keep order:false, stats:pseudo
@@ -2977,7 +2977,7 @@ HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule
 │ │ └─TableReader	9990.00	root		data:Selection
 │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
 │ │     └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p2	keep order:false, stats:pseudo
-│ └─PartitionUnion(Probe)	39960.00	root		
+│ └─PartitionUnion(Probe)	39960.00	root
 │   ├─TableReader	9990.00	root		data:Selection
 │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p0	keep order:false, stats:pseudo
@@ -2990,7 +2990,7 @@ HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule
 │   └─TableReader	9990.00	root		data:Selection
 │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │       └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	50000.00	root		
+└─PartitionUnion(Probe)	50000.00	root
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
   ├─TableReader	10000.00	root		data:TableFullScan
@@ -3009,7 +3009,7 @@ id	estRows	task	access object	operator info
 HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─Projection(Build)	46781.30	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
 │ └─HashJoin	46781.30	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-│   ├─PartitionUnion(Build)	39960.00	root		
+│   ├─PartitionUnion(Build)	39960.00	root
 │   │ ├─TableReader	9990.00	root		data:Selection
 │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
 │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t4, partition:p0	keep order:false, stats:pseudo
@@ -3023,7 +3023,7 @@ HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule
 │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
 │   │     └─TableFullScan	10000.00	cop[tikv]	table:t4, partition:p3	keep order:false, stats:pseudo
 │   └─HashJoin(Probe)	37425.04	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
-│     ├─PartitionUnion(Build)	29940.03	root		
+│     ├─PartitionUnion(Build)	29940.03	root
 │     │ ├─TableReader	9980.01	root		data:Selection
 │     │ │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │     │ │   └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p0	keep order:false, stats:pseudo
@@ -3033,7 +3033,7 @@ HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule
 │     │ └─TableReader	9980.01	root		data:Selection
 │     │   └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │     │     └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p2	keep order:false, stats:pseudo
-│     └─PartitionUnion(Probe)	39920.04	root		
+│     └─PartitionUnion(Probe)	39920.04	root
 │       ├─TableReader	9980.01	root		data:Selection
 │       │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │       │   └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p0	keep order:false, stats:pseudo
@@ -3046,7 +3046,7 @@ HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule
 │       └─TableReader	9980.01	root		data:Selection
 │         └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │           └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	50000.00	root		
+└─PartitionUnion(Probe)	50000.00	root
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
   ├─TableReader	10000.00	root		data:TableFullScan
@@ -3065,7 +3065,7 @@ id	estRows	task	access object	operator info
 HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─Projection(Build)	46781.30	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
 │ └─HashJoin	46781.30	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-│   ├─PartitionUnion(Build)	39960.00	root		
+│   ├─PartitionUnion(Build)	39960.00	root
 │   │ ├─TableReader	9990.00	root		data:Selection
 │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
 │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t4, partition:p0	keep order:false, stats:pseudo
@@ -3079,7 +3079,7 @@ HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule
 │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
 │   │     └─TableFullScan	10000.00	cop[tikv]	table:t4, partition:p3	keep order:false, stats:pseudo
 │   └─HashJoin(Probe)	37425.04	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
-│     ├─PartitionUnion(Build)	29940.03	root		
+│     ├─PartitionUnion(Build)	29940.03	root
 │     │ ├─TableReader	9980.01	root		data:Selection
 │     │ │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │     │ │   └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p0	keep order:false, stats:pseudo
@@ -3089,7 +3089,7 @@ HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule
 │     │ └─TableReader	9980.01	root		data:Selection
 │     │   └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │     │     └─TableFullScan	10000.00	cop[tikv]	table:t3, partition:p2	keep order:false, stats:pseudo
-│     └─PartitionUnion(Probe)	39920.04	root		
+│     └─PartitionUnion(Probe)	39920.04	root
 │       ├─TableReader	9980.01	root		data:Selection
 │       │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │       │   └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p0	keep order:false, stats:pseudo
@@ -3102,7 +3102,7 @@ HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule
 │       └─TableReader	9980.01	root		data:Selection
 │         └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │           └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	50000.00	root		
+└─PartitionUnion(Probe)	50000.00	root
   ├─TableReader	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
   ├─TableReader	10000.00	root		data:TableFullScan
@@ -7134,7 +7134,7 @@ HashJoin	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule
 └─HashJoin(Probe)	9990.00	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─StreamAgg(Build)	7992.00	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.a)->planner__core__casetest__rule__rule_join_reorder.t3.a
   │ └─IndexReader	7992.00	root		index:StreamAgg
-  │   └─StreamAgg	7992.00	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, 
+  │   └─StreamAgg	7992.00	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.a,
   │     └─IndexFullScan	9990.00	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
   └─TableReader(Probe)	9990.00	root		data:Selection
     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))

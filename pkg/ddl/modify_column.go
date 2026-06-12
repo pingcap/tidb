@@ -2170,7 +2170,10 @@ func fieldTypeForMVRelatedColumn(oldRelatedCol *model.ColumnInfo, baseNewCol *mo
 	newFieldType := baseNewCol.FieldType
 	// Preserve key-related flags on the related table column, but still apply the base column's type attributes.
 	keyFlags := oldRelatedCol.FieldType.GetFlag() & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
-	newFieldType.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newFieldType.DelFlag(
+		mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag |
+			mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag | mysql.PreventNullInsertFlag | mysql.GeneratedColumnFlag,
+	)
 	newFieldType.AddFlag(keyFlags)
 	return newFieldType
 }

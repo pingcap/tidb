@@ -25,6 +25,7 @@ explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where fr
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int not null, b datetime default null);
+# LEFT JOIN keeps the preserved side as Probe even when its selection has lower estRows.
 explain format = 'brief' select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01';
 
 # TestPartitionTableStats
