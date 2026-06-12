@@ -262,7 +262,7 @@ func startMVTaskMonitor(
 				)
 			} else if requested {
 				taskCancelController.requestManualCancelByRequester(requester)
-				failpoint.InjectCall("mvTaskCancelWatcherRequested", watchName)
+				failpoint.InjectCall("mvTaskCancelWatcherRequested", monitorName)
 				return
 			}
 
