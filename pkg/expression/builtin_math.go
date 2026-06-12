@@ -1245,7 +1245,7 @@ func (c *convFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(64)
+	bf.tp.SetFlen(65) // 64 digits plus possible '-', matching MySQL CONV_MAX_LENGTH = 64U + 1U
 	sig := &builtinConvSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Conv)
 	return sig, nil
