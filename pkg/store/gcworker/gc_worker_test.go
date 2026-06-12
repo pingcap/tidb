@@ -1110,7 +1110,6 @@ func TestLeaderTick(t *testing.T) {
 		break
 	}
 	require.NoError(t, err)
-
 }
 
 func TestUnifiedGCNeedsToWait(t *testing.T) {
