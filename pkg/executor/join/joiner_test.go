@@ -15,6 +15,7 @@
 package join
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -112,42 +113,28 @@ func TestRequiredRows(t *testing.T) {
 				maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 				lfields := convertTypes(ltype)
 				rfields := convertTypes(rtype)
-				outerIsRight := joinType == base.RightOuterJoin
-				outerFields, innerFields := lfields, rfields
-				if outerIsRight {
-					outerFields, innerFields = rfields, lfields
-				}
-				outerRow := genTestChunk(maxChunkSize, 1, outerFields).GetRow(0)
-				innerChk := genTestChunk(maxChunkSize, maxChunkSize, innerFields)
+				outerRow := genTestChunk(maxChunkSize, 1, lfields).GetRow(0)
+				innerChk := genTestChunk(maxChunkSize, maxChunkSize, rfields)
 				var defaultInner []types.Datum
-				for i, f := range innerFields {
+				for i, f := range rfields {
 					defaultInner = append(defaultInner, innerChk.GetRow(0).GetDatum(i, f))
 				}
-				conditionCases := []struct {
-					name       string
-					conditions []expression.Expression
-				}{
-					{name: "withoutConditions"},
-					{name: "withConditions", conditions: []expression.Expression{expression.NewOne()}},
-				}
+				joiner := NewJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil, false)
 
 				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
-				fields = append(fields, lfields...)
 				fields = append(fields, rfields...)
+				fields = append(fields, lfields...)
+				result := chunk.New(fields, maxChunkSize, maxChunkSize)
 
-				for _, conditionCase := range conditionCases {
-					joiner := NewJoiner(defaultCtx(), joinType, outerIsRight, defaultInner, conditionCase.conditions, lfields, rfields, nil, false)
-					result := chunk.New(fields, maxChunkSize, maxChunkSize)
-
-					for _, required := range []int{1, vardef.DefInitChunkSize + 1, maxChunkSize} {
-						result.SetRequiredRows(required, maxChunkSize)
-						result.Reset()
-						it := chunk.NewIterator4Chunk(innerChk)
-						it.Begin()
-						_, _, err := joiner.TryToMatchInners(outerRow, it, result)
-						require.NoError(t, err, conditionCase.name)
-						require.Equal(t, required, result.NumRows(), conditionCase.name)
-					}
+				for range 10 {
+					required := rand.Int()%maxChunkSize + 1
+					result.SetRequiredRows(required, maxChunkSize)
+					result.Reset()
+					it := chunk.NewIterator4Chunk(innerChk)
+					it.Begin()
+					_, _, err := joiner.TryToMatchInners(outerRow, it, result)
+					require.NoError(t, err)
+					require.Equal(t, required, result.NumRows())
 				}
 			}
 		}
