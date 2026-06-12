@@ -46,9 +46,12 @@ Suggested shape:
 type MVInitBuildState byte
 
 const (
-    MVInitBuildDeferred MVInitBuildState = iota
+    // MVInitBuildReady is zero for backward compatibility:
+    // existing clusters have persisted MV metadata without this field,
+    // and their MVs are already built — they default to Ready.
+    MVInitBuildReady MVInitBuildState = iota
+    MVInitBuildDeferred
     MVInitBuildBuilding
-    MVInitBuildReady
 )
 
 type MaterializedViewInfo struct {

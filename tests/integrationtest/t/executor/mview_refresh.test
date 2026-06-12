@@ -9,14 +9,14 @@ create materialized view mv_txn_66385 (a, s, cnt) refresh fast next date_add(now
 select a, sum(b), count(1) from t_mv_txn_66385 group by a;
 
 -- error 1105
-refresh materialized view mv_txn_66385 with async mode complete;
+refresh materialized view mv_txn_66385 with async mode complete delta apply;
 
 begin;
 -- error 1105
-refresh materialized view mv_txn_66385 complete;
+refresh materialized view mv_txn_66385 complete delta apply;
 rollback;
 
-prepare stmt from "refresh materialized view mv_txn_66385 complete";
+prepare stmt from "refresh materialized view mv_txn_66385 complete delta apply";
 begin;
 -- error 1105
 execute stmt;
@@ -25,13 +25,13 @@ deallocate prepare stmt;
 
 set autocommit = 0;
 select @@tidb_current_ts = 0;
-refresh materialized view mv_txn_66385 complete;
+refresh materialized view mv_txn_66385 complete delta apply;
 select @@tidb_current_ts = 0;
 
 insert into t_mv_txn_66385 values (3, 4);
 select @@tidb_current_ts > 0;
 -- error 1105
-refresh materialized view mv_txn_66385 complete;
+refresh materialized view mv_txn_66385 complete delta apply;
 rollback;
 
 set autocommit = 1;
