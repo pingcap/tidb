@@ -11,6 +11,7 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -323,6 +324,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
 		RegionScanConcurrency:    256,
+		SplitRegionIndexStep:     restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:      "STRICT",
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,

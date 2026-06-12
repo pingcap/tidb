@@ -36,17 +36,35 @@ const (
 	ScatterWaitUpperInterval = 30 * time.Minute
 
 	ScanRegionPaginationLimit = 128
+
+	// DefaultRegionIndexStep is the default number of split-key indexes between two rough split keys.
+	DefaultRegionIndexStep uint = 128
 )
+
+// NormalizeRegionIndexStep returns the default rough split step when the configured value is unset.
+func NormalizeRegionIndexStep(regionIndexStep uint) uint {
+	if regionIndexStep == 0 {
+		return DefaultRegionIndexStep
+	}
+	return regionIndexStep
+}
 
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client SplitClient
+	client          SplitClient
+	regionIndexStep uint
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
 func NewRegionSplitter(client SplitClient) *RegionSplitter {
+	return NewRegionSplitterWithRegionIndexStep(client, DefaultRegionIndexStep)
+}
+
+// NewRegionSplitterWithRegionIndexStep returns a new RegionSplitter with the configured rough split step.
+func NewRegionSplitterWithRegionIndexStep(client SplitClient, regionIndexStep uint) *RegionSplitter {
 	return &RegionSplitter{
-		client: client,
+		client:          client,
+		regionIndexStep: NormalizeRegionIndexStep(regionIndexStep),
 	}
 }
 
@@ -80,12 +98,14 @@ func (rs *RegionSplitter) executeSplitByRanges(
 ) error {
 	startTime := time.Now()
 	// Choose the rough region split keys,
-	// each splited region contains 128 regions to be splitted.
-	const regionIndexStep = 128
-
-	roughSortedSplitKeys := make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
-	for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
-		roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+	// each split region contains regionIndexStep regions to be split.
+	var roughSortedSplitKeys [][]byte
+	if rs.regionIndexStep < uint(len(sortedKeys)) {
+		regionIndexStep := int(rs.regionIndexStep)
+		roughSortedSplitKeys = make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
+		for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
+			roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+		}
 	}
 	if len(roughSortedSplitKeys) > 0 {
 		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys); err != nil {

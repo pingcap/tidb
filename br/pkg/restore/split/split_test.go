@@ -1077,6 +1077,28 @@ func TestScanEmptyRegion(t *testing.T) {
 	require.NoError(t, err)
 }
 
+type recordingSplitClient struct {
+	SplitClient
+	splitCalls [][][]byte
+}
+
+func (c *recordingSplitClient) SplitKeysAndScatter(_ context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	c.splitCalls = append(c.splitCalls, slices.Clone(keys))
+	return nil, nil
+}
+
+func TestRegionSplitterRoughSplitUsesConfiguredRegionIndexStep(t *testing.T) {
+	client := &recordingSplitClient{}
+	keys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}, {'e'}, {'f'}}
+	regionSplitter := NewRegionSplitterWithRegionIndexStep(client, 2)
+
+	err := regionSplitter.ExecuteSortedKeys(context.Background(), keys)
+	require.NoError(t, err)
+	require.Len(t, client.splitCalls, 2)
+	require.Equal(t, [][]byte{{'c'}, {'e'}}, client.splitCalls[0])
+	require.Equal(t, keys, client.splitCalls[1])
+}
+
 func TestSplitEmptyRegion(t *testing.T) {
 	mockPDCli := NewMockPDClientForSplit()
 	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})

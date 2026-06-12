@@ -367,14 +367,14 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := split.NewRegionSplitter(split.NewClient(
+	splitter := split.NewRegionSplitterWithRegionIndexStep(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
 		maxSplitKeysOnce,
 		rc.storeCount+1,
 		splitClientOpts...,
-	))
+	), rc.splitRegionIndexStep)
 
 	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }

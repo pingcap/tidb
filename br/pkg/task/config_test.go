@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -48,6 +49,7 @@ func TestRestoreConfigAdjust(t *testing.T) {
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
 	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
 	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
+	require.Equal(t, restoresplit.DefaultRegionIndexStep, cfg.SplitRegionIndexStep)
 }
 
 type mockPDClient struct {
@@ -78,6 +80,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig:   restoreComCfg,
 		DdlBatchSize:          128,
 		RegionScanConcurrency: 3,
+		SplitRegionIndexStep:  7,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
@@ -85,6 +88,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
 	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
+	require.Equal(t, uint(7), client.GetSplitRegionIndexStep())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
