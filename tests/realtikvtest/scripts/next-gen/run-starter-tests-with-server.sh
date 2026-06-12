@@ -85,6 +85,18 @@ function is_true() {
     esac
 }
 
+function json_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\b'/\\b}"
+    value="${value//$'\f'/\\f}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
+    printf "%s" "${value}"
+}
+
 function is_system_keyspace() {
     local value
     value="$(printf "%s" "$1" | tr '[:lower:]' '[:upper:]')"
@@ -97,7 +109,7 @@ function create_starter_keyspace() {
     local keyspace_create_body="${STARTER_KEYSPACE_CREATE_BODY:-}"
 
     if [[ -z "${keyspace_create_body}" ]]; then
-        keyspace_create_body="$(printf '{"name":"%s","config":{}}' "${keyspace_name}")"
+        keyspace_create_body="$(printf '{"name":"%s","config":{}}' "$(json_escape "${keyspace_name}")")"
     fi
 
     echo "Creating starter keyspace ${keyspace_name} via ${pd_status_url}/pd/api/v2/keyspaces"
@@ -146,13 +158,18 @@ function activate_starter_server() {
     local activate_err_file="${response_file}.err"
     local activate_rc_file="${response_file}.rc"
     local activate_body
+    local escaped_keyspace_name
+    local escaped_export_id
+
+    escaped_keyspace_name="$(json_escape "${keyspace_name}")"
+    escaped_export_id="$(json_escape "${export_id}")"
 
     if [[ -n "${metadata_json}" ]]; then
         activate_body="$(printf '{"keyspace_name":"%s","export_id":"%s","max_idle_seconds":%s,"metadata":%s,"tidb_enable_ddl":true,"run_auto_analyze":true}' \
-            "${keyspace_name}" "${export_id}" "${max_idle_seconds}" "${metadata_json}")"
+            "${escaped_keyspace_name}" "${escaped_export_id}" "${max_idle_seconds}" "${metadata_json}")"
     else
         activate_body="$(printf '{"keyspace_name":"%s","export_id":"%s","max_idle_seconds":%s,"tidb_enable_ddl":true,"run_auto_analyze":true}' \
-            "${keyspace_name}" "${export_id}" "${max_idle_seconds}")"
+            "${escaped_keyspace_name}" "${escaped_export_id}" "${max_idle_seconds}")"
     fi
 
     echo "Activating external starter tidb-server for keyspace ${keyspace_name}, export ID ${export_id}"

@@ -67,12 +67,15 @@ This script runs external starter-mode tests against a real `tidb-server`
 process. It first reuses `bootstrap-test-with-cluster.sh` to start PD, TiKV,
 TiKV-Worker, and MinIO. Then it starts `bin/tidb-server` with
 `deploy-mode = "starter"` and runs Go tests through the MySQL protocol and
-status HTTP APIs. By default, the script prepares a non-`SYSTEM` keyspace,
-starts TiDB in standby mode, activates the configured keyspace through
-`/tidb-pool/activate`, and then runs the tests against the activated external
-server. For the default `startertest` run, the script also runs a final
-destructive phase that verifies graceful exit waits for held client connections
-before shutting down the external `tidb-server`.
+status HTTP APIs. The standard `startertest` Makefile target runs against a
+non-`SYSTEM` keyspace. For a non-`SYSTEM` target keyspace, the script first
+bootstraps the shared `SYSTEM` keyspace with a no-op starter server, then
+creates the target keyspace through the PD keyspace API. It then starts TiDB in
+standby mode, activates the configured keyspace through `/tidb-pool/activate`,
+and runs the tests against the activated external server. For the default
+`startertest` run, the script also runs a final destructive phase that verifies
+graceful exit waits for held client connections before shutting down the
+external `tidb-server`.
 
 This script is an independent direct entry point and is not part of generic
 `run-tests.sh` suite discovery. For the standard next-gen RealTiKV CI flow, use
@@ -119,11 +122,11 @@ Useful environment variables:
   external server (default: `localhost:19000`)
 - `STARTER_KEYSPACE_NAME`: Starter keyspace activated by the script
   (default: `SYSTEM`)
-- `STARTER_PREPARE_KEYSPACE`: Whether to bootstrap `SYSTEM` and create
-  `STARTER_KEYSPACE_NAME` before starting the tested starter server when the
-  keyspace is not `SYSTEM` (default: `1`)
+- `STARTER_PREPARE_KEYSPACE`: Whether to bootstrap the shared `SYSTEM` keyspace
+  and create a non-`SYSTEM` `STARTER_KEYSPACE_NAME` before starting the tested
+  starter server (default: `1`)
 - `STARTER_KEYSPACE_CREATE_BODY`: Optional custom request body for creating
-  `STARTER_KEYSPACE_NAME` through the PD keyspace API
+  a non-`SYSTEM` `STARTER_KEYSPACE_NAME` through the PD keyspace API
 - `STARTER_SYSTEM_BOOTSTRAP_TIMEOUT`: Timeout for the no-op `SYSTEM` bootstrap
   phase before creating a non-`SYSTEM` keyspace (default: `2m`)
 - `STARTER_STANDBY_MODE`: Whether to start in standby mode and activate before
