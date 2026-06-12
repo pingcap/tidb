@@ -183,6 +183,7 @@ type clientConn struct {
 	serverHost    string                // server host
 	peerHost      string                // peer host
 	peerPort      string                // peer port
+	countedUser   string                // counted user identity for max_user_connections tracking
 	status        int32                 // dispatching/reading/shutdown/waitshutdown
 	lastCode      uint16                // last error code
 	collation     uint8                 // collation used by client, may be different from the collation used by database.
@@ -204,6 +205,10 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+}
+
+type userResourceLimits struct {
+	connections int
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -376,6 +381,7 @@ func (cc *clientConn) Close() error {
 	//
 	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
 	// times.
+
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
@@ -835,7 +841,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
-	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
+	if err := cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)

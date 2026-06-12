@@ -116,6 +116,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -1289,6 +1290,10 @@ const (
 	// add idx_start_time index to tidb_runaway_watch and idx_done_time index to tidb_runaway_watch_done.
 	version230 = 230
 
+	// version 231
+	// Add Max_user_connections to mysql.user.
+	version231 = 231
+
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1298,7 +1303,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version230
+var currentBootstrapVersion int64 = version231
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1484,6 +1489,7 @@ var (
 		upgradeToVer228,
 		upgradeToVer229,
 		upgradeToVer230,
+		upgradeToVer231,
 	}
 )
 
@@ -3473,6 +3479,14 @@ func upgradeToVer230(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer231(s sessiontypes.Session, ver int64) {
+	if ver >= version231 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
