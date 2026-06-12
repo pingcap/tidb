@@ -928,7 +928,7 @@ func ReadBackupMeta(
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
 	switch f.Name {
-	case flagStorage, FlagStreamFullBackupStorage:
+	case flagStorage, FlagStreamFullBackupStorage, FlagPiTRAddIndexSQLStorage, flagCheckpointStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")

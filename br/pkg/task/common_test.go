@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -59,6 +60,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://bucket/prefix/",
 		},
 		{
+			inputName:     FlagPiTRAddIndexSQLStorage,
+			expectedName:  "pitr-add-index-sql-storage",
+			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/pitr/add-index",
+		},
+		{
 			inputName:     flagFullBackupCipherKey,
 			expectedName:  "crypter.key",
 			inputValue:    "537570657253656372657456616C7565",
@@ -97,6 +104,16 @@ func TestUrlNoQuery(t *testing.T) {
 		}
 		require.Equal(t, tc.expectedValue, field.String, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
 	}
+}
+
+func TestParseStreamRestoreFlagsPiTRAddIndexSQLStorage(t *testing.T) {
+	command := &cobra.Command{}
+	DefineStreamRestoreFlags(command)
+	require.NoError(t, command.Flags().Set(FlagPiTRAddIndexSQLStorage, "local:///tmp/pitr-add-index"))
+
+	cfg := RestoreConfig{}
+	require.NoError(t, cfg.ParseStreamRestoreFlags(command.Flags()))
+	require.Equal(t, "local:///tmp/pitr-add-index", cfg.PiTRAddIndexSQLStorage)
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {

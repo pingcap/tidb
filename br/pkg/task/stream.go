@@ -1827,7 +1827,14 @@ func restoreStream(
 	}
 
 	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
+	var addIndexSQLStorage storeapi.Storage
+	if len(cfg.PiTRAddIndexSQLStorage) > 0 {
+		_, addIndexSQLStorage, err = GetStorage(ctx, cfg.PiTRAddIndexSQLStorage, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, addIndexSQLStorage); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
