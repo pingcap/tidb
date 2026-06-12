@@ -82,6 +82,52 @@ func TestDropPrepare(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+// TestPlanCacheTemporalParamFsp guards a correctness contract of the plan cache:
+// a temporal parameter's fractional-seconds precision (fsp) can be baked into
+// the cached plan's result type. Temporal values are rounded to that fsp at
+// evaluation time, so reusing a plan compiled for a datetime(0) param to serve a
+// datetime(6) param would round the value down to seconds and return a wrong
+// result. Hence the plan cache must treat a different temporal fsp as
+// type-incompatible.
+func TestPlanCacheTemporalParamFsp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, d0 datetime(0))")
+	tk.MustExec("insert into t values (1, null)") // d0 is NULL so the expressions return the param
+
+	for _, tc := range []struct {
+		name string
+		expr string
+	}{
+		{"ifnull", "ifnull(d0, ?)"},
+		{"if", "if(a = 0, d0, ?)"},
+		{"case", "case when a = 0 then d0 else ? end"},
+	} {
+		tk.MustExec("prepare st from 'select " + tc.expr + " from t where a = 1'")
+
+		// Prime the cache with a datetime(0) param: the result type fsp is fixed at 0.
+		tk.MustExec("set @p = cast('2024-01-01 12:34:56' as datetime(0))")
+		tk.MustQuery("execute st using @p")
+		tk.MustQuery("execute st using @p")
+		require.Equal(t, "1", tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0],
+			tc.name+": statement should be plan-cacheable")
+
+		// Reuse with a datetime(6) param: the plan must NOT be reused, and the
+		// .789012 fraction must survive (a stale fsp=0 plan would round it away).
+		tk.MustExec("set @p = cast('2024-01-01 12:34:56.789012' as datetime(6))")
+		got := tk.MustQuery("execute st using @p").Rows()[0][0]
+		require.Equal(t, "0", tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0],
+			tc.name+": cached plan must not be reused when the param fsp changes")
+		require.Equal(t, "2024-01-01 12:34:56.789012", got,
+			tc.name+": datetime(6) precision must be preserved")
+
+		tk.MustExec("deallocate prepare st")
+	}
+}
+
 func BenchmarkNewPlanCacheKey(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

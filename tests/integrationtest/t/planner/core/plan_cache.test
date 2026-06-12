@@ -1795,3 +1795,73 @@ CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
 INSERT INTO t VALUES (1, current_date());
 PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
 EXECUTE stmt;
+
+# Temporal parameter fsp should be part of plan-cache parameter compatibility.
+set tidb_enable_prepared_plan_cache=1;
+set time_zone='+00:00';
+drop table if exists t_plan_cache_fsp;
+create table t_plan_cache_fsp (
+    a int primary key,
+    d0 datetime(0),
+    ts0 timestamp(0) null,
+    tm0 time(0)
+);
+insert into t_plan_cache_fsp values (1, null, null, null);
+
+select ifnull(d0, cast('2024-01-01 12:34:56.789012' as datetime(6))) as v from t_plan_cache_fsp where a = 1;
+prepare st_fsp from 'select ifnull(d0, ?) as v from t_plan_cache_fsp where a = 1';
+set @p = cast('2024-01-01 12:34:56' as datetime(0));
+execute st_fsp using @p;
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+set @p = cast('2024-01-01 12:34:56.789012' as datetime(6));
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+set @p = cast('2024-01-01 12:34:56' as datetime(0));
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+deallocate prepare st_fsp;
+
+prepare st_fsp from 'select if(a = 0, d0, ?) as v from t_plan_cache_fsp where a = 1';
+set @p = cast('2024-01-01 12:34:56' as datetime(0));
+execute st_fsp using @p;
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+set @p = cast('2024-01-01 12:34:56.789012' as datetime(6));
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+deallocate prepare st_fsp;
+
+prepare st_fsp from 'select case when a = 0 then d0 else ? end as v from t_plan_cache_fsp where a = 1';
+set @p = cast('2024-01-01 12:34:56' as datetime(0));
+execute st_fsp using @p;
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+set @p = cast('2024-01-01 12:34:56.789012' as datetime(6));
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+deallocate prepare st_fsp;
+
+prepare st_fsp from 'select ifnull(ts0, ?) as v from t_plan_cache_fsp where a = 1';
+set @p = timestamp '2024-01-01 12:34:56';
+execute st_fsp using @p;
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+set @p = timestamp '2024-01-01 12:34:56.789012';
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+deallocate prepare st_fsp;
+
+prepare st_fsp from 'select ifnull(tm0, ?) as v from t_plan_cache_fsp where a = 1';
+set @p = cast('12:34:56' as time(0));
+execute st_fsp using @p;
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+set @p = cast('12:34:56.789012' as time(6));
+execute st_fsp using @p;
+select @@last_plan_from_cache;
+deallocate prepare st_fsp;
+set time_zone=default;
+set tidb_enable_prepared_plan_cache=default;
