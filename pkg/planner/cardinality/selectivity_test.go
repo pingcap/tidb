@@ -786,6 +786,90 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	rowCnt2, _ := strconv.ParseFloat(rows2[0][1].(string), 64)
 	require.InDelta(t, trueRowCnt, rowCnt1, 0.1)
 	require.NotEqual(t, rowCnt1, rowCnt2)
+
+	// issue 69134: when a composite index contains a virtual generated column,
+	// that column has no column stats. The estimator should then use the
+	// composite index histogram instead of applying expbackoff to the remaining
+	// columns only.
+	testKit.MustExec("drop table if exists t_virtual_idx")
+	testKit.MustExec("create table t_virtual_idx(c1 int, c2 int, base int, c_vir int generated always as (base) virtual, index idx(c1, c2, c_vir))")
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_virtual_idx"))
+	require.NoError(t, err)
+	virtualTblInfo := tb.Meta()
+	idxInfo := virtualTblInfo.Indices[0]
+
+	const rowCount = 1000
+	virtualStatsTbl := mockStatsTable(virtualTblInfo, rowCount)
+	virtualStatsTbl.PhysicalID = virtualTblInfo.ID
+	virtualStatsTbl.Version = 2
+	virtualStatsTbl.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMap(len(virtualTblInfo.Columns), len(virtualTblInfo.Indices))
+	for _, colInfo := range virtualTblInfo.Columns {
+		virtualStatsTbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, false)
+	}
+	virtualStatsTbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, true)
+
+	colValues := []types.Datum{types.NewIntDatum(1)}
+	for _, colInfo := range virtualTblInfo.Columns[:2] {
+		virtualStatsTbl.SetCol(colInfo.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(colInfo.ID, colValues, rowCount, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              colInfo,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          statistics.Version2,
+			TopN:              statistics.NewTopN(0),
+		})
+		virtualStatsTbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, true)
+	}
+	require.Nil(t, virtualStatsTbl.GetCol(virtualTblInfo.Columns[3].ID))
+
+	var lowIdxVal, highIdxVal types.Datum
+	lowIdxBytes, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(0))
+	require.NoError(t, err)
+	highIdxBytes, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(rowCount-1))
+	require.NoError(t, err)
+	lowIdxVal.SetBytes(lowIdxBytes)
+	highIdxVal.SetBytes(highIdxBytes)
+	idxHist := statistics.NewHistogram(idxInfo.ID, rowCount, 0, 0, types.NewFieldType(mysql.TypeBlob), 1, 0)
+	idxHist.AppendBucket(&lowIdxVal, &highIdxVal, rowCount, 1)
+	idxHist.PreCalculateScalar()
+	virtualStatsTbl.SetIdx(idxInfo.ID, &statistics.Index{
+		Histogram:         *idxHist,
+		Info:              idxInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          statistics.Version2,
+		TopN:              statistics.NewTopN(0),
+	})
+
+	sctx := testKit.Session().(sessionctx.Context)
+	stmts, err := session.Parse(sctx, "select * from t_virtual_idx where c1 = 1 and c2 = 1 and c_vir between 10 and 20")
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+	ret := &plannercore.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmts[0])
+	err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
+	require.NoError(t, err)
+	p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, nodeW, ret.InfoSchema)
+	require.NoError(t, err)
+	sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
+	ds := sel.Children()[0].(*logicalop.DataSource)
+	exprCols := ds.Schema().Columns
+	ranges := ranger.Ranges{{
+		LowVal:    []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(10)},
+		HighVal:   []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(20)},
+		Collators: collate.GetBinaryCollatorSlice(3),
+	}}
+
+	indexOnlyStatsTbl := virtualStatsTbl.CopyAs(statistics.ColumnMapWritable)
+	indexOnlyStatsTbl.DelCol(virtualTblInfo.Columns[0].ID)
+	indexOnlyStatsTbl.DelCol(virtualTblInfo.Columns[1].ID)
+	indexOnlyHistColl := indexOnlyStatsTbl.GenerateHistCollFromColumnInfo(virtualTblInfo, exprCols)
+	indexOnlyCount, err := cardinality.GetRowCountByIndexRanges(testKit.Session().GetPlanCtx(), indexOnlyHistColl, idxInfo.ID, ranges, nil)
+	require.NoError(t, err)
+	require.Less(t, indexOnlyCount.Est, float64(rowCount)/2)
+
+	histColl := virtualStatsTbl.GenerateHistCollFromColumnInfo(virtualTblInfo, exprCols)
+	countWithMissingVirtualColStats, err := cardinality.GetRowCountByIndexRanges(testKit.Session().GetPlanCtx(), histColl, idxInfo.ID, ranges, nil)
+	require.NoError(t, err)
+	require.InDelta(t, indexOnlyCount.Est, countWithMissingVirtualColStats.Est, eps)
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {

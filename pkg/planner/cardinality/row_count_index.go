@@ -493,18 +493,19 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
 				}
-				foundStats = true
 				countResult, err := GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
-				if err == nil {
-					break
+				if err != nil {
+					return 0, 0, 0, false, err
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 				selectivity = countResult.Est / float64(realtimeCnt)
-				maxSel = min(maxSel, countResult.MaxEst/float64(coll.RealtimeCount))
+				maxSel = min(maxSel, countResult.MaxEst/float64(realtimeCnt))
+				foundStats = true
+				break
 			}
 		}
 		if !foundStats {
-			continue
+			return 0, 0, 0, false, nil
 		}
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 		minSel *= selectivity
