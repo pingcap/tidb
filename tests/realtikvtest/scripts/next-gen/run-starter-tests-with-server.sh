@@ -313,7 +313,8 @@ slow-log-field = "Keyspace_meta_project"
 stmt-log-field = "project"
 required = true
 EOF
-        activate_metadata_json="$(printf '{"tenant":"%s","project":"%s"}' "${keyspace_meta_tenant}" "${keyspace_meta_project}")"
+        activate_metadata_json="$(printf '{"tenant":"%s","project":"%s"}' \
+            "$(json_escape "${keyspace_meta_tenant}")" "$(json_escape "${keyspace_meta_project}")")"
     fi
 
     local tidb_server_args=(
