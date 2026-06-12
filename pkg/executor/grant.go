@@ -614,10 +614,10 @@ func isSafeMViewTableGrantPriv(priv mysql.PrivilegeType) bool {
 
 func isSafeMLogTableGrantPriv(priv mysql.PrivilegeType) bool {
 	switch priv {
-	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv, mysql.SelectPriv:
+	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv:
 		return true
 	default:
-		return false
+		return materializedViewTablePrivs.Has(priv)
 	}
 }
 
@@ -736,7 +736,7 @@ func tablePrivsForGrantTarget(ctx sessionctx.Context, db string, tbl string) (my
 	case meta.MaterializedView != nil:
 		return materializedViewTablePrivs, nil
 	case meta.MaterializedViewLog != nil:
-		return mysql.Privileges{mysql.SelectPriv}, nil
+		return materializedViewTablePrivs, nil
 	case meta.MaterializedViewShadow != nil:
 		return nil, nil
 	default:

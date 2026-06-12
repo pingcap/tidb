@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/errctx",
+        "//pkg/errno",
         "//pkg/executor",
         "//pkg/kv",
         "//pkg/lightning/mydump",

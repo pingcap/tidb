@@ -292,7 +292,7 @@ func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.Cr
 	if schemaName.O == "" {
 		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
-	d.checkTableInfo(ctx, schemaName, pmodel.NewCIStr("$mlog$"+stmt.Table.Name.O))
+	d.checkTableInfo(ctx, schemaName, model.MaterializedViewLogTableName(stmt.Table.Name))
 	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
 	return nil
 }

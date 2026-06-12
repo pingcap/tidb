@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -952,6 +953,137 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 		"1 0 10 101",
 		"2 0 20 200",
 	))
+}
+
+// TestMLogAddColumnRejectsNonPublicBaseColumn verifies that ALTER MATERIALIZED
+// VIEW LOG only accepts public base-table columns. A column being added by
+// concurrent online DDL is visible in metadata before it becomes public, and mlog
+// tracking must reject it until the base DDL finishes.
+func TestMLogAddColumnRejectsNonPublicBaseColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int)")
+	tk.MustExec("create materialized view log on t (id)")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter table t add column added int default 0",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "base-table add-column write-reorg")
+
+	// The base column is non-public while ADD COLUMN is paused, so the mlog
+	// should treat it as unavailable instead of adding a transient column.
+	tk.MustGetErrCode("alter materialized view log on t add column (added)", errno.ErrBadField)
+
+	ctrl.releaseAndWaitFinish(t)
+
+	// Once the base ADD COLUMN completes, the same column is public and can be
+	// tracked by the mlog normally.
+	tk.MustExec("alter materialized view log on t add column (added)")
+	rows := tk.MustQuery("show create materialized view log on t").Rows()
+	require.Len(t, rows, 1)
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t` (`id`, `added`)")
+}
+
+// TestMLogOnlineDDLAddTrackedColumn verifies mlog writes while ADD COLUMN is in
+// progress: before the new mlog column is public, writes still use the old
+// tracked-column set; after it is public, the new tracked column participates in
+// update logging.
+func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, added int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100, 1000)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t add column (added)",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "mlog add-column write-reorg")
+
+	// The new mlog column is not public yet, so mlog writing should continue with the
+	// previous tracked column set instead of treating the transient metadata as corrupt.
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set untracked = 1001 where id = 1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	tk.MustExec("update t set added = 101 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, added, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 11 100 U -1",
+		"1 11 101 U 1",
+	))
+
+	tk.MustExec("create table t_drop_race (id int primary key, tracked int, added int)")
+	tk.MustExec("create materialized view log on t_drop_race (id)")
+	tkDDL2 := testkit.NewTestKit(t, store)
+	tkDDL2.MustExec("use test")
+	ctrl2 := startDDLPausedAtFailpoint(
+		t,
+		tkDDL2,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t_drop_race add column (added)",
+	)
+	defer ctrl2.releaseAndWaitFinish(t)
+	ctrl2.waitUntilPaused(t, "mlog add-column write-reorg before base drop")
+
+	tkDrop := testkit.NewTestKit(t, store)
+	tkDrop.MustExec("use test")
+	dropDone := make(chan error, 1)
+	go func() {
+		dropDone <- tkDrop.ExecToErr("alter table t_drop_race drop column added")
+	}()
+	select {
+	case err := <-dropDone:
+		require.FailNow(t, "base drop column finished before mlog add completed", "err=%v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	ctrl2.releaseAndWaitFinish(t)
+	select {
+	case err := <-dropDone:
+		require.ErrorContains(t, err, "referenced by materialized view log")
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting base drop column to finish")
+	}
+	rows := tk.MustQuery("show create materialized view log on t_drop_race").Rows()
+	require.Len(t, rows, 1)
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_drop_race` (`id`, `added`)")
 }
 
 func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {

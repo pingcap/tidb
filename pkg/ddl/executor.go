@@ -1086,8 +1086,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	if err := checkTooLongTable(mlogNameCIStr); err != nil {
 		return err
 	}
@@ -2429,6 +2428,9 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 
 	involvingSchemaInfo := appendInvolvingSchemaInfo(nil, info.InvolvingSchemaInfo...)
+	if mlogInvolving := buildMaterializedViewLogBaseInvolvingSchemaInfo(e.ctx, e.infoCache.GetLatest(), schema.Name.L, t.Meta()); len(mlogInvolving) > 0 {
+		involvingSchemaInfo = appendInvolvingSchemaInfo(involvingSchemaInfo, mlogInvolving...)
+	}
 	for _, j := range subJobs {
 		if j.Type == model.ActionAddForeignKey {
 			ref := j.JobArgs.(*model.AddForeignKeyArgs).FkInfo
@@ -2649,6 +2651,9 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	if involving := buildMaterializedViewLogInvolvingSchemaInfo(e.ctx, e.infoCache.GetLatest(), schema.Name.L, tbInfo); len(involving) > 0 {
+		job.InvolvingSchemaInfo = involving
 	}
 
 	args := &model.TableColumnArgs{
