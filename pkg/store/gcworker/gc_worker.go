@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -49,6 +50,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -78,6 +80,11 @@ type GCWorker struct {
 	cancel               context.CancelFunc
 	done                 chan error
 	regionLockResolver   tikv.RegionLockResolver
+
+	// Starter unified GC skips gcWaitTime only before the first completed GC job
+	// in production. After one GC job finishes, it falls back to the normal
+	// debounce behavior shared by other deployment modes.
+	hasFinishedFirstGCJob bool
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -228,6 +235,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 		case err := <-w.done:
 			w.gcIsRunning = false
 			w.lastFinish = time.Now()
+			w.hasFinishedFirstGCJob = true
 			if err != nil {
 				logutil.Logger(ctx).Error("runGCJob", zap.String("category", "gc worker"), zap.Error(err))
 			}
@@ -327,6 +335,18 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 	return nil
 }
 
+func (w *GCWorker) needsToWait() bool {
+	// In production Starter mode, unified GC should fast-start on the first tick
+	// instead of paying an extra gcWaitTime after worker bootstrap. The first
+	// completion flips hasFinishedFirstGCJob, so later ticks still honor the
+	// normal cooldown. Keep intest on the historical behavior unless a test
+	// explicitly opts into the production-only path.
+	if deploymode.IsStarter() && !intest.InTest {
+		return time.Since(w.lastFinish) < gcWaitTime && w.hasFinishedFirstGCJob
+	}
+	return time.Since(w.lastFinish) < gcWaitTime
+}
+
 func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcConcurrency) error {
 	// Get safe point from PD.
 	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
@@ -418,7 +438,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
+	if w.needsToWait() {
 		logutil.Logger(ctx).Info("another gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil
@@ -438,7 +458,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 func (w *GCWorker) runKeyspaceGCJobInUnifiedGCMode(ctx context.Context, concurrency gcConcurrency) error {
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
+	if w.needsToWait() {
 		logutil.Logger(ctx).Info("another keyspace gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil
