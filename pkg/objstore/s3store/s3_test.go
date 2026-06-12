@@ -35,6 +35,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -45,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const bucketRegionHeader = "X-Amz-Bucket-Region"
@@ -1705,6 +1708,40 @@ func TestRetryError(t *testing.T) {
 	err = s.WriteFile(ctx, "reset", []byte(errString))
 	require.NoError(t, err)
 	require.Equal(t, count, int32(2))
+}
+
+func TestS3ReadFileSuppressesSkippedChecksumValidationLog(t *testing.T) {
+	core, observedLogs := observer.New(zap.WarnLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	t.Cleanup(restore)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "ENABLED", r.Header.Get("X-Amz-Checksum-Mode"))
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("payload"))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	storage, err := NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:        server.URL,
+		Bucket:          "test",
+		Prefix:          "prefix",
+		AccessKey:       "none",
+		SecretAccessKey: "none",
+		Provider:        "minio",
+		ForcePathStyle:  true,
+	}, &storeapi.Options{})
+	require.NoError(t, err)
+
+	data, err := storage.ReadFile(ctx, "object")
+	require.NoError(t, err)
+	require.Equal(t, []byte("payload"), data)
+
+	for _, entry := range observedLogs.All() {
+		require.NotContains(t, entry.Message, "Response has no supported checksum")
+	}
 }
 
 func TestS3ReadFileRetryable(t *testing.T) {
