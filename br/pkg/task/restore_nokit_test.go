@@ -55,6 +55,16 @@ func TestRestorePhaseRequiresCheckpoint(t *testing.T) {
 }
 
 func TestSplitRegionIndexStepFlag(t *testing.T) {
+	t.Run("coarse scatter", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set(FlagCoarseScatter, "true"))
+
+		cfg := &RestoreConfig{}
+		require.NoError(t, cfg.ParseFromFlags(flags, true))
+		require.True(t, cfg.CoarseScatter)
+	})
+
 	t.Run("custom", func(t *testing.T) {
 		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
 		DefineRestoreFlags(flags)

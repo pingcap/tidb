@@ -50,6 +50,7 @@ func TestRestoreConfigAdjust(t *testing.T) {
 	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
 	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
 	require.Equal(t, restoresplit.DefaultRegionIndexStep, cfg.SplitRegionIndexStep)
+	require.False(t, cfg.CoarseScatter)
 }
 
 type mockPDClient struct {
@@ -81,6 +82,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		DdlBatchSize:          128,
 		RegionScanConcurrency: 3,
 		SplitRegionIndexStep:  7,
+		CoarseScatter:         true,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
@@ -89,6 +91,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
 	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
 	require.Equal(t, uint(7), client.GetSplitRegionIndexStep())
+	require.True(t, client.GetCoarseScatter())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {

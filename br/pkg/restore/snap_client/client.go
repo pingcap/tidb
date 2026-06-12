@@ -97,6 +97,7 @@ type SnapClient struct {
 	concurrencyPerStore   uint
 	regionScanConcurrency uint
 	splitRegionIndexStep  uint
+	coarseScatter         bool
 	keepaliveConf         keepalive.ClientParameters
 	rateLimit             uint64
 	tlsConf               *tls.Config
@@ -328,6 +329,17 @@ func (rc *SnapClient) SetSplitRegionIndexStep(step uint) {
 // GetSplitRegionIndexStep returns the rough split step during snapshot restore.
 func (rc *SnapClient) GetSplitRegionIndexStep() uint {
 	return rc.splitRegionIndexStep
+}
+
+// SetCoarseScatter controls whether only rough split regions are scattered.
+func (rc *SnapClient) SetCoarseScatter(coarseScatter bool) {
+	log.Info("coarse scatter", zap.Bool("enabled", coarseScatter))
+	rc.coarseScatter = coarseScatter
+}
+
+// GetCoarseScatter returns whether only rough split regions are scattered.
+func (rc *SnapClient) GetCoarseScatter() bool {
+	return rc.coarseScatter
 }
 
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {

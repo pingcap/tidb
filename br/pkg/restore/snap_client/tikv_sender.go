@@ -375,6 +375,7 @@ func (rc *SnapClient) SplitPoints(
 		rc.storeCount+1,
 		splitClientOpts...,
 	), rc.splitRegionIndexStep)
+	splitter.SetCoarseScatter(rc.coarseScatter)
 
 	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }

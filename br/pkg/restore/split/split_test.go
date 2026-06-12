@@ -1079,24 +1079,50 @@ func TestScanEmptyRegion(t *testing.T) {
 
 type recordingSplitClient struct {
 	SplitClient
-	splitCalls [][][]byte
+	splitCalls     [][][]byte
+	scatterByCalls []bool
 }
 
-func (c *recordingSplitClient) SplitKeysAndScatter(_ context.Context, keys [][]byte) ([]*RegionInfo, error) {
+func (c *recordingSplitClient) SplitKeysAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	return c.SplitKeys(ctx, keys, true)
+}
+
+func (c *recordingSplitClient) SplitKeys(_ context.Context, keys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	c.splitCalls = append(c.splitCalls, slices.Clone(keys))
+	c.scatterByCalls = append(c.scatterByCalls, scatter)
 	return nil, nil
 }
 
 func TestRegionSplitterRoughSplitUsesConfiguredRegionIndexStep(t *testing.T) {
-	client := &recordingSplitClient{}
 	keys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}, {'e'}, {'f'}}
-	regionSplitter := NewRegionSplitterWithRegionIndexStep(client, 2)
+	for _, testCase := range []struct {
+		name           string
+		coarseScatter  bool
+		scatterByCalls []bool
+	}{
+		{
+			name:           "default scatter",
+			scatterByCalls: []bool{true, true},
+		},
+		{
+			name:           "coarse scatter",
+			coarseScatter:  true,
+			scatterByCalls: []bool{true, false},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := &recordingSplitClient{}
+			regionSplitter := NewRegionSplitterWithRegionIndexStep(client, 2)
+			regionSplitter.SetCoarseScatter(testCase.coarseScatter)
 
-	err := regionSplitter.ExecuteSortedKeys(context.Background(), keys)
-	require.NoError(t, err)
-	require.Len(t, client.splitCalls, 2)
-	require.Equal(t, [][]byte{{'c'}, {'e'}}, client.splitCalls[0])
-	require.Equal(t, keys, client.splitCalls[1])
+			err := regionSplitter.ExecuteSortedKeys(context.Background(), keys)
+			require.NoError(t, err)
+			require.Len(t, client.splitCalls, 2)
+			require.Equal(t, [][]byte{{'c'}, {'e'}}, client.splitCalls[0])
+			require.Equal(t, keys, client.splitCalls[1])
+			require.Equal(t, testCase.scatterByCalls, client.scatterByCalls)
+		})
+	}
 }
 
 func TestSplitEmptyRegion(t *testing.T) {

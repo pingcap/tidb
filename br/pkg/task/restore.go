@@ -90,6 +90,8 @@ const (
 	FlagRegionScanConcurrency = "region-scan-concurrency"
 	// FlagSplitRegionIndexStep controls the split-key index step used by rough split during snapshot restore.
 	FlagSplitRegionIndexStep = "split-region-index-step"
+	// FlagCoarseScatter controls whether only rough split regions are scattered during snapshot restore.
+	FlagCoarseScatter = "corase-scatter"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
@@ -275,6 +277,7 @@ type RestoreConfig struct {
 	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	RegionScanConcurrency uint          `json:"region-scan-concurrency" toml:"region-scan-concurrency"`
 	SplitRegionIndexStep  uint          `json:"split-region-index-step" toml:"split-region-index-step"`
+	CoarseScatter         bool          `json:"corase-scatter" toml:"corase-scatter"`
 	StatsConcurrency      uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval    time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
@@ -404,6 +407,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagSplitRegionIndexStep, restoresplit.DefaultRegionIndexStep,
 		"number of split-key indexes between two rough split keys during snapshot restore.")
 	_ = flags.MarkHidden(FlagSplitRegionIndexStep)
+	flags.Bool(FlagCoarseScatter, false, "only scatter regions from rough split during snapshot restore")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -511,6 +515,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	}
 	if cfg.SplitRegionIndexStep == 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%s must be greater than 0", FlagSplitRegionIndexStep)
+	}
+	cfg.CoarseScatter, err = flags.GetBool(FlagCoarseScatter)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagCoarseScatter)
 	}
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
@@ -806,6 +814,7 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetSplitRegionIndexStep(cfg.SplitRegionIndexStep)
+	client.SetCoarseScatter(cfg.CoarseScatter)
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}

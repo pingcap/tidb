@@ -53,6 +53,7 @@ func NormalizeRegionIndexStep(regionIndexStep uint) uint {
 type RegionSplitter struct {
 	client          SplitClient
 	regionIndexStep uint
+	coarseScatter   bool
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
@@ -66,6 +67,11 @@ func NewRegionSplitterWithRegionIndexStep(client SplitClient, regionIndexStep ui
 		client:          client,
 		regionIndexStep: NormalizeRegionIndexStep(regionIndexStep),
 	}
+}
+
+// SetCoarseScatter makes only rough split regions scattered.
+func (rs *RegionSplitter) SetCoarseScatter(coarseScatter bool) {
+	rs.coarseScatter = coarseScatter
 }
 
 // ExecuteSortedKeysOnRegion expose the function `SplitWaitAndScatter` of split client.
@@ -108,14 +114,14 @@ func (rs *RegionSplitter) executeSplitByRanges(
 		}
 	}
 	if len(roughSortedSplitKeys) > 0 {
-		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys, true); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, sortedKeys, !rs.coarseScatter); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -130,9 +136,10 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	sortedKeys [][]byte,
+	scatter bool,
 ) error {
 	startTime := time.Now()
-	scatterRegions, err := rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	scatterRegions, err := rs.splitKeys(ctx, sortedKeys, scatter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -144,6 +151,17 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		log.Info("finish splitting regions.", zap.Duration("take", time.Since(startTime)))
 	}
 	return nil
+}
+
+func (rs *RegionSplitter) splitKeys(ctx context.Context, sortedKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
+	if scatter {
+		return rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	}
+	client, ok := rs.client.(splitClientWithScatterControl)
+	if !ok {
+		return nil, errors.New("split client does not support split without scatter")
+	}
+	return client.SplitKeys(ctx, sortedKeys, false)
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.

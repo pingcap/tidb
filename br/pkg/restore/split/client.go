@@ -123,6 +123,10 @@ type SplitClient interface {
 	GetCodecPDClient() *tikvclient.CodecPDClient
 }
 
+type splitClientWithScatterControl interface {
+	SplitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error)
+}
+
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
 type pdClient struct {
 	mu         sync.Mutex
@@ -627,6 +631,10 @@ func (c *pdClient) getEncodedKeys(start, end []byte) (encodedStart, encodedEnd [
 }
 
 func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	return c.SplitKeys(ctx, sortedSplitKeys, true)
+}
+
+func (c *pdClient) SplitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	if len(sortedSplitKeys) == 0 {
 		return nil, nil
 	}
@@ -686,7 +694,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		for region, splitKeys := range splitKeyMap {
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// TODO(lance6716): add error handling to retry from scan or retry from split
-				newRegions, err2 := c.SplitWaitAndScatter(eCtx, region, splitKeys)
+				newRegions, err2 := c.splitWaitAndMaybeScatter(eCtx, region, splitKeys, scatter)
 				if err2 != nil {
 					if common.IsContextCanceledError(err2) {
 						return err2
@@ -701,14 +709,16 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 					return nil
 				}
 
-				if len(newRegions) != len(splitKeys) {
+				if scatter && len(newRegions) != len(splitKeys) {
 					log.Warn("split key count and new region count mismatch",
 						zap.Int("new region count", len(newRegions)),
 						zap.Int("split key count", len(splitKeys)))
 				}
-				mu.Lock()
-				ret = append(ret, newRegions...)
-				mu.Unlock()
+				if scatter {
+					mu.Lock()
+					ret = append(ret, newRegions...)
+					mu.Unlock()
+				}
 				return nil
 			})
 		}
@@ -729,6 +739,10 @@ func isNonRetryErrForSplit(err error) bool {
 }
 
 func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
+	return c.splitWaitAndMaybeScatter(ctx, region, keys, true)
+}
+
+func (c *pdClient) splitWaitAndMaybeScatter(ctx context.Context, region *RegionInfo, keys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		failpoint.Return(nil, errors.New("retryable error"))
 	})
@@ -761,12 +775,14 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			if err = ctx.Err(); err != nil {
 				return nil, errors.Trace(err)
 			}
-			err = c.scatterRegions(ctx, newRegionsOfBatch)
-			if err != nil {
-				tidblogutil.Logger(ctx).Warn(
-					"scatter regions failed, will continue anyway",
-					zap.Error(err),
-				)
+			if scatter {
+				err = c.scatterRegions(ctx, newRegionsOfBatch)
+				if err != nil {
+					tidblogutil.Logger(ctx).Warn(
+						"scatter regions failed, will continue anyway",
+						zap.Error(err),
+					)
+				}
 			}
 			if c.onSplit != nil {
 				c.onSplit(keys[start:end])
