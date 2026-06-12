@@ -110,6 +110,8 @@ const (
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRAddIndexSQLStorage is used for PITR to output add index SQLs instead of rebuilding indexes.
+	FlagPiTRAddIndexSQLStorage = "pitr-add-index-sql-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
@@ -280,6 +282,9 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	// PiTRAddIndexSQLStorage is the external storage used to output add index SQLs instead of rebuilding indexes.
+	PiTRAddIndexSQLStorage string `json:"pitr-add-index-sql-storage" toml:"pitr-add-index-sql-storage"`
+
 	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
 	// In this restore mode, the restore will not perform timestamp rewrite on the incremental data.
 	AllowPITRFromIncremental bool `json:"allow-pitr-from-incremental" toml:"allow-pitr-from-incremental"`
@@ -404,6 +409,8 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().String(FlagPiTRAddIndexSQLStorage, "", "specify the external storage url where PITR add index SQLs are saved. "+
+		"When set, PITR drops incomplete indexes but does not rebuild them automatically; the SQLs are written to add-index.sql under this storage.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
@@ -435,6 +442,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PiTRAddIndexSQLStorage, err = flags.GetString(FlagPiTRAddIndexSQLStorage); err != nil {
 		return errors.Trace(err)
 	}
 
