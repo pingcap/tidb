@@ -17,6 +17,7 @@ package mviewdeltamergeagg
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"sync"
@@ -252,6 +253,19 @@ func (s *mergeWriterStats) merge(other mergeWriterStats) {
 	s.deleteRows += other.deleteRows
 }
 
+func (s mergeWriterStats) affectedRows() uint64 {
+	return uint64(s.insertRows + s.updateRows + s.deleteRows)
+}
+
+func (s mergeWriterStats) stmtMessage() string {
+	return fmt.Sprintf(
+		"Rows inserted: %d  Updated: %d  Deleted: %d",
+		s.insertRows,
+		s.updateRows,
+		s.deleteRows,
+	)
+}
+
 func newMergeRuntimeStats(workerCnt int) *mergeRuntimeStats {
 	if workerCnt < 0 {
 		workerCnt = 0
@@ -259,6 +273,21 @@ func newMergeRuntimeStats(workerCnt int) *mergeRuntimeStats {
 	return &mergeRuntimeStats{
 		mergeWorkerTime: make([]time.Duration, workerCnt),
 	}
+}
+
+func (s *mergeRuntimeStats) reset(workerCnt int) {
+	if workerCnt < 0 {
+		workerCnt = 0
+	}
+	s.readerTime = 0
+	s.writerTime = 0
+	s.writerDetail = mergeWriterStats{}
+	if cap(s.mergeWorkerTime) < workerCnt {
+		s.mergeWorkerTime = make([]time.Duration, workerCnt)
+		return
+	}
+	s.mergeWorkerTime = s.mergeWorkerTime[:workerCnt]
+	clear(s.mergeWorkerTime)
 }
 
 func (s *mergeRuntimeStats) String() string {
@@ -397,10 +426,23 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.executed = true
 	if e.BaseExecutor.RuntimeStats() != nil {
-		e.runtimeStats = newMergeRuntimeStats(e.WorkerCnt)
+		if e.runtimeStats == nil {
+			e.runtimeStats = newMergeRuntimeStats(e.WorkerCnt)
+		} else {
+			e.runtimeStats.reset(e.WorkerCnt)
+		}
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
 	}
-	return e.runMergePipeline(ctx)
+	pipelineStats, err := e.runMergePipeline(ctx)
+	if err != nil {
+		return err
+	}
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
+	if stmtCtx != nil {
+		stmtCtx.SetAffectedRows(pipelineStats.writerDetail.affectedRows())
+		stmtCtx.SetMessage(pipelineStats.writerDetail.stmtMessage())
+	}
+	return nil
 }
 
 // Close implements the Executor interface.
@@ -414,18 +456,17 @@ func (e *Exec) Close() error {
 	return e.BaseExecutor.Close()
 }
 
-func (e *Exec) runMergePipeline(ctx context.Context) error {
+func (e *Exec) runMergePipeline(ctx context.Context) (*mergeRuntimeStats, error) {
 	workerCnt := e.WorkerCnt
 	if workerCnt <= 0 {
 		workerCnt = 1
 	}
 	stats := e.runtimeStats
-	if stats != nil {
-		if tableWriter, ok := e.Writer.(*tableResultWriter); ok {
-			tableWriter.setRuntimeStats(&stats.writerDetail)
-		}
-	} else if tableWriter, ok := e.Writer.(*tableResultWriter); ok {
-		tableWriter.setRuntimeStats(nil)
+	if stats == nil {
+		stats = newMergeRuntimeStats(workerCnt)
+	}
+	if tableWriter, ok := e.Writer.(*tableResultWriter); ok {
+		tableWriter.setRuntimeStats(&stats.writerDetail)
 	}
 
 	inputBufSize := max(workerCnt*2, 2)
@@ -462,7 +503,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 		return e.runWriter(gctx, resultCh, freeInputCh, stats)
 	})
 
-	return g.Wait()
+	return stats, g.Wait()
 }
 
 func (e *Exec) runReader(
