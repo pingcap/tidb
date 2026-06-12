@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/hashicorp/go-version"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
@@ -157,6 +158,24 @@ func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testi
 	err := applyExec.Open(context.Background())
 	require.ErrorContains(t, err, "writable input col id 1")
 	require.False(t, child.opened)
+}
+
+func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+
+	sql, err := buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, "TiKV", 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`__mv_shadow_1` FROM (")
+	require.Contains(t, sql, "WITH "+strings.Join(ddl.BuildMViewImportIntoOptions(12, "64gib"), ", "))
+
+	sql, err = buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, kv.TiDB.Name(), 12, "64gib")
+	require.NoError(t, err)
+	require.Equal(t, "INSERT INTO `test`.`__mv_shadow_1` select a, count(1) from t group by a", sql)
 }
 
 func TestMarkMViewCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {

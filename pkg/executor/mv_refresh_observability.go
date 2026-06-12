@@ -482,11 +482,14 @@ func (e *RefreshMaterializedViewDryRunExec) buildOutOfPlaceRefreshPlanRows(ctx c
 
 	// Dry run explains the out-of-place load as a write statement shape (INSERT/IMPORT). We bind the
 	// target table name to the existing MV table because shadow table is not created in dry run mode.
+	targetExecutionVars := captureRefreshExecutionSessionVars(e.Ctx().GetSessionVars())
 	loadSQL, err := buildMVRefreshOutOfPlaceBuildSQL(
 		schemaName.O,
 		refreshStmt.ViewName.Name.O,
 		tblInfo,
 		e.Ctx().GetStore().Name(),
+		targetExecutionVars.ImportThreads,
+		targetExecutionVars.ImportDiskQuota,
 	)
 	if err != nil {
 		return nil, err
@@ -501,7 +504,10 @@ func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx co
 	}
 	defer e.ReleaseSysSession(ctx, internalSctx)
 
-	restore := enableMVRefreshObserveMaintenanceFlags(internalSctx)
+	restore, err := e.prepareMVRefreshObserveInternalSession(internalSctx)
+	if err != nil {
+		return nil, err
+	}
 	defer restore()
 
 	txnPreparer, ok := internalSctx.(interface {
@@ -548,7 +554,10 @@ func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalSQL(ctx con
 	}
 	defer e.ReleaseSysSession(ctx, internalSctx)
 
-	restore := enableMVRefreshObserveMaintenanceFlags(internalSctx)
+	restore, err := e.prepareMVRefreshObserveInternalSession(internalSctx)
+	if err != nil {
+		return nil, err
+	}
 	defer restore()
 
 	planSQL := fmt.Sprintf("EXPLAIN FORMAT='%s' %s", types.ExplainFormatBrief, sql)
@@ -850,6 +859,22 @@ func enableMVRefreshObserveMaintenanceFlags(sctx sessionctx.Context) func() {
 		sessVars.InRestrictedSQL = origRestricted
 		sessVars.InMaterializedViewMaintenance = origMaintenance
 	}
+}
+
+func (e *RefreshMaterializedViewDryRunExec) prepareMVRefreshObserveInternalSession(sctx sessionctx.Context) (func(), error) {
+	restoreExecutionVars, err := applyRefreshExecutionSessionVars(
+		sctx.GetSessionVars(),
+		captureRefreshExecutionSessionVars(e.Ctx().GetSessionVars()),
+		false,
+	)
+	if err != nil {
+		return nil, err
+	}
+	restoreObserve := enableMVRefreshObserveMaintenanceFlags(sctx)
+	return func() {
+		restoreObserve()
+		restoreExecutionVars()
+	}, nil
 }
 
 func cloneRefreshMaterializedViewStmt(stmt *ast.RefreshMaterializedViewStmt) *ast.RefreshMaterializedViewStmt {
