@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +26,9 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -122,13 +123,23 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	}
 }
 
-// OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
-// unspecified options will be set to global config
+// NewEtcdSafePointKVWithKeyspacePrefixIfNeeded adds the keyspace etcd namespace
+// when the current keyspace uses keyspace-level GC.
+func NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
+	var prefix string
+	if pd.IsKeyspaceUsingKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
+		prefix = keyspace.MakeKeyspaceEtcdNamespace(codec)
+	}
+	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(prefix))
+}
+
+// OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig.
+// unspecified options will be set to global config.
 func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
-	etcdAddrs, disableGC, keyspaceName, err := config.ParsePath(path)
+	pdAddrsInConfigPath, disableGC, keyspaceName, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -154,12 +165,12 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		}
 	}()
 
-	var apiCtx = pd.NewAPIContextV1()
+	apiCtx := pd.NewAPIContextV1()
 	if len(keyspaceName) > 0 {
 		apiCtx = pd.NewAPIContextV2(keyspaceName)
 	}
 
-	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", etcdAddrs,
+	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", pdAddrsInConfigPath,
 		pd.SecurityOption{
 			CAPath:   d.security.ClusterSSLCA,
 			CertPath: d.security.ClusterSSLCert,
@@ -184,15 +195,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// ---------------- keyspace logic  ----------------
-	var (
-		pdClient *tikv.CodecPDClient
-	)
+	var pdClient *tikv.CodecPDClient
 
 	if keyspaceName == "" {
 		logutil.BgLogger().Info("using API V1.")
@@ -206,14 +209,37 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	codec := pdClient.GetCodec()
-
 	rpcClient := tikv.NewRPCClient(
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
 	)
 
-	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
-		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
+	pdAddrs, err := metaservice.GetPDAddrs(context.Background(), pdCli, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	metaServiceInfo, err := metaservice.GetInfo(codec.GetKeyspaceMeta(), pdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	spkv, err = NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(metaServiceInfo.Group.Addrs, codec, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s, err = tikv.NewKVStore(
+		uuid,
+		pdClient,
+		spkv,
+		&injectTraceClient{Client: rpcClient},
+		tikv.WithPDHTTPClient(
+			"tikv-driver",
+			pdAddrsInConfigPath,
+			pdhttp.WithTLSConfig(tlsConfig),
+			pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram),
+		),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -229,15 +255,15 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	store := &tikvStore{
-		KVStore:   s,
-		etcdAddrs: etcdAddrs,
-		tlsConfig: tlsConfig,
-		memCache:  kv.NewCacheDB(),
-		enableGC:  !disableGC,
-		coprStore: coprStore,
-		codec:     codec,
-		clusterID: clusterID,
-		keyspace:  keyspaceName,
+		KVStore:         s,
+		tlsConfig:       tlsConfig,
+		memCache:        kv.NewCacheDB(),
+		enableGC:        !disableGC,
+		coprStore:       coprStore,
+		codec:           codec,
+		clusterID:       clusterID,
+		keyspace:        keyspaceName,
+		metaServiceInfo: metaServiceInfo,
 	}
 
 	mc.cache[uuid] = store
@@ -266,17 +292,17 @@ func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 
 type tikvStore struct {
 	*tikv.KVStore
-	etcdAddrs []string
-	tlsConfig *tls.Config
-	memCache  kv.MemManager // this is used to query from memory
-	enableGC  bool
-	gcWorker  *gcworker.GCWorker
-	coprStore *copr.Store
-	codec     tikv.Codec
-	opts      sync.Map
-	clusterID uint64
-	keyspace  string
-	closed    bool
+	tlsConfig       *tls.Config
+	memCache        kv.MemManager // this is used to query from memory
+	enableGC        bool
+	gcWorker        *gcworker.GCWorker
+	coprStore       *copr.Store
+	codec           tikv.Codec
+	opts            sync.Map
+	clusterID       uint64
+	keyspace        string
+	metaServiceInfo *metaservice.Info
+	closed          bool
 }
 
 // GetOption wraps around sync.Map.
@@ -305,49 +331,44 @@ func (s *tikvStore) Describe() string {
 
 var ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
 
-const getAllMembersBackoff = 5000
-
-// EtcdAddrs returns etcd server addresses.
+// EtcdAddrs returns the etcd-compatible metadata endpoints for the current keyspace.
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
-	if s.etcdAddrs == nil {
-		return nil, nil
-	}
-
 	if ldflagGetEtcdAddrsFromConfig == "1" {
 		// For automated test purpose.
 		// To manipulate connection to etcd by mandatorily setting path to a proxy.
 		cfg := config.GetGlobalConfig()
 		return strings.Split(cfg.Path, ","), nil
 	}
+	metaServiceInfo, err := s.MetaServiceInfo()
+	if err != nil {
+		return nil, errors.Annotate(err, "get meta service info")
+	}
+	if metaServiceInfo == nil || metaServiceInfo.Group == nil {
+		return nil, nil
+	}
+	return metaServiceInfo.Group.Addrs, nil
+}
 
-	ctx := context.Background()
-	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
-	etcdAddrs := make([]string, 0)
-	pdClient := s.GetPDClient()
-	if pdClient == nil {
-		return nil, errors.New("Etcd client not found")
+// GetPDAddrs returns PD addresses for PD-aware callers.
+func (s *tikvStore) GetPDAddrs() ([]string, error) {
+	return metaservice.GetPDAddrs(context.Background(), s.GetPDClient(), false)
+}
+
+// MetaServiceInfo returns the cached or lazily built keyspace meta service info.
+func (s *tikvStore) MetaServiceInfo() (*metaservice.Info, error) {
+	if s.metaServiceInfo != nil {
+		return s.metaServiceInfo, nil
 	}
-	for {
-		members, err := pdClient.GetAllMembers(ctx)
-		if err != nil {
-			err := bo.Backoff(tikv.BoRegionMiss(), err)
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-		for _, member := range members.GetMembers() {
-			if len(member.ClientUrls) > 0 {
-				u, err := url.Parse(member.ClientUrls[0])
-				if err != nil {
-					logutil.BgLogger().Error("fail to parse client url from pd members", zap.String("client_url", member.ClientUrls[0]), zap.Error(err))
-					return nil, err
-				}
-				etcdAddrs = append(etcdAddrs, u.Host)
-			}
-		}
-		return etcdAddrs, nil
+	pdAddrs, err := s.GetPDAddrs()
+	if err != nil {
+		return nil, errors.Annotate(err, "get pd addrs")
 	}
+	metaServiceInfo, err := metaservice.GetInfo(s.codec.GetKeyspaceMeta(), pdAddrs)
+	if err != nil {
+		return nil, errors.Annotate(err, "build meta service info")
+	}
+	s.metaServiceInfo = metaServiceInfo
+	return metaServiceInfo, nil
 }
 
 // TLSConfig returns the tls config to connect to etcd.

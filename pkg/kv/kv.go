@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -806,6 +807,8 @@ type Storage interface {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() ([]string, error)
+	GetPDAddrs() ([]string, error)
+	MetaServiceInfo() (*metaservice.Info, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }

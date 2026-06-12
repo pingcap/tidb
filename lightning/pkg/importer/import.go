@@ -59,10 +59,10 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -1388,15 +1388,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err = clientv3.New(clientv3.Config{
-			Endpoints:        urlsWithScheme,
-			AutoSyncInterval: 30 * time.Second,
-			TLS:              rc.tls.TLSConfig(),
-		})
+		etcdCli, err = kvstore.NewEtcdCli(kvStore)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {

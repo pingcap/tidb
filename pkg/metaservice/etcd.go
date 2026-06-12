@@ -28,6 +28,11 @@ import (
 
 const getAllMembersBackoffMs = 5000
 
+// NewEtcdMetaServiceClient creates a ServiceClient backed by etcd and PD clients.
+func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
+	return newClient(etcdCli, pdCli)
+}
+
 // client is used to implement etcd meta service.
 type client struct {
 	pdCli           pd.Client

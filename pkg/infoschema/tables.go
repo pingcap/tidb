@@ -2239,7 +2239,7 @@ func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	members, err := etcd.EtcdAddrs()
+	members, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

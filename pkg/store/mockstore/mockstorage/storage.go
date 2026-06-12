@@ -22,6 +22,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -71,7 +72,30 @@ func (s *mockStorage) SetOption(k, v any) {
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	return nil, nil
+	metaInfo, err := s.MetaServiceInfo()
+	if err != nil {
+		return nil, err
+	}
+	if metaInfo == nil || metaInfo.Group == nil {
+		return nil, nil
+	}
+	return metaInfo.Group.Addrs, nil
+}
+
+func (s *mockStorage) GetPDAddrs() ([]string, error) {
+	pdClient := s.KVStore.GetPDClient()
+	if pdClient == nil {
+		return nil, nil
+	}
+	return metaservice.GetPDAddrs(context.Background(), pdClient, false)
+}
+
+func (s *mockStorage) MetaServiceInfo() (*metaservice.Info, error) {
+	pdAddrs, err := s.GetPDAddrs()
+	if err != nil {
+		return nil, err
+	}
+	return metaservice.GetInfo(s.keyspaceMeta, pdAddrs)
 }
 
 func (s *mockStorage) TLSConfig() *tls.Config {
