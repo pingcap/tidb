@@ -1447,7 +1447,7 @@ import (
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
-	RefreshCompleteModeOpt                 "REFRESH MATERIALIZED VIEW COMPLETE mode option"
+	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5602,7 +5602,7 @@ CancelMaterializedViewJobStmt:
 	}
 
 RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteModeOpt RefreshMaterializedViewObserveOpt
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
 	{
 		completeType := $7.(ast.RefreshMaterializedViewCompleteType)
 		observeType := $8.(ast.RefreshMaterializedViewObserveType)
@@ -5655,12 +5655,8 @@ RefreshWithAsyncModeOpt:
 		$$ = true
 	}
 
-RefreshCompleteModeOpt:
-	/* EMPTY */
-	{
-		$$ = ast.RefreshMaterializedViewCompleteTypeDefault
-	}
-|	"IN" "PLACE"
+RefreshCompleteMode:
+	"IN" "PLACE"
 	{
 		$$ = ast.RefreshMaterializedViewCompleteTypeInPlace
 	}

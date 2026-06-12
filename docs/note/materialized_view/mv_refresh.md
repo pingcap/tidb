@@ -92,9 +92,7 @@ This create-time rule set is intentionally different from runtime internal-refre
 Supported syntax (current implemented modes):
 
 ```sql
-REFRESH MATERIALIZED VIEW db.mv COMPLETE;
-REFRESH MATERIALIZED VIEW mv COMPLETE; -- uses current DB
-REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE; -- parsed, but rejected: async refresh is not supported yet
+REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE;
 REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE;
 REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY;
 
@@ -756,7 +754,7 @@ changed rows to the target MV inside the existing refresh transaction framework.
 
 Refresh mode matrix is:
 
-- `REFRESH MATERIALIZED VIEW ... COMPLETE`
+- `REFRESH MATERIALIZED VIEW ... COMPLETE IN PLACE`
 - `REFRESH MATERIALIZED VIEW ... COMPLETE OUT OF PLACE`
 - `REFRESH MATERIALIZED VIEW ... COMPLETE DELTA APPLY`
 - `REFRESH MATERIALIZED VIEW ... FAST`

@@ -463,6 +463,9 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			if tblInfo.IsView() {
 				continue
 			}
+			if shouldSkipAutoAnalyzeTable(tblInfo) {
+				continue
+			}
 
 			pi := tblInfo.GetPartitionInfo()
 			// No partitions, analyze the whole table.
@@ -517,6 +520,18 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	}
 
 	return false
+}
+
+func shouldSkipAutoAnalyzeTable(tblInfo *model.TableInfo) bool {
+	if tblInfo == nil || tblInfo.MaterializedView == nil {
+		return false
+	}
+	return !tblInfo.MaterializedView.GetInitBuildState().IsReady()
+}
+
+// ShouldSkipAutoAnalyzeTableForTest is exposed for unit tests.
+func ShouldSkipAutoAnalyzeTableForTest(tblInfo *model.TableInfo) bool {
+	return shouldSkipAutoAnalyzeTable(tblInfo)
 }
 
 func getPartitionStats(
