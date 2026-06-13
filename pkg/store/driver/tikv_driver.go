@@ -204,12 +204,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		tikv.WithCodec(codec),
 	)
 
-	keyspaceMeta := codec.GetKeyspaceMeta()
-	metaServiceInfo, err := metaservice.FetchInfo(context.Background(), pdCli, keyspaceMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	groupAddrs, err := metaServiceInfo.GroupAddrs(keyspaceMeta)
+	metaServiceInfo, groupAddrs, err := metaservice.FetchInfoWithGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
