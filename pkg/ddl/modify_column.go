@@ -2228,11 +2228,8 @@ func analyzeMVColumnUsage(sel *ast.SelectStmt, colNameL string) (*mvColumnUsage,
 		}
 	}
 
-	// WHERE / HAVING / ORDER BY: any reference is unsupported in phase 1.
-	if sel.Where != nil && exprContainsColumnRef(sel.Where, colNameL) {
-		usage.unsupportedReason = "WHERE clause"
-		return usage, nil
-	}
+	// WHERE predicates do not affect the output column schema, so references there
+	// do not require related MV column metadata updates.
 	if sel.Having != nil && sel.Having.Expr != nil && exprContainsColumnRef(sel.Having.Expr, colNameL) {
 		usage.unsupportedReason = "HAVING clause"
 		return usage, nil
