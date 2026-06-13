@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -123,16 +122,6 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	}
 }
 
-// NewEtcdSafePointKVWithKeyspacePrefixIfNeeded adds the keyspace etcd namespace
-// when the current keyspace uses keyspace-level GC.
-func NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
-	var prefix string
-	if pd.IsKeyspaceUsingKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
-		prefix = keyspace.MakeKeyspaceEtcdNamespace(codec)
-	}
-	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(prefix))
-}
-
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig.
 // unspecified options will be set to global config.
 func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
@@ -223,7 +212,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err = NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(metaServiceInfo.Group.Addrs, codec, tlsConfig)
+	spkv, err = tikv.NewEtcdSafePointKV(metaServiceInfo.Group.Addrs, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -235,7 +224,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		&injectTraceClient{Client: rpcClient},
 		tikv.WithPDHTTPClient(
 			"tikv-driver",
-			pdAddrsInConfigPath,
+			pdAddrs,
 			pdhttp.WithTLSConfig(tlsConfig),
 			pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram),
 		),
