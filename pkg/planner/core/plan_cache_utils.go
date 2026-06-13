@@ -1469,6 +1469,7 @@ func NewPlanCacheKeyBySQLWithParams(sctx sessionctx.Context, params *PlanCacheLo
 	hash = append(hash, pruneMode...)
 	hash = codec.EncodeInt(hash, params.LatestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
