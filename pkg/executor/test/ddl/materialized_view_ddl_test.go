@@ -269,22 +269,16 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view log on t_change_ok")
 	tk.MustExec("drop table t_change_ok")
 
-	// A column referenced only by WHERE does not affect MV output schema and should be allowed.
-	tk.MustExec("create table t_where_ok (a int not null, b int not null)")
-	tk.MustExec("insert into t_where_ok values (1, 10), (2, -1)")
-	tk.MustExec("create materialized view log on t_where_ok (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_where_ok (a, cnt) as select a, count(1) from t_where_ok where b > 0 group by a")
-	tk.MustExec("alter table t_where_ok modify column b bigint not null")
-	showCreate = tk.MustQuery("show create table t_where_ok").Rows()[0][1].(string)
-	require.Contains(t, showCreate, "`b` bigint")
-	showCreate = tk.MustQuery("show create table `$mlog$t_where_ok`").Rows()[0][1].(string)
-	require.Contains(t, showCreate, "`b` bigint")
-	showCreate = tk.MustQuery("show create table mv_where_ok").Rows()[0][1].(string)
-	require.NotContains(t, showCreate, "`b`")
-	tk.MustQuery("select a, cnt from mv_where_ok order by a").Check(testkit.Rows("1 1"))
-	tk.MustExec("drop materialized view mv_where_ok")
-	tk.MustExec("drop materialized view log on t_where_ok")
-	tk.MustExec("drop table t_where_ok")
+	// A column referenced by WHERE is rejected in phase 1 because predicate semantics may change.
+	tk.MustExec("create table t_where_ref (a int not null, b int not null)")
+	tk.MustExec("insert into t_where_ref values (1, 10), (2, -1)")
+	tk.MustExec("create materialized view log on t_where_ref (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_where_ref (a, cnt) as select a, count(1) from t_where_ref where b > 0 group by a")
+	err = tk.ExecToErr("alter table t_where_ref modify column b bigint not null")
+	require.ErrorContains(t, err, "does not support modifying columns used in WHERE clause")
+	tk.MustExec("drop materialized view mv_where_ref")
+	tk.MustExec("drop materialized view log on t_where_ref")
+	tk.MustExec("drop table t_where_ref")
 
 	// Base table with dependent MV: allow restricted no-reorg MODIFY/CHANGE COLUMN, update dependent MV/MLog metadata.
 	err = tk.ExecToErr("alter table t change column a a2 bigint")

@@ -34,13 +34,13 @@ func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
 	require.True(t, usage.isGroupKey)
 }
 
-func TestAnalyzeMVColumnUsageWhereReferenceAllowed(t *testing.T) {
+func TestAnalyzeMVColumnUsageWhereReferenceUnsupported(t *testing.T) {
 	sel, err := parseSelectFromSQL("select a, count(1) from t where b > 0 group by a")
 	require.NoError(t, err)
 
 	usage, err := analyzeMVColumnUsage(sel, "b")
 	require.NoError(t, err)
-	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, "WHERE clause", usage.unsupportedReason)
 	require.Empty(t, usage.directOutputOffsets)
 	require.False(t, usage.isGroupKey)
 }
