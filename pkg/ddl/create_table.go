@@ -611,9 +611,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		if !colInfo.generated {
 			continue
 		}
-		for depCol := range colInfo.dependences {
-			if _, ok := autoEmbeddingCols[depCol]; ok {
-				return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column on an auto-embedding column is not supported: column '%s' is generated from '%s'", colName, depCol)
+		for depCol := range autoEmbeddingCols {
+			if _, ok := colInfo.dependences[depCol]; ok {
+				return errGeneratedColumnDependsOnAutoEmbedding(colName, depCol)
 			}
 		}
 	}

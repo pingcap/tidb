@@ -17,6 +17,7 @@ package inference
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -32,6 +33,21 @@ type staticEmbedder struct {
 func (s *staticEmbedder) CreateEmbeddings(context.Context, string, []string, map[string]any) ([][]float32, error) {
 	s.calls.Add(1)
 	return s.embeddings, s.err
+}
+
+type cancelAwareEmbedder struct {
+	started     chan struct{}
+	startedOnce sync.Once
+	calls       atomic.Int64
+}
+
+func (c *cancelAwareEmbedder) CreateEmbeddings(ctx context.Context, _ string, _ []string, _ map[string]any) ([][]float32, error) {
+	c.calls.Add(1)
+	c.startedOnce.Do(func() {
+		close(c.started)
+	})
+	<-ctx.Done()
+	return nil, context.Cause(ctx)
 }
 
 func TestEmbedFnProvidersAndMock(t *testing.T) {
@@ -87,6 +103,25 @@ func TestEmbedFnCacheAndErrors(t *testing.T) {
 	embedFn.MustRegisterEmbedder("fail", &staticEmbedder{err: errors.New("embed failed")})
 	_, err = embedFn.Embed(nil, "fail/model", "hello", nil)
 	require.ErrorContains(t, err, "embed failed")
+
+	cancelAware := &cancelAwareEmbedder{started: make(chan struct{})}
+	embedFn.MustRegisterEmbedder("cancel_aware", cancelAware)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := embedFn.EmbedWithContext(ctx, nil, "cancel_aware/model", "cancel me", nil)
+		errCh <- err
+	}()
+	<-cancelAware.started
+	cancel()
+	require.ErrorIs(t, <-errCh, context.Canceled)
+	require.Equal(t, int64(1), cancelAware.calls.Load())
+
+	cancelledCtx, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	_, err = embedFn.EmbedWithContext(cancelledCtx, nil, "cancel_aware/model", "already cancelled", nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, int64(1), cancelAware.calls.Load())
 }
 
 func TestSetDefaultEmbedFnForTest(t *testing.T) {

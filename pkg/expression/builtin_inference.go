@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/inference/domainadaptor"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -98,27 +100,11 @@ func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
 	}
 	sessionCtx := sessionEvalCtx.Sctx()
-	if !deploymode.IsStarter() {
-		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
-	}
-
-	embedArgs, isNull, err := EvalEmbedTextArgs(ctx, row, b.args, b.IsFromVecSearch)
-	if isNull || err != nil {
+	datum, isNull, err := EvalEmbedTextDatum(sessionCtx.GetTraceCtx(), sessionCtx, ctx, row, b.args, b.IsFromVecSearch)
+	if err != nil || isNull {
 		return types.ZeroVectorFloat32, isNull, err
 	}
-
-	embedding, err := domainadaptor.GetEmbedFn(sessionCtx).Embed(func() bool {
-		// any kill signal should be handled.
-		return sessionCtx.GetSessionVars().SQLKiller.GetKillSignal() > 0
-	}, embedArgs.Model, embedArgs.Text, embedArgs.Opts)
-	if err != nil {
-		return types.ZeroVectorFloat32, false, err
-	}
-	embeddingVec, err := types.CreateVectorFloat32(embedding)
-	if err != nil {
-		return types.ZeroVectorFloat32, false, err
-	}
-	return embeddingVec, false, nil
+	return datum.GetVectorFloat32(), false, nil
 }
 
 // EvalEmbedTextArgs evaluates EMBED_TEXT() arguments without calling the remote embedding provider.
@@ -159,6 +145,55 @@ func EvalEmbedTextArgs(ctx EvalContext, row chunk.Row, args []Expression, isFrom
 		}
 	}
 	return &EmbedTextArgs{Model: model, Text: text, Opts: opts}, false, nil
+}
+
+// CheckEmbedTextAllowed validates deployment-level EMBED_TEXT() availability.
+func CheckEmbedTextAllowed() error {
+	if !deploymode.IsStarter() {
+		return fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
+	}
+	return nil
+}
+
+// EvalEmbedTextDatum evaluates EMBED_TEXT() to a vector datum using the same runtime contract
+// for direct expression evaluation and generated-column materialization.
+func EvalEmbedTextDatum(ctx context.Context, sctx sessionctx.Context, evalCtx EvalContext, row chunk.Row, args []Expression, isFromVecSearch bool) (types.Datum, bool, error) {
+	if sctx == nil {
+		return types.Datum{}, false, fmt.Errorf("EMBED_TEXT requires session context")
+	}
+	if err := CheckEmbedTextAllowed(); err != nil {
+		return types.Datum{}, false, err
+	}
+	embedArgs, isNull, err := EvalEmbedTextArgs(evalCtx, row, args, isFromVecSearch)
+	if isNull || err != nil {
+		return types.Datum{}, isNull, err
+	}
+	datum, err := EvalEmbedTextArgsToDatum(ctx, sctx, embedArgs)
+	return datum, false, err
+}
+
+// EvalEmbedTextArgsToDatum materializes already-evaluated EMBED_TEXT() arguments to a vector datum.
+func EvalEmbedTextArgsToDatum(ctx context.Context, sctx sessionctx.Context, embedArgs *EmbedTextArgs) (types.Datum, error) {
+	if sctx == nil {
+		return types.Datum{}, fmt.Errorf("EMBED_TEXT requires session context")
+	}
+	if err := CheckEmbedTextAllowed(); err != nil {
+		return types.Datum{}, err
+	}
+	if embedArgs == nil {
+		return types.Datum{}, fmt.Errorf("invalid EMBED_TEXT() usage")
+	}
+	embedding, err := domainadaptor.GetEmbedFn(sctx).EmbedWithContext(ctx, func() bool {
+		return sctx.GetSessionVars().SQLKiller.GetKillSignal() > 0
+	}, embedArgs.Model, embedArgs.Text, embedArgs.Opts)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	embeddingVec, err := types.CreateVectorFloat32(embedding)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return types.NewVectorFloat32Datum(embeddingVec), nil
 }
 
 // RequiredOptionalEvalProps implements RequiredOptionalEvalProps interface.

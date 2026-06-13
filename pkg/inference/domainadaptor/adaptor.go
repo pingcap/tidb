@@ -30,6 +30,8 @@ type domainGetter interface {
 }
 
 // GetEmbedFn returns the embedding function bridge associated with the session's domain.
+// It falls back to the process-global default when no domain-owned bridge is available,
+// which keeps expression tests and non-session call paths usable without a Domain.
 func GetEmbedFn(sctx sessionctx.Context) *inference.EmbedFn {
 	if sctx == nil {
 		return inference.DefaultEmbedFn()

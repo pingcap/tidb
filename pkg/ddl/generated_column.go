@@ -15,14 +15,18 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -272,6 +276,9 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 				return errors.Trace(err)
 			}
 		}
+		if depCol, ok := dependsOnAutoEmbeddingColumn(dependColNames, tbl.Cols()); ok {
+			return errGeneratedColumnDependsOnAutoEmbedding(newCol.Name.L, depCol)
+		}
 
 		// rule 5.
 		if err := checkIndexOrStored(tbl, oldCol, newCol); err != nil {
@@ -457,6 +464,57 @@ func checkGeneratedColForAutoEmbedding(name string, expr ast.ExprNode, isStored 
 	}
 	if _, err := expression.ExtractAutoEmbedInfoFromAST(expr); err != nil {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("unsupported EMBED_TEXT() usage in auto-embedding column '%s': %v", name, err)
+	}
+	return checkAutoEmbeddingGeneratedColumnVersionCompatible()
+}
+
+func dependsOnAutoEmbeddingColumn(dependColNames map[string]struct{}, cols []*table.Column) (string, bool) {
+	for _, col := range cols {
+		if _, ok := dependColNames[col.Name.L]; !ok {
+			continue
+		}
+		if col.IsGenerated() && expression.IsAutoEmbedFnCallAST(col.GeneratedExpr.Internal()) {
+			return col.Name.L, true
+		}
+	}
+	return "", false
+}
+
+func errGeneratedColumnDependsOnAutoEmbedding(colName, depCol string) error {
+	return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column on an auto-embedding column is not supported: column '%s' is generated from '%s'", colName, depCol)
+}
+
+func checkAutoEmbeddingGeneratedColumnVersionCompatible() error {
+	infos, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		if strings.Contains(err.Error(), "infoSyncer is not initialized") {
+			return nil
+		}
+		return err
+	}
+	versions := make([]string, 0, len(infos))
+	for _, info := range infos {
+		if info == nil || info.IsAssumed() {
+			continue
+		}
+		versions = append(versions, info.Version)
+	}
+	return checkAutoEmbeddingGeneratedColumnServerVersionsCompatible(versions)
+}
+
+func checkAutoEmbeddingGeneratedColumnServerVersionsCompatible(versions []string) error {
+	var currentVersion string
+	for _, tidbVersion := range versions {
+		if idx := strings.Index(tidbVersion, mysql.VersionSeparator); idx >= 0 {
+			tidbVersion = tidbVersion[idx+len(mysql.VersionSeparator):]
+		}
+		if currentVersion == "" {
+			currentVersion = tidbVersion
+			continue
+		}
+		if currentVersion != tidbVersion {
+			return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Creating auto-embedding generated columns during mixed-version rolling upgrade is not supported")
+		}
 	}
 	return nil
 }

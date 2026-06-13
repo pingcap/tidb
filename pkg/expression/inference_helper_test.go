@@ -227,6 +227,20 @@ func TestExtractAutoEmbedInfoFromAST(t *testing.T) {
 	require.Equal(t, "model1", result.ModelNameWithProvider)
 	require.Equal(t, "", result.OptsInJSON)
 
+	// Invalid JSON options
+	expr = parseExpr(t, "embed_text('model1', 'text', '{invalid_json}')")
+	result, err = ExtractAutoEmbedInfoFromAST(expr)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "EMBED_TEXT expects options in JSON format")
+	require.Nil(t, result)
+
+	// Options must match the runtime parser shape.
+	expr = parseExpr(t, "embed_text('model1', 'text', '[]')")
+	result, err = ExtractAutoEmbedInfoFromAST(expr)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "EMBED_TEXT expects options in JSON format")
+	require.Nil(t, result)
+
 	// Special characters in model name
 	expr = parseExpr(t, "embed_text('provider/model-name_v1.0', 'text')")
 	result, err = ExtractAutoEmbedInfoFromAST(expr)

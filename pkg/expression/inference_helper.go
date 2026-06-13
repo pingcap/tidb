@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -124,9 +125,12 @@ func ExtractAutoEmbedInfoFromAST(expr ast.ExprNode) (*AutoEmbedInfo, error) {
 			return nil, fmt.Errorf("EMBED_TEXT() only accepts JSON options using string constant")
 		}
 		info.OptsInJSON = optsValStr
-
-		// We don't check whether OptsInJSON is a valid JSON, because embedding providers
-		// will check it anyway.
+		if len(optsValStr) > 0 {
+			var opts map[string]any
+			if err := json.Unmarshal([]byte(optsValStr), &opts); err != nil {
+				return nil, fmt.Errorf("EMBED_TEXT expects options in JSON format")
+			}
+		}
 	}
 
 	return info, nil

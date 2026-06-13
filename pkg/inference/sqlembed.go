@@ -104,17 +104,6 @@ func NewEmbedFn() *EmbedFn {
 		// ErrUnauthorized is not provided in gemini. The error message provided by Gemini API is sufficient enough.
 	}))
 	if isHostedEmbeddingEnabled() {
-		var apiKey string
-		if config.GetGlobalConfig().HostedEmbedding.APIKeyPath != "" {
-			d, err := os.ReadFile(config.GetGlobalConfig().HostedEmbedding.APIKeyPath)
-			if err != nil {
-				logutil.BgLogger().Error("Failed to read specified API key file for hosted embedding service, API key will not be attached",
-					zap.String("api-key-path", config.GetGlobalConfig().HostedEmbedding.APIKeyPath),
-					zap.Error(err))
-			} else {
-				apiKey = strings.TrimSpace(string(d))
-			}
-		}
 		embedder.RegisterEmbedder("tidbcloud_free", tidbcloud.NewTiDBCloudFreeEmbedder(tidbcloud.EmbedderConfig{
 			GetBillingID: func() string {
 				if config.GetGlobalConfig().AutoScalerClusterID == "" {
@@ -122,7 +111,7 @@ func NewEmbedFn() *EmbedFn {
 				}
 				return fmt.Sprintf("cluster_%s", config.GetGlobalConfig().AutoScalerClusterID)
 			},
-			GetAPIKey:  func() string { return apiKey },
+			GetAPIKey:  getHostedEmbeddingAPIKey,
 			GetBaseURL: func() string { return config.GetGlobalConfig().HostedEmbedding.APIEndpoint },
 		}))
 	}
@@ -158,9 +147,32 @@ func isHostedEmbeddingEnabled() bool {
 	return kerneltype.IsNextGen() && config.GetGlobalConfig().HostedEmbedding.Enabled
 }
 
+func getHostedEmbeddingAPIKey() string {
+	apiKeyPath := config.GetGlobalConfig().HostedEmbedding.APIKeyPath
+	if apiKeyPath == "" {
+		return ""
+	}
+	d, err := os.ReadFile(apiKeyPath)
+	if err != nil {
+		logutil.BgLogger().Error("Failed to read specified API key file for hosted embedding service, API key will not be attached",
+			zap.String("api-key-path", apiKeyPath),
+			zap.Error(err))
+		return ""
+	}
+	return strings.TrimSpace(string(d))
+}
+
 // Embed generates embeddings for the given text. It handles with cache and batching.
 func (e *EmbedFn) Embed(shouldCancel func() bool, modelWithProvider string, text string, opts map[string]any) ([]float32, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	return e.EmbedWithContext(context.Background(), shouldCancel, modelWithProvider, text, opts)
+}
+
+// EmbedWithContext generates embeddings for the given text. It handles cache and batching.
+func (e *EmbedFn) EmbedWithContext(ctx context.Context, shouldCancel func() bool, modelWithProvider string, text string, opts map[string]any) ([]float32, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// In TiDB expression execution, usually only a Killed flag can be retrieved.
@@ -193,7 +205,10 @@ func (e *EmbedFn) Embed(shouldCancel func() bool, modelWithProvider string, text
 	if cached, found := e.cache.Get(cacheKey); found {
 		return cached.([]float32), nil
 	}
-	result, err, _ := e.sf.Do(cacheKey, func() (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, context.Cause(ctx)
+	}
+	resultCh := e.sf.DoChan(cacheKey, func() (any, error) {
 		embeddings, err := e.embedder.CreateEmbeddings(ctx, modelWithProvider, []string{text}, opts)
 		if err != nil {
 			return nil, err
@@ -205,10 +220,15 @@ func (e *EmbedFn) Embed(shouldCancel func() bool, modelWithProvider string, text
 		e.cache.Wait()
 		return embeddings[0], nil
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		return result.Val.([]float32), nil
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
 	}
-	return result.([]float32), err
 }
 
 func embeddingCacheKey(modelWithProvider, text string, optsJSON []byte) string {

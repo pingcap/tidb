@@ -22,11 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/inference/domainadaptor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -54,8 +52,7 @@ import (
 )
 
 const (
-	autoEmbeddingEvalBatchSizeHint        = 16
-	autoEmbeddingEvalMaxConcurrentBatches = 50
+	autoEmbeddingEvalMaxConcurrentTasks = 800
 )
 
 // InsertValues is the data to insert.
@@ -267,7 +264,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
-			rows, err = e.fillAutoEmbeddingDatum(ctx, rows)
+			rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
 			if err != nil {
 				return err
 			}
@@ -292,7 +289,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
-	rows, err = e.fillAutoEmbeddingDatum(ctx, rows)
+	rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
 	if err != nil {
 		return err
 	}
@@ -548,7 +545,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
 				totalMemDelta += memUsageOfRows + memUsageOfExtraCols
 				e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
-				rows, err = e.fillAutoEmbeddingDatum(ctx, rows)
+				rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
 				if err != nil {
 					return err
 				}
@@ -573,7 +570,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
 			e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 		}
-		rows, err = e.fillAutoEmbeddingDatum(ctx, rows)
+		rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
 		if err != nil {
 			return err
 		}
@@ -663,7 +660,11 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	return defaultVal, nil
 }
 
-func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+func (e *InsertValues) fillAutoEmbeddingDatums(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+	return e.fillAutoEmbeddingDatumsWithRowCount(ctx, rows, e.rowCount)
+}
+
+func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, rows [][]types.Datum, endRowCount uint64) ([][]types.Datum, error) {
 	if len(e.GenExprs) == 0 || len(rows) == 0 {
 		return rows, nil
 	}
@@ -680,8 +681,8 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 	firstBatchRowIdx := uint64(0)
-	if rowCount := uint64(len(rows)); e.rowCount >= rowCount {
-		firstBatchRowIdx = e.rowCount - rowCount
+	if rowCount := uint64(len(rows)); endRowCount >= rowCount {
+		firstBatchRowIdx = endRowCount - rowCount
 	}
 
 	type autoEmbeddingEvalTask struct {
@@ -724,13 +725,10 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 		return rows, nil
 	}
 
-	if !deploymode.IsStarter() {
-		return nil, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
+	if err := expression.CheckEmbedTextAllowed(); err != nil {
+		return nil, err
 	}
 
-	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(autoEmbeddingEvalBatchSizeHint * autoEmbeddingEvalMaxConcurrentBatches)
 	results := make([]autoEmbeddingEvalResult, len(tasks))
 	inputs := make([]autoEmbeddingEvalInput, len(tasks))
 	for i, task := range tasks {
@@ -744,7 +742,7 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 			results[i].err = fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
 			continue
 		}
-		embedArgs, isNull, err := expression.EvalEmbedTextArgs(evalCtx, chunk.MutRowFromDatums(task.row).ToRow(), sf.GetArgs(), embedSig.IsFromVecSearch)
+		embedArgs, isNull, err := expression.EvalEmbedTextArgs(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(task.row).ToRow(), sf.GetArgs(), embedSig.IsFromVecSearch)
 		if err != nil || isNull {
 			results[i].err = err
 			inputs[i].isNull = isNull
@@ -752,9 +750,10 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 		}
 		inputs[i].args = embedArgs
 	}
-	embedFn := domainadaptor.GetEmbedFn(e.Ctx())
-	sessionVars := e.Ctx().GetSessionVars()
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(autoEmbeddingEvalMaxConcurrentTasks)
 	for i := range tasks {
+		i := i
 		eg.Go(func() error {
 			if err := egCtx.Err(); err != nil {
 				return err
@@ -766,20 +765,12 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 				results[i].val.SetNull()
 				return nil
 			}
-			embedArgs := inputs[i].args
-			embedding, err := embedFn.Embed(func() bool {
-				return sessionVars.SQLKiller.GetKillSignal() > 0
-			}, embedArgs.Model, embedArgs.Text, embedArgs.Opts)
+			val, err := expression.EvalEmbedTextArgsToDatum(egCtx, e.Ctx(), inputs[i].args)
 			if err != nil {
 				results[i].err = err
 				return nil
 			}
-			embeddingVec, err := types.CreateVectorFloat32(embedding)
-			if err != nil {
-				results[i].err = err
-				return nil
-			}
-			results[i].val = types.NewVectorFloat32Datum(embeddingVec)
+			results[i].val = val
 			return nil
 		})
 	}
@@ -794,6 +785,9 @@ func (e *InsertValues) fillAutoEmbeddingDatum(ctx context.Context, rows [][]type
 		}
 		val, err := table.CastValue(e.Ctx(), result.val, task.col.ToInfo(), false, false)
 		rowIdx := int(firstBatchRowIdx) + task.rowIdx
+		if inLoadData {
+			rowIdx++
+		}
 		if err = e.handleErr(task.col, &result.val, rowIdx, err); err != nil {
 			return nil, err
 		}

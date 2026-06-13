@@ -21,11 +21,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"math"
 	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -4645,6 +4649,15 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 		CREATE TABLE t(
 			id INT PRIMARY KEY,
 			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{invalid_json}')) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects options in JSON format")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
 			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED,
 			vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) STORED
 		)
@@ -4666,6 +4679,52 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 		GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
 	`)
 	require.ErrorContains(t, err, "Adding auto-embedding generated column through ALTER TABLE")
+
+	tk.MustExec(`
+		CREATE TABLE t_modify(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED,
+			vec_text TEXT GENERATED ALWAYS AS (text) VIRTUAL
+		)
+	`)
+	err = tk.ExecToErr("ALTER TABLE t_modify MODIFY COLUMN vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) VIRTUAL")
+	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+
+}
+
+func TestAutoEmbeddingGeneratedColumnLoadData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
+	ensureMockEmbeddingProvider(t, tk)
+
+	tk.MustExec(`
+		CREATE TABLE t_load(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":1}')) STORED
+		)
+	`)
+	var reader io.ReadCloser = mydump.NewStringReader("1,\"[1,2,3]\"\n2,\"[4,5,6]\"\n")
+	tk.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+		Build: func(_ string) (io.ReadCloser, error) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
+	})
+	t.Cleanup(func() {
+		tk.Session().SetValue(executor.LoadDataReaderBuilderKey, nil)
+	})
+
+	tk.MustExec("LOAD DATA LOCAL INFILE 'auto_embedding.csv' INTO TABLE t_load FIELDS TERMINATED BY ',' ENCLOSED BY '\"' (id, text)")
+	tk.MustQuery("select id, text, vec from t_load order by id").Check(testkit.Rows(
+		"1 [1,2,3] [2,3,4]",
+		"2 [4,5,6] [5,6,7]",
+	))
 }
 
 func ensureMockEmbeddingProvider(t *testing.T, tk *testkit.TestKit) {

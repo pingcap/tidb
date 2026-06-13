@@ -269,6 +269,7 @@ go_test(
         "export_test.go",
         "fail_test.go",
         "foreign_key_test.go",
+        "generated_column_internal_test.go",
         "index_change_test.go",
         "index_cop_test.go",
         "index_modify_test.go",

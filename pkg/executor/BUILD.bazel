@@ -147,7 +147,6 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/expression/sessionexpr",
         "//pkg/extension",
-        "//pkg/inference/domainadaptor",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/keyspace",
