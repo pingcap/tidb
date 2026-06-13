@@ -184,6 +184,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		return nil, errors.Trace(err)
 	}
 
+	// ---------------- keyspace logic  ----------------
 	var pdClient *tikv.CodecPDClient
 
 	if keyspaceName == "" {
