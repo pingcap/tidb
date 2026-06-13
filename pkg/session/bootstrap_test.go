@@ -204,11 +204,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password",
-		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
-		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
-		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N",
-		"Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -250,12 +246,6 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
-	// This test will downgrade DDL table version and drop DDL-related system tables.
-	// Stop the DDL notifier to avoid its background polling hitting "table doesn't exist"
-	// during the window when those tables are intentionally dropped.
-	if dom.DDLNotifier() != nil {
-		dom.DDLNotifier().Stop()
-	}
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
