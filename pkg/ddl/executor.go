@@ -2341,13 +2341,6 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				// so we just also ignore the `if not exists` check.
 				err = e.CreateForeignKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-<<<<<<< HEAD
-				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
-||||||| bea0668079
-				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
-			case ast.ConstraintFulltext:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
-=======
 				if multiSchemaTmpSchema != nil && multiSchemaTmpTbl != nil {
 					err = e.createPrimaryKeyWithTableInfo(sctx, multiSchemaTmpSchema, multiSchemaTmpTbl, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 				} else {
@@ -2355,7 +2348,6 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				}
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -5364,13 +5356,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 }
 
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName pmodel.CIStr,
-<<<<<<< HEAD
-	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType pmodel.ColumnarIndexType, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
-||||||| bea0668079
-	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
-=======
-	indexPartSpecifications []*ast.IndexPartSpecification, unique bool, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, uint8, error) {
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+	indexPartSpecifications []*ast.IndexPartSpecification, unique bool, columnarIndexType pmodel.ColumnarIndexType, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, uint8, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := pmodel.NewCIStr(getAnonymousIndexPrefix(columnarIndexType == pmodel.ColumnarIndexTypeVector))
@@ -5403,17 +5389,9 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName p
 
 	// Build hidden columns if necessary.
 	var hiddenCols []*model.ColumnInfo
-<<<<<<< HEAD
-	if columnarIndexType == pmodel.ColumnarIndexTypeNA {
-		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
-||||||| bea0668079
-	if !isVector {
-		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
-=======
 	shardIndexVersion := model.ShardIndexVersionLegacy
-	if !isVector {
+	if columnarIndexType == pmodel.ColumnarIndexTypeNA {
 		hiddenCols, shardIndexVersion, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols(), unique)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		if err != nil {
 			return pmodel.CIStr{}, nil, 0, err
 		}
@@ -5451,7 +5429,6 @@ func (e *executor) createColumnarIndex(sctx sessionctx.Context, ti ast.Ident, in
 		return errors.Trace(err)
 	}
 
-<<<<<<< HEAD
 	var columnarIndexType pmodel.ColumnarIndexType
 	switch indexOption.Tp {
 	case pmodel.IndexTypeVector:
@@ -5471,14 +5448,7 @@ func (e *executor) createColumnarIndex(sctx sessionctx.Context, ti ast.Ident, in
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(sctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, ifNotExists)
-||||||| bea0668079
-	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, true, ifNotExists)
-=======
-	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, true, ifNotExists)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+	indexName, _, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, columnarIndexType, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5615,13 +5585,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-<<<<<<< HEAD
-	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, pmodel.ColumnarIndexTypeNA, ifNotExists)
-||||||| bea0668079
-	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
-=======
-	indexName, hiddenCols, shardIndexVersion, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, unique, false, ifNotExists)
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+	indexName, hiddenCols, shardIndexVersion, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, unique, pmodel.ColumnarIndexTypeNA, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}

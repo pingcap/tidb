@@ -63,7 +63,7 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 	}
 
 	// Do the same prechecks as CreatePrimaryKey. The worker will re-check again at execution time.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, false)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, pmodel.ColumnarIndexTypeNA)
 	if err != nil {
 		return errors.Trace(err)
 	}

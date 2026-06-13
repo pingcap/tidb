@@ -1661,7 +1661,6 @@ func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
 	return
 }
 
-<<<<<<< HEAD
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64
@@ -1677,8 +1676,9 @@ func (td TableDelta) Clone() TableDelta {
 		Count:    td.Count,
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
-||||||| bea0668079
-=======
+	}
+}
+
 // ResetExecutionCaches clears statement-derived execution caches and returns
 // a restore closure so nested same-context execution can put them back.
 func (sc *StatementContext) ResetExecutionCaches() func() {
@@ -1701,6 +1701,5 @@ func (sc *StatementContext) ResetExecutionCaches() func() {
 		sc.distSQLCtxCache = distSQLCtxCache
 		sc.rangerCtxCache = rangerCtxCache
 		sc.buildPBCtxCache = buildPBCtxCache
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	}
 }

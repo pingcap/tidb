@@ -41,11 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
-||||||| bea0668079
-=======
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	"go.uber.org/zap"
 )
 

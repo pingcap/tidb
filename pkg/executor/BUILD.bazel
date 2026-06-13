@@ -56,15 +56,7 @@ go_library(
         "pipelined_window.go",
         "pkdb_audit_log.go",
         "pkdb_duty_separation.go",
-<<<<<<< HEAD
-||||||| bea0668079
-||||||| parent of aba8cebcd5 (Implement log replication (!579))
-=======
         "pkdb_builder.go",
->>>>>>> aba8cebcd5 (Implement log replication (!579))
-=======
-        "pkdb_builder.go",
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
         "pkdb_error_related.go",
         "pkdb_label_security.go",
         "pkdb_procedure.go",

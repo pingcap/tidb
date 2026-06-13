@@ -2838,7 +2838,6 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	return fn(sysCtx)
 }
 
-<<<<<<< HEAD
 func (e *ShowExec) fetchShowTableGroups() error {
 	tgs := e.is.AllTableGroups()
 	sort.Slice(tgs, func(i, j int) bool {
@@ -2848,8 +2847,9 @@ func (e *ShowExec) fetchShowTableGroups() error {
 		e.appendRow([]any{tg.Name.L})
 	}
 
-||||||| bea0668079
-=======
+	return nil
+}
+
 func getSystemSessionVarValues(sessionVars *variable.SessionVars) (map[string]string, error) {
 	values := make(map[string]string, len(systemSessionStateVarNames))
 	for _, varName := range systemSessionStateVarNames {
@@ -2868,6 +2868,5 @@ func setSystemSessionVarValues(sessionVars *variable.SessionVars, values map[str
 			return err
 		}
 	}
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	return nil
 }

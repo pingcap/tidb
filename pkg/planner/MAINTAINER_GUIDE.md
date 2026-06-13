@@ -233,24 +233,6 @@ Even on a hit, planner MUST rebuild param-dependent ranges for current values
 before executing:
 - scan ranges (table/index), point-get/batch-point-get ranges, index-join ranges
   must be regenerated.
-<<<<<<< HEAD
-- if rebuild fails or hits a safety fallback, the cached plan is treated as
-  unusable and the execution falls back to "miss" behavior.
-
-Why this exists:
-- the cached plan is a template; ranges are execution-specific and must not be
-  reused blindly.
-
-### 4.5 Non-Prepared Plan Cache: Parameterization Must Be Reversible
-
-Non-prepared plan cache is a text-protocol optimization that reuses the same
-backend (`GetPlanFromPlanCache`) after turning constants into parameters.
-
-Invariants:
-- Parameterization MUST NOT leave mutations on the original AST. If you need to
-  mutate, you must restore (or operate on a copied AST).
-||||||| bea0668079
-=======
 - wrapper plans such as `SelectInto` must be unwrapped to their target plan for
   cacheability checks, plan digest, and range rebuild; the executor still
   receives the wrapper plan so statement semantics are preserved.
@@ -300,7 +282,6 @@ Invariants:
   stored-routine warning-handler behavior. Hidden `EXECUTE` paths may replace
   `SessionVars.StmtCtx`, so warning filtering must be applied to the final
   active statement context, not only to the pre-execution pointer.
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 - Non-prepared cacheability rules MUST remain conservative; widen only with
   dedicated semantic coverage.
 - The per-session `PlanCacheStmt` for non-prepared cache is keyed by the

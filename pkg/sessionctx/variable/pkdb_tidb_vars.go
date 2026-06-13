@@ -55,17 +55,13 @@ const (
 	DefTiDBEnableUDVSubstitute         = false
 	DefTiDBEnableSPParamSubstitute     = false
 	DefTiDBCreateFromSelectUsingImport = false
-<<<<<<< HEAD
 	DefTiDBXShmLocalCallOpt            = false
 	DefTiDBXLocalCallNoMarshallOpt     = false
 	DefTiDBXStoreBatchGetOpt           = false
 	DefTiDBXFastPath                   = false
 	DefTiDBXEnableIndexLookUpPushDown  = false
 	DefTiDBXEnableSingleStoreTxn1PC    = false
-||||||| bea0668079
-=======
 	DefTiDBAlterSyncMaxLagSeconds      = 10
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	DefPKDBEnableWhitelist             = false
 	DefPKDBExtraDataType               = false
 	DefPKDBEnableEAL                   = false

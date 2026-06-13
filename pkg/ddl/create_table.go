@@ -1416,14 +1416,8 @@ func BuildTableInfo(
 
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-<<<<<<< HEAD
-		if constr.Tp != ast.ConstraintColumnar {
-||||||| bea0668079
-		if constr.Tp != ast.ConstraintVector {
-=======
 		shardIndexVersion := model.ShardIndexVersionLegacy
-		if constr.Tp != ast.ConstraintVector {
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, shardIndexVersion, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns, isUniqueIndexConstraint(constr.Tp))
 			if err != nil {

@@ -29,26 +29,13 @@ import (
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
 func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
-<<<<<<< HEAD
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	// if !sc.UseCache() {
-	// 	return false // plan-cache is disabled for this query
-	// }
-||||||| bea0668079
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	if !sc.UseCache() {
-		return false // plan-cache is disabled for this query
-	}
-=======
 	rebuildRoot := planCacheRebuildRoot(p)
 	if rebuildRoot == nil {
 		return false
 	}
 	sc := rebuildRoot.SCtx().GetSessionVars().StmtCtx
-	if !sc.UseCache() {
-		return false // plan-cache is disabled for this query
-	}
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+	// Keep the current remote/fast-plan behavior: don't early-return on UseCache
+	// before rebuilding. The post-rebuild check below remains the safety gate.
 
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()

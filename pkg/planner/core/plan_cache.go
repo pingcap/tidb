@@ -363,7 +363,6 @@ func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
-<<<<<<< HEAD
 	if ctx.Value(InRemoteExec{}) != nil {
 		metrics.RemotePlanCacheHitCounter.Inc()
 	}
@@ -371,19 +370,12 @@ func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	}
 	stmtCtx.StmtHints = *stmtHints
-	return plan, true, nil
-||||||| bea0668079
-	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
-=======
-	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	stmtCtx.StmtHints = *cachedVal.stmtHints
-	if stmt.ReplayWarningsOnHit {
-		replayCachedPlanWarnings(stmtCtx, cachedVal)
+	if stmt != nil && stmt.ReplayWarningsOnHit {
+		if cached, ok := sessVars.PlanCacheValue.(*PlanCacheValue); ok && cached != nil && cached.Stmt == stmt {
+			replayCachedPlanWarnings(stmtCtx, cached)
+		}
 	}
-	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+	return plan, true, nil
 }
 
 func replayCachedPlanWarnings(stmtCtx *stmtctx.StatementContext, cached *PlanCacheValue) {
@@ -434,18 +426,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-<<<<<<< HEAD
-||||||| bea0668079
-		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
-=======
-		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
+		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		if stmt.ReplayWarningsOnHit {
 			cached.Warnings = stmtCtx.CopyWarnings(nil)
 			cached.ExtraWarnings = append([]stmtctx.SQLWarn(nil), stmtCtx.GetExtraWarnings()...)
+			cached.Memory = 0
+			cached.MemoryUsage()
 		}
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
-		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
-		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		if instancePlanCacheEnabled(ctx) {

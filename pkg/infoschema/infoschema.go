@@ -226,22 +226,12 @@ func (is *infoSchema) base() *infoSchema {
 func newInfoSchema() *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
-<<<<<<< HEAD
+			routineMap:              map[string]map[string]*model.ProcedureInfo{},
 			policyMap:               map[string]*model.PolicyInfo{},
 			resourceGroupMap:        map[string]*model.ResourceGroupInfo{},
 			tableGroupMap:           map[string]*model.TableGroupInfo{},
 			tableName2TableGroupMap: map[model.TableName]*model.TableGroupInfo{},
 			ruleBundleMap:           map[int64]*placement.Bundle{},
-||||||| bea0668079
-			policyMap:        map[string]*model.PolicyInfo{},
-			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:    map[int64]*placement.Bundle{},
-=======
-			routineMap:       map[string]map[string]*model.ProcedureInfo{},
-			policyMap:        map[string]*model.PolicyInfo{},
-			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:    map[int64]*placement.Bundle{},
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		},
 		schemaMap:             map[string]*schemaTables{},
 		schemaID2Name:         map[int64]string{},

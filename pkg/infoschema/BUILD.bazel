@@ -15,14 +15,9 @@ go_library(
         "metric_table_def.go",
         "metrics.go",
         "metrics_schema.go",
-<<<<<<< HEAD
         "pkdb_tablegroup.go",
-||||||| bea0668079
-        "pkdb_builder.go",
-=======
         "pkdb_builder.go",
         "pkdb_routine_metadata.go",
->>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
         "pkdb_tables.go",
         "sieve.go",
         "tables.go",
