@@ -134,9 +134,10 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	var (
-		pdCli           pd.Client
-		spkv            *tikv.EtcdSafePointKV
-		s               *tikv.KVStore
+		pdCli pd.Client
+		spkv  *tikv.EtcdSafePointKV
+		s     *tikv.KVStore
+
 		metaServiceInfo *metaservice.Info
 		pdAddrs         []string
 	)
