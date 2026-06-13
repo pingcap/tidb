@@ -4690,7 +4690,6 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 	`)
 	err = tk.ExecToErr("ALTER TABLE t_modify MODIFY COLUMN vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) VIRTUAL")
 	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
-
 }
 
 func TestAutoEmbeddingGeneratedColumnLoadData(t *testing.T) {
