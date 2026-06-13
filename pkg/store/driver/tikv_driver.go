@@ -204,16 +204,18 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		tikv.WithCodec(codec),
 	)
 
-	pdAddrs, err := metaservice.GetPDAddrs(context.Background(), pdCli, false)
+	keyspaceMeta := codec.GetKeyspaceMeta()
+	metaServiceInfo, err := metaservice.FetchInfo(context.Background(), pdCli, keyspaceMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metaServiceInfo, err := metaservice.GetInfo(codec.GetKeyspaceMeta(), pdAddrs)
+	groupAddrs, err := metaServiceInfo.GroupAddrs(keyspaceMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdAddrs := metaServiceInfo.PDAddrs
 
-	spkv, err = tikv.NewEtcdSafePointKV(metaServiceInfo.Group.Addrs, tlsConfig)
+	spkv, err = tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -335,10 +337,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if err != nil {
 		return nil, errors.Annotate(err, "get meta service info")
 	}
-	if metaServiceInfo == nil || metaServiceInfo.Group == nil {
-		return nil, nil
-	}
-	return metaServiceInfo.Group.Addrs, nil
+	return metaServiceInfo.GroupAddrs(s.codec.GetKeyspaceMeta())
 }
 
 // GetPDAddrs returns PD addresses for PD-aware callers.
@@ -351,11 +350,7 @@ func (s *tikvStore) MetaServiceInfo() (*metaservice.Info, error) {
 	if s.metaServiceInfo != nil {
 		return s.metaServiceInfo, nil
 	}
-	pdAddrs, err := s.GetPDAddrs()
-	if err != nil {
-		return nil, errors.Annotate(err, "get pd addrs")
-	}
-	metaServiceInfo, err := metaservice.GetInfo(s.codec.GetKeyspaceMeta(), pdAddrs)
+	metaServiceInfo, err := metaservice.FetchInfo(context.Background(), s.GetPDClient(), s.codec.GetKeyspaceMeta())
 	if err != nil {
 		return nil, errors.Annotate(err, "build meta service info")
 	}

@@ -16,12 +16,14 @@ package metaservice
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -144,6 +146,33 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Info, er
 	}
 	log.Info("return keyspace meta service group info", zap.Any("meta-service-info", metaInfo))
 	return metaInfo, nil
+}
+
+func keyspaceDescription(keyspaceMeta *keyspacepb.KeyspaceMeta) string {
+	if keyspaceMeta == nil {
+		return "default"
+	}
+	if name := keyspaceMeta.GetName(); name != "" {
+		return name
+	}
+	return fmt.Sprintf("id=%d", keyspaceMeta.GetId())
+}
+
+// GroupAddrs returns the meta service group addresses.
+func (info *Info) GroupAddrs(keyspaceMeta *keyspacepb.KeyspaceMeta) ([]string, error) {
+	if info == nil || info.Group == nil {
+		return nil, errors.Errorf("meta service group is missing for keyspace %q", keyspaceDescription(keyspaceMeta))
+	}
+	return info.Group.Addrs, nil
+}
+
+// FetchInfo loads meta service info for the keyspace using the PD client.
+func FetchInfo(ctx context.Context, pdClient pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (*Info, error) {
+	pdAddrs, err := GetPDAddrs(ctx, pdClient, false)
+	if err != nil {
+		return nil, err
+	}
+	return GetInfo(keyspaceMeta, pdAddrs)
 }
 
 // ServiceClient is used to request meta service.
