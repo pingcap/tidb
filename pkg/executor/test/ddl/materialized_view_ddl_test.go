@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -72,6 +74,14 @@ func TestCreateMaterializedViewLogRejectsDuplicateColumns(t *testing.T) {
 
 	err := tk.ExecToErr("create materialized view log on t_dup (id, id)")
 	require.ErrorContains(t, err, "Duplicate column name")
+}
+
+func involvingSchemaInfoSet(involving []model.InvolvingSchemaInfo) map[string]struct{} {
+	got := make(map[string]struct{}, len(involving))
+	for _, info := range involving {
+		got[info.Database+"\x00"+info.Table] = struct{}{}
+	}
+	return got
 }
 
 func TestMaterializedViewDDLBasic(t *testing.T) {
@@ -238,6 +248,91 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("create materialized view mv_alias (a, c) as select x.a, count(1) from t x where x.b > 0 group by x.a")
 	tk.MustQuery("select a, c from mv_alias order by a").Check(testkit.Rows("1 2", "2 1"))
 
+	// Direct output column with output alias should be tracked by SELECT list offset (not by output column name).
+	tk.MustExec("create materialized view mv_out_alias (k, cnt) as select a as k, count(1) from t group by a")
+	tk.MustQuery("select k, cnt from mv_out_alias order by k").Check(testkit.Rows("1 2", "2 1"))
+
+	// Non-renaming CHANGE COLUMN should follow the same no-reorg metadata sync path as MODIFY COLUMN.
+	tk.MustExec("create table t_change_ok (a int not null, b int not null)")
+	tk.MustExec("insert into t_change_ok values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_change_ok (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_change_ok (a, cnt) as select a, count(1) from t_change_ok group by a")
+	tk.MustExec("alter table t_change_ok change column a a bigint not null")
+	showCreate = tk.MustQuery("show create table t_change_ok").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table `$mlog$t_change_ok`").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_change_ok").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	tk.MustQuery("select a, cnt from mv_change_ok order by a").Check(testkit.Rows("1 1", "2 1"))
+	tk.MustExec("drop materialized view mv_change_ok")
+	tk.MustExec("drop materialized view log on t_change_ok")
+	tk.MustExec("drop table t_change_ok")
+
+	// A column referenced by WHERE is rejected in phase 1 because predicate semantics may change.
+	tk.MustExec("create table t_where_ref (a int not null, b int not null)")
+	tk.MustExec("insert into t_where_ref values (1, 10), (2, -1)")
+	tk.MustExec("create materialized view log on t_where_ref (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_where_ref (a, cnt) as select a, count(1) from t_where_ref where b > 0 group by a")
+	err = tk.ExecToErr("alter table t_where_ref modify column b bigint not null")
+	require.ErrorContains(t, err, "does not support modifying columns used in WHERE clause")
+	tk.MustExec("drop materialized view mv_where_ref")
+	tk.MustExec("drop materialized view log on t_where_ref")
+	tk.MustExec("drop table t_where_ref")
+
+	// Base table with dependent MV: allow restricted no-reorg MODIFY/CHANGE COLUMN, update dependent MV/MLog metadata.
+	err = tk.ExecToErr("alter table t change column a a2 bigint")
+	require.ErrorContains(t, err, "does not support renaming")
+
+	tk.MustExec("alter table t modify column a bigint not null")
+
+	var historyJob *model.Job
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		jobs, err := ddl.GetLastNHistoryDDLJobs(m, 32)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionModifyColumn && job.TableID == baseTable.Meta().ID {
+				historyJob = job
+				return nil
+			}
+		}
+		return nil
+	}))
+	require.NotNil(t, historyJob)
+	involving := historyJob.GetInvolvingSchemaInfo()
+	wantInvolving := map[string]struct{}{
+		"test\x00t":               {},
+		"test\x00$mlog$t":         {},
+		"test\x00mv":              {},
+		"test\x00mv_count_col":    {},
+		"test\x00mv_upper_agg":    {},
+		"test\x00mv_alias":        {},
+		"test\x00mv_out_alias":    {},
+		"test\x00mv_alert":        {},
+		"test\x00mv_alert_zero":   {},
+		"test\x00mv_alert_failed": {},
+	}
+	require.Equal(t, wantInvolving, involvingSchemaInfoSet(involving))
+
+	showCreate = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_alias").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_out_alias").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`k` bigint")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	// Reorg-required or MV-dependent modifying should still be rejected.
+	err = tk.ExecToErr("alter table t modify column b bigint")
+	require.ErrorContains(t, err, "does not support modifying columns used in non-direct SELECT expressions")
+
 	// MV LOG must contain all referenced columns.
 	tk.MustExec("create table t_mlog_missing (a int not null, b int not null)")
 	tk.MustExec("create materialized view log on t_mlog_missing (a) purge next date_add(now(), interval 1 hour)")
@@ -286,7 +381,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("alter table t add column c int")
 	tk.MustExec("alter table t add index idx_base_c_alter (c)")
 	err = tk.ExecToErr("alter table t modify column a bigint")
-	require.ErrorContains(t, err, "referenced by materialized view log")
+	require.ErrorContains(t, err, "does not support changing charset/collation/nullability of group keys")
 	tk.MustExec("alter table t drop index idx_base_c_alter")
 	tk.MustExec("alter table mv add index idx_mv_s_alter (s)")
 	tk.MustExec("alter table mv drop index idx_mv_s_alter")
@@ -310,8 +405,10 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_count_col")
 	tk.MustExec("drop materialized view mv_alert")
 	tk.MustExec("drop materialized view mv_alert_zero")
+	tk.MustExec("drop materialized view mv_alert_failed")
 	tk.MustExec("drop materialized view mv_upper_agg")
 	tk.MustExec("drop materialized view mv_alias")
+	tk.MustExec("drop materialized view mv_out_alias")
 	tk.MustExec("drop materialized view mv_nullable")
 	tk.MustExec("drop materialized view mv_sum_nullable")
 	tk.MustExec("drop materialized view mv_sum_nullable_dup_cnt")
@@ -333,6 +430,49 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	baseTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
+}
+
+func TestMaterializedViewBaseModifyColumnMultiSchemaInvolvingSchemaInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_multi_schema (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_multi_schema (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_multi_schema (a, b, cnt) as select a, b, count(1) from t_multi_schema group by a, b")
+	tk.MustExec("alter table t_multi_schema modify column a bigint not null, modify column b bigint not null")
+
+	var historyJob *model.Job
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		jobs, err := ddl.GetLastNHistoryDDLJobs(m, 16)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionMultiSchemaChange && job.TableName == "t_multi_schema" {
+				historyJob = job
+				return nil
+			}
+		}
+		return nil
+	}))
+	require.NotNil(t, historyJob)
+	require.Equal(t, map[string]struct{}{
+		"test\x00t_multi_schema":       {},
+		"test\x00$mlog$t_multi_schema": {},
+		"test\x00mv_multi_schema":      {},
+	}, involvingSchemaInfoSet(historyJob.GetInvolvingSchemaInfo()))
+
+	showCreate := tk.MustQuery("show create table t_multi_schema").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	require.Contains(t, showCreate, "`b` bigint")
+	showCreate = tk.MustQuery("show create table `$mlog$t_multi_schema`").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	require.Contains(t, showCreate, "`b` bigint")
+	showCreate = tk.MustQuery("show create table mv_multi_schema").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	require.Contains(t, showCreate, "`b` bigint")
 }
 
 func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {

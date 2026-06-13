@@ -257,6 +257,7 @@ go_test(
         "job_worker_test.go",
         "main_test.go",
         "metabuild_test.go",
+        "modify_column_mv_usage_test.go",
         "modify_column_test.go",
         "multi_schema_change_test.go",
         "mv_index_test.go",
