@@ -122,8 +122,8 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	}
 }
 
-// OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig.
-// unspecified options will be set to global config.
+// OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
+// unspecified options will be set to global config
 func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
 	mc.Lock()
 	defer mc.Unlock()
