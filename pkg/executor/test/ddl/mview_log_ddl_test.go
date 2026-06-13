@@ -921,15 +921,32 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_ddl_mv (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_ddl_mv (a, b)")
+
+	err := tk.ExecToErr("drop table t_ddl_mv")
+	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
+	require.ErrorContains(t, err, "RENAME TABLE on base table with materialized view log")
+	err = tk.ExecToErr("drop table `$mlog$t_ddl_mv`")
+	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
+	err = tk.ExecToErr("rename table `$mlog$t_ddl_mv` to `$mlog$t_ddl_mv2`")
+	require.ErrorContains(t, err, "RENAME TABLE on materialized view log table")
+
 	tk.MustExec("create materialized view mv_ddl_mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_ddl_mv group by a")
 
 	tk.MustExec("alter table t_ddl_mv add column c int")
-	err := tk.ExecToErr("alter table t_ddl_mv modify column a bigint")
-	require.ErrorContains(t, err, "referenced by materialized view log")
+	err = tk.ExecToErr("alter table t_ddl_mv modify column a bigint")
+	require.ErrorContains(t, err, "does not support changing charset/collation/nullability of group keys")
 	err = tk.ExecToErr("drop table t_ddl_mv")
 	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
 	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
 	require.ErrorContains(t, err, "RENAME TABLE on base table with materialized view dependencies")
+
+	// Restricted MODIFY/CHANGE COLUMN should be allowed at ALTER TABLE entry, but still rejected on reorg/renaming.
+	tk.MustExec("alter table t_ddl_mv modify column b bigint")
+	err = tk.ExecToErr("alter table t_ddl_mv modify column b smallint")
+	require.ErrorContains(t, err, "only supports no-reorg compatible type changes")
+	err = tk.ExecToErr("alter table t_ddl_mv change column b b2 bigint")
+	require.ErrorContains(t, err, "does not support renaming")
 
 	err = tk.ExecToErr("alter table mv_ddl_mv add column x int")
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view table")
@@ -947,6 +964,8 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add column c int")
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
 	err = tk.ExecToErr("create index idx_mlog_b_create on `$mlog$t_ddl_mv`(b)")
+	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
+	err = tk.ExecToErr("create vector index idx_mlog_vec_create on `$mlog$t_ddl_mv` ((vec_cosine_distance(b))) using hnsw")
 	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
 	err = tk.ExecToErr("drop index idx_mlog_b_create on `$mlog$t_ddl_mv`")
 	require.ErrorContains(t, err, "DROP INDEX on materialized view log table")
