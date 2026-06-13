@@ -753,7 +753,6 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(autoEmbeddingEvalMaxConcurrentTasks)
 	for i := range tasks {
-		i := i
 		eg.Go(func() error {
 			if err := egCtx.Err(); err != nil {
 				return err
