@@ -134,9 +134,11 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	var (
-		pdCli pd.Client
-		spkv  *tikv.EtcdSafePointKV
-		s     *tikv.KVStore
+		pdCli           pd.Client
+		spkv            *tikv.EtcdSafePointKV
+		s               *tikv.KVStore
+		metaServiceInfo *metaservice.Info
+		pdAddrs         []string
 	)
 	defer func() {
 		if err != nil {
@@ -204,13 +206,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		tikv.WithCodec(codec),
 	)
 
-	metaServiceInfo, groupAddrs, err := metaservice.FetchInfoWithGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	pdAddrs := metaServiceInfo.PDAddrs
-
-	spkv, err = tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
+	metaServiceInfo, pdAddrs, spkv, err = newSafePointKV(pdCli, codec, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -256,6 +252,22 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 
 	mc.cache[uuid] = store
 	return store, nil
+}
+
+func newSafePointKV(
+	pdCli pd.Client,
+	codec tikv.Codec,
+	tlsConfig *tls.Config,
+) (*metaservice.Info, []string, *tikv.EtcdSafePointKV, error) {
+	metaServiceInfo, groupAddrs, err := metaservice.FetchInfoWithGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	spkv, err := tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	return metaServiceInfo, metaServiceInfo.PDAddrs, spkv, nil
 }
 
 func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
