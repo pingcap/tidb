@@ -72,7 +72,7 @@ go_test(
     ],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -82,6 +82,7 @@ go_test(
         "//pkg/keyspace",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",

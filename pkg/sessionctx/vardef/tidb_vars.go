@@ -790,6 +790,9 @@ const (
 	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
 	TiDBSuperReadOnly = "tidb_super_read_only"
 
+	// TiDBIsReadOnly is a read-only derived status that indicates whether all TiDB instances are effectively read-only.
+	TiDBIsReadOnly = "tidb_is_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.

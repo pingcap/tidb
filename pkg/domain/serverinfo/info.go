@@ -88,13 +88,19 @@ func (i *StaticInfo) IsAssumed() bool {
 // To update the dynamic server information, use `InfoSyncer.cloneDynamicServerInfo` to obtain a copy of the dynamic server info.
 // After making modifications, use `InfoSyncer.setDynamicServerInfo` to update the dynamic server information.
 type DynamicInfo struct {
-	Labels map[string]string `json:"labels"`
+	Labels                 map[string]string `json:"labels"`
+	TiDBRestrictedReadOnly bool              `json:"tidb_restricted_read_only,omitempty"`
+	TiDBSuperReadOnly      bool              `json:"tidb_super_read_only,omitempty"`
+	TiDBEffectiveReadOnly  bool              `json:"tidb_effective_read_only,omitempty"`
 }
 
 // Clone the DynamicInfo.
 func (d *DynamicInfo) Clone() *DynamicInfo {
 	return &DynamicInfo{
-		Labels: maps.Clone(d.Labels),
+		Labels:                 maps.Clone(d.Labels),
+		TiDBRestrictedReadOnly: d.TiDBRestrictedReadOnly,
+		TiDBSuperReadOnly:      d.TiDBSuperReadOnly,
+		TiDBEffectiveReadOnly:  d.TiDBEffectiveReadOnly,
 	}
 }
 

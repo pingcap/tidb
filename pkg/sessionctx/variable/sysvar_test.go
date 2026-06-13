@@ -445,6 +445,40 @@ func TestReadOnlyNoop(t *testing.T) {
 	}
 }
 
+func TestTiDBIsReadOnly(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBIsReadOnly)
+	require.NotNil(t, sv)
+	require.True(t, sv.ReadOnly)
+	require.True(t, sv.HasGlobalScope())
+
+	t.Cleanup(func() {
+		vardef.RestrictedReadOnly.Store(false)
+		vardef.VarTiDBSuperReadOnly.Store(false)
+	})
+
+	_, err := sv.Validate(vars, vardef.On, vardef.ScopeGlobal)
+	require.Error(t, err)
+	require.Equal(t, "[variable:1238]Variable 'tidb_is_read_only' is a read only variable", err.Error())
+
+	vardef.RestrictedReadOnly.Store(false)
+	vardef.VarTiDBSuperReadOnly.Store(false)
+	val, err := sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, val)
+
+	vardef.VarTiDBSuperReadOnly.Store(true)
+	val, err = sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	vardef.VarTiDBSuperReadOnly.Store(false)
+	vardef.RestrictedReadOnly.Store(true)
+	val, err = sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+}
+
 func TestSkipInit(t *testing.T) {
 	sv := SysVar{Scope: vardef.ScopeGlobal, Name: "skipinit1", Value: vardef.On, Type: vardef.TypeBool}
 	require.True(t, sv.SkipInit())

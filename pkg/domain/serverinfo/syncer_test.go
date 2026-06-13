@@ -182,3 +182,32 @@ func TestAssumedServerInfoSyncer(t *testing.T) {
 	require.Equal(t, "ks1", info.AssumedKeyspace)
 	require.EqualValues(t, keyspace.System, info.Keyspace)
 }
+
+func TestGetAllServerInfoWithoutEtcd(t *testing.T) {
+	bak := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(bak)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = 10080
+		conf.Labels = map[string]string{"old": "label"}
+	})
+
+	syncer := NewSyncer("1", func() uint64 { return 1 }, nil, nil)
+	require.NoError(t, syncer.UpdateServerReadOnlyStatus(context.Background(), true, false))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = 12345
+		conf.Labels = map[string]string{"fresh": "label"}
+	})
+
+	infos, err := syncer.GetAllServerInfo(context.Background())
+	require.NoError(t, err)
+	info := infos["1"]
+	require.NotNil(t, info)
+	require.EqualValues(t, 12345, info.StatusPort)
+	require.Equal(t, map[string]string{"fresh": "label"}, info.Labels)
+	require.True(t, info.TiDBRestrictedReadOnly)
+	require.False(t, info.TiDBSuperReadOnly)
+	require.True(t, info.TiDBEffectiveReadOnly)
+}

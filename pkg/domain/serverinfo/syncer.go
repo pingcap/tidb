@@ -180,6 +180,39 @@ func (s *Syncer) UpdateServerLabel(ctx context.Context, labels map[string]string
 	return nil
 }
 
+// UpdateServerReadOnlyStatus updates the local server read-only status in etcd.
+func (s *Syncer) UpdateServerReadOnlyStatus(ctx context.Context, restricted, super bool) error {
+	dynamicInfo := s.cloneDynamicServerInfo()
+	effective := restricted || super
+	if dynamicInfo.TiDBRestrictedReadOnly == restricted &&
+		dynamicInfo.TiDBSuperReadOnly == super &&
+		dynamicInfo.TiDBEffectiveReadOnly == effective {
+		return nil
+	}
+
+	dynamicInfo.TiDBRestrictedReadOnly = restricted
+	dynamicInfo.TiDBSuperReadOnly = super
+	dynamicInfo.TiDBEffectiveReadOnly = effective
+	if s.etcdCli == nil || s.session == nil {
+		s.setDynamicServerInfo(dynamicInfo)
+		return nil
+	}
+
+	info := s.GetLocalServerInfo().Clone()
+	info.DynamicInfo = *dynamicInfo
+	infoBuf, err := info.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	str := string(hack.String(infoBuf))
+	err = util.PutKVToEtcd(ctx, s.etcdCli, KeyOpDefaultRetryCnt, s.serverInfoPath, str, clientv3.WithLease(s.session.Lease()))
+	if err != nil {
+		return err
+	}
+	s.setDynamicServerInfo(dynamicInfo)
+	return nil
+}
+
 // cloneDynamicServerInfo returns a clone of the dynamic server info.
 func (s *Syncer) cloneDynamicServerInfo() *DynamicInfo {
 	return s.info.Load().DynamicInfo.Clone()
@@ -204,8 +237,12 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	})
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
-		info := s.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "")
+		localInfo := s.info.Load()
+		info := getServerInfo(localInfo.ID, localInfo.ServerIDGetter, localInfo.AssumedKeyspace)
+		info.TiDBRestrictedReadOnly = localInfo.TiDBRestrictedReadOnly
+		info.TiDBSuperReadOnly = localInfo.TiDBSuperReadOnly
+		info.TiDBEffectiveReadOnly = localInfo.TiDBEffectiveReadOnly
+		allInfo[info.ID] = info
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
