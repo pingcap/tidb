@@ -562,7 +562,8 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 		if !ok {
 			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log schema not found")
 		}
-		// Use InfoSchema only to locate the schema; load mutable table info from meta before editing it.
+		// baseInfo only stores the MLog table ID. Resolve its schema ID from InfoSchema,
+		// then load the mutable TableInfo from meta so the metadata change can be persisted.
 		mlogTblInfo, err := getTableInfo(jobCtx.metaMut, baseInfo.MLogID, mlogDB.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
