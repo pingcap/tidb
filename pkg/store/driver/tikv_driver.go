@@ -255,14 +255,15 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	store := &tikvStore{
-		KVStore:         s,
-		tlsConfig:       tlsConfig,
-		memCache:        kv.NewCacheDB(),
-		enableGC:        !disableGC,
-		coprStore:       coprStore,
-		codec:           codec,
-		clusterID:       clusterID,
-		keyspace:        keyspaceName,
+		KVStore:   s,
+		tlsConfig: tlsConfig,
+		memCache:  kv.NewCacheDB(),
+		enableGC:  !disableGC,
+		coprStore: coprStore,
+		codec:     codec,
+		clusterID: clusterID,
+		keyspace:  keyspaceName,
+
 		metaServiceInfo: metaServiceInfo,
 	}
 
