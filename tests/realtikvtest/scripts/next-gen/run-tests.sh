@@ -22,6 +22,14 @@ function main() {
     local make_test_task="$1"
 
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
+
+    # TEMPORARY PR validation: route one existing next-gen CI slot to
+    # startertest until the CI repo change invokes startertest directly.
+    if [[ "${make_test_task}" == "bazel_sessiontest" ]]; then
+        echo "Temporary startertest validation: replacing bazel_sessiontest with startertest"
+        make_test_task="startertest"
+    fi
+
     "${self_dir}/bootstrap-test-with-cluster.sh" make ${make_test_task}
 }
 
