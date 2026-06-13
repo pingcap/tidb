@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
@@ -362,6 +363,7 @@ func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
+<<<<<<< HEAD
 	if ctx.Value(InRemoteExec{}) != nil {
 		metrics.RemotePlanCacheHitCounter.Inc()
 	}
@@ -370,6 +372,37 @@ func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	}
 	stmtCtx.StmtHints = *stmtHints
 	return plan, true, nil
+||||||| bea0668079
+	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	stmtCtx.StmtHints = *cachedVal.stmtHints
+	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+=======
+	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	stmtCtx.StmtHints = *cachedVal.stmtHints
+	if stmt.ReplayWarningsOnHit {
+		replayCachedPlanWarnings(stmtCtx, cachedVal)
+	}
+	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
+}
+
+func replayCachedPlanWarnings(stmtCtx *stmtctx.StatementContext, cached *PlanCacheValue) {
+	if stmtCtx == nil || cached == nil {
+		return
+	}
+	if len(cached.Warnings) > 0 {
+		stmtCtx.AppendWarnings(cached.Warnings)
+	}
+	for _, warn := range cached.ExtraWarnings {
+		switch warn.Level {
+		case contextutil.WarnLevelError:
+			stmtCtx.AppendExtraError(warn.Err)
+		case contextutil.WarnLevelNote:
+			stmtCtx.AppendExtraNote(warn.Err)
+		default:
+			stmtCtx.AppendExtraWarning(warn.Err)
+		}
+	}
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
@@ -401,6 +434,16 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
+<<<<<<< HEAD
+||||||| bea0668079
+		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+=======
+		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		if stmt.ReplayWarningsOnHit {
+			cached.Warnings = stmtCtx.CopyWarnings(nil)
+			cached.ExtraWarnings = append([]stmtctx.SQLWarn(nil), stmtCtx.GetExtraWarnings()...)
+		}
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)

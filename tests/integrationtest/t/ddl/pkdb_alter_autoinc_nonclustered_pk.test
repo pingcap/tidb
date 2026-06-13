@@ -1,0 +1,201 @@
+# Basic add-column + nonclustered PK
+drop table if exists t;
+create table t (v int);
+insert into t values (10), (20), (30);
+alter table t add column id bigint not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+insert into t(v) values (40);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+
+# Default PK type should still be NONCLUSTERED for ALTER TABLE
+drop table if exists t;
+create table t (v int);
+insert into t values (10), (20), (30);
+alter table t add column id bigint not null auto_increment, add primary key (id);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+insert into t(v) values (40);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+
+# Adding clustered primary key via ALTER TABLE is not supported
+drop table if exists t;
+create table t (v int);
+-- error 8200
+alter table t add column id bigint not null auto_increment, add primary key (id) clustered;
+
+# Adding AUTO_INCREMENT column without ADD PRIMARY KEY in the same statement is not supported
+drop table if exists t;
+create table t (v int);
+-- error 8200
+alter table t add column id bigint not null auto_increment, add column v2 int;
+
+# AUTO_INCREMENT must be on an integer column
+drop table if exists t;
+create table t (v int);
+-- error 8200
+alter table t add column id varchar(10) not null auto_increment, add primary key (id) nonclustered;
+
+# AUTO_INCREMENT column can't have a DEFAULT value
+drop table if exists t;
+create table t (v int);
+-- error 8200
+alter table t add column id bigint not null auto_increment default 1, add primary key (id) nonclustered;
+
+# MODIFY COLUMN enable AUTO_INCREMENT requires paired ADD PRIMARY KEY in the same statement (unless PK already exists)
+drop table if exists t;
+create table t (id bigint not null, v int);
+-- error 8200
+alter table t modify column id bigint not null auto_increment, add column v2 int;
+
+# Adding clustered primary key via ALTER TABLE is not supported (MODIFY + ADD PK path)
+drop table if exists t;
+create table t (id bigint not null, v int);
+-- error 8200
+alter table t modify column id bigint not null auto_increment, add primary key (id) clustered;
+
+# MODIFY COLUMN + ADD PRIMARY KEY (nonclustered) should keep existing ids and rebase allocator
+drop table if exists t;
+create table t (id bigint not null, v int);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+insert into t(v) values (40);
+select id > 30 from t where v=40;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+
+# Enabling AUTO_INCREMENT on an existing NONCLUSTERED PRIMARY KEY column should work
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment;
+insert into t(v) values (40);
+select id > 30 from t where v=40;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+
+# Multi-schema enable AUTO_INCREMENT on existing NONCLUSTERED PK should work
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add column c int;
+insert into t(v) values (40);
+select id > 30 from t where v=40;
+
+# Unsigned AUTO_INCREMENT values can exceed MaxInt64
+drop table if exists t;
+create table t (id bigint unsigned not null, v int);
+insert into t values (9223372036854775808, 1);
+alter table t modify column id bigint unsigned not null auto_increment, add primary key (id) nonclustered;
+insert into t(v) values (2);
+select id > 9223372036854775808 from t where v=2;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+select EXTRA from information_schema.columns where table_schema=(select database()) and table_name='t' and column_name='id';
+
+# ADD COLUMN unsigned AUTO_INCREMENT backfill should handle values across MaxInt64
+drop table if exists t;
+create table t (v int);
+insert into t values (10), (20);
+alter table t force auto_increment = 9223372036854775807;
+alter table t add column id bigint unsigned not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), min(id), max(id), sum(id is null), sum(id=0) from t;
+insert into t(v) values (30);
+select id > 9223372036854775808 from t where v=30;
+
+# TiDB supports at most one AUTO_INCREMENT column
+drop table if exists t;
+create table t (a bigint not null auto_increment, b bigint not null, unique key(a), v int);
+-- error 8200
+alter table t modify column b bigint not null auto_increment, add primary key (b) nonclustered;
+
+# Default PK type path for MODIFY + ADD PRIMARY KEY should still be NONCLUSTERED
+drop table if exists t;
+create table t (id bigint not null, v int);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add primary key (id);
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+
+# Partitioned table + GLOBAL index
+set tidb_enable_global_index=true;
+drop table if exists t;
+create table t (v int) partition by hash(v) partitions 4;
+insert into t values (10), (20), (30), (40), (50), (60);
+alter table t add column id bigint not null auto_increment, add primary key (id) nonclustered global;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+insert into t(v) values (70), (80), (90);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+
+# Default PK type + GLOBAL
+drop table if exists t;
+create table t (v int) partition by hash(v) partitions 4;
+insert into t values (10), (20), (30), (40), (50), (60);
+alter table t add column id bigint not null auto_increment, add primary key (id) global;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+insert into t(v) values (70), (80), (90);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+select TIDB_PK_TYPE from information_schema.tables where table_schema=(select database()) and table_name='t';
+set tidb_enable_global_index=default;
+
+# AUTO_ID_CACHE=1 should use dedicated AUTO_INCREMENT allocator
+drop table if exists t;
+create table t (v int) AUTO_ID_CACHE=1;
+insert into t values (10), (20), (30);
+alter table t add column id bigint not null auto_increment, add primary key (id) nonclustered;
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+show table t next_row_id;
+insert into t(v) values (40);
+select count(*), count(distinct id), sum(id is null), sum(id=0) from t;
+
+drop table if exists t;
+create table t (id bigint not null, v int) AUTO_ID_CACHE=1;
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment, add primary key (id) nonclustered;
+show table t next_row_id;
+
+# NO_AUTO_VALUE_ON_ZERO should keep explicit 0 after enabling AUTO_INCREMENT
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (10, 10), (20, 20), (30, 30);
+alter table t modify column id bigint not null auto_increment;
+set @@sql_mode = 'NO_AUTO_VALUE_ON_ZERO';
+insert into t values (0, 40);
+insert into t(v) values (50);
+select id, v from t where v in (40, 50) order by v;
+set @@sql_mode = default;
+
+# Existing negative values should still allow new AUTO_INCREMENT ids to be allocated
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (-10, 10), (-5, 20), (-1, 30);
+alter table t modify column id bigint not null auto_increment;
+insert into t(v) values (40), (50);
+select id, v from t where v in (40, 50) order by v;
+
+# Existing MaxInt64 value should reject enabling AUTO_INCREMENT on signed column
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+insert into t values (9223372036854775807, 10);
+-- error 1467
+alter table t modify column id bigint not null auto_increment;
+
+# CHANGE COLUMN rename + enable AUTO_INCREMENT is rejected
+drop table if exists t;
+create table t (id bigint not null, v int, primary key (id) nonclustered);
+-- error 8200
+alter table t change column id new_id bigint not null auto_increment;
+
+# Composite NONCLUSTERED primary key reject enabling AUTO_INCREMENT
+drop table if exists t;
+create table t (id bigint not null, k bigint not null, v int, primary key (id, k) nonclustered);
+-- error 8200
+alter table t modify column id bigint not null auto_increment;
+
+# Common-handle primary key reject enabling AUTO_INCREMENT
+drop table if exists t;
+create table t (id bigint not null, k bigint not null, v int, primary key (id, k) clustered);
+-- error 8200
+alter table t modify column id bigint not null auto_increment;

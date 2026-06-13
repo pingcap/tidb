@@ -102,6 +102,63 @@ var (
 	errEALIsOff             = errors.NewNoStackError(variable.PKDBEnableEAL + " is off")
 )
 
+var ctasParserStateVarNames = []string{
+	variable.CharacterSetClient,
+	variable.CharacterSetConnection,
+	variable.CollationConnection,
+}
+
+type ctasSessionVarValue struct {
+	name  string
+	value string
+}
+
+func captureCTASRestoreSessionVars(sessionVars *variable.SessionVars) ([]ctasSessionVarValue, error) {
+	sqlMode, ok := sessionVars.GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		sqlMode = mysql.DefaultSQLMode
+	}
+	values := []ctasSessionVarValue{{name: variable.SQLModeVar, value: sqlMode}}
+	return appendCTASSessionVarValues(values, sessionVars, ctasParserStateVarNames)
+}
+
+func captureCTASCallerSessionVars(sessionVars *variable.SessionVars) ([]ctasSessionVarValue, error) {
+	sqlMode, ok := sessionVars.GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		return nil, errors.New("unknown system var " + variable.SQLModeVar)
+	}
+	values := []ctasSessionVarValue{{name: variable.SQLModeVar, value: sqlMode}}
+	return appendCTASSessionVarValues(values, sessionVars, ctasParserStateVarNames)
+}
+
+func appendCTASSessionVarValues(values []ctasSessionVarValue, sessionVars *variable.SessionVars, varNames []string) ([]ctasSessionVarValue, error) {
+	for _, varName := range varNames {
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), varName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, ctasSessionVarValue{name: varName, value: value})
+	}
+	return values, nil
+}
+
+func applyCTASSessionVars(sessionVars *variable.SessionVars, values []ctasSessionVarValue) error {
+	for _, value := range values {
+		if err := sessionVars.SetSystemVar(value.name, value.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreCTASSessionVars(sessionVars *variable.SessionVars, values []ctasSessionVarValue) {
+	for _, value := range values {
+		if err := sessionVars.SetSystemVar(value.name, value.value); err != nil {
+			logutil.DDLLogger().Warn("restore "+value.name+" for CTAS internal session failed", zap.Error(err))
+		}
+	}
+}
+
 // Executor is the interface for executing DDL statements.
 // it's mostly called by SQL executor.
 // DDL statements are converted into DDL jobs, JobSubmitter will submit the jobs
@@ -1030,10 +1087,9 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 		oldUser := internalVars.User
 		oldActiveRoles := internalVars.ActiveRoles
 		oldPrivilegeManager := privilege.GetPrivilegeManager(sctx)
-		oldSQLMode, hadOldSQLMode := internalVars.GetSystemVar(variable.SQLModeVar)
-		restoreSQLMode := oldSQLMode
-		if !hadOldSQLMode {
-			restoreSQLMode = mysql.DefaultSQLMode
+		restoreSessionVars, err := captureCTASRestoreSessionVars(internalVars)
+		if err != nil {
+			return err
 		}
 		defer func() {
 			internalVars.CurrentDB = oldDB
@@ -1041,9 +1097,7 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 			internalVars.User = oldUser
 			internalVars.ActiveRoles = oldActiveRoles
 			privilege.BindPrivilegeManager(sctx, oldPrivilegeManager)
-			if restoreErr := internalVars.SetSystemVar(variable.SQLModeVar, restoreSQLMode); restoreErr != nil {
-				logutil.DDLLogger().Warn("restore sql_mode for CTAS internal session failed", zap.Error(restoreErr))
-			}
+			restoreCTASSessionVars(internalVars, restoreSessionVars)
 		}()
 
 		internalVars.CurrentDB = callerVars.CurrentDB
@@ -1052,18 +1106,18 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 		} else {
 			internalVars.CurrentDBCI = pmodel.NewCIStr(callerVars.CurrentDB)
 		}
-		sqlMode, ok := callerVars.GetSystemVar(variable.SQLModeVar)
-		if !ok {
-			return errors.New("unknown system var " + variable.SQLModeVar)
+		callerSessionVars, err := captureCTASCallerSessionVars(callerVars)
+		if err != nil {
+			return err
 		}
-		if err := internalVars.SetSystemVar(variable.SQLModeVar, sqlMode); err != nil {
+		if err := applyCTASSessionVars(internalVars, callerSessionVars); err != nil {
 			return err
 		}
 		internalVars.User = callerVars.User
 		internalVars.ActiveRoles = callerVars.ActiveRoles
 		privilege.BindPrivilegeManager(sctx, callerPrivilegeManager)
 
-		_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL)
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL)
 		return err
 	}(); err != nil {
 		// if insert data into temporary table failed, drop the temporary table (like rollback)
@@ -2003,6 +2057,12 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		// TODO: Only allow REMOVE PARTITIONING as a single ALTER TABLE statement?
 	}
 
+	var err error
+	validSpecs, err = resolveAlterTableInlinePrimaryKey(validSpecs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
@@ -2020,6 +2080,127 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 	// Only handle valid specs.
 	return validSpecs, nil
+}
+
+// resolveAlterTableInlinePrimaryKey rewrites inline column-level PRIMARY KEY options into
+// separate "ADD PRIMARY KEY(...)" specs so that they can be executed as a multi-schema change.
+//
+// MySQL allows statements like:
+//
+//	ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT PRIMARY KEY;
+//
+// which is equivalent to:
+//
+//	ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT, ADD PRIMARY KEY (id);
+//
+// TiDB's add/modify column paths don't apply index/PK constraints embedded in column definition,
+// so we expand them here to reuse the existing multi-schema implementation.
+func resolveAlterTableInlinePrimaryKey(specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
+	hasExplicitAddPK := false
+	for _, spec := range specs {
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint != nil && spec.Constraint.Tp == ast.ConstraintPrimaryKey {
+			hasExplicitAddPK = true
+			break
+		}
+	}
+
+	var (
+		inlinePKFound bool
+		inlinePKCol   *ast.ColumnName
+		inlinePKOpt   *ast.ColumnOption
+		inlinePKSpec  *ast.AlterTableSpec
+	)
+
+	// Find at most one inline PRIMARY KEY definition.
+	for _, spec := range specs {
+		var colDef *ast.ColumnDef
+		switch spec.Tp {
+		case ast.AlterTableAddColumns, ast.AlterTableModifyColumn, ast.AlterTableChangeColumn:
+			if len(spec.NewColumns) == 1 {
+				colDef = spec.NewColumns[0]
+			}
+		}
+		if colDef == nil || len(colDef.Options) == 0 {
+			continue
+		}
+
+		// Only rewrite the syntax variants we explicitly support today:
+		// inline PRIMARY KEY paired with AUTO_INCREMENT (e.g. "AUTO_INCREMENT PRIMARY KEY").
+		// This avoids changing the historical behavior of unsupported statements like
+		// "MODIFY COLUMN c INT PRIMARY KEY ...", which previously returned error 8200.
+		hasAutoIncrement := false
+		for _, opt := range colDef.Options {
+			if opt.Tp == ast.ColumnOptionAutoIncrement {
+				hasAutoIncrement = true
+				break
+			}
+		}
+		if !hasAutoIncrement {
+			continue
+		}
+
+		// Extract the PRIMARY KEY option from the column definition.
+		foundInlinePKInThisCol := false
+		newOpts := colDef.Options[:0]
+		for _, opt := range colDef.Options {
+			if opt.Tp == ast.ColumnOptionPrimaryKey {
+				if inlinePKFound {
+					return nil, infoschema.ErrMultiplePriKey
+				}
+				foundInlinePKInThisCol = true
+				inlinePKFound = true
+				inlinePKCol = colDef.Name
+				inlinePKOpt = opt
+				inlinePKSpec = spec
+				continue
+			}
+			newOpts = append(newOpts, opt)
+		}
+		if foundInlinePKInThisCol {
+			colDef.Options = newOpts
+			// PRIMARY KEY implies NOT NULL. Keep the semantic after removing the option.
+			if !containsColumnOption(colDef, ast.ColumnOptionNotNull) && !containsColumnOption(colDef, ast.ColumnOptionNull) {
+				colDef.Options = append(colDef.Options, &ast.ColumnOption{Tp: ast.ColumnOptionNotNull})
+			}
+		}
+	}
+
+	if !inlinePKFound {
+		return specs, nil
+	}
+	if hasExplicitAddPK {
+		return nil, infoschema.ErrMultiplePriKey
+	}
+
+	// Insert an ADD PRIMARY KEY spec right after the column spec that defined it inline,
+	// so the target column is available for later processing.
+	newSpecs := make([]*ast.AlterTableSpec, 0, len(specs)+1)
+	for _, spec := range specs {
+		newSpecs = append(newSpecs, spec)
+		if spec != inlinePKSpec {
+			continue
+		}
+
+		keys := []*ast.IndexPartSpecification{
+			{
+				Column: inlinePKCol,
+				Length: types.UnspecifiedLength,
+			},
+		}
+		idxOpt := &ast.IndexOption{PrimaryKeyTp: inlinePKOpt.PrimaryKeyTp}
+		if inlinePKOpt.StrValue == "Global" {
+			idxOpt.Global = true
+		}
+		addPKSpec := &ast.AlterTableSpec{
+			Tp:         ast.AlterTableAddConstraint,
+			Constraint: &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Name: mysql.PrimaryKeyName, Keys: keys, Option: idxOpt},
+			Algorithm:  spec.Algorithm,
+			LockType:   spec.LockType,
+		}
+		newSpecs = append(newSpecs, addPKSpec)
+	}
+
+	return newSpecs, nil
 }
 
 func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
@@ -2067,13 +2248,28 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		}
 	}
 
-	if len(validSpecs) > 1 {
+	// In multi-schema change, later specs may depend on earlier specs (e.g. add column then add index/PK on it).
+	// Maintain a temporary TableInfo to perform prechecks/job construction.
+	var (
+		multiSchemaTmpSchema *model.DBInfo
+		multiSchemaTmpTbl    *model.TableInfo
+	)
+	if isMultiSchemaChanges(validSpecs) {
 		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
 		// MultiSchemaInfo and skip running them. Then we will run them in
 		// d.multiSchemaChange all at once.
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
+		if schema, ok := is.SchemaByName(ident.Schema); ok {
+			multiSchemaTmpSchema = schema
+			multiSchemaTmpTbl = tb.Meta().Clone()
+		}
 	}
 	for _, spec := range validSpecs {
+		prevSubJobCnt := 0
+		if mci := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+			prevSubJobCnt = len(mci.SubJobs)
+		}
+
 		var handledCharsetOrCollate bool
 		var ttlOptionsHandled bool
 		switch spec.Tp {
@@ -2145,7 +2341,21 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				// so we just also ignore the `if not exists` check.
 				err = e.CreateForeignKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
+<<<<<<< HEAD
 				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+||||||| bea0668079
+				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+			case ast.ConstraintFulltext:
+				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
+=======
+				if multiSchemaTmpSchema != nil && multiSchemaTmpTbl != nil {
+					err = e.createPrimaryKeyWithTableInfo(sctx, multiSchemaTmpSchema, multiSchemaTmpTbl, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				} else {
+					err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				}
+			case ast.ConstraintFulltext:
+				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -2297,6 +2507,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// If a sub-job is appended, update the temporary schema so that following specs can reference it.
+		pkdbUpdateMultiSchemaTmpTableInfo(sctx, multiSchemaTmpTbl, prevSubJobCnt)
 	}
 
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
@@ -5151,7 +5364,13 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 }
 
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName pmodel.CIStr,
+<<<<<<< HEAD
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType pmodel.ColumnarIndexType, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
+||||||| bea0668079
+	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
+=======
+	indexPartSpecifications []*ast.IndexPartSpecification, unique bool, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, uint8, error) {
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := pmodel.NewCIStr(getAnonymousIndexPrefix(columnarIndexType == pmodel.ColumnarIndexTypeVector))
@@ -5173,28 +5392,37 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName p
 		}
 		if ifNotExists {
 			ctx.AppendNote(err)
-			return pmodel.CIStr{}, nil, nil
+			return pmodel.CIStr{}, nil, 0, nil
 		}
-		return pmodel.CIStr{}, nil, err
+		return pmodel.CIStr{}, nil, 0, err
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
-		return pmodel.CIStr{}, nil, errors.Trace(err)
+		return pmodel.CIStr{}, nil, 0, errors.Trace(err)
 	}
 
 	// Build hidden columns if necessary.
 	var hiddenCols []*model.ColumnInfo
+<<<<<<< HEAD
 	if columnarIndexType == pmodel.ColumnarIndexTypeNA {
 		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+||||||| bea0668079
+	if !isVector {
+		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+=======
+	shardIndexVersion := model.ShardIndexVersionLegacy
+	if !isVector {
+		hiddenCols, shardIndexVersion, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols(), unique)
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		if err != nil {
-			return pmodel.CIStr{}, nil, err
+			return pmodel.CIStr{}, nil, 0, err
 		}
 	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
-		return pmodel.CIStr{}, nil, errors.Trace(err)
+		return pmodel.CIStr{}, nil, 0, errors.Trace(err)
 	}
 
-	return indexName, hiddenCols, nil
+	return indexName, hiddenCols, shardIndexVersion, nil
 }
 
 func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
@@ -5223,6 +5451,7 @@ func (e *executor) createColumnarIndex(sctx sessionctx.Context, ti ast.Ident, in
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	var columnarIndexType pmodel.ColumnarIndexType
 	switch indexOption.Tp {
 	case pmodel.IndexTypeVector:
@@ -5243,6 +5472,13 @@ func (e *executor) createColumnarIndex(sctx sessionctx.Context, ti ast.Ident, in
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(sctx)
 	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, ifNotExists)
+||||||| bea0668079
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, true, ifNotExists)
+=======
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, true, ifNotExists)
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5379,7 +5615,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+<<<<<<< HEAD
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, pmodel.ColumnarIndexTypeNA, ifNotExists)
+||||||| bea0668079
+	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
+=======
+	indexName, hiddenCols, shardIndexVersion, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, unique, false, ifNotExists)
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5421,6 +5663,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return err
 		}
+		indexInfo.ShardIndexVersion = shardIndexVersion
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 

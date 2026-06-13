@@ -669,6 +669,28 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|", "9"))
 }
 
+func TestInformationSchemaColumnsFromDecimalView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database crash_test")
+	tk.MustExec("use crash_test")
+
+	tk.MustExec("create table t1 (id int, val decimal(10,2))")
+	tk.MustExec("create table t2 (id int, val decimal(10,2))")
+	tk.MustExec(`create view v_crash as
+		select a.id, a.val, count(*) as cnt
+		from t1 a join t2 b on a.id = b.id
+		group by a.id`)
+
+	tk.MustQuery(`select table_name, column_name from information_schema.columns
+		where table_schema = 'crash_test' and data_type = 'decimal'
+		order by table_name, ordinal_position`).Check(testkit.Rows(
+		"t1 val",
+		"t2 val",
+		"v_crash val",
+	))
+}
+
 func TestIndexUsageTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

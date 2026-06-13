@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,6 +32,11 @@ func Vectorizable(exprs []Expression) bool {
 		if HasGetSetVarFunc(expr) {
 			return false
 		}
+	}
+	// Stored functions reuse session-scoped routine / transaction state while evaluating rows,
+	// so they must not be driven by parallel projection workers.
+	if slices.ContainsFunc(exprs, HasStoredFunc) {
+		return false
 	}
 	return checkSequenceFunction(exprs)
 }
@@ -88,6 +95,18 @@ func HasGetSetVarFunc(expr Expression) bool {
 		}
 	}
 	return false
+}
+
+// HasStoredFunc checks whether an expression contains a stored function.
+func HasStoredFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if _, ok := scalaFunc.Function.(*storedFuncSig); ok {
+		return true
+	}
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasStoredFunc)
 }
 
 // HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value

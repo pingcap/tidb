@@ -15,7 +15,14 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+<<<<<<< HEAD
 	github.com/antchfx/xmlquery v1.5.0
+||||||| bea0668079
+	github.com/antchfx/xmlquery v1.5.0
+	github.com/antchfx/xpath v1.3.5
+=======
+	github.com/antchfx/xmlquery v1.5.1
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	github.com/antchfx/xpath v1.3.6
 	github.com/apache/arrow-go/v18 v18.0.0
 	github.com/apache/skywalking-eyes v0.4.0
@@ -268,7 +275,7 @@ require (
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
 	github.com/ncw/directio v1.0.5 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
-	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe // indirect
+	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1
@@ -330,6 +337,22 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
+<<<<<<< HEAD
+||||||| bea0668079
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260319090131-1b48a0dae99e
+
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204
+
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260320025932-85bedded2396
+
+=======
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260520111337-efee48c2f1ae
+
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204
+
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260527113327-84c6a13f4626
+
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82

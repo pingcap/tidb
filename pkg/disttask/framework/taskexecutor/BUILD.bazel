@@ -19,7 +19,32 @@ go_library(
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor/execute",
+<<<<<<< HEAD
         "//pkg/lightning/common",
+||||||| bea0668079
+||||||| parent of aba8cebcd5 (Implement log replication (!579)):pkg/dxf/framework/taskexecutor/BUILD.bazel
+        "//pkg/dxf/framework/dxfmetric",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/metering",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/kv",
+=======
+        "//pkg/domain/pkdb_repl",
+        "//pkg/dxf/framework/dxfmetric",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/metering",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/kv",
+>>>>>>> aba8cebcd5 (Implement log replication (!579)):pkg/dxf/framework/taskexecutor/BUILD.bazel
+=======
+        "//pkg/domain/pkdb_repl",
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
         "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",

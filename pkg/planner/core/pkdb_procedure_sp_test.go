@@ -58,8 +58,15 @@ func TestNewVariableVars(t *testing.T) {
 	resVar := variable.NewProcedureVars("t1", tp)
 	require.Equal(t, *con.Vars[0], *resVar)
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 1)
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables),
-		UpdateVariables{baseProcedureExecPlan{}, "t1", "", con, tp})
+	require.Equal(t, UpdateVariables{
+		baseProcedureExecPlan: baseProcedureExecPlan{},
+		name:                  "t1",
+		expr:                  "",
+		context:               con,
+		declType:              tp,
+		blockPath:             "root",
+		stmtOrdinal:           1,
+	}, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables))
 	oldPlan := &ProcedurePlan{
 		ProcedureExecPlan: builder.procedurePlan,
 	}
@@ -78,12 +85,33 @@ func TestNewVariableVars(t *testing.T) {
 	resVar3 := variable.NewProcedureVars("t3", tp)
 	require.Equal(t, *con.Vars[2], *resVar3)
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 3)
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables),
-		UpdateVariables{baseProcedureExecPlan{}, "t1", "", con, tp})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*UpdateVariables),
-		UpdateVariables{baseProcedureExecPlan{}, "t2", "", con, tp})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*UpdateVariables),
-		UpdateVariables{baseProcedureExecPlan{}, "t3", "", con, tp})
+	require.Equal(t, UpdateVariables{
+		baseProcedureExecPlan: baseProcedureExecPlan{},
+		name:                  "t1",
+		expr:                  "",
+		context:               con,
+		declType:              tp,
+		blockPath:             "root",
+		stmtOrdinal:           2,
+	}, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables))
+	require.Equal(t, UpdateVariables{
+		baseProcedureExecPlan: baseProcedureExecPlan{},
+		name:                  "t2",
+		expr:                  "",
+		context:               con,
+		declType:              tp,
+		blockPath:             "root",
+		stmtOrdinal:           3,
+	}, *builder.procedurePlan.ProcedureCommandList[1].(*UpdateVariables))
+	require.Equal(t, UpdateVariables{
+		baseProcedureExecPlan: baseProcedureExecPlan{},
+		name:                  "t3",
+		expr:                  "",
+		context:               con,
+		declType:              tp,
+		blockPath:             "root",
+		stmtOrdinal:           4,
+	}, *builder.procedurePlan.ProcedureCommandList[2].(*UpdateVariables))
 	// support copy
 	oldPlan = &ProcedurePlan{
 		ProcedureExecPlan: builder.procedurePlan,
@@ -181,7 +209,7 @@ func TestNewVariableVars(t *testing.T) {
 	builder.procedurePlan.ProcedureCommandList = builder.procedurePlan.ProcedureCommandList[:0]
 	numCode := &ast.ProcedureErrorVal{ErrorNum: 1000}
 	handlerInfo := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_CONTINUE,
+		ControlHandle: ast.ProcedureContinue,
 		ErrorCon:      []ast.ErrNode{numCode},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -193,10 +221,14 @@ func TestNewVariableVars(t *testing.T) {
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 4)
 	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*ProcedureGoToEnd), ProcedureGoToEnd{label: &variable.ProcedureLabel{LabelType: variable.HANDLELABEL, LabelBegin: 0, LabelEnd: 4}, dest: 4})
 	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*ProcedureSaveIP), ProcedureSaveIP{context: hanldercon, dest: 1})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*executeBaseSQL), executeBaseSQL{context: hanldercon, cacheStmt: &CacheAst{sql: "select 1;", isInvalid: false, stmts: []ast.StmtNode{handlerInfo.Operate}}})
+	handlerExec := builder.procedurePlan.ProcedureCommandList[2].(*executeBaseSQL)
+	require.Equal(t, hanldercon, handlerExec.context)
+	require.Equal(t, "select 1;", handlerExec.cacheStmt.GetString())
+	require.NotEmpty(t, handlerExec.blockPath)
+	require.NotZero(t, handlerExec.stmtOrdinal)
 	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[3].(*ProcedureOutputIP), ProcedureOutputIP{context: hanldercon})
 	base := variable.ProcedureHandleBase{
-		Handle:        ast.PROCEDUR_CONTINUE,
+		Handle:        ast.ProcedureContinue,
 		Operate:       1,
 		HandleContext: hanldercon,
 	}
@@ -216,7 +248,7 @@ func TestNewVariableVars(t *testing.T) {
 	// can add more code
 	numCode2 := &ast.ProcedureErrorVal{ErrorNum: 2000}
 	handlerInfo2 := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_CONTINUE,
+		ControlHandle: ast.ProcedureContinue,
 		ErrorCon:      []ast.ErrNode{numCode2},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -243,9 +275,9 @@ func TestNewVariableVars(t *testing.T) {
 	builder.procedurePlan.ProcedureCommandList = builder.procedurePlan.ProcedureCommandList[:0]
 
 	// handler error condition
-	errCon := &ast.ProcedureErrorCon{ErrorCon: ast.PROCEDUR_NOT_FOUND}
+	errCon := &ast.ProcedureErrorCon{ErrorCon: ast.ProcedureNotFound}
 	handlerErrorCon := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_CONTINUE,
+		ControlHandle: ast.ProcedureContinue,
 		ErrorCon:      []ast.ErrNode{errCon},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -261,7 +293,7 @@ func TestNewVariableVars(t *testing.T) {
 	// handler sqlstate
 	errState := &ast.ProcedureErrorState{CodeStatus: "01242"}
 	handlerErrorState := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_CONTINUE,
+		ControlHandle: ast.ProcedureContinue,
 		ErrorCon:      []ast.ErrNode{errState},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -286,7 +318,7 @@ func TestNewVariableVars(t *testing.T) {
 	//handler sqlstate check
 	errState1 := &ast.ProcedureErrorState{CodeStatus: "0124"}
 	handlerErrorState1 := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_CONTINUE,
+		ControlHandle: ast.ProcedureContinue,
 		ErrorCon:      []ast.ErrNode{errState1},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -303,7 +335,7 @@ func TestNewVariableVars(t *testing.T) {
 	builder.procedurePlan.ProcedureCommandList = builder.procedurePlan.ProcedureCommandList[:0]
 	con = variable.NewProcedureContext(variable.BLOCKLABEL)
 	mutiHandlerError := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_CONTINUE,
+		ControlHandle: ast.ProcedureContinue,
 		ErrorCon:      []ast.ErrNode{numCode2, errState, errCon, numCode},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -328,7 +360,7 @@ func TestNewVariableVars(t *testing.T) {
 	con = variable.NewProcedureContext(variable.BLOCKLABEL)
 	numCode2 = &ast.ProcedureErrorVal{ErrorNum: 2000}
 	handlerInfo2 = &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_EXIT,
+		ControlHandle: ast.ProcedureExit,
 		ErrorCon:      []ast.ErrNode{numCode2},
 		Operate:       &ast.SelectStmt{},
 	}
@@ -340,10 +372,14 @@ func TestNewVariableVars(t *testing.T) {
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 4)
 	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*ProcedureGoToEnd), ProcedureGoToEnd{label: &variable.ProcedureLabel{LabelType: variable.HANDLELABEL, LabelBegin: 0, LabelEnd: 4}, dest: 4})
 	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*ProcedureNoNeedSave), ProcedureNoNeedSave{dest: 1, context: builder.procedurePlan.ProcedureCommandList[1].(*ProcedureNoNeedSave).GetContext()})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*executeBaseSQL), executeBaseSQL{context: hanldercon, cacheStmt: &CacheAst{sql: "select 1;", isInvalid: false, stmts: []ast.StmtNode{handlerInfo.Operate}}})
+	handlerExitExec := builder.procedurePlan.ProcedureCommandList[2].(*executeBaseSQL)
+	require.Equal(t, hanldercon, handlerExitExec.context)
+	require.Equal(t, "select 1;", handlerExitExec.cacheStmt.GetString())
+	require.NotEmpty(t, handlerExitExec.blockPath)
+	require.NotZero(t, handlerExitExec.stmtOrdinal)
 	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[3].(*ProcedureGoToEndWithOutStmt), ProcedureGoToEndWithOutStmt{label: &variable.ProcedureLabel{LabelType: variable.BLOCKLABEL}, context: builder.procedurePlan.ProcedureCommandList[3].GetContext()})
 	base = variable.ProcedureHandleBase{
-		Handle:        ast.PROCEDUR_EXIT,
+		Handle:        ast.ProcedureExit,
 		Operate:       1,
 		HandleContext: hanldercon,
 	}
@@ -372,7 +408,7 @@ func TestProcedureNodePlan(t *testing.T) {
 	// add handler test
 	numCode := &ast.ProcedureErrorVal{ErrorNum: 2000}
 	handlerInfo := &ast.ProcedureErrorControl{
-		ControlHandle: ast.PROCEDUR_EXIT,
+		ControlHandle: ast.ProcedureExit,
 		ErrorCon:      []ast.ErrNode{numCode},
 		Operate:       &ast.SelectStmt{},
 	}

@@ -750,6 +750,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
@@ -861,6 +862,7 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
+<<<<<<< HEAD
 	// Meta Info, all are READ-ONLY once initialized.
 	SQLDigest        string
 	SQLText          string
@@ -887,6 +889,23 @@ type PlanCacheValue struct {
 	lastUsedTimeInUnix int64 // the last time when this plan is used, in Unix timestamp.
 
 	testKey int64 // test-only
+||||||| bea0668079
+	Plan          base.Plan          // not-read-only, session might update it before reusing
+	OutputColumns types.NameSlice    // read-only
+	memoryUsage   int64              // read-only
+	testKey       int64              // test-only
+	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
+	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+=======
+	Plan          base.Plan          // not-read-only, session might update it before reusing
+	OutputColumns types.NameSlice    // read-only
+	memoryUsage   int64              // read-only
+	testKey       int64              // test-only
+	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
+	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+	Warnings      []stmtctx.SQLWarn  // warnings produced while building the cached plan
+	ExtraWarnings []stmtctx.SQLWarn  // extra warnings produced while building the cached plan
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 }
 
 // CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
@@ -963,6 +982,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
+<<<<<<< HEAD
 	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) + int64(len(v.BinaryPlan)) +
 		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
 
@@ -970,6 +990,24 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	sum += size.SizeOfFloat64 * 7
 
 	v.Memory = sum
+||||||| bea0668079
+	v.memoryUsage = sum
+=======
+	sum += size.SizeOfSlice * 2
+	for _, warn := range v.Warnings {
+		sum += size.SizeOfString + int64(len(warn.Level))
+		if warn.Err != nil {
+			sum += size.SizeOfInterface + int64(len(warn.Err.Error()))
+		}
+	}
+	for _, warn := range v.ExtraWarnings {
+		sum += size.SizeOfString + int64(len(warn.Level))
+		if warn.Err != nil {
+			sum += size.SizeOfInterface + int64(len(warn.Err.Error()))
+		}
+	}
+	v.memoryUsage = sum
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	return
 }
 
@@ -1137,6 +1175,12 @@ type PlanCacheStmt struct {
 	// InUse is used to mark plan cache is used.
 	// Avoid stored procedures being recursively called in prepare.
 	InUse bool
+
+	// ReplayWarningsOnHit marks cached statements whose build-time warnings must
+	// be replayed when the cached plan is reused. This is currently reserved for
+	// hidden stored-routine prepared templates so their warning handlers observe
+	// the same warnings on cache hits as on cache misses.
+	ReplayWarningsOnHit bool
 
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr

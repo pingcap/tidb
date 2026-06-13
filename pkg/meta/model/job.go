@@ -116,6 +116,7 @@ const (
 	ActionRefreshMeta            ActionType = 76
 	_                            ActionType = 77 // reserve for database read-only feature
 	ActionAlterTableAffinity     ActionType = 78
+<<<<<<< HEAD
 	ActionCreateTableGroup       ActionType = 79
 	ActionDropTableGroup         ActionType = 80
 	ActionAlterTableGroup        ActionType = 81
@@ -125,6 +126,18 @@ const (
 	ActionCreateProcedure        ActionType = 85
 	ActionDropProcedure          ActionType = 86
 	ActionAlterProcedure         ActionType = 87
+||||||| bea0668079
+	ActionCreateTrigger          ActionType = 79
+	ActionDropTrigger            ActionType = 80
+	ActionCreateProcedure        ActionType = 81
+	ActionDropProcedure          ActionType = 82
+	ActionAlterProcedure         ActionType = 83
+=======
+
+	// 200 ~ 255 are reserved for pkdb usage.
+	// 200 ~ 204 are reserved for udf.
+	// 205 ~ 207 are reserved for tablegroup.
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 )
 
 // ActionMap is the map of DDL ActionType to string.

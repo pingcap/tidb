@@ -1120,8 +1120,17 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
+	} else if b.ctx.GetSessionVars().EnableSPPlanCache {
+		colNameField, ok := innerNode.(*ast.ColumnNameExpr)
+		if ok && colNameField.Name.Table.L == "" {
+			if _, _, notFind := b.ctx.GetSessionVars().GetProcedureVariable(colNameField.Name.Name.L); !notFind {
+				colName = colNameField.Name.Name
+			}
+		}
 	} else {
 		// Other: field is an expression.
+	}
+	if colName.L == "" {
 		var err error
 		if colName, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
 			return nil, nil, err
@@ -2252,6 +2261,22 @@ func (a *havingWindowAndOrderbyExprResolver) popCurClause() {
 	a.prevClause = a.prevClause[:len(a.prevClause)-1]
 }
 
+func (a *havingWindowAndOrderbyExprResolver) isUnresolvedSPVariable(v *ast.ColumnNameExpr) bool {
+	if a.curClause != havingClause || v.Name.Schema.L != "" || v.Name.Table.L != "" || a.p == nil {
+		return false
+	}
+	sctx := a.p.SCtx()
+	if sctx == nil {
+		return false
+	}
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil || !sessVars.GetCallProcedure() {
+		return false
+	}
+	_, _, notFind := sessVars.GetProcedureVariable(v.Name.Name.L)
+	return !notFind
+}
+
 // Enter implements Visitor interface.
 func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
 	switch n.(type) {
@@ -2455,6 +2480,9 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				if idx >= 0 {
 					return n, true
 				}
+			}
+			if a.isUnresolvedSPVariable(v) {
+				return n, true
 			}
 			a.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
 			return node, false
@@ -3035,6 +3063,22 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 	return nil
 }
 
+func isStoredRoutineVariableInPlan(p base.LogicalPlan, colName *ast.ColumnName) bool {
+	if p == nil || colName == nil || colName.Schema.L != "" || colName.Table.L != "" {
+		return false
+	}
+	sctx := p.SCtx()
+	if sctx == nil {
+		return false
+	}
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil || !sessVars.GetCallProcedure() {
+		return false
+	}
+	_, _, notFind := sessVars.GetProcedureVariable(colName.Name.L)
+	return !notFind
+}
+
 func buildFuncDependCol(p base.LogicalPlan, cond ast.ExprNode) (*types.FieldName, *types.FieldName, error) {
 	binOpExpr, ok := cond.(*ast.BinaryOperationExpr)
 	if !ok {
@@ -3049,6 +3093,9 @@ func buildFuncDependCol(p base.LogicalPlan, cond ast.ExprNode) (*types.FieldName
 	}
 	rColExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr)
 	if !ok {
+		return nil, nil, nil
+	}
+	if isStoredRoutineVariableInPlan(p, lColExpr.Name) || isStoredRoutineVariableInPlan(p, rColExpr.Name) {
 		return nil, nil, nil
 	}
 	lIdx, err := expression.FindFieldName(p.OutputNames(), lColExpr.Name)
@@ -3313,6 +3360,10 @@ func extractSingeValueColNamesFromWhere(p base.LogicalPlan, where ast.ExprNode, 
 					addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 				}
 			}
+			// a = routine_variable
+			if rhsCol, ok := binOpExpr.R.(*ast.ColumnNameExpr); ok && isStoredRoutineVariableInPlan(p, rhsCol.Name) {
+				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+			}
 		} else if colExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr); ok {
 			// value = a
 			if _, ok := binOpExpr.L.(ast.ValueExpr); ok {
@@ -3323,6 +3374,10 @@ func extractSingeValueColNamesFromWhere(p base.LogicalPlan, where ast.ExprNode, 
 				if _, ok := u.V.(ast.ValueExpr); ok {
 					addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 				}
+			}
+			// routine_variable = a
+			if lhsCol, ok := binOpExpr.L.(*ast.ColumnNameExpr); ok && isStoredRoutineVariableInPlan(p, lhsCol.Name) {
+				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 			}
 		}
 	}
@@ -3447,6 +3502,9 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p base.LogicalPlan,
 	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(resolver.nonAggCols))
 	for i, colName := range resolver.nonAggCols {
+		if isStoredRoutineVariableInPlan(p, colName) {
+			continue
+		}
 		idx, err := expression.FindFieldName(p.OutputNames(), colName)
 		if err != nil || idx < 0 {
 			return plannererrors.ErrMixOfGroupFuncAndFields.GenWithStackByArgs(resolver.nonAggColIdxs[i]+1, colName.Name.O)
@@ -4820,7 +4878,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true, requireColumnPriv)
+				expr, _, err = b.rewriteWithPreprocessAndBuildCtx(
+					ctx,
+					columns[i].GeneratedExpr.Clone(),
+					ds,
+					nil,
+					nil,
+					true,
+					nil,
+					requireColumnPriv,
+					expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), columns[i].GeneratedExpr.Internal(), columns[i].ToInfo()),
+				)
 				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
@@ -5021,6 +5089,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = NewInfoSchemaIndexesExtractor()
 		case infoschema.TableViews:
 			p.Extractor = NewInfoSchemaViewsExtractor()
+		case infoschema.TableParameters:
+			p.Extractor = NewInfoSchemaParametersExtractor()
 		case infoschema.TableKeyColumn:
 			p.Extractor = NewInfoSchemaKeyColumnUsageExtractor()
 		case infoschema.TableConstraints:
@@ -5080,11 +5150,29 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	}
 	defer deferFunc()
 
-	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	sessionVars := b.ctx.GetSessionVars()
+	originalCurrentDB, originalCurrentDBCI := sessionVars.CurrentDB, sessionVars.CurrentDBCI
+	if dbName.L != "" {
+		sessionVars.CurrentDB = dbName.O
+		sessionVars.CurrentDBCI = dbName
+		defer func() {
+			sessionVars.CurrentDB = originalCurrentDB
+			sessionVars.CurrentDBCI = originalCurrentDBCI
+		}()
+	}
+
+	charset, collation := sessionVars.GetCharsetInfo()
 	viewParser := parser.New()
-	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
+	viewParser.SetParserConfig(sessionVars.BuildParserConfig())
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
+		return nil, err
+	}
+	sctx, err := AsSctx(b.ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := preloadUserStoredFunction(ctx, sctx, collectUserDefinedStoredFunctions(selectNode)); err != nil {
 		return nil, err
 	}
 	originalVisitInfo := b.visitInfo
@@ -5152,7 +5240,12 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 		b.hintProcessor = originHintProcessor
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	}()
-	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
+	var nodeW *resolve.NodeW
+	if b.resolveCtx == nil {
+		nodeW = resolve.NewNodeW(selectNode)
+	} else {
+		nodeW = resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
+	}
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	errViewInvalid := plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	if err != nil {
@@ -6008,6 +6101,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
+	virtualAssignmentCols := make([]*model.ColumnInfo, 0)
 	for _, tn := range tableList {
 		tnW := b.resolveCtx.GetTableName(tn)
 		if isCTE(tnW) || tnW.TableInfo.IsView() || tnW.TableInfo.IsSequence() {
@@ -6037,6 +6131,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
 				Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
 			})
+			virtualAssignmentCols = append(virtualAssignmentCols, colInfo.ToInfo())
 		}
 	}
 
@@ -6101,7 +6196,21 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign), requireColumnPriv)
+			newExpr, np, err = b.rewriteWithPreprocessAndBuildCtx(
+				ctx,
+				assign.Expr,
+				p,
+				nil,
+				nil,
+				true,
+				rewritePreprocess(assign),
+				requireColumnPriv,
+				expression.WithTiDBShardInternalVersionForGeneratedColumn(
+					b.ctx.GetExprCtx(),
+					assign.Expr,
+					virtualAssignmentCols[i-len(list)],
+				),
+			)
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err

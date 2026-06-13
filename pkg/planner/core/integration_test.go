@@ -175,6 +175,31 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	require.Equal(t, 0, res[0])
 }
 
+func TestPartitionTableRowIDWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t_partition_rowid_warn, t_plain_rowid_warn")
+	testKit.MustExec(`create table t_partition_rowid_warn(a int)
+			partition by range(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (20))`)
+	testKit.MustExec("create table t_plain_rowid_warn(a int)")
+
+	testKit.MustQuery("select _tidb_rowid from t_partition_rowid_warn").Rows()
+	testKit.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 `_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
+
+	testKit.MustQuery("select _tidb_rowid from t_partition_rowid_warn where _tidb_rowid >= 0").Rows()
+	testKit.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 `_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
+
+	testKit.MustQuery("select _tidb_rowid from t_plain_rowid_warn").Rows()
+	testKit.MustQuery("show warnings").Check(testkit.Rows())
+}
+
 func TestNotReadOnlySQLOnTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

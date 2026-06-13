@@ -3,9 +3,11 @@ package pkdbrepl
 import (
 	"context"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/pd/client/constants"
@@ -26,6 +28,61 @@ var (
 	watchRestartAfterCreateWatch func()
 )
 
+var restartHoldState struct {
+	mu      sync.Mutex
+	ch      chan struct{}
+	holders int
+}
+
+var restartDomainCloseTimeout = 3 * time.Second
+
+// HoldRestart sets a barrier that blocks restartProcess until ReleaseRestart is called.
+func HoldRestart() {
+	restartHoldState.mu.Lock()
+	defer restartHoldState.mu.Unlock()
+
+	if restartHoldState.holders == 0 {
+		restartHoldState.ch = make(chan struct{})
+	}
+	restartHoldState.holders++
+}
+
+// ReleaseRestart releases the restart barrier, allowing a pending restart to proceed.
+func ReleaseRestart() {
+	failpoint.Inject("beforeReleaseRestart", func() {})
+
+	restartHoldState.mu.Lock()
+	defer restartHoldState.mu.Unlock()
+
+	if restartHoldState.holders == 0 {
+		return
+	}
+	restartHoldState.holders--
+	if restartHoldState.holders == 0 {
+		close(restartHoldState.ch)
+		restartHoldState.ch = nil
+	}
+}
+
+func waitRestartHold(stopCh <-chan struct{}) bool {
+	restartHoldState.mu.Lock()
+	ch := restartHoldState.ch
+	restartHoldState.mu.Unlock()
+	if ch == nil {
+		return true
+	}
+	if stopCh == nil {
+		<-ch
+		return true
+	}
+	select {
+	case <-stopCh:
+		return false
+	case <-ch:
+		return true
+	}
+}
+
 func restart() error {
 	executablePath, err := os.Executable()
 	if err != nil {
@@ -43,12 +100,7 @@ func restartProcess(domain domainCloser) {
 	disableStandbyMode()
 
 	if domain != nil {
-		domain.Close()
-		// nil is only possible in tests
-		if CloseDDLOwnerMgr != nil {
-			CloseDDLOwnerMgr()
-		}
-		logutil.BgLogger().Info("domain closed before restart")
+		closeDomainBeforeRestart(domain)
 	}
 	if intest.InTest {
 		// don't want to restart in go unit test
@@ -56,6 +108,26 @@ func restartProcess(domain domainCloser) {
 	}
 	if err := restart(); err != nil {
 		logutil.BgLogger().Fatal("failed to restart process", zap.Error(err))
+	}
+}
+
+func closeDomainBeforeRestart(domain domainCloser) {
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		domain.Close()
+		// nil is only possible in tests
+		if CloseDDLOwnerMgr != nil {
+			CloseDDLOwnerMgr()
+		}
+	}()
+
+	select {
+	case <-doneCh:
+		logutil.BgLogger().Info("domain closed before restart")
+	case <-time.After(restartDomainCloseTimeout):
+		logutil.BgLogger().Warn("timed out waiting for domain close before restart",
+			zap.Duration("timeout", restartDomainCloseTimeout))
 	}
 }
 
@@ -151,6 +223,9 @@ func WatchRestart(etcdCli *clientv3.Client, stopCh <-chan struct{}, domain domai
 					return
 				}
 				if snapshot.modRevision != newSnapshot.modRevision {
+					if !waitRestartHold(stopCh) {
+						return
+					}
 					go restartProcess(domain)
 					return
 				}
@@ -164,9 +239,11 @@ func WatchRestart(etcdCli *clientv3.Client, stopCh <-chan struct{}, domain domai
 			if len(watchResp.Events) == 0 {
 				continue
 			}
-			// will call Domain.Close() inside restartProcess, but this goroutine is also
-			// created by Domain, so we need to start another goroutine and return after
-			// Domain.Close() is blocked
+			// restartProcess calls Domain.Close(), but this goroutine is also created by
+			// Domain, so schedule the restart on another goroutine and let WatchRestart exit.
+			if !waitRestartHold(stopCh) {
+				return
+			}
 			go restartProcess(domain)
 			return
 		}

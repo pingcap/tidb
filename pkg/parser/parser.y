@@ -45,6 +45,11 @@ type createFunctionPrefix struct {
 	definer       *auth.UserIdentity
 	ifNotExists   bool
 }
+
+type likeEscapeSpec struct {
+	escape   string
+	explicit bool
+}
 %}
 
 %union {
@@ -705,6 +710,7 @@ type createFunctionPrefix struct {
 	statsSamplePages           "STATS_SAMPLE_PAGES"
 	statsSampleRate            "STATS_SAMPLE_RATE"
 	status                     "STATUS"
+	stmt                       "STMT"
 	storage                    "STORAGE"
 	strictFormat               "STRICT_FORMAT"
 	stringType                 "STRING"
@@ -941,6 +947,7 @@ type createFunctionPrefix struct {
 	degradeTimeout             "DEGRADE_TIMEOUT"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	detached                   "DETACHED"
 	distribute                 "DISTRIBUTE"
 	distribution               "DISTRIBUTION"
 	distributions              "DISTRIBUTIONS"
@@ -1209,6 +1216,7 @@ type createFunctionPrefix struct {
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
+	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterJobOptionList                     "Alter job option list"
@@ -1696,6 +1704,7 @@ type createFunctionPrefix struct {
 	AdminResumeLogReplication              "Admin resume log replication statement"
 	AdminDropLogReplication                "Admin drop log replication statement"
 	AdminSwitchOverPrimary                 "Admin switchover primary statement"
+	AdminSwitchOverAsPrimary               "Admin switchover as primary statement"
 	AdminActivateStandby                   "Admin activate standby statement"
 	ActivateStandbyMode                    "Activate standby mode"
 	LogReplicationOptList                  "Log replication option list"
@@ -1773,7 +1782,6 @@ type createFunctionPrefix struct {
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
 	LoadableFunctionSoname          "SONAME clause of loadable function"
-	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -5731,7 +5739,15 @@ ExplainSym:
 |	"DESC"
 
 ExplainStmt:
-	ExplainSym TableName
+	ExplainSym "ROUTINE" "FUNCTION" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt("row", false, ast.ExplainRoutineTypeFunction, $4)
+	}
+|	ExplainSym "ROUTINE" "PROCEDURE" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt("row", false, ast.ExplainRoutineTypeProcedure, $4)
+	}
+|	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt: &ast.ShowStmt{
@@ -5778,6 +5794,14 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" stringLit "ROUTINE" "FUNCTION" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($4, false, ast.ExplainRoutineTypeFunction, $7)
+	}
+|	ExplainSym "FORMAT" "=" stringLit "ROUTINE" "PROCEDURE" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($4, false, ast.ExplainRoutineTypeProcedure, $7)
+	}
 |	ExplainSym "FORMAT" "=" ExplainFormatType "FOR" "CONNECTION" NUM
 	{
 		$$ = &ast.ExplainForStmt{
@@ -5792,6 +5816,14 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType "ROUTINE" "FUNCTION" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($4, false, ast.ExplainRoutineTypeFunction, $7)
+	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType "ROUTINE" "PROCEDURE" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($4, false, ast.ExplainRoutineTypeProcedure, $7)
+	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5799,6 +5831,22 @@ ExplainStmt:
 			Format:  "row",
 			Analyze: true,
 		}
+	}
+|	ExplainSym "ANALYZE" "ROUTINE" "FUNCTION" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt("row", true, ast.ExplainRoutineTypeFunction, $5)
+	}
+|	ExplainSym "ANALYZE" "ROUTINE" "FUNCTION" ProcedureCall "FOR" "STMT" NUM
+	{
+		$$ = newExplainRoutineStmtWithTarget("row", true, ast.ExplainRoutineTypeFunction, $5, true, getUint64FromNUM($8))
+	}
+|	ExplainSym "ANALYZE" "ROUTINE" "PROCEDURE" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt("row", true, ast.ExplainRoutineTypeProcedure, $5)
+	}
+|	ExplainSym "ANALYZE" "ROUTINE" "PROCEDURE" ProcedureCall "FOR" "STMT" NUM
+	{
+		$$ = newExplainRoutineStmtWithTarget("row", true, ast.ExplainRoutineTypeProcedure, $5, true, getUint64FromNUM($8))
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
@@ -5808,6 +5856,22 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType "ROUTINE" "FUNCTION" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($5, true, ast.ExplainRoutineTypeFunction, $8)
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType "ROUTINE" "FUNCTION" ProcedureCall "FOR" "STMT" NUM
+	{
+		$$ = newExplainRoutineStmtWithTarget($5, true, ast.ExplainRoutineTypeFunction, $8, true, getUint64FromNUM($11))
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType "ROUTINE" "PROCEDURE" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($5, true, ast.ExplainRoutineTypeProcedure, $8)
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType "ROUTINE" "PROCEDURE" ProcedureCall "FOR" "STMT" NUM
+	{
+		$$ = newExplainRoutineStmtWithTarget($5, true, ast.ExplainRoutineTypeProcedure, $8, true, getUint64FromNUM($11))
+	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5815,6 +5879,22 @@ ExplainStmt:
 			Format:  $5,
 			Analyze: true,
 		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit "ROUTINE" "FUNCTION" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($5, true, ast.ExplainRoutineTypeFunction, $8)
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit "ROUTINE" "FUNCTION" ProcedureCall "FOR" "STMT" NUM
+	{
+		$$ = newExplainRoutineStmtWithTarget($5, true, ast.ExplainRoutineTypeFunction, $8, true, getUint64FromNUM($11))
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit "ROUTINE" "PROCEDURE" ProcedureCall
+	{
+		$$ = newExplainRoutineStmt($5, true, ast.ExplainRoutineTypeProcedure, $8)
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit "ROUTINE" "PROCEDURE" ProcedureCall "FOR" "STMT" NUM
+	{
+		$$ = newExplainRoutineStmtWithTarget($5, true, ast.ExplainRoutineTypeProcedure, $8, true, getUint64FromNUM($11))
 	}
 
 ExplainFormatType:
@@ -6631,36 +6711,50 @@ PredicateExpr:
 	}
 |	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		}
+		// When ESCAPE is an empty string, escape is empty and explicit is true.
+		// This means no escape character should be used (Escape = 0).
+		var escapeChar byte
+		if len(escape) > 0 {
+			escapeChar = escape[0]
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  true,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escapeChar,
+			EscapeExplicit: explicit,
+			IsLike:         true,
 		}
 	}
 |	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		}
+		// When ESCAPE is an empty string, escape is empty and explicit is true.
+		// This means no escape character should be used (Escape = 0).
+		var escapeChar byte
+		if len(escape) > 0 {
+			escapeChar = escape[0]
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  false,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escapeChar,
+			EscapeExplicit: explicit,
+			IsLike:         false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -6680,11 +6774,11 @@ RegexpSym:
 LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
-		$$ = "\\"
+		$$ = &likeEscapeSpec{escape: "\\", explicit: false}
 	}
 |	"ESCAPE" stringLit
 	{
-		$$ = $2
+		$$ = &likeEscapeSpec{escape: $2, explicit: true}
 	}
 
 Field:
@@ -7131,6 +7225,7 @@ UnReservedKeyword:
 |	"SONAME"
 |	"START"
 |	"STATUS"
+|	"STMT"
 |	"STRING"
 |	"OPEN"
 |	"POINT"
@@ -7204,7 +7299,7 @@ UnReservedKeyword:
 |	"PRIVILEGES"
 |	"NO"
 |	"BINLOG"
-|	"FUNCTION"
+|	"FUNCTION" %prec lowerThanFunction
 |	"VIEW"
 |	"BINDING"
 |	"BINDINGS"
@@ -7246,7 +7341,7 @@ UnReservedKeyword:
 |	"SLAVE"
 |	"RELOAD"
 |	"TEMPORARY"
-|	"ROUTINE"
+|	"ROUTINE" %prec lowerThanFunction
 |	"EVENT"
 |	"ALGORITHM"
 |	"DEFINER"
@@ -7509,6 +7604,7 @@ TiDBKeyword:
 |	"MAXIMUM_PROTECTION"
 |	"PROTECTION_MODE"
 |	"DEGRADE_TIMEOUT"
+|	"DETACHED"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -11945,6 +12041,13 @@ AdminStmt:
 			SwitchOverPrimary: $2.(*ast.SwitchOverPrimary),
 		}
 	}
+|	"ADMIN" AdminSwitchOverAsPrimary
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                  ast.AdminSwitchOverAsPrimary,
+			SwitchOverAsPrimary: $2.(*ast.SwitchOverAsPrimary),
+		}
+	}
 |	"ADMIN" AdminActivateStandby
 	{
 		$$ = &ast.AdminStmt{
@@ -12621,9 +12724,10 @@ ShowLikeOrWhereOpt:
 |	"LIKE" SimpleExpr
 	{
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Pattern: $2,
-			Escape:  '\\',
-			IsLike:  true,
+			Pattern:        $2,
+			Escape:         '\\',
+			EscapeExplicit: false,
+			IsLike:         true,
 		}
 	}
 |	"WHERE" Expression
@@ -15714,11 +15818,11 @@ LoadDataOptionList:
 	}
 
 LoadDataOption:
-	identifier
+	Identifier
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1)}
 	}
-|	identifier "=" SignedLiteral
+|	Identifier "=" SignedLiteral
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
@@ -16747,7 +16851,7 @@ SpPdparam:
 	Identifier Type OptCollate
 	{
 		x := &ast.StoreParameter{
-			Paramstatus:     ast.MODE_IN,
+			Paramstatus:     ast.ModeIn,
 			ParamType:       $2.(*types.FieldType),
 			ParamName:       $1,
 			OmitParamStatus: true,
@@ -16769,15 +16873,15 @@ SpPdparam:
 ProcedureInOut:
 	"IN"
 	{
-		$$ = ast.MODE_IN
+		$$ = ast.ModeIn
 	}
 |	"OUT"
 	{
-		$$ = ast.MODE_OUT
+		$$ = ast.ModeOut
 	}
 |	"INOUT"
 	{
-		$$ = ast.MODE_INOUT
+		$$ = ast.ModeInOut
 	}
 
 ProcedureStatementStmt:
@@ -16918,11 +17022,11 @@ SQLStateText:
 ProcedureHandlerType:
 	"CONTINUE"
 	{
-		$$ = ast.PROCEDUR_CONTINUE
+		$$ = ast.ProcedureContinue
 	}
 |	"EXIT"
 	{
-		$$ = ast.PROCEDUR_EXIT
+		$$ = ast.ProcedureExit
 	}
 
 ProcedureHcondList:
@@ -16946,21 +17050,21 @@ ProcedureHcond:
 	/* SQLSTATEs 01??? */
 	{
 		$$ = &ast.ProcedureErrorCon{
-			ErrorCon: ast.PROCEDUR_SQLWARNING,
+			ErrorCon: ast.ProcedureSQLWarning,
 		}
 	}
 |	"NOT" "FOUND"
 	/* SQLSTATEs 02??? */
 	{
 		$$ = &ast.ProcedureErrorCon{
-			ErrorCon: ast.PROCEDUR_NOT_FOUND,
+			ErrorCon: ast.ProcedureNotFound,
 		}
 	}
 |	"SQLEXCEPTION"
 	/* All other SQLSTATEs */
 	{
 		$$ = &ast.ProcedureErrorCon{
-			ErrorCon: ast.PROCEDUR_SQLEXCEPTION,
+			ErrorCon: ast.ProcedureSQLException,
 		}
 	}
 
@@ -17356,53 +17460,65 @@ ProcedureChistic:
 	"COMMENT" stringLit
 	{
 		$$ = &ast.ProcedureComment{
-			Type:    ast.PROCEDURCOMMENT,
+			Type:    ast.ProcedureCommentType,
 			Comment: $2,
 		}
 	}
 |	"SQL" "SECURITY" "DEFINER"
 	{
 		$$ = &ast.ProcedureSecurity{
-			Type:     ast.PROCEDURSECURITY,
+			Type:     ast.ProcedureSecurityType,
 			Security: model.SecurityDefiner,
 		}
 	}
 |	"SQL" "SECURITY" "INVOKER"
 	{
 		$$ = &ast.ProcedureSecurity{
-			Type:     ast.PROCEDURSECURITY,
+			Type:     ast.ProcedureSecurityType,
 			Security: model.SecurityInvoker,
 		}
 	}
 |	"DETERMINISTIC"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureDeterministic{
+			Type:          ast.ProcedureDeterministicType,
+			Deterministic: true,
+		}
 	}
 |	"NOT" "DETERMINISTIC"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureDeterministic{
+			Type:          ast.ProcedureDeterministicType,
+			Deterministic: false,
+		}
 	}
 |	"NO" "SQL"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineNoSQL,
+		}
 	}
 |	"READS" "SQL" "DATA"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineReadsSQLData,
+		}
 	}
 |	"MODIFIES" "SQL" "DATA"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineModifiesSQLData,
+		}
 	}
 |	"CONTAINS" "SQL"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineContainsSQL,
+		}
 	}
 |	"LANGUAGE" "SQL"
 	{
@@ -17516,7 +17632,7 @@ StoredFunctionParam:
 	Identifier Type OptCollate
 	{
 		x := &ast.StoreParameter{
-			Paramstatus:     ast.MODE_IN,
+			Paramstatus:     ast.ModeIn,
 			ParamType:       $2.(*types.FieldType),
 			ParamName:       $1,
 			OmitParamStatus: true,
@@ -18284,6 +18400,12 @@ AdminSwitchOverPrimary:
 		}
 	}
 
+AdminSwitchOverAsPrimary:
+	"SWITCHOVER" "AS" "PRIMARY"
+	{
+		$$ = &ast.SwitchOverAsPrimary{}
+	}
+
 AdminActivateStandby:
 	"ACTIVATE" "STANDBY" "MODE" "=" ActivateStandbyMode
 	{
@@ -18355,6 +18477,12 @@ LogReplicationOpt:
 			Value: $3,
 		}
 	}
+|	"DETACHED"
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp: ast.LogReplicationOptDetached,
+		}
+	}
 
 ProtectionMode:
 	"MAXIMUM_AVAILABILITY"
@@ -18368,5 +18496,9 @@ ProtectionMode:
 |	"MAXIMUM_PROTECTION"
 	{
 		$$ = ast.ProtectionModeMaximumProtection
+	}
+|	LengthNum
+	{
+		$$ = ast.ProtectionMode($1.(uint64))
 	}
 %%

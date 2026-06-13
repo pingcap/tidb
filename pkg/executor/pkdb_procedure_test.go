@@ -3,6 +3,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,11 +11,15 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,6 +36,27 @@ type udfPrivManager struct {
 	privilege.Manager
 	allowInsert bool
 	allowDelete bool
+}
+
+type procedureResultCapture struct {
+	tk     *testkit.TestKit
+	fields [][]*resolve.ResultField
+}
+
+func (c *procedureResultCapture) MultiHanldeNodeWithResult(_ context.Context, stmt ast.StmtNode) error {
+	ctx := context.Background()
+	comment := fmt.Sprintf("stmt:%v", stmt)
+	rs, err := c.tk.Session().ExecuteStmt(ctx, stmt)
+	if err != nil {
+		c.tk.Session().GetSessionVars().StmtCtx.AppendError(err)
+		return err
+	}
+	if rs == nil {
+		return fmt.Errorf("%s returned nil record set", comment)
+	}
+	c.fields = append(c.fields, rs.Fields())
+	c.tk.Res = append(c.tk.Res, c.tk.ResultSetToResultWithCtx(ctx, rs, comment))
+	return nil
 }
 
 func (m *udfPrivManager) RequestVerification(_ []*auth.RoleIdentity, db, table, _ string, priv mysql.PrivilegeType) bool {
@@ -253,6 +279,27 @@ begin
 	return cnt;
 end`)
 	tk.MustQuery("select f_cnt()").Check(testkit.Rows("5"))
+}
+
+func TestProcedureCallResultUsesParameterName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	capture := &procedureResultCapture{tk: tk}
+	tk.Session().SetSessionExec(capture)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("drop procedure if exists sp_param_name")
+	tk.MustExec("create procedure sp_param_name(f1 text) select f1")
+	tk.MustExec("call sp_param_name('abc')")
+
+	require.Len(t, capture.fields, 1)
+	require.Len(t, capture.fields[0], 1)
+	require.Equal(t, "f1", capture.fields[0][0].ColumnAsName.L)
+	require.Equal(t, "f1", capture.fields[0][0].Column.Name.L)
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("abc"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func TestBaseCall(t *testing.T) {
@@ -2644,6 +2691,279 @@ func TestProcedureComment(t *testing.T) {
 	tk.MustQuery("select routine_comment from information_schema.routines").Check(testkit.Rows("114"))
 }
 
+func TestShowCreateFunctionCharacteristics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec(`create function fn_show_create() returns int deterministic reads sql data sql security invoker comment 'this is simple' return 1;`)
+
+	tk.MustQuery(`select is_deterministic, sql_data_access, security_type, routine_comment
+		from information_schema.routines
+		where routine_schema = 'test' and specific_name = 'fn_show_create'`).Check(testkit.Rows(
+		"YES READS SQL DATA INVOKER this is simple",
+	))
+	tk.MustQuery(`select options from mysql.routines where route_schema = 'test' and name = 'fn_show_create' and type = 'FUNCTION'`).Check(testkit.Rows(
+		"DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'this is simple'",
+	))
+	tk.MustQuery("show create function fn_show_create").Check(testkit.Rows(
+		"fn_show_create ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  " +
+			"CREATE FUNCTION `fn_show_create`()\nRETURNS int(11) DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'this is simple'\nreturn 1 utf8mb4 utf8mb4_bin utf8mb4_bin",
+	))
+}
+
+func TestAlterFunctionCharacteristicsUpdatesMetadata(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec(`create function fn_alter_characteristics() returns int not deterministic contains sql return 1;`)
+
+	tk.MustExec(`alter function fn_alter_characteristics deterministic reads sql data;`)
+	tk.MustQuery(`select is_deterministic, sql_data_access
+		from mysql.routines
+		where route_schema = 'test' and name = 'fn_alter_characteristics' and type = 'FUNCTION'`).Check(testkit.Rows(
+		"1 READS SQL DATA",
+	))
+	tk.MustQuery(`select options
+		from mysql.routines
+		where route_schema = 'test' and name = 'fn_alter_characteristics' and type = 'FUNCTION'`).Check(testkit.Rows(
+		"DETERMINISTIC READS SQL DATA",
+	))
+	tk.MustQuery("show create function fn_alter_characteristics").Check(testkit.Rows(
+		"fn_alter_characteristics ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  " +
+			"CREATE FUNCTION `fn_alter_characteristics`()\nRETURNS int(11) DETERMINISTIC READS SQL DATA\nreturn 1 utf8mb4 utf8mb4_bin utf8mb4_bin",
+	))
+}
+
+func TestInformationSchemaParametersForStoredRoutines(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("set names latin1")
+	tk.MustExec("set @@collation_connection = 'latin1_bin'")
+	tk.MustExec("create procedure proc_meta(in p_in int, out p_out decimal(10,0), inout p_inout varchar(20)) begin select 1; end;")
+	tk.MustExec("create function func_meta(p_id bigint, p_label varchar(10)) returns decimal(8,2) begin return 1.23; end;")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+
+	tk.MustQuery(`
+		select specific_name,
+		       ordinal_position,
+		       ifnull(parameter_mode, ''),
+		       ifnull(parameter_name, ''),
+		       data_type,
+		       ifnull(character_set_name, ''),
+		       ifnull(collation_name, ''),
+		       dtd_identifier,
+		       routine_type
+		from information_schema.parameters
+		where specific_schema = 'test'
+		  and specific_name in ('proc_meta', 'func_meta')
+		order by specific_name, ordinal_position
+	`).Check(testkit.Rows(
+		"func_meta 0   decimal   decimal(8,2) FUNCTION",
+		"func_meta 1 IN p_id bigint   bigint(20) FUNCTION",
+		"func_meta 2 IN p_label varchar latin1 latin1_bin varchar(10) CHARACTER SET latin1 COLLATE latin1_bin FUNCTION",
+		"proc_meta 1 IN p_in int   int(11) PROCEDURE",
+		"proc_meta 2 OUT p_out decimal   decimal(10,0) PROCEDURE",
+		"proc_meta 3 INOUT p_inout varchar latin1 latin1_bin varchar(20) CHARACTER SET latin1 COLLATE latin1_bin PROCEDURE",
+	))
+}
+
+func TestInformationSchemaParametersWarnsOnRoutineParseFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("create procedure proc_bad(in p_label varchar(20)) begin select 1; end;")
+	tk.MustExec(`update mysql.routines
+		set parameter_str = 'in p_label varchar('
+		where route_schema = 'test' and name = 'proc_bad' and type = 'PROCEDURE'`)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
+
+	tk.MustQuery(`
+		select specific_name, ordinal_position
+		from information_schema.parameters
+		where specific_schema = 'test' and specific_name = 'proc_bad'
+	`).Check(testkit.Rows())
+
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.NotEmpty(t, warnings)
+	found := false
+	for _, warn := range warnings {
+		msg := warn.Err.Error()
+		if strings.Contains(msg, "failed to build information_schema.parameters rows for routine") &&
+			strings.Contains(msg, "test") &&
+			strings.Contains(msg, "proc_bad") &&
+			strings.Contains(msg, "PROCEDURE") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "warnings: %+v", warnings)
+}
+
+func TestInformationSchemaParametersPredicateRegressions(t *testing.T) {
+	t.Run("specific_name_like", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.InProcedure()
+		tk.MustExec("use test")
+
+		tk.MustExec("create procedure proc_match(in p1 int) begin select 1; end;")
+		tk.MustExec("create procedure x_other(in p1 int) begin select 1; end;")
+		tk.MustExec("create function func_match(p1 int) returns int begin return p1; end;")
+
+		tk.MustQuery(`
+			select specific_name, ordinal_position
+			from information_schema.parameters
+			where specific_schema = 'test'
+			  and specific_name like 'proc_%'
+			order by specific_name, ordinal_position
+		`).Check(testkit.Rows(
+			"proc_match 1",
+		))
+	})
+
+	t.Run("mixed_case_schema", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.InProcedure()
+
+		tk.MustExec("drop database if exists TeStMixed")
+		tk.MustExec("create database TeStMixed")
+		tk.MustExec("use TeStMixed")
+		tk.MustExec("create procedure proc_case(in p1 int) begin select 1; end;")
+
+		tk.MustQuery(`
+			select specific_schema, specific_name, ordinal_position
+			from information_schema.parameters
+			where specific_schema = 'TeStMixed'
+			  and specific_name = 'proc_case'
+			order by ordinal_position
+		`).Check(testkit.Rows(
+			"TeStMixed proc_case 1",
+		))
+	})
+}
+
+func TestProcedureMetadataCleanupForMixedCaseSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	tk.MustExec("drop database if exists Foo")
+	tk.MustExec("drop database if exists foo")
+
+	tk.MustExec("create database Foo")
+	tk.MustExec("use Foo")
+	tk.MustExec("create procedure proc_case() begin select 1; end;")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'proc_case' and type = 'PROCEDURE'
+		order by route_schema
+	`).Check(testkit.Rows(
+		"Foo proc_case PROCEDURE",
+	))
+
+	tk.MustExec("drop database Foo")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'proc_case' and type = 'PROCEDURE'
+		order by route_schema
+	`).Check(testkit.Rows())
+
+	tk.MustExec("create database foo")
+	tk.MustExec("use foo")
+	tk.MustExec("create procedure proc_case() begin select 2; end;")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'proc_case' and type = 'PROCEDURE'
+		order by route_schema
+	`).Check(testkit.Rows(
+		"foo proc_case PROCEDURE",
+	))
+}
+
+func TestRoutineOperationsWithMixedCaseSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	tk.MustExec("drop user if exists routine_case_user")
+	tk.MustExec("drop database if exists Foo")
+	tk.MustExec("drop database if exists foo")
+	tk.MustExec("create database Foo")
+	tk.MustExec("use Foo")
+	tk.MustExec("create procedure p() comment 'p0' begin select 1; end;")
+	tk.MustExec("create function f() returns int comment 'f0' begin return 1; end;")
+
+	require.Len(t, tk.MustQuery("show create procedure foo.p").Rows(), 1)
+	require.Len(t, tk.MustQuery("show create function foo.f").Rows(), 1)
+
+	tk.MustExec("alter procedure foo.p comment 'p1'")
+	tk.MustExec("alter function foo.f comment 'f1'")
+	tk.MustQuery(`
+		select comment
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'p' and type = 'PROCEDURE'
+	`).Check(testkit.Rows("p1"))
+	tk.MustQuery(`
+		select comment
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'f' and type = 'FUNCTION'
+	`).Check(testkit.Rows("f1"))
+
+	tk.MustExec("create user routine_case_user")
+	tk.MustExec("grant execute on procedure foo.p to routine_case_user")
+	tk.MustExec("grant execute on function foo.f to routine_case_user")
+
+	tk.MustExec("drop procedure foo.p")
+	tk.MustExec("drop function foo.f")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'p' and type = 'PROCEDURE'
+	`).Check(testkit.Rows())
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'f' and type = 'FUNCTION'
+	`).Check(testkit.Rows())
+}
+
+func TestRoutineCreateRejectsMixedCaseSchemaDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	tk.MustExec("drop database if exists Foo")
+	tk.MustExec("drop database if exists foo")
+	tk.MustExec("create database Foo")
+
+	tk.MustExec("create procedure Foo.proc_dup() begin select 1; end;")
+	tk.MustGetErrCode("create procedure foo.proc_dup() begin select 2; end;", 1304)
+
+	tk.MustExec("create function Foo.func_dup() returns int begin return 1; end;")
+	tk.MustGetErrCode("create function foo.func_dup() returns int begin return 2; end;", 1304)
+
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name in ('proc_dup', 'func_dup')
+		order by name, type, route_schema
+	`).Check(testkit.Rows(
+		"Foo func_dup FUNCTION",
+		"Foo proc_dup PROCEDURE",
+	))
+}
+
 func TestProcedureTranscation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2871,6 +3191,584 @@ func TestProcedureProcedureVariable(t *testing.T) {
 	tk.Res[0].Check(testkit.Rows("111"))
 	tk.Res[1].Check(testkit.Rows("<nil>"))
 	tk.ClearProcedureRes()
+}
+
+func TestProcedurePreparedPlanCacheSwitchScopes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustQuery("show variables like 'tidb_enable_sp_plan_cache'").Check(testkit.Rows("tidb_enable_sp_plan_cache OFF"))
+	tk.MustExec("create table ppc_switch_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_switch_t values (1, 10), (2, 20)")
+	tk.MustExec(`create procedure ppc_switch(in a int)
+		begin
+			select v from ppc_switch_t where id = a;
+		end`)
+
+	tk.MustExec("call ppc_switch(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_switch(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("20"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("call ppc_switch(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_switch(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("20"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set global tidb_enable_sp_plan_cache=1")
+	tkGlobal := testkit.NewTestKit(t, store)
+	tkGlobal.InProcedure()
+	tkGlobal.MustExec("use test")
+	tkGlobal.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tkGlobal.MustQuery("show variables like 'tidb_enable_sp_plan_cache'").Check(testkit.Rows("tidb_enable_sp_plan_cache ON"))
+	tkGlobal.MustExec("call ppc_switch(1)")
+	require.Len(t, tkGlobal.Res, 1)
+	tkGlobal.Res[0].Check(testkit.Rows("10"))
+	tkGlobal.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tkGlobal.ClearProcedureRes()
+	tkGlobal.MustExec("call ppc_switch(2)")
+	require.Len(t, tkGlobal.Res, 1)
+	tkGlobal.Res[0].Check(testkit.Rows("20"))
+	tkGlobal.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tkGlobal.ClearProcedureRes()
+	tkGlobal.MustExec("set tidb_enable_sp_plan_cache=0")
+	tkGlobal.MustExec("call ppc_switch(1)")
+	require.Len(t, tkGlobal.Res, 1)
+	tkGlobal.Res[0].Check(testkit.Rows("10"))
+	tkGlobal.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tkGlobal.ClearProcedureRes()
+	tkGlobal.MustExec("call ppc_switch(2)")
+	require.Len(t, tkGlobal.Res, 1)
+	tkGlobal.Res[0].Check(testkit.Rows("20"))
+	tkGlobal.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheBasic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_basic_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_basic_t values (1, 10), (2, 20)")
+	tk.MustExec(`create procedure ppc_basic(in a int)
+		begin
+			select v from ppc_basic_t where id = a;
+		end`)
+
+	tk.MustExec("call ppc_basic(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_basic(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("20"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestProcedurePreparedPlanCacheDisabledCanRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_toggle_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_toggle_t values (1, 10), (2, 20)")
+	tk.MustExec(`create procedure ppc_toggle(in a int)
+		begin
+			select v from ppc_toggle_t where id = a;
+		end`)
+
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	tk.MustExec("call ppc_toggle(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("call ppc_toggle(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_toggle(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("20"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestProcedurePreparedPlanCacheBoundaries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_boundary_t (id int primary key, a int, v int)")
+	tk.MustExec("insert into ppc_boundary_t values (1, 100, 10), (2, 200, 20)")
+	tk.MustExec(`create procedure ppc_select_into(in a int, out out_v int)
+		begin
+			select v into out_v from ppc_boundary_t where id = a;
+		end`)
+
+	tk.MustExec("set @out_v = 0")
+	tk.MustExec("call ppc_select_into(1, @out_v)")
+	require.Len(t, tk.Res, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @out_v").Check(testkit.Rows("10"))
+
+	tk.MustExec("call ppc_select_into(2, @out_v)")
+	require.Len(t, tk.Res, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @out_v").Check(testkit.Rows("20"))
+
+	tk.MustExec(`create procedure ppc_qualified_column(in a int)
+		begin
+			select t.a from ppc_boundary_t t where t.id = a;
+		end`)
+	tk.MustExec("call ppc_qualified_column(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("100"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_qualified_column(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("200"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestProcedurePreparedPlanCacheHavingAliasFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_having_alias_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_having_alias_t values (1, 10), (2, 20)")
+	tk.MustExec(`create procedure ppc_having_alias(in v int)
+		begin
+			select id as v from ppc_having_alias_t group by id having v = 2;
+		end`)
+
+	tk.MustExec("call ppc_having_alias(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_having_alias(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheGroupByAliasFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_group_alias_t (id int primary key, score int)")
+	tk.MustExec("insert into ppc_group_alias_t values (1, 10), (2, 10), (3, 20)")
+	tk.MustExec(`create procedure ppc_group_alias(in bucket int)
+		begin
+			select t.score as bucket, count(*) from ppc_group_alias_t t group by bucket order by bucket;
+		end`)
+
+	tk.MustExec("call ppc_group_alias(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10 2", "20 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_group_alias(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10 2", "20 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheOrderByAliasFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_order_alias_t (id int primary key, score int)")
+	tk.MustExec("insert into ppc_order_alias_t values (1, 20), (2, 10)")
+	tk.MustExec(`create procedure ppc_order_alias(in score int)
+		begin
+			select t.score as score from ppc_order_alias_t t order by score limit 1;
+		end`)
+
+	tk.MustExec("call ppc_order_alias(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_order_alias(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheKeepsStatementTableFencesSeparate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_fence_t1 (id int primary key, v int)")
+	tk.MustExec("create table ppc_fence_t2 (id int primary key, v int)")
+	tk.MustExec("insert into ppc_fence_t1 values (1, 101), (2, 102)")
+	tk.MustExec("insert into ppc_fence_t2 values (1, 201), (2, 202)")
+	tk.MustExec(`create procedure ppc_fence(in branch int, in a int)
+		begin
+			if branch = 1 or branch = 3 then
+				select v from ppc_fence_t1 where id = a;
+			end if;
+			if branch = 2 or branch = 3 then
+				select v from ppc_fence_t2 where id = a;
+			end if;
+		end`)
+
+	tk.MustExec("call ppc_fence(3, 1)")
+	require.Len(t, tk.Res, 2)
+	tk.Res[0].Check(testkit.Rows("101"))
+	tk.Res[1].Check(testkit.Rows("201"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_fence(2, 1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("201"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("drop table ppc_fence_t1")
+	tk.MustExec("call ppc_fence(2, 2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("202"))
+}
+
+func TestProcedurePreparedPlanCacheUnsupportedFallbacks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_dynamic_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_dynamic_t values (1, 11), (2, 22)")
+	tk.MustExec(`create procedure ppc_dynamic(in a int)
+		begin
+			prepare stmt from 'select v from ppc_dynamic_t where id = ?';
+			set @ppc_dynamic_arg = a;
+			execute stmt using @ppc_dynamic_arg;
+			drop prepare stmt;
+		end`)
+	tk.MustExec("call ppc_dynamic(1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("11"))
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_dynamic(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("22"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure ppc_child(out x int)
+		begin
+			set x = 42;
+		end`)
+	tk.MustExec(`create procedure ppc_parent(out x int)
+		begin
+			call ppc_child(x);
+		end`)
+	tk.MustExec("set @x = 0")
+	tk.MustExec("call ppc_parent(@x)")
+	tk.MustQuery("select @x").Check(testkit.Rows("42"))
+
+	tk.MustExec("create table ppc_ddl_t (id int)")
+	tk.MustExec(`create procedure ppc_ddl()
+		begin
+			drop table if exists ppc_ddl_tmp;
+			create table ppc_ddl_tmp (id int);
+			insert into ppc_ddl_tmp values (1);
+		end`)
+	tk.MustExec("call ppc_ddl()")
+	tk.MustQuery("select * from ppc_ddl_tmp").Check(testkit.Rows("1"))
+}
+
+func TestProcedurePreparedPlanCacheEnumSetFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec(`create procedure ppc_enum(in sp1 enum('a','b','c'), out sp2 enum('a','b','c'))
+		begin
+			select sp1;
+			set sp2 = sp1;
+		end`)
+	tk.MustExec("set @ppc_enum_out = ''")
+	tk.MustExec("call ppc_enum('b', @ppc_enum_out)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("b"))
+	tk.MustQuery("select @ppc_enum_out").Check(testkit.Rows("b"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_enum('c', @ppc_enum_out)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("c"))
+	tk.MustQuery("select @ppc_enum_out").Check(testkit.Rows("c"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec(`create procedure ppc_set(in sp1 set('a','b','c'), out sp2 set('a','b','c'))
+		begin
+			select sp1;
+			set sp2 = sp1;
+		end`)
+	tk.MustExec("set @ppc_set_out = ''")
+	tk.MustExec("call ppc_set('b,a', @ppc_set_out)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("a,b"))
+	tk.MustQuery("select @ppc_set_out").Check(testkit.Rows("a,b"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_set('c,b', @ppc_set_out)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("b,c"))
+	tk.MustQuery("select @ppc_set_out").Check(testkit.Rows("b,c"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheLimitFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_limit_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_limit_t values (1, 10), (2, 20), (3, 30), (4, 40)")
+	tk.MustExec(`create procedure ppc_limit_count(in num int)
+		begin
+			select v from ppc_limit_t order by id limit num;
+		end`)
+	tk.MustExec(`create procedure ppc_limit_range(in offset_rows int, in count_rows int)
+		begin
+			select v from ppc_limit_t order by id limit offset_rows, count_rows;
+		end`)
+
+	tk.MustExec("call ppc_limit_count(2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10", "20"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_limit_count(-1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("10", "20", "30", "40"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_limit_range(1, 2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("20", "30"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_limit_range(2, 2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("30", "40"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheLimitOffsetCountParamOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_plan_cache_for_param_limit=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_limit_order_t (id int primary key)")
+	tk.MustExec("insert into ppc_limit_order_t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`create procedure ppc_limit_order(in skip_rows int, in take_rows int)
+		begin
+			select id from ppc_limit_order_t order by id limit skip_rows, take_rows;
+		end`)
+
+	tk.MustExec("call ppc_limit_order(1, 2)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.ClearProcedureRes()
+	tk.MustExec("call ppc_limit_order(2, 1)")
+	require.Len(t, tk.Res, 1)
+	tk.Res[0].Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestProcedurePreparedPlanCacheProbeWarningsAreHidden(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec(`create function ppc_probe_warning()
+		returns int
+		begin
+			declare handled int default 0;
+			declare continue handler for sqlwarning set handled = handled + 100;
+			set handled = handled + 1;
+			return handled;
+		end`)
+
+	tk.MustQuery("select ppc_probe_warning()").Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestProcedurePreparedPlanCacheReplaysWarningsOnHits(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	metrics.ResettablePlanCacheCounterFortTest = true
+	metrics.PlanCacheCounter.Reset()
+	t.Cleanup(func() {
+		metrics.ResettablePlanCacheCounterFortTest = false
+		metrics.PlanCacheCounter.Reset()
+	})
+	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	pb := &dto.Metric{}
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_warning_hit_t (id int primary key, v int)")
+	tk.MustExec("insert into ppc_warning_hit_t values (1, 10), (2, 20)")
+	tk.MustExec(`create procedure ppc_warning_hit(in a int, out handled int)
+		begin
+			declare tmp int default 0;
+			declare continue handler for sqlwarning set handled = handled + 1;
+			set handled = 0;
+			select v + cast('6x' as unsigned integer) into tmp from ppc_warning_hit_t where id = a;
+		end`)
+
+	tk.MustExec("set @handled = -1")
+	tk.MustExec("call ppc_warning_hit(1, @handled)")
+	require.Len(t, tk.Res, 0)
+	tk.MustQuery("select @handled").Check(testkit.Rows("1"))
+	require.NoError(t, counter.Write(pb))
+	require.Equal(t, float64(0), pb.GetCounter().GetValue())
+
+	tk.MustExec("set @handled = -1")
+	tk.MustExec("call ppc_warning_hit(2, @handled)")
+	require.Len(t, tk.Res, 0)
+	tk.MustQuery("select @handled").Check(testkit.Rows("1"))
+	require.NoError(t, counter.Write(pb))
+	require.Equal(t, float64(1), pb.GetCounter().GetValue())
+}
+
+func TestProcedurePreparedPlanCacheTriggerResultSetConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("create table ppc_trigger_lookup (id int primary key, v int)")
+	tk.MustExec("insert into ppc_trigger_lookup values (1, 10), (2, 20)")
+	tk.MustExec("create table ppc_trigger_target (id int)")
+	tk.MustExec(`create procedure ppc_trigger_proc(in a int)
+		begin
+			select v from ppc_trigger_lookup where id = a;
+		end`)
+	tk.MustExec(`create trigger ppc_trigger_bi before insert on ppc_trigger_target
+		for each row call ppc_trigger_proc(new.id)`)
+
+	tk.MustGetErrMsg("insert into ppc_trigger_target values (1)", "[planner:1415]Not allowed to return a result set from a TRIGGER")
+	tk.MustGetErrMsg("insert into ppc_trigger_target values (2)", "[planner:1415]Not allowed to return a result set from a TRIGGER")
+}
+
+func TestProcedurePreparedPlanCacheTriggerDMLStmtContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
+	tk.MustExec("create table ppc_trigger_dml_source (v varchar(32))")
+	tk.MustExec("create table ppc_trigger_dml_target (v int not null)")
+	tk.MustExec(`create procedure ppc_trigger_dml_proc(in a varchar(32))
+		begin
+			insert into ppc_trigger_dml_target values (a);
+		end`)
+	tk.MustExec(`create trigger ppc_trigger_dml_bi before insert on ppc_trigger_dml_source
+		for each row call ppc_trigger_dml_proc(new.v)`)
+
+	tk.MustExec("insert into ppc_trigger_dml_source values ('1')")
+	tk.MustQuery("select * from ppc_trigger_dml_target").Check(testkit.Rows("1"))
+	tk.MustExec("insert into ppc_trigger_dml_source values ('2')")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from ppc_trigger_dml_target order by v").Check(testkit.Rows("1", "2"))
+	tk.MustGetErrCode("insert into ppc_trigger_dml_source values ('bad')", mysql.ErrTruncatedWrongValueForField)
+	tk.MustQuery("select * from ppc_trigger_dml_target order by v").Check(testkit.Rows("1", "2"))
+}
+
+func TestProcedurePreparedPlanCacheDMLStmtContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_sp_plan_cache=1")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
+	tk.MustExec("create table ppc_dml_ctx_t (v int not null)")
+	tk.MustExec(`create procedure ppc_dml_ctx(in a varchar(32))
+		begin
+			insert into ppc_dml_ctx_t values (a);
+		end`)
+
+	tk.MustExec("call ppc_dml_ctx('1')")
+	tk.MustExec("call ppc_dml_ctx('2')")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustGetErrCode("call ppc_dml_ctx('bad')", mysql.ErrTruncatedWrongValueForField)
+	tk.MustQuery("select * from ppc_dml_ctx_t order by v").Check(testkit.Rows("1", "2"))
 }
 
 func TestProcedureLimit(t *testing.T) {

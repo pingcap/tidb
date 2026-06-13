@@ -1,0 +1,121 @@
+set global tidb_enable_procedure = ON;
+drop database if exists db_explain_routine;
+create database db_explain_routine;
+use db_explain_routine;
+drop table if exists t_explain_routine;
+create table t_explain_routine(a int, b int, key idx_a(a));
+insert into t_explain_routine values (1, 10), (2, 20), (3, 30);
+drop procedure if exists p_explain_routine_summary;
+create procedure p_explain_routine_summary(id int)
+begin
+if id > 10 then
+select * from t_explain_routine where a = id;
+end if;
+select * from t_explain_routine where a = id;
+end//
+explain analyze routine procedure p_explain_routine_summary(1);
+ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
+db_explain_routine	p_explain_routine_summary	PROCEDURE	2	root/if#1/then	select	select * from t_explain_routine where a = id	YES			0	<total_time>	<avg_time>	0	0
+db_explain_routine	p_explain_routine_summary	PROCEDURE	3	root	select	select * from t_explain_routine where a = id	YES			1	<total_time>	<avg_time>	1	1
+explain analyze routine procedure p_explain_routine_summary(1) for stmt 3;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexLookUp_<id>	10.00	1	root	NULL	<execution_info>	NULL	<memory>	<disk>
+├─IndexRangeScan_<id>(Build)	10.00	1	cop[tikv]	table:t_explain_routine, index:idx_a(a)	<execution_info>	range:[1,1], keep order:false, stats:pseudo	<memory>	<disk>
+└─TableRowIDScan_<id>(Probe)	10.00	1	cop[tikv]	table:t_explain_routine	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
+drop procedure if exists p_explain_routine_dynamic;
+create procedure p_explain_routine_dynamic(id int)
+begin
+set @sql = concat('select * from t_explain_routine where a = ', id);
+prepare stmt1 from @sql;
+execute stmt1;
+deallocate prepare stmt1;
+end//
+explain analyze routine procedure p_explain_routine_dynamic(1);
+ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
+db_explain_routine	p_explain_routine_dynamic	PROCEDURE	2	root	dynamic_sql	prepare stmt1 from @sql	NO	dynamic SQL is not explainable in v1	select * from t_explain_routine where a = 1	1	<total_time>	<avg_time>	0	0
+db_explain_routine	p_explain_routine_dynamic	PROCEDURE	3	root	dynamic_sql	execute stmt1	YES		select * from t_explain_routine where a = 1	1	<total_time>	<avg_time>	1	1
+drop procedure if exists p_explain_routine_dynamic_using;
+create procedure p_explain_routine_dynamic_using(id int)
+begin
+set @sql = 'select * from t_explain_routine where a = ?';
+set @id = id;
+prepare stmt1 from @sql;
+execute stmt1 using @id;
+deallocate prepare stmt1;
+end//
+explain analyze routine procedure p_explain_routine_dynamic_using(1);
+ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
+db_explain_routine	p_explain_routine_dynamic_using	PROCEDURE	3	root	dynamic_sql	prepare stmt1 from @sql	NO	dynamic SQL is not explainable in v1	select * from t_explain_routine where a = ?	1	<total_time>	<avg_time>	0	0
+db_explain_routine	p_explain_routine_dynamic_using	PROCEDURE	4	root	dynamic_sql	execute stmt1 using @id	YES		select * from t_explain_routine where a = ?	1	<total_time>	<avg_time>	1	1
+explain analyze routine procedure p_explain_routine_dynamic_using(1) for stmt 4;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexLookUp_<id>	10.00	1	root	NULL	<execution_info>	NULL	<memory>	<disk>
+├─IndexRangeScan_<id>(Build)	10.00	1	cop[tikv]	table:t_explain_routine, index:idx_a(a)	<execution_info>	range:[1,1], keep order:false, stats:pseudo	<memory>	<disk>
+└─TableRowIDScan_<id>(Probe)	10.00	1	cop[tikv]	table:t_explain_routine	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
+drop procedure if exists p_explain_routine_nested_helper;
+create procedure p_explain_routine_nested_helper(id int)
+begin
+declare v int default 0;
+select b into v from t_explain_routine where a = id;
+end//
+drop procedure if exists p_explain_routine_nested_parent;
+create procedure p_explain_routine_nested_parent(id int)
+begin
+call p_explain_routine_nested_helper(id);
+select * from t_explain_routine where a = id;
+end//
+explain analyze routine procedure p_explain_routine_nested_parent(1);
+ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
+db_explain_routine	p_explain_routine_nested_parent	PROCEDURE	1	root	call	call p_explain_routine_nested_helper(id)	YES			1	<total_time>	<avg_time>	0	0
+db_explain_routine	p_explain_routine_nested_parent	PROCEDURE	2	root	select	select * from t_explain_routine where a = id	YES			1	<total_time>	<avg_time>	1	1
+set @seen = 0;
+drop procedure if exists p_explain_routine_invalid_target;
+create procedure p_explain_routine_invalid_target(id int)
+begin
+set @seen = @seen + 1;
+select * from t_explain_routine where a = id;
+end//
+explain analyze routine procedure p_explain_routine_invalid_target(1) for stmt 99;
+Error 1105 (HY000): explain analyze routine STMT_ORDINAL 99 not found
+select @seen;
+@seen
+0
+set @seen = 0;
+drop procedure if exists p_explain_routine_missing_args;
+create procedure p_explain_routine_missing_args(id int)
+begin
+set @seen = @seen + 1;
+select * from t_explain_routine where a = id;
+end//
+explain analyze routine procedure p_explain_routine_missing_args;
+Error 1318 (42000): Incorrect number of arguments for PROCEDURE db_explain_routine.p_explain_routine_missing_args; expected 1, got 0
+select @seen;
+@seen
+0
+drop procedure if exists p_explain_routine_write;
+create procedure p_explain_routine_write(id int)
+begin
+update t_explain_routine set b = b + 1 where a = id;
+end//
+explain analyze routine procedure p_explain_routine_write(1);
+ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
+db_explain_routine	p_explain_routine_write	PROCEDURE	1	root	update	update t_explain_routine set b = b + 1 where a = id	YES			1	<total_time>	<avg_time>	0	1
+select b from t_explain_routine where a = 1;
+b
+11
+set @seen = 0;
+drop procedure if exists p_explain_routine_write_preflight;
+create procedure p_explain_routine_write_preflight(id int)
+begin
+set @seen = @seen + 1;
+update t_explain_routine set b = b + 1 where a = id;
+end//
+explain analyze routine procedure p_explain_routine_write_preflight(1);
+ROUTINE_SCHEMA	ROUTINE_NAME	ROUTINE_TYPE	STMT_ORDINAL	BLOCK_PATH	STMT_KIND	SQL_TEXT	EXPLAINABLE	NOTE	RUNTIME_SQL_TEXT	EXEC_COUNT	TOTAL_TIME	AVG_TIME	ROWS_PRODUCED	PLAN_VARIANTS
+db_explain_routine	p_explain_routine_write_preflight	PROCEDURE	2	root	update	update t_explain_routine set b = b + 1 where a = id	YES			1	<total_time>	<avg_time>	0	1
+select @seen;
+@seen
+1
+select b from t_explain_routine where a = 1;
+b
+12

@@ -65,6 +65,7 @@ const (
 	typeCleanUpIndexWorker
 	typeAddIndexMergeTmpWorker
 	typeReorgPartitionWorker
+	typeAddAutoIncrementColumnWorker
 
 	typeCount
 )
@@ -86,6 +87,8 @@ func (bT backfillerType) String() string {
 		return "merge temporary index"
 	case typeReorgPartitionWorker:
 		return "reorganize partition"
+	case typeAddAutoIncrementColumnWorker:
+		return "add auto_increment column"
 	default:
 		return "unknown"
 	}

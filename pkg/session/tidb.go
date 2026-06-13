@@ -246,9 +246,23 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	})
 	sessVars := se.sessionVars
 	if !sql.IsReadOnly(sessVars) {
-		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
+<<<<<<< HEAD
 			GetHistory(se).Add(sql, sessVars.StmtCtx, sessVars.PlanCacheParams)
+||||||| bea0668079
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
+=======
+			// Add only retry-safe write statements to StmtHistory.
+			// LOAD DATA LOCAL INFILE uses a one-shot client file stream via
+			// the 0xfb protocol; retrying would desync the connection.
+			// Disable retry instead of recording it. Only LOCAL is affected;
+			// non-LOCAL reads from server/remote storage and can be safely retried.
+			if isLoadDataLocal(sql) {
+				sessVars.TxnCtx.CouldRetry = false
+			} else {
+				GetHistory(se).Add(sql, sessVars.StmtCtx)
+			}
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 		}
 
 		// Handle the stmt commit/rollback.
@@ -276,6 +290,14 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		return err
 	}
 	return checkStmtLimit(ctx, se, true)
+}
+
+// isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
+func isLoadDataLocal(sql sqlexec.Statement) bool {
+	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
+		return s.FileLocRef == ast.FileLocClient
+	}
+	return false
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {

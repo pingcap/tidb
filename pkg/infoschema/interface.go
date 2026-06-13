@@ -30,6 +30,12 @@ type InfoSchema interface {
 	context.MetaOnlyInfoSchema
 	TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
+	// RoutineByName returns stored procedure/function metadata by name.
+	// The returned pointer should be treated as read-only.
+	RoutineByName(schema, name pmodel.CIStr, routineType string) (*model.ProcedureInfo, bool)
+	// SchemaRoutines returns all stored procedures/functions in the given schema.
+	// The returned pointers should be treated as read-only.
+	SchemaRoutines(schema pmodel.CIStr) []*model.ProcedureInfo
 	// TableItemByID returns a lightweight table meta specified by the given ID,
 	// without loading the whole info from storage.
 	// So it's all in memory operation. No need to worry about network or disk cost.

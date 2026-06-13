@@ -27,6 +27,9 @@ type ProcedureInfo struct {
 	CollationConnection string `json:"collation_connection"`
 	SchemaCollation     string `json:"schema_collation"`
 
+	Created     string `json:"created"`
+	LastAltered string `json:"last_altered"`
+
 	Comment          string  `json:"comment"`
 	Options          *string `json:"options,omitempty"`
 	ExternalLanguage string  `json:"external_language"`

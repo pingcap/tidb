@@ -196,6 +196,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTrace(v)
 	case *plannercore.Explain:
 		return b.buildExplain(v)
+	case *plannercore.ExplainRoutine:
+		return b.buildExplainRoutine(v)
 	case *plannercore.PointGetPlan:
 		return b.buildPointGet(v)
 	case *plannercore.BatchPointGetPlan:
@@ -298,6 +300,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.PhysicalOrderedWindow:
+		return b.buildOrderedWindow(v)
 	case *plannercore.PhysicalShuffle:
 		return b.buildShuffle(v)
 	case *plannercore.PhysicalShuffleReceiverStub:
@@ -1298,6 +1302,55 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 	// to get partition pruning.
 	explainExec.analyzeExec = b.build(v.TargetPlan)
 	return explainExec
+}
+
+func (b *executorBuilder) buildExplainRoutine(v *plannercore.ExplainRoutine) exec.Executor {
+	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base.SetInitCap(chunk.ZeroCapacity)
+
+	callPlan := *v.Call
+	callPlan.Plan = v.Call.Plan.DeepCopyForExecution()
+	if callPlan.Plan == nil {
+		b.err = errors.New("missing stored routine execution plan")
+		return nil
+	}
+
+	var securityType string
+	switch callPlan.Plan.SecurityType {
+	case "INVOKER":
+		securityType = "INVOKER"
+	case "DEFAULT", "DEFINER":
+		securityType = "DEFINER"
+	default:
+		b.err = errors.Errorf("unsupport security type %s", callPlan.Plan.SecurityType)
+		return nil
+	}
+
+	procExec := &ProcedureExec{
+		BaseExecutor:    exec.NewBaseExecutor(b.ctx, nil, 0),
+		Statement:       callPlan.Callstmt,
+		flag:            0,
+		is:              b.is,
+		done:            false,
+		ProcedureSQLMod: callPlan.ProcedureSQLMod,
+		outVarParam:     make(map[string]string, 10),
+		outLocalParam:   make(map[string]string, 10),
+		outTriggerParam: make(map[string]int, 10),
+		procedurePlan:   callPlan.Plan.ProcedureExecPlan,
+		IsStrict:        callPlan.IsStrictMode,
+		definerHost:     callPlan.Plan.DefinerHost,
+		definerUser:     callPlan.Plan.DefinerUser,
+		securityType:    securityType,
+		isFunction:      callPlan.Callstmt.IsFunction,
+	}
+
+	return &ExplainRoutineExec{
+		BaseExecutor: base,
+		explain:      v,
+		call:         &callPlan,
+		catalog:      plannercore.BuildExplainRoutineCatalog(callPlan.Plan),
+		procExec:     procExec,
+	}
 }
 
 func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) exec.Executor {
@@ -2350,6 +2403,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableRoutines),
+			strings.ToLower(infoschema.TableParameters),
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
 			strings.ToLower(infoschema.TableSchemaPrivileges),
@@ -4589,6 +4643,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	case *plannercore.PhysicalOrderedWindow:
+		return builder.buildOrderedWindowForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
@@ -5095,6 +5151,55 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	return e, nil
 }
 
+type selfOpeningExecutor interface {
+	OpenSelf() error
+}
+
+func openExecutorSelf(e exec.Executor) error {
+	if opener, ok := e.(selfOpeningExecutor); ok {
+		return opener.OpenSelf()
+	}
+	return errors.New("executor cannot be opened without opening children")
+}
+
+func (builder *dataReaderBuilder) buildOrderedWindowForIndexJoin(
+	ctx context.Context,
+	v *plannercore.PhysicalOrderedWindow,
+	lookUpContents []*join.IndexJoinLookUpContent,
+	indexRanges []*ranger.Range,
+	keyOff2IdxOff []int,
+	cwc *plannercore.ColWithCmpFuncManager,
+	canReorderHandles bool,
+	memTracker *memory.Tracker,
+	interruptSignal *atomic.Value,
+) (windowExecutor exec.Executor, err error) {
+	var childExec exec.Executor
+	childExec, err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if windowExecutor != nil {
+			terror.Log(exec.Close(windowExecutor))
+			return
+		}
+		terror.Log(exec.Close(childExec))
+	}()
+
+	windowExecutor, err = BuildOrdered(builder.ctx, &v.PhysicalWindow, childExec)
+	if err != nil {
+		return nil, err
+	}
+	err = openExecutorSelf(windowExecutor)
+	if err != nil {
+		return nil, err
+	}
+	return windowExecutor, nil
+}
+
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager,
@@ -5219,123 +5324,25 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	if b.err != nil {
 		return nil
 	}
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
-	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
-	for _, item := range v.PartitionBy {
-		groupByItems = append(groupByItems, item.Col)
+	windowExec, err := buildWindowExec(b.ctx, v, childExec, false)
+	if err != nil {
+		b.err = err
+		return nil
 	}
-	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
-	for _, item := range v.OrderBy {
-		orderByCols = append(orderByCols, item.Col)
-	}
-	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
-	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
-	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-	exprCtx := b.ctx.GetExprCtx()
-	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(exprCtx, desc, false)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		agg := aggfuncs.BuildWindowFunctions(exprCtx, aggDesc, resultColIdx, orderByCols)
-		windowFuncs = append(windowFuncs, agg)
-		partialResult, _ := agg.AllocPartialResult()
-		partialResults = append(partialResults, partialResult)
-		resultColIdx++
-	}
+	return windowExec
+}
 
-	var err error
-	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
-		exec := &PipelinedWindowExec{
-			BaseExecutor:   base,
-			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx().GetEvalCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
-			numWindowFuncs: len(v.WindowFuncDescs),
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-		}
-		exec.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(exec.windowFuncs))
-		for i, windowFunc := range exec.windowFuncs {
-			if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
-				exec.slidingWindowFuncs[i] = slidingWindowAggFunc
-			}
-		}
-		if v.Frame == nil {
-			exec.start = &logicalop.FrameBound{
-				Type:      ast.Preceding,
-				UnBounded: true,
-			}
-			exec.end = &logicalop.FrameBound{
-				Type:      ast.Following,
-				UnBounded: true,
-			}
-		} else {
-			exec.start = v.Frame.Start
-			exec.end = v.Frame.End
-			if v.Frame.Type == ast.Ranges {
-				cmpResult := int64(-1)
-				if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
-					cmpResult = 1
-				}
-				exec.orderByCols = orderByCols
-				exec.expectedCmpResult = cmpResult
-				exec.isRangeFrame = true
-				err = exec.start.UpdateCompareCols(b.ctx, exec.orderByCols)
-				if err != nil {
-					return nil
-				}
-				err = exec.end.UpdateCompareCols(b.ctx, exec.orderByCols)
-				if err != nil {
-					return nil
-				}
-			}
-		}
-		return exec
+func (b *executorBuilder) buildOrderedWindow(v *plannercore.PhysicalOrderedWindow) exec.Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
 	}
-	var processor windowProcessor
-	if v.Frame == nil {
-		processor = &aggWindowProcessor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-		}
-	} else if v.Frame.Type == ast.Rows {
-		processor = &rowFrameWindowProcessor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-			start:          v.Frame.Start,
-			end:            v.Frame.End,
-		}
-	} else {
-		cmpResult := int64(-1)
-		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
-			cmpResult = 1
-		}
-		tmpProcessor := &rangeFrameWindowProcessor{
-			windowFuncs:       windowFuncs,
-			partialResults:    partialResults,
-			start:             v.Frame.Start,
-			end:               v.Frame.End,
-			orderByCols:       orderByCols,
-			expectedCmpResult: cmpResult,
-		}
-
-		err = tmpProcessor.start.UpdateCompareCols(b.ctx, orderByCols)
-		if err != nil {
-			return nil
-		}
-		err = tmpProcessor.end.UpdateCompareCols(b.ctx, orderByCols)
-		if err != nil {
-			return nil
-		}
-
-		processor = tmpProcessor
+	exec, err := BuildOrdered(b.ctx, &v.PhysicalWindow, childExec)
+	if err != nil {
+		b.err = err
+		return nil
 	}
-	return &WindowExec{
-		BaseExecutor:   base,
-		processor:      processor,
-		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx().GetEvalCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
-		numWindowFuncs: len(v.WindowFuncDescs),
-	}
+	return exec
 }
 
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {

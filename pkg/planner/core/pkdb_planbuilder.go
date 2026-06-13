@@ -5,9 +5,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -22,6 +25,7 @@ type CreateLogReplication struct {
 	Password          string
 	ProtectionMode    ast.ProtectionMode
 	DegradeTimeoutSec uint64
+	Detached          bool
 }
 
 // AlterLogReplication represents an ALTER LOG REPLICATION plan.
@@ -63,6 +67,11 @@ type SwitchOverPrimary struct {
 	NewPrimaryClusterID uint64
 }
 
+// SwitchOverAsPrimary represents an ADMIN SWITCHOVER AS PRIMARY plan.
+type SwitchOverAsPrimary struct {
+	baseSchemaProducer
+}
+
 // ActivateStandby represents an ADMIN ACTIVATE STANDBY plan.
 type ActivateStandby struct {
 	baseSchemaProducer
@@ -84,6 +93,8 @@ func (b *PlanBuilder) pkdbBuildAdmin(ctx context.Context, as *ast.AdminStmt) (ba
 		return b.buildAdminDropLogReplication(ctx, as.DropLogReplication)
 	case ast.AdminSwitchOverPrimary:
 		return b.buildAdminSwitchOverPrimary(ctx, as.SwitchOverPrimary)
+	case ast.AdminSwitchOverAsPrimary:
+		return b.buildAdminSwitchOverAsPrimary(ctx, as.SwitchOverAsPrimary)
 	case ast.AdminActivateStandby:
 		return b.buildAdminActivateStandby(ctx, as.ActivateStandby)
 	default:
@@ -100,6 +111,16 @@ func getLogReplOptsMap(opts []*ast.LogReplicationOpt) (map[ast.LogReplicationOpt
 		optsMap[opt.Tp] = opt
 	}
 	return optsMap, nil
+}
+
+func validateProtectionMode(mode ast.ProtectionMode) error {
+	switch mode {
+	case ast.ProtectionModeMaximumPerformance, ast.ProtectionModeMaximumProtection,
+		ast.ProtectionModeMaximumAvailability:
+		return nil
+	default:
+		return errors.Errorf("invalid PROTECTION_MODE value: %d, expected one of 0, 1, 2", mode)
+	}
 }
 
 func (*PlanBuilder) buildAdminCreateLogReplication(_ context.Context, as *ast.CreateLogReplication) (base.Plan, error) {
@@ -124,11 +145,24 @@ func (*PlanBuilder) buildAdminCreateLogReplication(_ context.Context, as *ast.Cr
 	}
 	if opt, ok := optsMap[ast.LogReplicationOptProtectionMode]; ok {
 		p.ProtectionMode = ast.ProtectionMode(opt.UintValue)
+		if err := validateProtectionMode(p.ProtectionMode); err != nil {
+			return nil, err
+		}
 	}
 	if err := parseDegradeTimeoutOption(&p.DegradeTimeoutSec, p.ProtectionMode, optsMap); err != nil {
 		return nil, err
 	}
+	if _, ok := optsMap[ast.LogReplicationOptDetached]; ok {
+		p.Detached = true
+		p.setSchemaAndNames(buildCreateLogReplicationDetachedFields())
+	}
 	return p, nil
+}
+
+func buildCreateLogReplicationDetachedFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "WORKFLOW_ID", mysql.TypeLonglong, 20))
+	return schema.col2Schema(), schema.names
 }
 
 func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.AlterLogReplication) (base.Plan, error) {
@@ -151,6 +185,9 @@ func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.Alt
 	}
 	if opt, ok := optsMap[ast.LogReplicationOptProtectionMode]; ok {
 		p.ProtectionMode = ast.ProtectionMode(opt.UintValue)
+		if err := validateProtectionMode(p.ProtectionMode); err != nil {
+			return nil, err
+		}
 	}
 	if err := parseDegradeTimeoutOption(&p.DegradeTimeoutSec, p.ProtectionMode, optsMap); err != nil {
 		return nil, err
@@ -189,6 +226,11 @@ func (*PlanBuilder) buildAdminSwitchOverPrimary(_ context.Context, as *ast.Switc
 	p := &SwitchOverPrimary{
 		NewPrimaryClusterID: as.NewPrimaryClusterID,
 	}
+	return p, nil
+}
+
+func (*PlanBuilder) buildAdminSwitchOverAsPrimary(_ context.Context, _ *ast.SwitchOverAsPrimary) (base.Plan, error) {
+	p := &SwitchOverAsPrimary{}
 	return p, nil
 }
 

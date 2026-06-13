@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -40,6 +41,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+<<<<<<< HEAD
+||||||| bea0668079
+=======
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+>>>>>>> d1ce84d007974170f98e644ab39fd5b7bd4d7bcb
 	"go.uber.org/zap"
 )
 
@@ -764,6 +770,9 @@ func (b *Builder) applyDropSchema(m meta.Reader, diff *model.SchemaDiff) []int64
 		return nil
 	}
 	b.infoSchema.delSchema(di)
+	if b.infoSchema.routineMap != nil {
+		delete(b.infoSchema.routineMap, di.Name.L)
+	}
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
@@ -823,6 +832,8 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
+		// Keep the allocator routing logic in sync with the current TableInfo.
+		allocs.SepAutoInc = tblInfo.SepAutoInc()
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIDCache)
@@ -846,6 +857,9 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 				newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 				allocs = allocs.Append(newAlloc)
 			}
+			allocs = pkdbMaybeAdjustAllocsAfterAutoIncrementEnabled(b.Requirement, dbInfo, tblInfo, allocs, tblVer)
+		case model.ActionMultiSchemaChange:
+			allocs = pkdbMaybeAdjustAllocsAfterAutoIncrementEnabled(b.Requirement, dbInfo, tblInfo, allocs, tblVer)
 		}
 		return allocs
 	}
@@ -1012,6 +1026,17 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	return b.infoSchema
 }
 
+func cloneRoutineMap(src map[string]map[string]*model.ProcedureInfo) map[string]map[string]*model.ProcedureInfo {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]map[string]*model.ProcedureInfo, len(src))
+	for schemaName, routines := range src {
+		dst[schemaName] = maps.Clone(routines)
+	}
+	return dst
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
@@ -1038,6 +1063,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	oldIS.tableGroupMutex.RUnlock()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	b.infoSchema.routineMap = cloneRoutineMap(oldIS.routineMap)
 	b.infoSchema.triggerTableMap = maps.Clone(oldIS.triggerTableMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
@@ -1082,13 +1108,102 @@ func (b *Builder) sortAllTablesByID() {
 	}
 }
 
-func (b *Builder) reloadRoutines() error {
-	return nil
-}
-
 func (b *Builder) reloadLoadableFunctions() error {
-	// Loadable functions (UDF) are intentionally not implemented in this build, so
-	// infoschema reload should not attempt to load metadata from mysql.func.
+	if !b.loadableFunctionReload {
+		return nil
+	}
+	if b.crossKS {
+		return nil
+	}
+	// The sys session factory is optional. Leave loadable functions unchanged in such cases.
+	if b.factory == nil {
+		return nil
+	}
+
+	res, err := b.factory()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer res.Close()
+	sctx, ok := res.(sessionctx.Context)
+	if !ok {
+		return errors.Errorf("unexpected sys session type %T", res)
+	}
+	sessIS := sctx.GetDomainInfoSchema()
+	if sessIS == nil {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip loadable function loading in such cases; it will be loaded on later infoschema reloads.
+		return nil
+	}
+	if ext, ok := sessIS.(*SessionExtendedInfoSchema); ok && ext.InfoSchema == nil {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip loadable function loading in such cases; it will be loaded on later infoschema reloads.
+		return nil
+	}
+
+	exec := sctx.GetSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnProcedure)
+	rs, err := exec.ExecuteInternal(ctx, "SELECT name, ret, dl FROM mysql.func WHERE type = 'function'")
+	if err != nil {
+		logutil.BgLogger().Error("failed to execute query for loadable functions", zap.Error(err))
+		return nil
+	}
+	if rs == nil {
+		return nil
+	}
+	chunkRows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+	closeErr := rs.Close()
+	if err != nil {
+		logutil.BgLogger().Error("failed to drain record set for loadable functions", zap.Error(err))
+		return nil
+	}
+	if closeErr != nil {
+		logutil.BgLogger().Error("failed to close record set for loadable functions", zap.Error(closeErr))
+		return nil
+	}
+
+	dbFuncs := make(map[string]struct{}, len(chunkRows))
+	for _, row := range chunkRows {
+		name := row.GetString(0)
+		lowerName := strings.ToLower(name)
+		dbFuncs[lowerName] = struct{}{}
+		if expression.HasLoadableFunction(lowerName) {
+			continue
+		}
+
+		ret := row.GetInt64(1)
+		dl := row.GetString(2)
+		funcDef, err := expression.LoadUDF(dl, lowerName, expression.CastUDFArgTypeIntToEvalType(int(ret)))
+		if err != nil {
+			logutil.BgLogger().Error("failed to load UDF expression",
+				zap.String("soName", dl),
+				zap.String("name", lowerName),
+				zap.Error(err))
+			continue
+		}
+
+		exist, err := expression.CreateLoadableFunction(funcDef)
+		if err != nil || exist {
+			logutil.BgLogger().Error(
+				"failed to create loadable function",
+				zap.String("name", lowerName),
+				zap.Bool("exist", exist),
+				zap.Error(err))
+			funcDef.Drop()
+			continue
+		}
+	}
+
+	for _, name := range expression.LoadableFunctionNames() {
+		if _, ok := dbFuncs[name]; ok {
+			continue
+		}
+		if def, ok := expression.RemoveLoadableFunction(name); ok {
+			if def != nil {
+				def.Drop()
+			}
+		}
+	}
 	return nil
 }
 
