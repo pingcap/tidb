@@ -293,17 +293,18 @@ func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 
 type tikvStore struct {
 	*tikv.KVStore
-	tlsConfig       *tls.Config
-	memCache        kv.MemManager // this is used to query from memory
-	enableGC        bool
-	gcWorker        *gcworker.GCWorker
-	coprStore       *copr.Store
-	codec           tikv.Codec
-	opts            sync.Map
-	clusterID       uint64
-	keyspace        string
+	tlsConfig *tls.Config
+	memCache  kv.MemManager // this is used to query from memory
+	enableGC  bool
+	gcWorker  *gcworker.GCWorker
+	coprStore *copr.Store
+	codec     tikv.Codec
+	opts      sync.Map
+	clusterID uint64
+	keyspace  string
+	closed    bool
+
 	metaServiceInfo *metaservice.Info
-	closed          bool
 }
 
 // GetOption wraps around sync.Map.
