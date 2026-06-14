@@ -1595,6 +1595,114 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 	}
 }
 
+func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
+	ctx := context.Background()
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowForeignKeyCheckInSharedLock = false
+	})
+
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	if !kerneltype.IsNextGen() {
+		for _, val := range []string{vardef.On, "1"} {
+			require.NoError(t, vars.SetSystemVar(vardef.TiDBForeignKeyCheckInSharedLock, val), val)
+			require.True(t, vars.ForeignKeyCheckInSharedLock)
+			sessionVal, err := vars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+			require.NoError(t, err)
+			require.Equal(t, vardef.On, sessionVal)
+			require.NoError(t, vars.SetSystemVar(vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
+		}
+
+		for _, val := range []string{vardef.On, "1"} {
+			require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, val), val)
+			globalVal, err := vars.GetGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+			require.NoError(t, err)
+			require.Equal(t, vardef.On, globalVal)
+			require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
+		}
+		return
+	}
+
+	for _, val := range []string{vardef.On, "1"} {
+		err := vars.SetSystemVar(vardef.TiDBForeignKeyCheckInSharedLock, val)
+		require.Error(t, err, val)
+		require.True(t, ErrWrongValueForVar.Equal(err), err)
+		require.False(t, vars.ForeignKeyCheckInSharedLock)
+		sessionVal, err := vars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+		require.NoError(t, err)
+		require.Equal(t, vardef.Off, sessionVal)
+	}
+
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
+	require.False(t, vars.ForeignKeyCheckInSharedLock)
+
+	for _, val := range []string{vardef.On, "1"} {
+		err := mock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, val)
+		require.Error(t, err, val)
+		require.True(t, ErrWrongValueForVar.Equal(err), err)
+		rawGlobalVal, err := mock.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
+		require.NoError(t, err)
+		require.Equal(t, vardef.Off, rawGlobalVal)
+	}
+
+	require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
+	rawGlobalVal, err := mock.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, rawGlobalVal)
+
+	require.NoError(t, mock.SetGlobalSysVarOnly(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.On, true))
+	globalVal, err := vars.GetGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, globalVal)
+
+	fallbackVars := NewSessionVars(nil)
+	fallbackMock := NewMockGlobalAccessor4Tests()
+	fallbackMock.SessionVars = fallbackVars
+	fallbackVars.GlobalVarsAccessor = fallbackMock
+	require.NoError(t, fallbackMock.SetGlobalSysVarOnly(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.On, true))
+	sessionVal, err := fallbackVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, sessionVal)
+	require.False(t, fallbackVars.ForeignKeyCheckInSharedLock)
+
+	initVars := NewSessionVars(nil)
+	require.NoError(t, initVars.SetSystemVarWithRelaxedValidation(vardef.TiDBForeignKeyCheckInSharedLock, vardef.On))
+	require.False(t, initVars.ForeignKeyCheckInSharedLock)
+	sessionVal, err = initVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, sessionVal)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowForeignKeyCheckInSharedLock = true
+	})
+
+	enabledVars := NewSessionVars(nil)
+	enabledMock := NewMockGlobalAccessor4Tests()
+	enabledMock.SessionVars = enabledVars
+	enabledVars.GlobalVarsAccessor = enabledMock
+	for _, val := range []string{vardef.On, "1"} {
+		require.NoError(t, enabledVars.SetSystemVar(vardef.TiDBForeignKeyCheckInSharedLock, val), val)
+		require.True(t, enabledVars.ForeignKeyCheckInSharedLock)
+		sessionVal, err = enabledVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+		require.NoError(t, err)
+		require.Equal(t, vardef.On, sessionVal)
+		require.NoError(t, enabledVars.SetSystemVar(vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
+	}
+
+	for _, val := range []string{vardef.On, "1"} {
+		require.NoError(t, enabledMock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, val), val)
+		globalVal, err = enabledVars.GetGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+		require.NoError(t, err)
+		require.Equal(t, vardef.On, globalVal)
+		require.NoError(t, enabledMock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
+	}
+}
+
 func TestTiDBOptTxnAutoRetry(t *testing.T) {
 	sv := GetSysVar(vardef.TiDBDisableTxnAutoRetry)
 	vars := NewSessionVars(nil)

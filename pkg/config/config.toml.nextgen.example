@@ -441,6 +441,9 @@ pessimistic-auto-commit = true
 # enable creating expression index.
 allow-expression-index = false
 
+# allow foreign key checks to use shared locks on next-gen TiKV.
+allow-foreign-key-check-in-shared-lock = false
+
 # server level isolation read by engines and labels
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
