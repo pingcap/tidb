@@ -38,7 +38,7 @@ func allowForeignKeyCheckInSharedLockForTest(t *testing.T) {
 	restore := config.RestoreFunc()
 	t.Cleanup(restore)
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowForeignKeyCheckInSharedLock = true
+		conf.Experimental.AllowEnableForeignKeyCheckInSharedLock = true
 	})
 }
 

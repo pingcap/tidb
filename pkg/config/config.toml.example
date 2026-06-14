@@ -430,8 +430,8 @@ pessimistic-auto-commit = false
 # enable creating expression index.
 allow-expression-index = false
 
-# allow foreign key checks to use shared locks on next-gen TiKV.
-allow-foreign-key-check-in-shared-lock = false
+# allow SQL users to enable tidb_foreign_key_check_in_shared_lock on next-gen TiKV.
+allow-enable-foreign-key-check-in-shared-lock = false
 
 # server level isolation read by engines and labels
 [isolation-read]
