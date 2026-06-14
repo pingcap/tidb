@@ -1701,6 +1701,17 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 		require.Equal(t, vardef.On, globalVal)
 		require.NoError(t, enabledMock.SetGlobalSysVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.Off))
 	}
+
+	require.NoError(t, enabledMock.SetGlobalSysVarOnly(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.On, true))
+	rawGlobalVal, err = enabledMock.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, rawGlobalVal)
+	enabledInitVars := NewSessionVars(nil)
+	require.NoError(t, enabledInitVars.SetSystemVarWithRelaxedValidation(vardef.TiDBForeignKeyCheckInSharedLock, rawGlobalVal))
+	require.True(t, enabledInitVars.ForeignKeyCheckInSharedLock)
+	sessionVal, err = enabledInitVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, sessionVal)
 }
 
 func TestTiDBOptTxnAutoRetry(t *testing.T) {
