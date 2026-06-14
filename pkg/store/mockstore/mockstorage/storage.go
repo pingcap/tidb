@@ -72,14 +72,7 @@ func (s *mockStorage) SetOption(k, v any) {
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	metaInfo, err := s.MetaServiceInfo()
-	if err != nil {
-		return nil, err
-	}
-	if metaInfo == nil || metaInfo.Group == nil {
-		return nil, nil
-	}
-	return metaInfo.Group.Addrs, nil
+	return nil, nil
 }
 
 func (s *mockStorage) GetPDAddrs() ([]string, error) {
