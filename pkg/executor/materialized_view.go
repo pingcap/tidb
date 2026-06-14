@@ -553,6 +553,14 @@ func (s *mviewCompleteDeltaApplyWriterStats) merge(other mviewCompleteDeltaApply
 	s.deleteRows += other.deleteRows
 }
 
+func (s mviewCompleteDeltaApplyWriterStats) affectedRows() uint64 {
+	return uint64(s.insertRows + s.updateRows + s.deleteRows)
+}
+
+func (s mviewCompleteDeltaApplyWriterStats) stmtMessage() string {
+	return formatMVRefreshWriteResultMessage(s.insertRows, s.updateRows, s.deleteRows)
+}
+
 type mviewCompleteDeltaApplyRuntimeStats struct {
 	writerTime   time.Duration
 	writerDetail mviewCompleteDeltaApplyWriterStats
@@ -608,6 +616,73 @@ func (s *mviewCompleteDeltaApplyRuntimeStats) Merge(other execdetails.RuntimeSta
 
 func (*mviewCompleteDeltaApplyRuntimeStats) Tp() int {
 	return execdetails.TpMViewCompleteDeltaApplyRuntimeStats
+}
+
+func durationMicrosecondsBetween(startAt, endAt time.Time) int64 {
+	if startAt.IsZero() || endAt.IsZero() || endAt.Before(startAt) {
+		return 0
+	}
+	return endAt.Sub(startAt).Microseconds()
+}
+
+func formatDurationSecondsFromMicroseconds(durationMicroseconds int64) string {
+	if durationMicroseconds <= 0 {
+		return "0.000000"
+	}
+	return fmt.Sprintf("%d.%06d", durationMicroseconds/1_000_000, durationMicroseconds%1_000_000)
+}
+
+func formatDurationSecondsBetween(startAt, endAt time.Time) string {
+	return formatDurationSecondsFromMicroseconds(durationMicrosecondsBetween(startAt, endAt))
+}
+
+func histTime(t time.Time, loc *time.Location) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	if loc != nil {
+		t = t.In(loc)
+	}
+	return t.Truncate(time.Microsecond)
+}
+
+type mvRefreshStmtResult struct {
+	affectedRows uint64
+	message      string
+}
+
+func newMVRefreshStmtResultFromWriteCounts(insertRows, updateRows, deleteRows int64) mvRefreshStmtResult {
+	return mvRefreshStmtResult{
+		affectedRows: uint64(insertRows + updateRows + deleteRows),
+		message:      formatMVRefreshWriteResultMessage(insertRows, updateRows, deleteRows),
+	}
+}
+
+func formatMVRefreshWriteResultMessage(insertRows, updateRows, deleteRows int64) string {
+	return fmt.Sprintf(
+		"Rows inserted: %d  Updated: %d  Deleted: %d",
+		insertRows,
+		updateRows,
+		deleteRows,
+	)
+}
+
+func captureMVRefreshStmtResult(sessVars *variable.SessionVars) mvRefreshStmtResult {
+	if sessVars == nil || sessVars.StmtCtx == nil {
+		return mvRefreshStmtResult{}
+	}
+	return mvRefreshStmtResult{
+		affectedRows: sessVars.StmtCtx.AffectedRows(),
+		message:      sessVars.StmtCtx.GetMessage(),
+	}
+}
+
+func applyMVRefreshStmtResult(stmtCtx *stmtctx.StatementContext, result mvRefreshStmtResult) {
+	if stmtCtx == nil {
+		return
+	}
+	stmtCtx.SetAffectedRows(result.affectedRows)
+	stmtCtx.SetMessage(result.message)
 }
 
 // Open implements the Executor interface.
@@ -689,6 +764,7 @@ func (e *MViewCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	if insertSizeHintStep <= 0 {
 		insertSizeHintStep = 1
 	}
+	var stmtWriterDetail mviewCompleteDeltaApplyWriterStats
 
 	for {
 		e.childChunk.Reset()
@@ -696,13 +772,17 @@ func (e *MViewCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			return err
 		}
 		if e.childChunk.NumRows() == 0 {
+			applyMVRefreshStmtResult(stmtCtx, mvRefreshStmtResult{
+				affectedRows: stmtWriterDetail.affectedRows(),
+				message:      stmtWriterDetail.stmtMessage(),
+			})
 			return nil
 		}
 		writeStart := time.Time{}
 		if e.runtimeStats != nil {
 			writeStart = time.Now()
 		}
-		if err := e.applyChunk(txn, tableCtx, stmtCtx, insertSizeHintStep, e.childChunk); err != nil {
+		if err := e.applyChunk(txn, tableCtx, stmtCtx, insertSizeHintStep, e.childChunk, &stmtWriterDetail); err != nil {
 			return err
 		}
 		if e.runtimeStats != nil {
@@ -734,6 +814,7 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 	stmtCtx *stmtctx.StatementContext,
 	insertSizeHintStep int,
 	input *chunk.Chunk,
+	stmtWriterStats *mviewCompleteDeltaApplyWriterStats,
 ) error {
 	ops := input.Column(e.OpColID).Int64s()[:input.NumRows()]
 	insertRemain, err := e.collectChunkUpdateRows(ops)
@@ -743,16 +824,18 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 	if err := e.markChunkUpdateTouchedColumns(input); err != nil {
 		return err
 	}
-	var writerStats *mviewCompleteDeltaApplyWriterStats
-	var writerStatsDelta mviewCompleteDeltaApplyWriterStats
-	if e.runtimeStats != nil {
-		writerStats = &e.runtimeStats.writerDetail
-		writerStatsDelta.chunks = 1
-		writerStatsDelta.rowOps = int64(input.NumRows())
-		defer func() {
-			writerStats.merge(writerStatsDelta)
-		}()
+	writerStatsDelta := mviewCompleteDeltaApplyWriterStats{
+		chunks: 1,
+		rowOps: int64(input.NumRows()),
 	}
+	defer func() {
+		if stmtWriterStats != nil {
+			stmtWriterStats.merge(writerStatsDelta)
+		}
+		if e.runtimeStats != nil {
+			e.runtimeStats.writerDetail.merge(writerStatsDelta)
+		}
+	}()
 
 	insertOrdinal := 0
 	updateOrdinal := 0
@@ -1049,6 +1132,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	kctx context.Context,
 	s *ast.PurgeMaterializedViewLogStmt,
 ) (err error) {
+	purgeStart := time.Now()
 	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
 	purgeMethod, err := validatePurgeMaterializedViewLogStmt(s, isInternalSQL)
 	if err != nil {
@@ -1085,9 +1169,12 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			finalizeCtx,
 			releaseCtx,
 			mlogID,
+			schemaName.O,
+			baseTableMeta.Name.O,
 			purgeMethod,
 			&purgeJobID,
 			taskCancelController,
+			purgeStart,
 			totalPurgeRows,
 			err,
 		)
@@ -1114,6 +1201,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	var scheduleEvalSctx sessionctx.Context
 	if isInternalSQL {
@@ -1137,12 +1225,15 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		if purgeFailedReason != nil {
 			purgeErrMsg = *purgeFailedReason
 		}
+		purgeEndAt := time.Now()
 		if histErr := finalizeMLogPurgeHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
 			purgeJobID,
 			mlogID,
 			purgeHistStatusFailed,
+			histTime(purgeStart, histLoc),
+			histTime(purgeEndAt, histLoc),
 			totalPurgeRows,
 			&purgeErrMsg,
 		); histErr != nil {
@@ -1159,12 +1250,15 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				failpoint.Return(errors.New("mock purge finalize success error"))
 			}
 		})
+		purgeEndAt := time.Now()
 		return finalizeMLogPurgeHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
 			purgeJobID,
 			mlogID,
 			purgeHistStatusSuccess,
+			histTime(purgeStart, histLoc),
+			histTime(purgeEndAt, histLoc),
 			totalPurgeRows,
 			nil,
 		)
@@ -1198,6 +1292,10 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 						errors.Annotate(histErr, "purge materialized view log: purge committed but failed to finalize purge history"),
 					)
 				}
+				applyMVRefreshStmtResult(
+					e.Ctx().GetSessionVars().StmtCtx,
+					newMVRefreshStmtResultFromWriteCounts(0, 0, totalPurgeRows),
+				)
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
 					"purge materialized view log on %s.%s stopped before deleting all eligible rows due to lock conflict after deleting %d rows; please retry later",
 					schemaName.O,
@@ -1236,7 +1334,16 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 
 			if !purgeHistRunningInserted {
 				purgeJobID = purgeStartTS
-				if err := insertMLogPurgeHistRunning(kctx, histSQLExec, purgeJobID, mlogID, purgeMethod); err != nil {
+				if err := insertMLogPurgeHistRunning(
+					kctx,
+					histSQLExec,
+					purgeJobID,
+					mlogID,
+					schemaName.O,
+					baseTableMeta.Name.O,
+					purgeMethod,
+					histTime(purgeStart, histLoc),
+				); err != nil {
 					_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 					return errors.Trace(err)
 				}
@@ -1336,6 +1443,10 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					errors.Annotate(err, "purge materialized view log: purge committed but failed to finalize purge history"),
 				)
 			}
+			applyMVRefreshStmtResult(
+				e.Ctx().GetSessionVars().StmtCtx,
+				newMVRefreshStmtResultFromWriteCounts(0, 0, totalPurgeRows),
+			)
 			return nil
 		}
 	}
@@ -1701,11 +1812,16 @@ func insertMLogPurgeHistRunning(
 	sqlExec sqlexec.SQLExecutor,
 	purgeJobID uint64,
 	mlogID int64,
+	baseTableSchema string,
+	baseTableName string,
 	purgeMethod string,
+	purgeStartAt time.Time,
 ) error {
 	insertSQL := `INSERT INTO mysql.tidb_mlog_purge_hist (
 		PURGE_JOB_ID,
 		MLOG_ID,
+		BASE_TABLE_SCHEMA,
+		BASE_TABLE_NAME,
 		PURGE_METHOD,
 		PURGE_TIME,
 		PURGE_ROWS,
@@ -1714,11 +1830,24 @@ func insertMLogPurgeHistRunning(
 		%?,
 		%?,
 		%?,
-		NOW(6),
+		%?,
+		%?,
+		%?,
 		%?,
 		%?
 	)`
-	_, err := sqlExec.ExecuteInternal(kctx, insertSQL, purgeJobID, mlogID, purgeMethod, int64(0), purgeHistStatusRunning)
+	_, err := sqlExec.ExecuteInternal(
+		kctx,
+		insertSQL,
+		purgeJobID,
+		mlogID,
+		baseTableSchema,
+		baseTableName,
+		purgeMethod,
+		purgeStartAt,
+		int64(0),
+		purgeHistStatusRunning,
+	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return errors.New("required system table mysql.tidb_mlog_purge_hist does not exist")
@@ -1733,7 +1862,11 @@ func insertMLogPurgeHistFailed(
 	sqlExec sqlexec.SQLExecutor,
 	purgeJobID uint64,
 	mlogID int64,
+	baseTableSchema string,
+	baseTableName string,
 	purgeMethod string,
+	purgeStartAt time.Time,
+	purgeEndAt time.Time,
 	purgeRows int64,
 	purgeFailedReason *string,
 ) error {
@@ -1744,23 +1877,43 @@ func insertMLogPurgeHistFailed(
 	insertSQL := `INSERT INTO mysql.tidb_mlog_purge_hist (
 		PURGE_JOB_ID,
 		MLOG_ID,
+		BASE_TABLE_SCHEMA,
+		BASE_TABLE_NAME,
 		PURGE_METHOD,
 		PURGE_TIME,
 		PURGE_ENDTIME,
 		PURGE_ROWS,
+		PURGE_DURATION_SEC,
 		PURGE_STATUS,
 		PURGE_FAILED_REASON
 	) VALUES (
 		%?,
 		%?,
 		%?,
-		NOW(6),
-		NOW(6),
+		%?,
+		%?,
+		%?,
+		%?,
+		%?,
 		%?,
 		%?,
 		%?
 	)`
-	_, err := sqlExec.ExecuteInternal(kctx, insertSQL, purgeJobID, mlogID, purgeMethod, purgeRows, purgeHistStatusFailed, purgeFailedReasonArg)
+	_, err := sqlExec.ExecuteInternal(
+		kctx,
+		insertSQL,
+		purgeJobID,
+		mlogID,
+		baseTableSchema,
+		baseTableName,
+		purgeMethod,
+		purgeStartAt,
+		purgeEndAt,
+		purgeRows,
+		formatDurationSecondsBetween(purgeStartAt, purgeEndAt),
+		purgeHistStatusFailed,
+		purgeFailedReasonArg,
+	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return errors.New("required system table mysql.tidb_mlog_purge_hist does not exist")
@@ -1774,9 +1927,12 @@ func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(
 	kctx context.Context,
 	releaseCtx context.Context,
 	mlogID int64,
+	baseTableSchema string,
+	baseTableName string,
 	purgeMethod string,
 	purgeJobID *uint64,
 	taskCancelController *mvTaskCancelController,
+	purgeStart time.Time,
 	purgeRows int64,
 	purgeErr error,
 ) error {
@@ -1787,6 +1943,7 @@ func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	if *purgeJobID == 0 {
 		*purgeJobID, err = allocJobID(e.Ctx().GetStore())
@@ -1799,12 +1956,17 @@ func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(
 	if purgeFailedReason != nil {
 		purgeErrMsg = *purgeFailedReason
 	}
+	purgeEndAt := time.Now()
 	if err := insertMLogPurgeHistFailed(
 		kctx,
 		histSQLExec,
 		*purgeJobID,
 		mlogID,
+		baseTableSchema,
+		baseTableName,
 		purgeMethod,
+		histTime(purgeStart, histLoc),
+		histTime(purgeEndAt, histLoc),
 		purgeRows,
 		&purgeErrMsg,
 	); err != nil {
@@ -1818,6 +1980,8 @@ func finalizeMLogPurgeHist(
 	sqlExec sqlexec.SQLExecutor,
 	purgeJobID uint64,
 	purgeStatus string,
+	purgeStartAt time.Time,
+	purgeEndAt time.Time,
 	purgeRows int64,
 	purgeFailedReason *string,
 ) error {
@@ -1827,12 +1991,22 @@ func finalizeMLogPurgeHist(
 	}
 	updateSQL := `UPDATE mysql.tidb_mlog_purge_hist
 	SET
-		PURGE_ENDTIME = NOW(6),
+		PURGE_ENDTIME = %?,
 		PURGE_ROWS = %?,
+		PURGE_DURATION_SEC = %?,
 		PURGE_STATUS = %?,
 		PURGE_FAILED_REASON = %?
 	WHERE PURGE_JOB_ID = %?`
-	_, err := sqlExec.ExecuteInternal(kctx, updateSQL, purgeRows, purgeStatus, purgeFailedReasonArg, purgeJobID)
+	_, err := sqlExec.ExecuteInternal(
+		kctx,
+		updateSQL,
+		purgeEndAt,
+		purgeRows,
+		formatDurationSecondsBetween(purgeStartAt, purgeEndAt),
+		purgeStatus,
+		purgeFailedReasonArg,
+		purgeJobID,
+	)
 	failpoint.Inject("mockUpdateMaterializedViewLogPurgeStateErr", func(val failpoint.Value) {
 		if val.(bool) {
 			err = errors.New("mock update mlog purge state error")
@@ -1853,6 +2027,8 @@ func finalizeMLogPurgeHistWithRetry(
 	purgeJobID uint64,
 	mlogID int64,
 	purgeStatus string,
+	purgeStartAt time.Time,
+	purgeEndAt time.Time,
 	purgeRows int64,
 	purgeFailedReason *string,
 ) error {
@@ -1861,6 +2037,8 @@ func finalizeMLogPurgeHistWithRetry(
 		sqlExec,
 		purgeJobID,
 		purgeStatus,
+		purgeStartAt,
+		purgeEndAt,
 		purgeRows,
 		purgeFailedReason,
 	)
@@ -1872,6 +2050,8 @@ func finalizeMLogPurgeHistWithRetry(
 		sqlExec,
 		purgeJobID,
 		purgeStatus,
+		purgeStartAt,
+		purgeEndAt,
 		purgeRows,
 		purgeFailedReason,
 	)
@@ -2012,10 +2192,13 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			finalizeCtx,
 			releaseCtx,
 			mviewID,
+			schemaName.O,
+			tblInfo.Name.O,
 			refreshMethod,
 			refreshHistFailedReadTSO,
 			&refreshJobID,
 			taskCancelController,
+			refreshStart,
 			err,
 		)
 	}()
@@ -2099,9 +2282,19 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		defer e.ReleaseSysSession(releaseCtx, histSctx)
 		histSQLExec := histSctx.GetSQLExecutor()
+		histLoc := histSctx.GetSessionVars().Location()
 
 		if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
-			return insertRefreshHistRunning(kctx, histSQLExec, refreshJobID, mviewID, refreshMethod)
+			return insertRefreshHistRunning(
+				kctx,
+				histSQLExec,
+				refreshJobID,
+				mviewID,
+				schemaName.O,
+				tblInfo.Name.O,
+				refreshMethod,
+				histTime(refreshStart, histLoc),
+			)
 		}); err != nil {
 			return err
 		}
@@ -2114,6 +2307,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				refreshErrMsg = *refreshFailedReason
 			}
 			histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+				refreshEndAt := time.Now()
 				return finalizeRefreshHistWithRetry(
 					finalizeCtx,
 					histSQLExec,
@@ -2121,6 +2315,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 					mviewID,
 					refreshHistStatusFailed,
 					refreshHistFailedReadTSO,
+					histTime(refreshStart, histLoc),
+					histTime(refreshEndAt, histLoc),
 					nil,
 					&refreshErrMsg,
 				)
@@ -2165,7 +2361,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if err != nil {
 			return finalizeFailure(err)
 		}
+		refreshStmtResult := captureMVRefreshStmtResult(sessVars)
 		if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+			refreshEndAt := time.Now()
 			return finalizeRefreshHistWithRetry(
 				finalizeCtx,
 				histSQLExec,
@@ -2173,6 +2371,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				mviewID,
 				refreshHistStatusSuccess,
 				&buildReadTSO,
+				histTime(refreshStart, histLoc),
+				histTime(refreshEndAt, histLoc),
 				nil,
 				nil,
 			)
@@ -2181,6 +2381,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
 			)
 		}
+		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
 		return nil
 	}
 	var scheduleEvalSctx sessionctx.Context
@@ -2236,6 +2437,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return err
 	}
 	if refreshMode == ast.RefreshMaterializedViewModeFast && !lockedReadTSONull && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedReadTSO {
+		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
 		return nil
 	}
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
@@ -2259,9 +2461,19 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
-		return insertRefreshHistRunning(kctx, histSQLExec, refreshJobID, mviewID, refreshMethod)
+		return insertRefreshHistRunning(
+			kctx,
+			histSQLExec,
+			refreshJobID,
+			mviewID,
+			schemaName.O,
+			tblInfo.Name.O,
+			refreshMethod,
+			histTime(refreshStart, histLoc),
+		)
 	}); err != nil {
 		return err
 	}
@@ -2285,6 +2497,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			}
 		}
 		histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+			refreshEndAt := time.Now()
 			return finalizeRefreshHistWithRetry(
 				finalizeCtx,
 				histSQLExec,
@@ -2292,6 +2505,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				mviewID,
 				refreshHistStatusFailed,
 				refreshHistFailedReadTSO,
+				histTime(refreshStart, histLoc),
+				histTime(refreshEndAt, histLoc),
 				nil,
 				&refreshErrMsg,
 			)
@@ -2364,6 +2579,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 	executeDataChangesDur = time.Since(executeDataChangesStart)
+	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
 
 	actualRefreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
 	if err != nil {
@@ -2427,8 +2643,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if txnCommitTimerStarted && txnTotalDur == 0 {
 		txnTotalDur = time.Since(txnCommitStart)
 	}
+	applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+		refreshEndAt := time.Now()
 		return finalizeRefreshHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
@@ -2436,6 +2654,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			mviewID,
 			refreshHistStatusSuccess,
 			&refreshReadTSO,
+			histTime(refreshStart, histLoc),
+			histTime(refreshEndAt, histLoc),
 			refreshRows,
 			nil,
 		)
@@ -2514,6 +2734,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 
 	shadowTableName := buildMVRefreshShadowTableName(tblInfo.ID)
 	shadowCreated := false
+	shadowLoadStmtResult := mvRefreshStmtResult{}
 	buildSQLExec := buildSctx.GetSQLExecutor()
 	defer func() {
 		if err == nil || !shadowCreated {
@@ -2589,6 +2810,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if buildErr = executeRefreshMaterializedViewInternalSQL(kctx, buildSQLExec, buildSQL); buildErr != nil {
 			return buildErr
 		}
+		shadowLoadStmtResult = newMVRefreshStmtResultFromWriteCounts(int64(buildSessVars.StmtCtx.AffectedRows()), 0, 0)
 		// Capture profile rows for the real shadow-load statement before any follow-up SQL (for example read tso query)
 		// overwrites session statement context.
 		emitMVRefreshStepPlanRows(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, buildSessVars, e.planFormatForObserver)
@@ -2661,6 +2883,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}); err != nil {
 		return 0, err
 	}
+	applyMVRefreshStmtResult(refreshSctx.GetSessionVars().StmtCtx, shadowLoadStmtResult)
 	return buildReadTSO, nil
 }
 
@@ -3206,21 +3429,32 @@ func executeRefreshMaterializedViewCompleteInPlace(
 	insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, s.ViewName.Name.O)
 	/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
 	insertSQL := insertPrefix + tblInfo.MaterializedView.SQLContent
+	deleteRows := int64(0)
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDelete, func() error {
 		_, deleteErr := sqlExec.ExecuteInternal(kctx, deleteSQL)
+		if deleteErr == nil && sessVars != nil && sessVars.StmtCtx != nil {
+			deleteRows = int64(sessVars.StmtCtx.AffectedRows())
+		}
 		return deleteErr
 	}); err != nil {
 		return err
 	}
 	emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteDelete, sessVars, explainFormat)
 
+	insertRows := int64(0)
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteInsert, func() error {
 		_, insertErr := sqlExec.ExecuteInternal(kctx, insertSQL)
+		if insertErr == nil && sessVars != nil && sessVars.StmtCtx != nil {
+			insertRows = int64(sessVars.StmtCtx.AffectedRows())
+		}
 		return insertErr
 	}); err != nil {
 		return err
 	}
 	emitMVRefreshStepPlanRows(stepObserver, stepSet.dataChangeCompleteInsert, sessVars, explainFormat)
+	if sessVars != nil {
+		applyMVRefreshStmtResult(sessVars.StmtCtx, newMVRefreshStmtResultFromWriteCounts(insertRows, 0, deleteRows))
+	}
 	return nil
 }
 
@@ -3559,11 +3793,16 @@ func insertRefreshHistRunning(
 	sqlExec sqlexec.SQLExecutor,
 	refreshJobID uint64,
 	mviewID int64,
+	mvSchema string,
+	mvName string,
 	refreshMethod string,
+	refreshStartAt time.Time,
 ) error {
 	insertSQL := `INSERT INTO mysql.tidb_mview_refresh_hist (
 	REFRESH_JOB_ID,
 	MVIEW_ID,
+	MV_SCHEMA,
+	MV_NAME,
 	REFRESH_METHOD,
 	REFRESH_TIME,
 	REFRESH_STATUS
@@ -3571,10 +3810,22 @@ func insertRefreshHistRunning(
 	%?,
 	%?,
 	%?,
-	NOW(6),
+	%?,
+	%?,
+	%?,
 	%?
 )`
-	if _, err := sqlExec.ExecuteInternal(kctx, insertSQL, refreshJobID, mviewID, refreshMethod, refreshHistStatusRunning); err != nil {
+	if _, err := sqlExec.ExecuteInternal(
+		kctx,
+		insertSQL,
+		refreshJobID,
+		mviewID,
+		mvSchema,
+		mvName,
+		refreshMethod,
+		refreshStartAt,
+		refreshHistStatusRunning,
+	); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
 		}
@@ -3588,7 +3839,11 @@ func insertRefreshHistFailed(
 	sqlExec sqlexec.SQLExecutor,
 	refreshJobID uint64,
 	mviewID int64,
+	mvSchema string,
+	mvName string,
 	refreshMethod string,
+	refreshStartAt time.Time,
+	refreshEndAt time.Time,
 	refreshReadTSO *uint64,
 	refreshFailedReason *string,
 ) error {
@@ -3603,19 +3858,25 @@ func insertRefreshHistFailed(
 	insertSQL := `INSERT INTO mysql.tidb_mview_refresh_hist (
 	REFRESH_JOB_ID,
 	MVIEW_ID,
+	MV_SCHEMA,
+	MV_NAME,
 	REFRESH_METHOD,
 	REFRESH_TIME,
 	REFRESH_ENDTIME,
 	REFRESH_STATUS,
 	REFRESH_ROWS,
+	REFRESH_DURATION_SEC,
 	REFRESH_READ_TSO,
 	REFRESH_FAILED_REASON
 ) VALUES (
 	%?,
 	%?,
 	%?,
-	NOW(6),
-	NOW(6),
+	%?,
+	%?,
+	%?,
+	%?,
+	%?,
 	%?,
 	%?,
 	%?,
@@ -3626,9 +3887,14 @@ func insertRefreshHistFailed(
 		insertSQL,
 		refreshJobID,
 		mviewID,
+		mvSchema,
+		mvName,
 		refreshMethod,
+		refreshStartAt,
+		refreshEndAt,
 		refreshHistStatusFailed,
 		nil,
+		formatDurationSecondsBetween(refreshStartAt, refreshEndAt),
 		refreshReadTSOArg,
 		refreshFailedReasonArg,
 	); err != nil {
@@ -3644,10 +3910,13 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	kctx context.Context,
 	releaseCtx context.Context,
 	mviewID int64,
+	mvSchema string,
+	mvName string,
 	refreshMethod string,
 	refreshReadTSO *uint64,
 	refreshJobID *uint64,
 	taskCancelController *mvTaskCancelController,
+	refreshStart time.Time,
 	refreshErr error,
 ) error {
 	refreshFailedReason, finalErr := taskCancelController.normalizeTaskFailure(refreshErr)
@@ -3657,6 +3926,7 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	if *refreshJobID == 0 {
 		*refreshJobID, err = allocJobID(e.Ctx().GetStore())
@@ -3669,12 +3939,17 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	if refreshFailedReason != nil {
 		refreshErrMsg = *refreshFailedReason
 	}
+	refreshEndAt := time.Now()
 	if err := insertRefreshHistFailed(
 		kctx,
 		histSQLExec,
 		*refreshJobID,
 		mviewID,
+		mvSchema,
+		mvName,
 		refreshMethod,
+		histTime(refreshStart, histLoc),
+		histTime(refreshEndAt, histLoc),
 		refreshReadTSO,
 		&refreshErrMsg,
 	); err != nil {
@@ -3690,6 +3965,8 @@ func finalizeRefreshHistWithRetry(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshStartAt time.Time,
+	refreshEndAt time.Time,
 	refreshRows *int64,
 	refreshFailedReason *string,
 ) error {
@@ -3700,6 +3977,8 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshStartAt,
+		refreshEndAt,
 		refreshRows,
 		refreshFailedReason,
 	)
@@ -3713,6 +3992,8 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshStartAt,
+		refreshEndAt,
 		refreshRows,
 		refreshFailedReason,
 	)
@@ -3736,6 +4017,8 @@ func finalizeRefreshHist(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshStartAt time.Time,
+	refreshEndAt time.Time,
 	refreshRows *int64,
 	refreshFailedReason *string,
 ) error {
@@ -3759,9 +4042,10 @@ func finalizeRefreshHist(
 	}
 	updateSQL := `UPDATE mysql.tidb_mview_refresh_hist
 SET
-	REFRESH_ENDTIME = NOW(6),
+	REFRESH_ENDTIME = %?,
 	REFRESH_STATUS = %?,
 	REFRESH_ROWS = %?,
+	REFRESH_DURATION_SEC = %?,
 	REFRESH_READ_TSO = %?,
 	REFRESH_FAILED_REASON = %?
 WHERE REFRESH_JOB_ID = %?
@@ -3769,8 +4053,10 @@ WHERE REFRESH_JOB_ID = %?
 	if _, err := sqlExec.ExecuteInternal(
 		kctx,
 		updateSQL,
+		refreshEndAt,
 		refreshStatus,
 		refreshRowsArg,
+		formatDurationSecondsBetween(refreshStartAt, refreshEndAt),
 		refreshReadTSOArg,
 		refreshFailedReasonArg,
 		refreshJobID,
