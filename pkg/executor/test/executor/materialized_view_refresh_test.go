@@ -2044,7 +2044,7 @@ func TestMaterializedViewRefreshRunningHistHeartbeat(t *testing.T) {
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	}()
 
 	var firstHeartbeat string
