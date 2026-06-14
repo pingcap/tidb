@@ -1028,17 +1028,12 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshAlert(jobCtx *jobContext, mviewID int64) error {
-	ctx := jobCtx.stepCtx
-	if ctx == nil {
-		ctx = w.workCtx
-	}
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
 	var err error
 	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) {
 		err = errors.New(val.(string))
 	})
 	if err == nil {
-		_, err = w.sess.Execute(ctx, deleteSQL, "mview-refresh-alert-delete")
+		err = w.executeDeleteMViewRefreshAlert(jobCtx, mviewID, "mview-refresh-alert-delete")
 	}
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil

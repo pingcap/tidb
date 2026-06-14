@@ -1474,35 +1474,35 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 }
 
 func (w *worker) deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx *jobContext, oldMViewID int64) error {
+	err := w.executeDeleteMViewRefreshAlert(jobCtx, oldMViewID, "mview-refresh-cutover-delete-refresh-alert")
+	if err != nil {
+		return errors.Trace(convertMViewRefreshAlertTableNotExistsErr(
+			err,
+			dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				"refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_alert does not exist",
+			),
+		))
+	}
+	return nil
+}
+
+func (w *worker) executeDeleteMViewRefreshAlert(jobCtx *jobContext, mviewID int64, resourceGroupTag string) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
 	_, err := w.sess.Execute(
 		ctx,
-		"DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?",
-		"mview-refresh-cutover-delete-refresh-alert",
-		oldMViewID,
+		buildDeleteMViewRefreshAlertSQL(mviewID),
+		resourceGroupTag,
 	)
-	if err != nil {
-		return errors.Trace(convertMViewRefreshAlertTableNotExistsErrOnOutOfPlaceCutover(err))
-	}
-	return nil
+	return err
 }
 
 func convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err error) error {
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
 			"refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_info does not exist",
-		)
-	}
-	return err
-}
-
-func convertMViewRefreshAlertTableNotExistsErrOnOutOfPlaceCutover(err error) error {
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
-			"refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_alert does not exist",
 		)
 	}
 	return err

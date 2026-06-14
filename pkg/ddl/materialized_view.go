@@ -952,17 +952,23 @@ func (e *executor) deleteMaterializedViewRefreshAlert(ctx sessionctx.Context, mv
 	}
 	defer releaseInternalSession()
 
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
-	_, err = ddlSess.Execute(kctx, deleteSQL, "alter-materialized-view-refresh-delete-alert")
+	_, err = ddlSess.Execute(kctx, buildDeleteMViewRefreshAlertSQL(mviewID), "alter-materialized-view-refresh-delete-alert")
 	failpoint.Inject("mockDeleteMaterializedViewRefreshAlertTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
 			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_alert")
 		}
 	})
 	if err != nil {
-		return errors.Trace(convertAlterMaterializedViewRefreshAlertTableNotExistsErr(err))
+		return errors.Trace(convertMViewRefreshAlertTableNotExistsErr(
+			err,
+			errors.New("alter materialized view refresh: required system table mysql.tidb_mview_refresh_alert does not exist"),
+		))
 	}
 	return nil
+}
+
+func buildDeleteMViewRefreshAlertSQL(mviewID int64) string {
+	return sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
 }
 
 func convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
@@ -972,9 +978,9 @@ func convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
 	return err
 }
 
-func convertAlterMaterializedViewRefreshAlertTableNotExistsErr(err error) error {
+func convertMViewRefreshAlertTableNotExistsErr(err error, tableMissingErr error) error {
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return errors.New("alter materialized view refresh: required system table mysql.tidb_mview_refresh_alert does not exist")
+		return tableMissingErr
 	}
 	return err
 }
