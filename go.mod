@@ -135,7 +135,7 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.49.0
+	golang.org/x/net v0.51.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.42.0
@@ -343,7 +343,7 @@ replace (
 )
 
 replace (
-	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260613100522-9046e96400e5
+	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260615022553-9a64381f8b33
 	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260415124818-8dac51c06b6c
 	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260613091450-a9536e9d9cda
 )
