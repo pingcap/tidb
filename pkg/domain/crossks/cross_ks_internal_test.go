@@ -15,35 +15,49 @@
 package crossks
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type runtimeHandleTestStore struct {
 	kv.Storage
-	ks string
+	ks         string
+	closeCount int
 }
 
 func (s *runtimeHandleTestStore) GetKeyspace() string {
 	return s.ks
 }
 
+func (s *runtimeHandleTestStore) Close() error {
+	s.closeCount++
+	return nil
+}
+
 type runtimeHandleTestSessPool struct {
 	util.DestroyableSessionPool
 	closeCount int
+	onClose    func()
 }
 
 func (p *runtimeHandleTestSessPool) Close() {
 	p.closeCount++
+	if p.onClose != nil {
+		p.onClose()
+	}
 }
 
 func newRuntimeHandleTestManager(targetKS string) (*Manager, *runtimeEntry, *runtimeHandleTestStore, *runtimeHandleTestSessPool) {
@@ -51,14 +65,24 @@ func newRuntimeHandleTestManager(targetKS string) (*Manager, *runtimeEntry, *run
 	targetStore := &runtimeHandleTestStore{ks: targetKS}
 	sessPool := &runtimeHandleTestSessPool{}
 	entry := &runtimeEntry{
-		sessMgr: &SessionManager{
-			store:    targetStore,
-			sessPool: sessPool,
-		},
+		sessMgr:       newRuntimeHandleTestSessionManager(targetStore, sessPool),
 		activeHolders: make(map[string]struct{}),
 	}
 	mgr.runtimes[targetKS] = entry
 	return mgr, entry, targetStore, sessPool
+}
+
+func newRuntimeHandleTestSessionManager(targetStore *runtimeHandleTestStore, sessPool *runtimeHandleTestSessPool) *SessionManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &SessionManager{
+		ctx:             ctx,
+		cancel:          cancel,
+		exitCh:          make(chan struct{}),
+		store:           targetStore,
+		etcdCli:         clientv3.NewCtxClient(context.Background()),
+		schemaVerSyncer: schemaver.NewMemSyncer(),
+		sessPool:        sessPool,
+	}
 }
 
 func unusedRuntimeHandleFactoryGetter(t *testing.T) func(string, validatorapi.Validator) pools.Factory {
@@ -101,7 +125,7 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		first, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
 		require.NoError(t, err)
 		require.Same(t, targetStore, first.Store())
-		require.Same(t, sessPool, first.SessPool())
+		require.Same(t, sessPool, first.SysSessionPool())
 		require.Contains(t, entry.activeHolders, "holder-1")
 
 		duplicate, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
@@ -237,4 +261,127 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		require.False(t, entry.lastReleaseAt.IsZero())
 		require.Zero(t, sessPool.closeCount)
 	})
+}
+
+func TestEvictRuntime(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+
+	t.Run("skips active holders", func(t *testing.T) {
+		targetKS := "ks-evict-active"
+		mgr, entry, _, sessPool := newRuntimeHandleTestManager(targetKS)
+		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
+
+		first, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
+		require.NoError(t, err)
+		second, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
+		require.NoError(t, err)
+
+		first.Release()
+		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+
+		_, ok := mgr.Get(targetKS)
+		require.True(t, ok)
+		require.Contains(t, entry.activeHolders, "holder-2")
+		require.Zero(t, sessPool.closeCount)
+		second.Release()
+	})
+
+	t.Run("closes idle entry outside manager lock", func(t *testing.T) {
+		targetKS := "ks-evict-idle"
+		mgr, entry, targetStore, sessPool := newRuntimeHandleTestManager(targetKS)
+		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
+		sessPool.onClose = func() {
+			require.True(t, mgr.mu.TryLock())
+			mgr.mu.Unlock()
+		}
+
+		handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
+		require.NoError(t, err)
+		handle.Release()
+		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+
+		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+
+		_, ok := mgr.Get(targetKS)
+		require.False(t, ok)
+		require.Equal(t, 1, sessPool.closeCount)
+		require.Equal(t, 1, targetStore.closeCount)
+	})
+
+	t.Run("reacquire creates new runtime", func(t *testing.T) {
+		targetKS := "ks-evict-reacquire"
+		mgr, entry, oldStore, oldSessPool := newRuntimeHandleTestManager(targetKS)
+		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
+		createCount := 0
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+			func(createSessionManager *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*createSessionManager = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+					createCount++
+					newStore := &runtimeHandleTestStore{ks: ks}
+					newSessPool := &runtimeHandleTestSessPool{}
+					return newRuntimeHandleTestSessionManager(newStore, newSessPool), nil
+				}
+			},
+		)
+
+		handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
+		require.NoError(t, err)
+		handle.Release()
+		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+
+		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+		require.Equal(t, 1, oldSessPool.closeCount)
+		require.Equal(t, 1, oldStore.closeCount)
+
+		reacquired, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
+		require.NoError(t, err)
+		require.NotSame(t, oldStore, reacquired.Store())
+		require.Equal(t, 1, createCount)
+		reacquired.Release()
+	})
+}
+
+func TestRuntimeHandleManagerCloseClosesAllEntriesRegardlessOfIdleTimeout(t *testing.T) {
+	firstKS := "ks-close-runtime-1"
+	secondKS := "ks-close-runtime-2"
+	mgr, firstEntry, firstStore, firstSessPool := newRuntimeHandleTestManager(firstKS)
+	secondStore := &runtimeHandleTestStore{ks: secondKS}
+	secondSessPool := &runtimeHandleTestSessPool{}
+	mgr.runtimes[secondKS] = &runtimeEntry{
+		sessMgr:       newRuntimeHandleTestSessionManager(secondStore, secondSessPool),
+		activeHolders: make(map[string]struct{}),
+	}
+	firstEntry.lastReleaseAt = time.Now()
+
+	mgr.Close()
+
+	require.Empty(t, mgr.GetAllKeyspace())
+	require.Equal(t, 1, firstSessPool.closeCount)
+	require.Equal(t, 1, firstStore.closeCount)
+	require.Equal(t, 1, secondSessPool.closeCount)
+	require.Equal(t, 1, secondStore.closeCount)
+}
+
+func TestGCLoopExitsWhenContextCancelled(t *testing.T) {
+	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		mgr.RunSystemKSGCLoop(ctx)
+		close(done)
+	}()
+
+	cancel()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
 }

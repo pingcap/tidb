@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
@@ -367,7 +368,7 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
 		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
+		cpuCount := cpu.GetCPUCount()
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
 		}
@@ -1461,7 +1462,7 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency:  runtime.NumCPU(),
+			RegionConcurrency:  cpu.GetCPUCount(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
 			IOConcurrency:      5,

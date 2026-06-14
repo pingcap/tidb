@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
@@ -130,19 +129,8 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-	store := s.TaskStore
-	sessPool := ddlObj.sessPool
-	taskKS := s.task.Keyspace
-	if ddlObj.store.GetKeyspace() != taskKS {
-		if err := s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
-			svr := se.GetSQLServer()
-			sp, err := svr.GetKSSessPool(taskKS)
-			sessPool = sess.NewSessionPool(sp)
-			return err
-		}); err != nil {
-			return nil, err
-		}
-	}
+	store := s.TaskRuntime.Store()
+	sessPool := sess.NewSessionPool(s.TaskRuntime.SysSessionPool())
 	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
 	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)

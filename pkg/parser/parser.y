@@ -1734,6 +1734,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %precedence local
 %precedence lowerThanRemove
 %precedence remove
+%precedence lowerThanReplayer
+%precedence replayer
 %precedence lowerThenOrder
 %precedence order
 %precedence returning
@@ -5869,6 +5871,13 @@ ExplainStmt:
 			Explore:   true,
 		}
 	}
+|	ExplainSym "EXPLORE" "REPLAYER" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			ReplayerFile: $4,
+			Explore:      true,
+		}
+	}
 |	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
@@ -7322,7 +7331,7 @@ UnReservedKeyword:
 |	"ESCAPE"
 |	"EVOLVE"
 |	"EXECUTE"
-|	"EXPLORE"
+|	"EXPLORE" %prec lowerThanReplayer
 |	"EXTENDED"
 |	"FIELDS"
 |	"FILE"
@@ -16361,22 +16370,22 @@ StatsObject:
 	{
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeDatabase,
-			DBName:             ast.NewCIStr($1),
+			DBName:           ast.NewCIStr($1),
 		}
 	}
 |	Identifier '.' Identifier
 	{
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeTable,
-			DBName:             ast.NewCIStr($1),
-			TableName:          ast.NewCIStr($3),
+			DBName:           ast.NewCIStr($1),
+			TableName:        ast.NewCIStr($3),
 		}
 	}
 |	Identifier
 	{
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeTable,
-			TableName:          ast.NewCIStr($1),
+			TableName:        ast.NewCIStr($1),
 		}
 	}
 

@@ -957,7 +957,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
 	defer func() {
-		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
+		if logTaskBackend == nil || restoreErr != nil {
 			return
 		}
 		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
@@ -1573,7 +1573,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 		keyRange := rewriteKeyRanges(preAllocRange)
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
-			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+			ctx, mgr, importModeSwitcher, keyRange, !cfg.Online)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1590,7 +1590,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
 		log.Info("finish restoring pd scheduler")
 	}()
 
