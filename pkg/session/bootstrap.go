@@ -1277,7 +1277,7 @@ const (
 	// Add time-oriented indexes, object schema/name snapshots, and duration columns to MV refresh/purge history tables.
 	version223 = 223
 
-	// next version should start with 224
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.

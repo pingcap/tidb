@@ -94,6 +94,14 @@ func TestShouldUseImportIntoForMVRefreshOutOfPlace(t *testing.T) {
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("mock-storage"))
 }
 
+func TestHistTimeUsesLocation(t *testing.T) {
+	input := time.Date(2026, 6, 14, 12, 0, 0, 123456789, time.UTC)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+
+	require.Equal(t, "2026-06-14 20:00:00.123456 +0800", histTime(input, loc).Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, "2026-06-14 12:00:00.123456 +0000", histTime(input, time.UTC).Format("2006-01-02 15:04:05.000000 -0700"))
+}
+
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
 		ID:    1,

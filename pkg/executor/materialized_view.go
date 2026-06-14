@@ -636,9 +636,12 @@ func formatDurationSecondsBetween(startAt, endAt time.Time) string {
 	return formatDurationSecondsFromMicroseconds(durationMicrosecondsBetween(startAt, endAt))
 }
 
-func histTime(t time.Time) time.Time {
+func histTime(t time.Time, loc *time.Location) time.Time {
 	if t.IsZero() {
 		return t
+	}
+	if loc != nil {
+		t = t.In(loc)
 	}
 	return t.Truncate(time.Microsecond)
 }
@@ -1198,6 +1201,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	var scheduleEvalSctx sessionctx.Context
 	if isInternalSQL {
@@ -1228,8 +1232,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			purgeJobID,
 			mlogID,
 			purgeHistStatusFailed,
-			histTime(purgeStart),
-			histTime(purgeEndAt),
+			histTime(purgeStart, histLoc),
+			histTime(purgeEndAt, histLoc),
 			totalPurgeRows,
 			&purgeErrMsg,
 		); histErr != nil {
@@ -1253,8 +1257,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			purgeJobID,
 			mlogID,
 			purgeHistStatusSuccess,
-			histTime(purgeStart),
-			histTime(purgeEndAt),
+			histTime(purgeStart, histLoc),
+			histTime(purgeEndAt, histLoc),
 			totalPurgeRows,
 			nil,
 		)
@@ -1338,7 +1342,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					schemaName.O,
 					baseTableMeta.Name.O,
 					purgeMethod,
-					histTime(purgeStart),
+					histTime(purgeStart, histLoc),
 				); err != nil {
 					_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 					return errors.Trace(err)
@@ -1939,6 +1943,7 @@ func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	if *purgeJobID == 0 {
 		*purgeJobID, err = allocJobID(e.Ctx().GetStore())
@@ -1960,8 +1965,8 @@ func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(
 		baseTableSchema,
 		baseTableName,
 		purgeMethod,
-		histTime(purgeStart),
-		histTime(purgeEndAt),
+		histTime(purgeStart, histLoc),
+		histTime(purgeEndAt, histLoc),
 		purgeRows,
 		&purgeErrMsg,
 	); err != nil {
@@ -2277,6 +2282,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		defer e.ReleaseSysSession(releaseCtx, histSctx)
 		histSQLExec := histSctx.GetSQLExecutor()
+		histLoc := histSctx.GetSessionVars().Location()
 
 		if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
 			return insertRefreshHistRunning(
@@ -2287,7 +2293,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				schemaName.O,
 				tblInfo.Name.O,
 				refreshMethod,
-				histTime(refreshStart),
+				histTime(refreshStart, histLoc),
 			)
 		}); err != nil {
 			return err
@@ -2309,8 +2315,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 					mviewID,
 					refreshHistStatusFailed,
 					refreshHistFailedReadTSO,
-					histTime(refreshStart),
-					histTime(refreshEndAt),
+					histTime(refreshStart, histLoc),
+					histTime(refreshEndAt, histLoc),
 					nil,
 					&refreshErrMsg,
 				)
@@ -2365,8 +2371,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				mviewID,
 				refreshHistStatusSuccess,
 				&buildReadTSO,
-				histTime(refreshStart),
-				histTime(refreshEndAt),
+				histTime(refreshStart, histLoc),
+				histTime(refreshEndAt, histLoc),
 				nil,
 				nil,
 			)
@@ -2455,6 +2461,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
 		return insertRefreshHistRunning(
@@ -2465,7 +2472,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			schemaName.O,
 			tblInfo.Name.O,
 			refreshMethod,
-			histTime(refreshStart),
+			histTime(refreshStart, histLoc),
 		)
 	}); err != nil {
 		return err
@@ -2498,8 +2505,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				mviewID,
 				refreshHistStatusFailed,
 				refreshHistFailedReadTSO,
-				histTime(refreshStart),
-				histTime(refreshEndAt),
+				histTime(refreshStart, histLoc),
+				histTime(refreshEndAt, histLoc),
 				nil,
 				&refreshErrMsg,
 			)
@@ -2647,8 +2654,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			mviewID,
 			refreshHistStatusSuccess,
 			&refreshReadTSO,
-			histTime(refreshStart),
-			histTime(refreshEndAt),
+			histTime(refreshStart, histLoc),
+			histTime(refreshEndAt, histLoc),
 			refreshRows,
 			nil,
 		)
@@ -3919,6 +3926,7 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	}
 	defer e.ReleaseSysSession(releaseCtx, histSctx)
 	histSQLExec := histSctx.GetSQLExecutor()
+	histLoc := histSctx.GetSessionVars().Location()
 
 	if *refreshJobID == 0 {
 		*refreshJobID, err = allocJobID(e.Ctx().GetStore())
@@ -3940,8 +3948,8 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 		mvSchema,
 		mvName,
 		refreshMethod,
-		histTime(refreshStart),
-		histTime(refreshEndAt),
+		histTime(refreshStart, histLoc),
+		histTime(refreshEndAt, histLoc),
 		refreshReadTSO,
 		&refreshErrMsg,
 	); err != nil {
