@@ -88,21 +88,19 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 
+	var bo backoffer
+retry:
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-<<<<<<< HEAD
-		return nil, 0, errors.New("autoid service leader not found")
-=======
 		// If the key is not found, it means the autoid service leader is not elected yet.
 		// We can retry to get the leader.
 		if err := bo.Backoff(ctx); err != nil {
 			return nil, 0, errors.Trace(err)
 		}
 		goto retry
->>>>>>> 2b73570233d (pkg/meta/autoid: fix autoid client blocking on canceled context (#68125))
 	}
 
 	addr := string(resp.Kvs[0].Value)
@@ -169,13 +167,9 @@ retry:
 				return 0, 0, errors.Trace(ctx.Err())
 			}
 			sp.resetConn(ver, err)
-<<<<<<< HEAD
-			bo.Backoff()
-=======
 			if err := bo.Backoff(ctx); err != nil {
 				return 0, 0, errors.Trace(err)
 			}
->>>>>>> 2b73570233d (pkg/meta/autoid: fix autoid client blocking on canceled context (#68125))
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
