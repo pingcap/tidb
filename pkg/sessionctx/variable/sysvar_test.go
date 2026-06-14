@@ -1658,7 +1658,7 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 	require.NoError(t, mock.SetGlobalSysVarOnly(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.On, true))
 	globalVal, err := vars.GetGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
 	require.NoError(t, err)
-	require.Equal(t, vardef.Off, globalVal)
+	require.Equal(t, vardef.On, globalVal)
 
 	fallbackVars := NewSessionVars(nil)
 	fallbackMock := NewMockGlobalAccessor4Tests()
@@ -1667,15 +1667,15 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 	require.NoError(t, fallbackMock.SetGlobalSysVarOnly(ctx, vardef.TiDBForeignKeyCheckInSharedLock, vardef.On, true))
 	sessionVal, err := fallbackVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
 	require.NoError(t, err)
-	require.Equal(t, vardef.Off, sessionVal)
+	require.Equal(t, vardef.On, sessionVal)
 	require.False(t, fallbackVars.ForeignKeyCheckInSharedLock)
 
 	initVars := NewSessionVars(nil)
 	require.NoError(t, initVars.SetSystemVarWithRelaxedValidation(vardef.TiDBForeignKeyCheckInSharedLock, vardef.On))
-	require.False(t, initVars.ForeignKeyCheckInSharedLock)
+	require.True(t, initVars.ForeignKeyCheckInSharedLock)
 	sessionVal, err = initVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBForeignKeyCheckInSharedLock)
 	require.NoError(t, err)
-	require.Equal(t, vardef.Off, sessionVal)
+	require.Equal(t, vardef.On, sessionVal)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowForeignKeyCheckInSharedLock = true
