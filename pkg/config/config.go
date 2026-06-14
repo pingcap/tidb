@@ -1022,8 +1022,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
-	// Whether allow foreign key checks to use shared locks on next-gen TiKV.
-	AllowForeignKeyCheckInSharedLock bool `toml:"allow-foreign-key-check-in-shared-lock" json:"allow-foreign-key-check-in-shared-lock"`
+	// Whether SQL users can enable tidb_foreign_key_check_in_shared_lock on next-gen TiKV.
+	AllowEnableForeignKeyCheckInSharedLock bool `toml:"allow-enable-foreign-key-check-in-shared-lock" json:"allow-enable-foreign-key-check-in-shared-lock"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }

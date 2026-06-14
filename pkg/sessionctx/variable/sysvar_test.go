@@ -1600,7 +1600,7 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 	restore := config.RestoreFunc()
 	t.Cleanup(restore)
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowForeignKeyCheckInSharedLock = false
+		conf.Experimental.AllowEnableForeignKeyCheckInSharedLock = false
 	})
 
 	vars := NewSessionVars(nil)
@@ -1678,7 +1678,7 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 	require.Equal(t, vardef.On, sessionVal)
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowForeignKeyCheckInSharedLock = true
+		conf.Experimental.AllowEnableForeignKeyCheckInSharedLock = true
 	})
 
 	enabledVars := NewSessionVars(nil)

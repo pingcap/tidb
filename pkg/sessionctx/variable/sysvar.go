@@ -108,7 +108,7 @@ func allowSetForeignKeyCheckInSharedLock() bool {
 	if !kerneltype.IsNextGen() {
 		return true
 	}
-	return config.GetGlobalConfig().Experimental.AllowForeignKeyCheckInSharedLock
+	return config.GetGlobalConfig().Experimental.AllowEnableForeignKeyCheckInSharedLock
 }
 
 func getForeignKeyCheckInSharedLockSession(s *SessionVars) (string, error) {
