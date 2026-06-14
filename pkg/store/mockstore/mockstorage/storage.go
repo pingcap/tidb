@@ -76,11 +76,7 @@ func (s *mockStorage) EtcdAddrs() ([]string, error) {
 }
 
 func (s *mockStorage) GetPDAddrs() ([]string, error) {
-	pdClient := s.KVStore.GetPDClient()
-	if pdClient == nil {
-		return nil, nil
-	}
-	return metaservice.GetPDAddrs(context.Background(), pdClient, false)
+	return nil, nil
 }
 
 func (s *mockStorage) MetaServiceInfo() (*metaservice.Info, error) {
