@@ -104,6 +104,23 @@ func newExecConcurrencySysVar(name string, defValue int, setter concurrencySette
 	return sv
 }
 
+func allowSetForeignKeyCheckInSharedLock() bool {
+	if !kerneltype.IsNextGen() {
+		return true
+	}
+	return config.GetGlobalConfig().Experimental.AllowEnableForeignKeyCheckInSharedLock
+}
+
+func getForeignKeyCheckInSharedLockSession(s *SessionVars) (string, error) {
+	if val, ok := s.systems[vardef.TiDBForeignKeyCheckInSharedLock]; ok {
+		return val, nil
+	}
+	if s.GlobalVarsAccessor != nil {
+		return s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
+	}
+	return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
+}
+
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
 //	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
@@ -1988,9 +2005,21 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.ForeignKeyChecks, originalValue)
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !allowSetForeignKeyCheckInSharedLock() {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBForeignKeyCheckInSharedLock, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.ForeignKeyCheckInSharedLock = TiDBOptOn(val)
 		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return getForeignKeyCheckInSharedLockSession(s)
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		if s.GlobalVarsAccessor == nil {
+			return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
+		}
+		return s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableForeignKey.Store(TiDBOptOn(val))
