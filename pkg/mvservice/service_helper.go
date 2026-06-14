@@ -139,6 +139,10 @@ UPDATED_AT
 		if i > 0 {
 			sql.WriteString(",")
 		}
+		var lastSuccessTime any
+		if !state.lastSuccessTime.IsZero() {
+			lastSuccessTime = state.lastSuccessTime.Round(0)
+		}
 		sqlescape.MustFormatSQL(
 			&sql,
 			"(%?, %?, %?, %?, %?, %?)",
@@ -146,7 +150,7 @@ UPDATED_AT
 			state.schemaName,
 			state.mviewName,
 			state.alertLevel,
-			state.lastSuccessTime.Round(0),
+			lastSuccessTime,
 			updatedAt.Round(0),
 		)
 	}

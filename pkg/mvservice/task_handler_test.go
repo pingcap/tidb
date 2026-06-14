@@ -2582,14 +2582,22 @@ func TestServerHelperSyncMVRefreshAlertStates(t *testing.T) {
 		{
 			mviewID: 0,
 		},
+		{
+			mviewID:    105,
+			schemaName: "test",
+			mviewName:  "mv_no_success",
+			alertLevel: mvRefreshAlertLevelWarning,
+		},
 	}
 
 	err := (&serviceHelper{}).SyncMVRefreshAlertStates(context.Background(), pool, now, states)
 	require.NoError(t, err)
+	upsertSQL := buildUpsertMVRefreshAlertSQL(now, []refreshAlertTask{states[0], states[1], states[5]})
 	require.Equal(t, []string{
 		buildDeleteMVRefreshAlertSQL([]int64{103}),
-		buildUpsertMVRefreshAlertSQL(now, states[:2]),
+		upsertSQL,
 	}, se.executedRestrictedSQL)
+	require.Contains(t, upsertSQL, "'mv_no_success', 'warning', NULL,")
 	require.Len(t, se.executedRestrictedArg, 2)
 	require.Empty(t, se.executedRestrictedArg[0])
 	require.Empty(t, se.executedRestrictedArg[1])
