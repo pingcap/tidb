@@ -148,6 +148,9 @@ type recordingSessionContext struct {
 	restrictedBatchSize                    []uint64
 	restrictedImportThreads                []int
 	restrictedImportDiskQuota              []string
+	restrictedMLogPurgeBatchSize           []int
+	restrictedMLogPurgeMinRate             []int
+	restrictedMLogPurgeRateBudgetRatio     []float64
 	restrictedRows                         map[string][]chunk.Row
 	restrictedErrs                         map[string]error
 	restrictedAffectedRows                 map[string][]uint64
@@ -241,6 +244,9 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	s.restrictedBatchSize = append(s.restrictedBatchSize, s.GetSessionVars().TiFlashFineGrainedShuffleBatchSize)
 	s.restrictedImportThreads = append(s.restrictedImportThreads, s.GetSessionVars().MViewMaintainImportThreads)
 	s.restrictedImportDiskQuota = append(s.restrictedImportDiskQuota, s.GetSessionVars().MViewMaintainImportDiskQuota)
+	s.restrictedMLogPurgeBatchSize = append(s.restrictedMLogPurgeBatchSize, s.GetSessionVars().MLogPurgeBatchSize)
+	s.restrictedMLogPurgeMinRate = append(s.restrictedMLogPurgeMinRate, s.GetSessionVars().MLogPurgeMinRate)
+	s.restrictedMLogPurgeRateBudgetRatio = append(s.restrictedMLogPurgeRateBudgetRatio, s.GetSessionVars().MLogPurgeRateBudgetRatio)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
 		if pos < len(seq) {
@@ -348,7 +354,7 @@ func TestLatestServerInfosByInstanceKeepsNewestDDLID(t *testing.T) {
 func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.finishedCount.Load() == expected
+		return svc.combinedTaskExecutorMetrics().finishedCount == expected
 	}, testEventuallyWait, testEventuallyTick)
 }
 
@@ -1091,7 +1097,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.purgeMVLog([]*mvLog{l})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.purgeExecutor.metrics.counters.failedCount.Load())
 			require.Eventually(t, func() bool {
 				svc.mvLogPurgeMu.Lock()
 				_, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -1117,7 +1123,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.purgeMVLog([]*mvLog{l})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.purgeExecutor.metrics.counters.failedCount.Load())
 
 			svc.mvLogPurgeMu.Lock()
 			item, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -1220,7 +1226,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.refreshMV([]*mv{m})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.refreshExecutor.metrics.counters.failedCount.Load())
 			require.Eventually(t, func() bool {
 				svc.mvRefreshMu.Lock()
 				_, ok := svc.mvRefreshMu.pending[m.ID]
@@ -1246,7 +1252,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.refreshMV([]*mv{m})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.refreshExecutor.metrics.counters.failedCount.Load())
 
 			svc.mvRefreshMu.Lock()
 			item, ok := svc.mvRefreshMu.pending[m.ID]
@@ -1462,7 +1468,8 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 		MemThreshold: defaultBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}, svc.GetTaskBackpressureConfig())
-	require.NotNil(t, svc.executor.backpressure.Load())
+	require.NotNil(t, svc.refreshExecutor.backpressure.Load())
+	require.NotNil(t, svc.purgeExecutor.backpressure.Load())
 
 	createTable := notifier.NewCreateTableEvent(&meta.TableInfo{ID: 1})
 	require.NoError(t, gotHandler(context.Background(), nil, createTable))
@@ -2313,9 +2320,15 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	vars.GlobalVarsAccessor = mockGlobalAccessor
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainMemQuota, "536870912"))
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainIsolationReadEngines, "tikv"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMLogPurgeBatchSize, "4321"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMLogPurgeMinRate, "8765"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMLogPurgeRateBudgetRatio, "0.75"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainIsolationReadEngines, "tidb"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tidb"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeBatchSize, "1234"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeMinRate, "2345"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeRateBudgetRatio, "0.25"))
 
 	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
@@ -2323,9 +2336,15 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
 	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
 	require.Equal(t, []string{"tikv", "tikv"}, se.restrictedMaintainIsolationReadEngines)
+	require.Equal(t, []int{4321, 4321}, se.restrictedMLogPurgeBatchSize)
+	require.Equal(t, []int{8765, 8765}, se.restrictedMLogPurgeMinRate)
+	require.Equal(t, []float64{0.75, 0.75}, se.restrictedMLogPurgeRateBudgetRatio)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
 	require.Equal(t, "tidb", variable.GetIsolationReadEnginesString(vars))
 	require.Equal(t, "tidb", vars.MVMaintainIsolationReadEngines)
+	require.Equal(t, 1234, vars.MLogPurgeBatchSize)
+	require.Equal(t, 2345, vars.MLogPurgeMinRate)
+	require.Equal(t, 0.25, vars.MLogPurgeRateBudgetRatio)
 }
 
 func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t *testing.T) {
@@ -2347,6 +2366,9 @@ func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t
 		getErrs: map[string]error{
 			variable.TiDBMVMaintainMemQuota:             errors.New("mock global read failure"),
 			variable.TiDBMVMaintainIsolationReadEngines: errors.New("mock global read failure"),
+			variable.TiDBMLogPurgeBatchSize:             errors.New("mock global read failure"),
+			variable.TiDBMLogPurgeMinRate:               errors.New("mock global read failure"),
+			variable.TiDBMLogPurgeRateBudgetRatio:       errors.New("mock global read failure"),
 		},
 		failAfter: map[string]int{
 			variable.TiDBMVMaintainIsolationReadEngines: 1,
@@ -2357,6 +2379,9 @@ func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t
 	}
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tikv"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeBatchSize, "3456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeMinRate, "4567"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeRateBudgetRatio, "0.35"))
 
 	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
@@ -2364,9 +2389,15 @@ func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t
 	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
 	require.Equal(t, []int64{268435456, 268435456}, se.restrictedMaintainQuota)
 	require.Equal(t, []string{"tidb", "tidb"}, se.restrictedMaintainIsolationReadEngines)
+	require.Equal(t, []int{3456, 3456}, se.restrictedMLogPurgeBatchSize)
+	require.Equal(t, []int{4567, 4567}, se.restrictedMLogPurgeMinRate)
+	require.Equal(t, []float64{0.35, 0.35}, se.restrictedMLogPurgeRateBudgetRatio)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
 	require.Equal(t, "tikv", variable.GetIsolationReadEnginesString(vars))
 	require.Equal(t, variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value, vars.MVMaintainIsolationReadEngines)
+	require.Equal(t, 3456, vars.MLogPurgeBatchSize)
+	require.Equal(t, 4567, vars.MLogPurgeMinRate)
+	require.Equal(t, 0.35, vars.MLogPurgeRateBudgetRatio)
 }
 
 func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {

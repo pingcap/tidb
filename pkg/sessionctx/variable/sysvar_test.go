@@ -1847,12 +1847,14 @@ func TestMVServiceGlobalSysVars(t *testing.T) {
 	mock := NewMockGlobalAccessor4Tests()
 
 	oldTaskMax := SetMVServiceTaskMaxConcurrency.Load()
+	oldRefreshRatio := SetMVServiceRefreshTaskConcurrencyRatio.Load()
 	oldCPU := SetMVServiceTaskThresholdCPU.Load()
 	oldMemory := SetMVServiceTaskThresholdMemory.Load()
 	oldRefreshHist := SetMVServiceMViewRefreshHistRetention.Load()
 	oldPurgeHist := SetMVServiceMLogPurgeHistRetention.Load()
 	defer func() {
 		SetMVServiceTaskMaxConcurrency.Store(oldTaskMax)
+		SetMVServiceRefreshTaskConcurrencyRatio.Store(oldRefreshRatio)
 		SetMVServiceTaskThresholdCPU.Store(oldCPU)
 		SetMVServiceTaskThresholdMemory.Store(oldMemory)
 		SetMVServiceMViewRefreshHistRetention.Store(oldRefreshHist)
@@ -1860,17 +1862,20 @@ func TestMVServiceGlobalSysVars(t *testing.T) {
 	}()
 
 	gotTaskMax := -1
+	gotRefreshRatio := -1.0
 	gotCPU := -1.0
 	gotMemory := -1.0
 	var gotRefreshHist time.Duration
 	var gotPurgeHist time.Duration
 
 	taskMaxFn := func(v int) { gotTaskMax = v }
+	refreshRatioFn := func(v float64) { gotRefreshRatio = v }
 	cpuFn := func(v float64) { gotCPU = v }
 	memoryFn := func(v float64) { gotMemory = v }
 	refreshHistFn := func(v time.Duration) { gotRefreshHist = v }
 	purgeHistFn := func(v time.Duration) { gotPurgeHist = v }
 	SetMVServiceTaskMaxConcurrency.Store(&taskMaxFn)
+	SetMVServiceRefreshTaskConcurrencyRatio.Store(&refreshRatioFn)
 	SetMVServiceTaskThresholdCPU.Store(&cpuFn)
 	SetMVServiceTaskThresholdMemory.Store(&memoryFn)
 	SetMVServiceMViewRefreshHistRetention.Store(&refreshHistFn)
@@ -1878,6 +1883,10 @@ func TestMVServiceGlobalSysVars(t *testing.T) {
 
 	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskMax, "0"))
 	require.Equal(t, 0, gotTaskMax)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskRefreshRatio, "0.6"))
+	require.Equal(t, 0.6, gotRefreshRatio)
+	require.Error(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskRefreshRatio, "1"))
 
 	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskThresholdCPU, "0.7"))
 	require.Equal(t, 0.7, gotCPU)

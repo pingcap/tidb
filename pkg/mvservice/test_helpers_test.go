@@ -45,9 +45,9 @@ func runMVServiceForTest(t *testing.T, svc *MVService, cancel context.CancelFunc
 func newRunningMVServiceForTest(t *testing.T, helper Helper) *MVService {
 	t.Helper()
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	svc.executor.Run()
+	svc.runTaskExecutors()
 	t.Cleanup(func() {
-		svc.executor.Close()
+		svc.closeTaskExecutors()
 	})
 	return svc
 }
