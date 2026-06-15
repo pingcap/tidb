@@ -250,7 +250,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	if len(jobWs) == 0 {
 		return nil
 	}
-	_, err := jobsubmit.SubmitBatch(s.ctx, jobsubmit.SubmitOptions{
+	err := jobsubmit.SubmitBatch(s.ctx, jobsubmit.SubmitOptions{
 		Store:                       s.store,
 		SessPool:                    s.sessPool,
 		SysTblMgr:                   s.sysTblMgr,

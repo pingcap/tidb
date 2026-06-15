@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -215,7 +214,7 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 		}
 		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
 		// and stop the reorganization workers
-		if job.IsPausing() || jobsubmit.HasSysDB(job) {
+		if job.IsPausing() || util.HasSysDB(job) {
 			return true, nil
 		}
 		var errs []error

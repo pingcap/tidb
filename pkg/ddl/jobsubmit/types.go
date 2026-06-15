@@ -44,8 +44,3 @@ type SubmitOptions struct {
 	// insert attempt. The returned cleanup runs if that transaction attempt fails.
 	BeforeInsertWithAssignedIDs func(specs []*JobSpec) (cleanup func())
 }
-
-// SubmitResult is the durable enqueue result for one submitted job.
-type SubmitResult struct {
-	JobID int64
-}

@@ -32,7 +32,6 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -49,25 +48,25 @@ import (
 // It mutates the input specs in place: jobs receive their IDs, StartTS, BDR
 // role, and state. Upgrade-time submission may also set AdminOperator while
 // pausing user jobs. Callers must not treat the input specs as read-only.
-func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]SubmitResult, error) {
+func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) error {
 	if len(specs) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se, err := opts.SessPool.Get()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer opts.SessPool.Put(se)
 
 	minJobID := opts.MinJobIDRefresher.GetCurrMinJobID()
 	found, err := opts.SysTblMgr.HasFlashbackClusterJob(ctx, minJobID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if found {
-		return nil, errors.Errorf("Can't add ddl job, have flashback cluster job")
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
 	var (
@@ -84,13 +83,13 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	for _, spec := range specs {
 		job := spec.Job
 		if err = job.CheckInvolvingSchemaInfo(); err != nil {
-			return nil, err
+			return err
 		}
 		intest.Assert(job.Version != 0, "Job version should not be zero")
 
@@ -102,20 +101,20 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
 					if bdr.IsDenied(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
-						return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
 			} else if bdr.IsDenied(ast.BDRRole(bdrRole), job.Type, spec.Args) && !filter.IsSystemSchema(job.SchemaName) {
-				return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}
 
 		setJobStateToQueueing(job)
 
-		if opts.ServerStateSyncer != nil && opts.ServerStateSyncer.IsUpgradingState() && !HasSysDB(job) {
-			if err = PauseRunningJob(job, model.AdminCommandBySystem); err != nil {
+		if opts.ServerStateSyncer != nil && opts.ServerStateSyncer.IsUpgradingState() && !ddlutil.HasSysDB(job) {
+			if err = ddlutil.PauseRunningJob(job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
-				return nil, err
+				return err
 			}
 			logutil.DDLUpgradingLogger().Info("pause user DDL by system successful", zap.Stringer("job", job))
 		}
@@ -123,14 +122,10 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 
 	ddlSe := sess.NewSession(se)
 	if err = GenGIDAndInsertJobsWithRetry(ctx, ddlSe, specs, opts.BeforeInsertWithAssignedIDs); err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	results := make([]SubmitResult, 0, len(specs))
-	for _, spec := range specs {
-		results = append(results, SubmitResult{JobID: spec.Job.ID})
-	}
-	return results, nil
+	return nil
 }
 
 // GenGIDAndInsertJobsWithRetry generates job-related global IDs and inserts DDL
@@ -491,29 +486,4 @@ func setJobStateToQueueing(job *model.Job) {
 		}
 	}
 	job.State = model.JobStateQueueing
-}
-
-// HasSysDB returns whether a job involves a system-related database.
-func HasSysDB(job *model.Job) bool {
-	for _, info := range job.GetInvolvingSchemaInfo() {
-		if metadef.IsSystemRelatedDB(info.Database) {
-			return true
-		}
-	}
-	return false
-}
-
-// PauseRunningJob changes a runnable job to the pausing state.
-func PauseRunningJob(job *model.Job, byWho model.AdminCommandOperator) error {
-	if job.IsPausing() || job.IsPaused() {
-		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-	}
-	if !job.IsPausable() {
-		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
-		return dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
-	}
-
-	job.State = model.JobStatePausing
-	job.AdminOperator = byWho
-	return nil
 }

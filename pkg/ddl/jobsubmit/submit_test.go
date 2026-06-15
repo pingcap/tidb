@@ -146,10 +146,8 @@ func TestSubmitBatchEnqueuesTableModeJob(t *testing.T) {
 	spec := newTableModeSpec(t)
 	initialGID := getGlobalIDForSubmitTest(ctx, t, env.store)
 
-	results, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+	err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, spec.Job.ID, results[0].JobID)
 	require.Greater(t, spec.Job.ID, initialGID)
 	require.Equal(t, model.JobStateQueueing, spec.Job.State)
 	require.NotZero(t, spec.Job.StartTS)
@@ -200,10 +198,8 @@ func TestSubmitBatchAllocatesIDsAndInsertsJob(t *testing.T) {
 	}
 	initialGID := getGlobalIDForSubmitTest(ctx, t, env.store)
 
-	results, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+	err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, spec.Job.ID, results[0].JobID)
 	require.Greater(t, spec.Job.ID, initialGID)
 	require.Greater(t, spec.Job.TableID, initialGID)
 	createArgs := spec.Args.(*model.CreateTableArgs)
@@ -223,7 +219,7 @@ func TestSubmitBatchChecksAndPauseState(t *testing.T) {
 		env := newSubmitTestEnv(t)
 		spec := newTableModeSpec(t)
 		spec.Job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{{Database: "test"}}
-		_, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
 		require.ErrorContains(t, err, "must have non-empty name")
 		env.tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("0"))
 	})
@@ -232,7 +228,7 @@ func TestSubmitBatchChecksAndPauseState(t *testing.T) {
 		env := newSubmitTestEnv(t)
 		env.tk.MustExec(fmt.Sprintf(`insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
 			values(123, 0, '1', '1', '{"id":123}', %d, 0)`, model.ActionFlashbackCluster))
-		_, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{newTableModeSpec(t)})
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{newTableModeSpec(t)})
 		require.ErrorContains(t, err, "have flashback cluster job")
 	})
 
@@ -241,7 +237,7 @@ func TestSubmitBatchChecksAndPauseState(t *testing.T) {
 		setBDRRoleForSubmitTest(ctx, t, env.store, ast.BDRRolePrimary)
 		spec := newTableModeSpec(t)
 		spec.Job.CDCWriteSource = 0
-		_, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
 		require.ErrorContains(t, err, "bdr role")
 		env.tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("0"))
 	})
@@ -250,7 +246,7 @@ func TestSubmitBatchChecksAndPauseState(t *testing.T) {
 		env := newSubmitTestEnv(t)
 		env.opts.ServerStateSyncer.(*fakeServerStateSyncer).upgrading = true
 		spec := newTableModeSpec(t)
-		_, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
 		require.NoError(t, err)
 		require.Equal(t, model.JobStatePausing, spec.Job.State)
 		require.Equal(t, model.AdminCommandBySystem, spec.Job.AdminOperator)
@@ -289,12 +285,11 @@ func TestSubmitBatchRetryCleanup(t *testing.T) {
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGIDRetryableError", `1*return(true)`)
 
-	results, err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+	err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
 	require.NoError(t, err)
-	require.Len(t, results, 1)
 	require.Len(t, assignedIDs, 2)
 	require.Len(t, cleanupIDs, 1)
 	require.Equal(t, assignedIDs[0], cleanupIDs[0])
-	require.Equal(t, assignedIDs[1], results[0].JobID)
+	require.Equal(t, assignedIDs[1], spec.Job.ID)
 	env.tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("1"))
 }

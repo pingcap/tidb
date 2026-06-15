@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -1584,7 +1583,7 @@ func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs [
 
 // PauseJobs pause all the DDL jobs according to user command.
 func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(ctx, jobsubmit.PauseRunningJob, se, ids, model.AdminCommandByEndUser)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
@@ -1601,7 +1600,7 @@ func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 // PauseJobsBySystem pauses Jobs because of internal reasons.
 func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
-	return processJobs(ctx, jobsubmit.PauseRunningJob, se, ids, model.AdminCommandBySystem)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
@@ -1675,7 +1674,7 @@ func processAllJobs(
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
 func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), jobsubmit.PauseRunningJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), util.PauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.

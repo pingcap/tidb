@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -67,6 +69,31 @@ const (
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL = 90
 )
+
+// HasSysDB returns whether a job involves a system-related database.
+func HasSysDB(job *model.Job) bool {
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if metadef.IsSystemRelatedDB(info.Database) {
+			return true
+		}
+	}
+	return false
+}
+
+// PauseRunningJob changes a runnable job to the pausing state.
+func PauseRunningJob(job *model.Job, byWho model.AdminCommandOperator) error {
+	if job.IsPausing() || job.IsPaused() {
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+	}
+	if !job.IsPausable() {
+		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
+		return dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
+	}
+
+	job.State = model.JobStatePausing
+	job.AdminOperator = byWho
+	return nil
+}
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
