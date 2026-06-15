@@ -15,7 +15,6 @@
 package keyspace
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -101,18 +100,4 @@ func BuildAPIContext(keyspaceName string) (apiContext pd.APIContext) {
 		apiContext = pd.NewAPIContextV2(keyspaceName)
 	}
 	return
-}
-
-// CodecFromName is used to get the corresponding codec according to the keyspace name.
-func CodecFromName(ctx context.Context, pdCli pd.Client, keyspaceName string) (tikv.Codec, error) {
-	if len(keyspaceName) == 0 {
-		return tikv.NewCodecV1(tikv.ModeTxn), nil
-	}
-
-	meta, err := pdCli.LoadKeyspace(ctx, keyspaceName)
-	if err != nil {
-		return nil, err
-	}
-
-	return tikv.NewCodecV2(tikv.ModeTxn, meta)
 }
