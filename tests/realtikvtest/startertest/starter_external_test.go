@@ -435,6 +435,8 @@ func TestExternalStarterUsernamePrefixContracts(t *testing.T) {
 	prefixError := fmt.Sprintf("User name must start with `%s.`", keyspaceName)
 	userName := keyspaceName + ".ext_starter_user"
 	dotUserName := keyspaceName + ".ext.starter_user"
+	validRenameSourceUserName := keyspaceName + ".ext_starter_rename_source"
+	validRenamedUserName := keyspaceName + ".ext_starter_renamed"
 	invalidRenamedUserName := "ext_starter_renamed"
 	roleName := keyspaceName + ".ext_starter_role"
 	wrongKeyspaceUserName := otherStarterKeyspaceName(keyspaceName) + ".ext_starter_user"
@@ -457,7 +459,16 @@ func TestExternalStarterUsernamePrefixContracts(t *testing.T) {
 		quoteSQLIdentifier(userName), quoteSQLIdentifier("%"))))
 	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("create user %s@%s identified by 'starter_dot_pwd'",
 		quoteSQLIdentifier(dotUserName), quoteSQLIdentifier("%"))))
+	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("create user %s@%s identified by 'starter_rename_pwd'",
+		quoteSQLIdentifier(validRenameSourceUserName), quoteSQLIdentifier("%"))))
 	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("create role %s", quoteSQLIdentifier(roleName))))
+
+	require.NoError(t, execSQL(ctx, db, fmt.Sprintf("rename user %s@%s to %s@%s",
+		quoteSQLIdentifier(validRenameSourceUserName), quoteSQLIdentifier("%"),
+		quoteSQLIdentifier(validRenamedUserName), quoteSQLIdentifier("%"))))
+	require.Equal(t, validRenamedUserName, queryString(ctx, t, db, fmt.Sprintf(
+		"select User from mysql.user where User=%s and Host=%s",
+		quoteSQLString(validRenamedUserName), quoteSQLString("%"))))
 
 	requireErrorContains(t,
 		execSQL(ctx, db, fmt.Sprintf("rename user %s@%s to %s@%s",
@@ -823,6 +834,7 @@ func cleanupStarterUsernamePrefixData(ctx context.Context, t *testing.T, db *sql
 	userNames := []string{
 		keyspaceName + ".ext_starter_user",
 		keyspaceName + ".ext.starter_user",
+		keyspaceName + ".ext_starter_rename_source",
 		keyspaceName + ".ext_starter_renamed",
 		keyspaceName + ".ext_starter_reject",
 		otherStarterKeyspaceName(keyspaceName) + ".ext_starter_user",
