@@ -245,6 +245,16 @@ type session struct {
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
+}
+
+// SetTraceCtx updates the trace context of the session.
+func (s *session) SetTraceCtx(ctx context.Context) {
+	s.currentCtx = ctx
+}
+
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
@@ -3940,6 +3950,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	model.SetLowerCaseTableNamesOnBootstrap(lowerCaseTableNames)
 
+	infoschema.BootstrapFinishGlobalVars.Store(true)
+
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
 	err = dom.Start(ddl.Normal)
@@ -4585,6 +4597,8 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
 		isCrucial = true
+	case *ast.AdminStmt:
+		isCrucial = isAdminLogReplStmt(stmt.Tp)
 	}
 
 	if isCrucial {

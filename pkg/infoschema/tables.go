@@ -113,8 +113,9 @@ const (
 	// TableViews is the string constant of infoschema table.
 	TableViews = "VIEWS"
 	// TableRoutines is the string constant of infoschema table.
-	TableRoutines        = "ROUTINES"
-	tableParameters      = "PARAMETERS"
+	TableRoutines = "ROUTINES"
+	// TableParameters is the string constant of infoschema table.
+	TableParameters      = "PARAMETERS"
 	tableEvents          = "EVENTS"
 	tableGlobalStatus    = "GLOBAL_STATUS"
 	tableGlobalVariables = "GLOBAL_VARIABLES"
@@ -296,7 +297,7 @@ var tableIDMap = map[string]int64{
 	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
 	TableRoutines:                           autoid.InformationSchemaDBID + 24,
-	tableParameters:                         autoid.InformationSchemaDBID + 25,
+	TableParameters:                         autoid.InformationSchemaDBID + 25,
 	tableEvents:                             autoid.InformationSchemaDBID + 26,
 	tableGlobalStatus:                       autoid.InformationSchemaDBID + 27,
 	tableGlobalVariables:                    autoid.InformationSchemaDBID + 28,
@@ -2472,7 +2473,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
 	TableRoutines:                           tableRoutinesCols,
-	tableParameters:                         tableParametersCols,
+	TableParameters:                         tableParametersCols,
 	tableEvents:                             tableEventsCols,
 	tableGlobalStatus:                       tableGlobalStatusCols,
 	tableGlobalVariables:                    tableGlobalVariablesCols,

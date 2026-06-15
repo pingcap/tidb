@@ -56,7 +56,7 @@ func TestStandbyBlockingCh(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		InitStandby(ctx, etcdCli)
-		go WatchStandby(ctx, etcdCli, nil)
+		go WatchStandby(ctx, etcdCli)
 
 		require.False(t, IsStandbyMode())
 
@@ -97,7 +97,7 @@ func TestStandbyBlockingCh(t *testing.T) {
 		}()
 		checkChanNotClosed(t, doneCh)
 
-		go WatchStandby(ctx, etcdCli, nil)
+		go WatchStandby(ctx, etcdCli)
 
 		mustPutStandbyEtcdValue(t, etcdCli, "0")
 		checkChanClosed(t, doneCh)
@@ -159,8 +159,7 @@ func TestWatchStandbyCompactedBeforeStart(t *testing.T) {
 	defer cancel()
 	doneCh := make(chan struct{})
 	go func() {
-		WatchStandby(watchCtx, etcdCli, nil)
-		// currently WatchStandby will return after see "0"
+		WatchStandby(watchCtx, etcdCli)
 		close(doneCh)
 	}()
 
@@ -230,8 +229,7 @@ func TestWatchStandbyCompactedDuringRunning(t *testing.T) {
 	defer cancel()
 	doneCh := make(chan struct{})
 	go func() {
-		WatchStandby(watchCtx, etcdCli, nil)
-		// currently WatchStandby will return after see "0"
+		WatchStandby(watchCtx, etcdCli)
 		close(doneCh)
 	}()
 
@@ -245,8 +243,12 @@ func TestWatchStandbyCompactedDuringRunning(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 
 	// The watcher should not miss the latest version after it renews from compaction.
+	require.Eventually(t, func() bool {
+		return !IsStandbyMode()
+	}, 2*time.Second, 50*time.Millisecond)
+
+	cancel()
 	<-doneCh
-	require.False(t, IsStandbyMode())
 }
 
 func TestWatchStandbyCompactedAfterSwitchEvent(t *testing.T) {
@@ -289,23 +291,17 @@ func TestWatchStandbyCompactedAfterSwitchEvent(t *testing.T) {
 	defer cancel()
 	doneCh := make(chan struct{})
 	go func() {
-		WatchStandby(watchCtx, etcdCli, nil)
+		WatchStandby(watchCtx, etcdCli)
 		close(doneCh)
 	}()
 
-	// WatchStandby should observe the snapshot value and exit even if the switch event is compacted away.
-	require.Eventually(t, func() bool {
-		select {
-		case <-doneCh:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
-
+	// WatchStandby should observe the snapshot value even if the switch event is compacted away.
 	require.Eventually(t, func() bool {
 		return !IsStandbyMode()
 	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	<-doneCh
 }
 
 func TestDupEnableDisable(t *testing.T) {

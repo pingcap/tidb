@@ -54,3 +54,47 @@ func TestPseudoTable(t *testing.T) {
 	// We added a hidden column. The pseudo table still only have zero column.
 	require.Equal(t, tbl.ColNum(), 0)
 }
+
+func TestEstimateRowCountWithUniformDistributionNoHistogramTopN(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tests := []struct {
+		name     string
+		topN     *statistics.TopN
+		ndv      int64
+		expected float64
+	}{
+		{name: "nil topn", ndv: 1, expected: 1},
+		{name: "empty topn", topN: &statistics.TopN{}, ndv: 1, expected: 1},
+		{
+			name: "topn min count",
+			topN: &statistics.TopN{TopN: []statistics.TopNMeta{
+				{Count: 5},
+				{Count: 3},
+			}},
+			ndv:      3,
+			expected: 2,
+		},
+		{
+			name: "topn min count lower bound",
+			topN: &statistics.TopN{TopN: []statistics.TopNMeta{
+				{Count: 1},
+			}},
+			ndv:      2,
+			expected: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx := &statistics.Index{
+				TopN:      tt.topN,
+				Histogram: *statistics.NewHistogram(1, tt.ndv, 0, 0, tp, 0, 0),
+			}
+
+			require.NotPanics(t, func() {
+				count := estimateRowCountWithUniformDistribution(nil, idx, 3, 0)
+				require.Equal(t, tt.expected, count)
+			})
+		})
+	}
+}

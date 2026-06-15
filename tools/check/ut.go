@@ -1101,6 +1101,12 @@ func listNewTestCases(pkg string) ([]string, error) {
 func cmdToLines(cmd *exec.Cmd) ([]string, error) {
 	res, err := cmd.Output()
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			if stderr != "" {
+				err = fmt.Errorf("%w: %s", err, stderr)
+			}
+		}
 		return nil, withTrace(err)
 	}
 	ss := bytes.Split(res, []byte{'\n'})

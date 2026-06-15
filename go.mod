@@ -15,7 +15,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
-	github.com/antchfx/xmlquery v1.5.0
+	github.com/antchfx/xmlquery v1.5.1
 	github.com/antchfx/xpath v1.3.6
 	github.com/apache/arrow-go/v18 v18.0.0
 	github.com/apache/skywalking-eyes v0.4.0
@@ -135,7 +135,7 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.49.0
+	golang.org/x/net v0.51.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.42.0
@@ -268,7 +268,7 @@ require (
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
 	github.com/ncw/directio v1.0.5 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
-	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe // indirect
+	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1
@@ -343,9 +343,9 @@ replace (
 )
 
 replace (
-	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260415090129-0899813016f7
+	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260615022553-9a64381f8b33
 	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260415124818-8dac51c06b6c
-	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260415100754-cdf993cfd9de
+	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260613091450-a9536e9d9cda
 )
 
 replace github.com/ihciah/rust2go => git.pingcap.net/pingkai/rust2go v0.0.0-20260116050154-68094297cea8

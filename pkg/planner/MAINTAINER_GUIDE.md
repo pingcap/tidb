@@ -233,6 +233,14 @@ Even on a hit, planner MUST rebuild param-dependent ranges for current values
 before executing:
 - scan ranges (table/index), point-get/batch-point-get ranges, index-join ranges
   must be regenerated.
+- wrapper plans such as `SelectInto` must be unwrapped to their target plan for
+  cacheability checks, plan digest, and range rebuild; the executor still
+  receives the wrapper plan so statement semantics are preserved.
+- hidden stored-routine prepared templates may need statement-visible warnings
+  produced while building the cached plan (for example constant-fold side
+  effects) to be replayed on cache hits so warning handlers observe the same
+  warnings on hit and miss paths. Plain prepared statements currently preserve
+  their historical behavior and do not replay those warnings on hits.
 - if rebuild fails or hits a safety fallback, the cached plan is treated as
   unusable and the execution falls back to "miss" behavior.
 
@@ -248,6 +256,32 @@ backend (`GetPlanFromPlanCache`) after turning constants into parameters.
 Invariants:
 - Parameterization MUST NOT leave mutations on the original AST. If you need to
   mutate, you must restore (or operate on a copied AST).
+- The stored-routine-specific rules below apply only when
+  `tidb_enable_sp_plan_cache=ON`; with the switch OFF, routine internal SQL
+  stays on the plain execution path.
+- Stored routine parameterization MUST respect SQL name-resolution boundaries;
+  for example, alias-sensitive `GROUP BY` / `HAVING` / `ORDER BY` references
+  should fall back rather than being rewritten before the planner can
+  disambiguate aliases and routine vars.
+- Stored routine `LIMIT` routine variables MUST fall back; prepared-parameter
+  semantics reject values like `-1` and bypass the routine-only mutability
+  checks that plain procedure execution applies.
+- Stored routine `ENUM` / `SET` variables MUST fall back for now; the hidden
+  prepared `EXECUTE` path can lose scalar-result metadata for those parameter
+  types, so the uncached routine execution path is the current correctness
+  boundary.
+- Hidden stored-routine prepared templates MUST isolate statement-scoped table
+  tracking such as `StmtCtx.RelatedTableIDs`; otherwise one internal SQL can
+  inherit another statement's schema fences and fail after unrelated DDL.
+- Hidden stored-routine prepared-template generation can run while the outer
+  statement still has active cache state; seed and restore temporary
+  `PlanCacheParams` slots during probing so parameter markers do not read the
+  outer execution's runtime arguments.
+- Hidden stored-routine prepared-template probes MUST isolate warnings; an
+  unsupported probe should fall back without changing `SHOW WARNINGS` output or
+  stored-routine warning-handler behavior. Hidden `EXECUTE` paths may replace
+  `SessionVars.StmtCtx`, so warning filtering must be applied to the final
+  active statement context, not only to the pre-execution pointer.
 - Non-prepared cacheability rules MUST remain conservative; widen only with
   dedicated semantic coverage.
 - The per-session `PlanCacheStmt` for non-prepared cache is keyed by the

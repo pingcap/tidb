@@ -158,6 +158,21 @@ func TestRandomFlushPlanCache(t *testing.T) {
 	require.EqualError(t, err, "Do not support the 'admin flush global scope.'")
 }
 
+func TestPreparedPlanCacheHitDoesNotReplayWarnings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("prepare stmt from \"select cast('6x' as unsigned integer)\"")
+
+	tk.MustExec("execute stmt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '6x'"))
+
+	tk.MustExec("execute stmt")
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
 func TestPrepareCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

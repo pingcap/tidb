@@ -5463,7 +5463,7 @@ func TestUnionOrderBy(t *testing.T) {
 func TestLikeEscape(t *testing.T) {
 	table := []testCase{
 		// for like escape
-		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
+		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_' ESCAPE ''"},
 		{`select "abc_" like "abc\\_" escape '\\'`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
 		{`select "abc_" like "abc\\_" escape '||'`, false, ""},
 		{`select "abc" like "escape" escape '+'`, true, "SELECT _UTF8MB4'abc' LIKE _UTF8MB4'escape' ESCAPE '+'"},
@@ -5656,6 +5656,14 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = TIDB_JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'TIDB_JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = tidb_json SELECT 1", true, "EXPLAIN FORMAT = 'tidb_json' SELECT 1"},
 		{"EXPLAIN ANALYZE FORMAT = tidb_json SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' SELECT 1"},
+		{"EXPLAIN ROUTINE FUNCTION db.f", true, "EXPLAIN ROUTINE FUNCTION `db`.`f`()"},
+		{"EXPLAIN ROUTINE FUNCTION db.f(1, 'x')", true, "EXPLAIN ROUTINE FUNCTION `db`.`f`(1, _UTF8MB4'x')"},
+		{"EXPLAIN ROUTINE PROCEDURE db.p(1, @x)", true, "EXPLAIN ROUTINE PROCEDURE `db`.`p`(1, @`x`)"},
+		{"EXPLAIN ROUTINE FUNCTION db.f(1) FOR STMT 7", false, ""},
+		{"EXPLAIN FORMAT = 'brief' ROUTINE FUNCTION db.f(1)", true, "EXPLAIN FORMAT = 'brief' ROUTINE FUNCTION `db`.`f`(1)"},
+		{"EXPLAIN ANALYZE ROUTINE FUNCTION db.f(1)", true, "EXPLAIN ANALYZE ROUTINE FUNCTION `db`.`f`(1)"},
+		{"EXPLAIN ANALYZE ROUTINE FUNCTION db.f(1) FOR STMT 7", true, "EXPLAIN ANALYZE ROUTINE FUNCTION `db`.`f`(1) FOR STMT 7"},
+		{"EXPLAIN ANALYZE FORMAT = 'tidb_json' ROUTINE PROCEDURE db.p(1, @x) FOR STMT 3", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' ROUTINE PROCEDURE `db`.`p`(1, @`x`) FOR STMT 3"},
 	}
 	RunTest(t, table, false)
 }
@@ -6954,6 +6962,10 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	}
 
 	switch node := in.(type) {
+	case *ast.PatternLikeOrIlikeExpr:
+		if node.Escape == '\\' {
+			node.EscapeExplicit = false
+		}
 	case *ast.CreateTableStmt:
 		for _, opt := range node.Options {
 			switch opt.Tp {
@@ -7887,7 +7899,97 @@ func TestStoredRoutines(t *testing.T) {
 		{
 			`CREATE FUNCTION fn1(a char) returns int deterministic return 1;`,
 			true,
-			"CREATE DEFINER = CURRENT_USER FUNCTION `fn1`(`a` char) RETURNS int RETURN 1",
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn1`(`a` char) RETURNS int DETERMINISTIC RETURN 1",
+		},
+		{
+			`CREATE FUNCTION fn2() RETURNS varchar(100) NOT DETERMINISTIC RETURN 'test';`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn2`() RETURNS varchar(100) NOT DETERMINISTIC RETURN _UTF8MB4'test'",
+		},
+		{
+			`CREATE FUNCTION fn3(x INT, y INT) RETURNS INT READS SQL DATA BEGIN RETURN x + y; END;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn3`(`x` int, `y` int) RETURNS int READS SQL DATA BEGIN RETURN `x`+`y`; END",
+		},
+		{
+			`CREATE FUNCTION fn4(val DOUBLE) RETURNS DOUBLE MODIFIES SQL DATA RETURN val * 2;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn4`(`val` double) RETURNS double MODIFIES SQL DATA RETURN `val`*2",
+		},
+		{
+			`CREATE FUNCTION fn5() RETURNS INT NO SQL RETURN 42;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn5`() RETURNS int NO SQL RETURN 42",
+		},
+		{
+			`CREATE FUNCTION fn6(a TEXT) RETURNS TEXT CONTAINS SQL RETURN UPPER(a);`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn6`(`a` text) RETURNS text CONTAINS SQL RETURN UPPER(`a`)",
+		},
+		{
+			`CREATE DEFINER='user'@'host' FUNCTION fn7(x INT) RETURNS INT SQL SECURITY DEFINER RETURN x * x;`,
+			true,
+			"CREATE DEFINER = `user`@`host` FUNCTION `fn7`(`x` int) RETURNS int SQL SECURITY DEFINER RETURN `x`*`x`",
+		},
+		{
+			`CREATE FUNCTION fn8(p DECIMAL(10,2)) RETURNS DECIMAL(10,2) DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'square function' BEGIN RETURN p * p; END;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn8`(`p` decimal(10,2)) RETURNS decimal(10,2) DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'square function' BEGIN RETURN `p`*`p`; END",
+		},
+		{
+			`CREATE FUNCTION fn9(d DATE) RETURNS DATE NOT DETERMINISTIC NO SQL RETURN d + INTERVAL 1 DAY;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn9`(`d` date) RETURNS date NOT DETERMINISTIC NO SQL RETURN DATE_ADD(`d`, INTERVAL 1 DAY)",
+		},
+		{
+			`CREATE FUNCTION fn10(flag BOOLEAN) RETURNS VARCHAR(10) LANGUAGE SQL RETURN IF(flag, 'true', 'false');`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn10`(`flag` tinyint(1)) RETURNS varchar(10) RETURN IF(`flag`, _UTF8MB4'true', _UTF8MB4'false')",
+		},
+		{
+			`CREATE FUNCTION fn11() RETURNS JSON DETERMINISTIC RETURN JSON_OBJECT('key', 'value');`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn11`() RETURNS json DETERMINISTIC RETURN JSON_OBJECT(_UTF8MB4'key', _UTF8MB4'value')",
+		},
+		{
+			`CREATE FUNCTION fn12(a INT, b INT, c INT) RETURNS INT BEGIN DECLARE result INT; SET result = a + b + c; RETURN result; END;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn12`(`a` int, `b` int, `c` int) RETURNS int BEGIN DECLARE `result` INT;SET `result`=`a`+`b`+`c`;RETURN `result`; END",
+		},
+		{
+			`CREATE FUNCTION fn13(str VARCHAR(255)) RETURNS INT DETERMINISTIC RETURN LENGTH(str);`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn13`(`str` varchar(255)) RETURNS int DETERMINISTIC RETURN LENGTH(`str`)",
+		},
+		{
+			`CREATE FUNCTION fn14() RETURNS BIGINT UNSIGNED DETERMINISTIC RETURN 18446744073709551615;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn14`() RETURNS bigint UNSIGNED DETERMINISTIC RETURN 18446744073709551615",
+		},
+		{
+			`CREATE FUNCTION fn15(ts TIMESTAMP) RETURNS DATETIME MODIFIES SQL DATA SQL SECURITY DEFINER RETURN CONVERT_TZ(ts, '+00:00', '+08:00');`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn15`(`ts` timestamp) RETURNS datetime MODIFIES SQL DATA SQL SECURITY DEFINER RETURN CONVERT_TZ(`ts`, _UTF8MB4'+00:00', _UTF8MB4'+08:00')",
+		},
+		{
+			`CREATE FUNCTION udf1 RETURNS INTEGER SONAME 'udf1.so';`,
+			true,
+			"CREATE FUNCTION `udf1` RETURNS INTEGER SONAME 'udf1.so'",
+		},
+		{
+			`CREATE FUNCTION udf2 RETURNS INTEGER NOT DETERMINISTIC READS SQL DATA SONAME 'udf2.so';`,
+			false,
+			"",
+		},
+		{
+			`CREATE AGGREGATE FUNCTION udf3 RETURNS STRING SONAME 'udf3.so';`,
+			true,
+			"CREATE AGGREGATE FUNCTION `udf3` RETURNS STRING SONAME 'udf3.so'",
+		},
+		{
+			`CREATE AGGREGATE FUNCTION udf4 RETURNS STRING DETERMINISTIC SONAME 'udf4.so';`,
+			false,
+			"",
 		},
 		{
 			`CREATE PROCEDURE sp6( )

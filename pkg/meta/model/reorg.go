@@ -65,6 +65,10 @@ func (s BackfillState) String() string {
 //   - ReorgStageModifyColumnUpdateColumn
 //   - ReorgStageModifyColumnRecreateIndex
 //   - ReorgStageModifyColumnCompleted
+//
+// Add auto_increment column (non-instant backfill):
+//   - ReorgStageAddAutoIncrementColumnBackfill
+//   - ReorgStageAddAutoIncrementColumnCompleted
 type ReorgStage byte
 
 const (
@@ -76,6 +80,10 @@ const (
 	ReorgStageModifyColumnRecreateIndex ReorgStage = 2
 	// ReorgStageModifyColumnCompleted means the reorganization process is completed.
 	ReorgStageModifyColumnCompleted ReorgStage = 3
+	// ReorgStageAddAutoIncrementColumnBackfill means the new AUTO_INCREMENT column is being backfilled.
+	ReorgStageAddAutoIncrementColumnBackfill ReorgStage = 4
+	// ReorgStageAddAutoIncrementColumnCompleted means the AUTO_INCREMENT backfill is completed.
+	ReorgStageAddAutoIncrementColumnCompleted ReorgStage = 5
 )
 
 // DDLReorgMeta is meta info of DDL reorganization.

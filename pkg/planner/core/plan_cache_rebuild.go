@@ -29,14 +29,17 @@ import (
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
 func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	// if !sc.UseCache() {
-	// 	return false // plan-cache is disabled for this query
-	// }
+	rebuildRoot := planCacheRebuildRoot(p)
+	if rebuildRoot == nil {
+		return false
+	}
+	sc := rebuildRoot.SCtx().GetSessionVars().StmtCtx
+	// Keep the current remote/fast-plan behavior: don't early-return on UseCache
+	// before rebuilding. The post-rebuild check below remains the safety gate.
 
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
-	if err := rebuildRange(p); err != nil {
+	if err := rebuildRange(rebuildRoot); err != nil {
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
@@ -46,6 +49,13 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 		return false
 	}
 	return true
+}
+
+func planCacheRebuildRoot(p base.Plan) base.Plan {
+	if selectInto, ok := p.(*SelectInto); ok {
+		return selectInto.TargetPlan
+	}
+	return p
 }
 
 func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
@@ -158,6 +168,10 @@ func rebuildRange(p base.Plan) error {
 	case *Delete:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
+		}
+	case *SelectInto:
+		if x.TargetPlan != nil {
+			return rebuildRange(x.TargetPlan)
 		}
 	}
 	return nil

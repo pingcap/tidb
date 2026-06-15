@@ -2247,6 +2247,10 @@ var defaultSysVars = []*SysVar{
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoBackslashEscapesInLike, Value: BoolToOnOff(DefTiDBEnableNoBackslashEscapesInLike), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoBackslashEscapesInLike = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, "AUTO"}, Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
 		if s == Off {
 			vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
@@ -3763,6 +3767,13 @@ var defaultSysVars = []*SysVar{
 		transaction.SingleStoreTxnCommitEnabled = enabled
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSPPlanCache, Value: BoolToOnOff(DefTiDBEnableSPPlanCache), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableSPPlanCache = TiDBOptOn(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAlterSyncMaxLagSeconds, Value: strconv.Itoa(DefTiDBAlterSyncMaxLagSeconds), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32},
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,

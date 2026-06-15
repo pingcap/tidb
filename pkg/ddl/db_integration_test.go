@@ -1230,7 +1230,8 @@ func TestAlterColumn(t *testing.T) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
 
-	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	// Dropping or keeping auto_increment is allowed, and enabling it again is supported
+	// when the column is already a NONCLUSTERED PRIMARY KEY.
 	tk.MustExec("drop table if exists mc")
 	tk.MustExec("create table mc(a int key nonclustered auto_increment, b int)")
 	tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
@@ -1247,7 +1248,16 @@ func TestAlterColumn(t *testing.T) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
 
-	err = tk.ExecToErr("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	tk.MustExec("alter table mc modify column a bigint auto_increment") // Enables auto_increment again on existing PK.
+	result = tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	require.Equal(t, expected, createSQL)
+
+	// But enabling auto_increment without a (nonclustered) PRIMARY KEY is still unsupported.
+	tk.MustExec("drop table if exists mc2")
+	tk.MustExec("create table mc2(a bigint not null, b int)")
+	err = tk.ExecToErr("alter table mc2 modify column a bigint not null auto_increment")
 	require.Error(t, err)
 
 	tk.MustExec("drop table if exists t")

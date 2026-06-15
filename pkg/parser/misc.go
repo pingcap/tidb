@@ -849,6 +849,7 @@ var tokenMap = map[string]int{
 	"STDDEV_SAMP":                    stddevSamp,
 	"STDDEV":                         stddevPop,
 	"STOP":                           stop,
+	"STMT":                           stmt,
 	"STORAGE":                        storage,
 	"STORED":                         stored,
 	"STRAIGHT_JOIN":                  straightJoin,
@@ -1013,6 +1014,7 @@ var tokenMap = map[string]int{
 	"SOURCE_USER":          sourceUser,
 	"SOURCE_PASSWORD":      sourcePassword,
 	"DEGRADE_TIMEOUT":      degradeTimeout,
+	"DETACHED":             detached,
 	"FORCE_COMMIT":         forceCommit,
 }
 

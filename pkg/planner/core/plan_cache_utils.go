@@ -750,6 +750,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
@@ -878,6 +879,8 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 	Stmt             *PlanCacheStmt     // read-only, the original PlanCacheStmt for ResetContextOfStmt
+	Warnings         []stmtctx.SQLWarn  // warnings produced while building the cached plan
+	ExtraWarnings    []stmtctx.SQLWarn  // extra warnings produced while building the cached plan
 
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
@@ -965,6 +968,19 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	}
 	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) + int64(len(v.BinaryPlan)) +
 		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
+	sum += size.SizeOfSlice * 2
+	for _, warn := range v.Warnings {
+		sum += size.SizeOfString + int64(len(warn.Level))
+		if warn.Err != nil {
+			sum += size.SizeOfInterface + int64(len(warn.Err.Error()))
+		}
+	}
+	for _, warn := range v.ExtraWarnings {
+		sum += size.SizeOfString + int64(len(warn.Level))
+		if warn.Err != nil {
+			sum += size.SizeOfInterface + int64(len(warn.Err.Error()))
+		}
+	}
 
 	// Runtime Info Size
 	sum += size.SizeOfFloat64 * 7
@@ -1137,6 +1153,12 @@ type PlanCacheStmt struct {
 	// InUse is used to mark plan cache is used.
 	// Avoid stored procedures being recursively called in prepare.
 	InUse bool
+
+	// ReplayWarningsOnHit marks cached statements whose build-time warnings must
+	// be replayed when the cached plan is reused. This is currently reserved for
+	// hidden stored-routine prepared templates so their warning handlers observe
+	// the same warnings on cache hits as on cache misses.
+	ReplayWarningsOnHit bool
 
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr
@@ -1447,6 +1469,7 @@ func NewPlanCacheKeyBySQLWithParams(sctx sessionctx.Context, params *PlanCacheLo
 	hash = append(hash, pruneMode...)
 	hash = codec.EncodeInt(hash, params.LatestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)

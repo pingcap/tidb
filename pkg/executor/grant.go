@@ -78,7 +78,7 @@ func (e *GrantExec) checkRoutineExists(ctx context.Context, internalSession sess
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "select name, sql_mode ,definition_utf8,parameter_str,character_set_client, connection_collation,")
-	sqlescape.MustFormatSQL(sql, "schema_collation from %n.%n where route_schema = %?  and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, db, name, routineType)
+	sqlescape.MustFormatSQL(sql, "schema_collation from %n.%n where lower(route_schema) = %?  and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, strings.ToLower(db), name, routineType)
 	rs, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, sql.String())
 	if rs == nil {
 		return exeerrors.ErrSpDoesNotExist.GenWithStackByArgs(routineType, db+"."+name)
