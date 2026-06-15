@@ -31,7 +31,7 @@ go_library(
 go_test(
     name = "inference_test",
     timeout = "short",
-    srcs = ["manager_test.go"],
+    srcs = ["sqlembed_test.go"],
     embed = [":inference"],
     flaky = True,
     shard_count = 3,

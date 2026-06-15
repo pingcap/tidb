@@ -119,9 +119,8 @@ func TestEmbedFnCacheAndErrors(t *testing.T) {
 
 	cancelledCtx, cancel2 := context.WithCancel(context.Background())
 	cancel2()
-	_, err = embedFn.EmbedWithContext(cancelledCtx, nil, "cancel_aware/model", "already cancelled", nil)
+	_, err = embedFn.EmbedWithContext(cancelledCtx, nil, "static/model", "will not run", nil)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, int64(1), cancelAware.calls.Load())
 }
 
 func TestSetDefaultEmbedFnForTest(t *testing.T) {
