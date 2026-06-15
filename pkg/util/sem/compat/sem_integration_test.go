@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -48,11 +49,6 @@ func TestRestrictedSQL(t *testing.T) {
 		t.Cleanup(func() {
 			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 		})
-<<<<<<< HEAD
-		tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", "is not supported when security enhanced mode is enabled")
-
-		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
-=======
 		if kerneltype.IsNextGen() {
 			tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'", "IMPORT INTO with explicit external ID")
 
@@ -62,7 +58,6 @@ func TestRestrictedSQL(t *testing.T) {
 			return
 		}
 
->>>>>>> f4471e607df (sem: make import external ID rule a no-op (#69179))
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
@@ -70,15 +65,10 @@ func TestRestrictedSQL(t *testing.T) {
 			require.Equal(t, "allowed", u.Query().Get(s3like.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
-<<<<<<< HEAD
-		tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'",
-			"is not supported when security enhanced mode is enabled")
-=======
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
 		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
 		tk.MustQuery("select * from test.t").Check(testkit.Rows())
->>>>>>> f4471e607df (sem: make import external ID rule a no-op (#69179))
 	})
 
 	t.Run("ALTER RESOURCE GROUP is not allowed", func(t *testing.T) {
