@@ -909,6 +909,13 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
+func restoreOperationCommandName(cmdName string) string {
+	if IsStreamRestore(cmdName) {
+		return "log-restore"
+	}
+	return cmdName
+}
+
 func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF func(context.Context) error, err error) {
 	register := utils.NewTaskRegister(etcdCLI, utils.RegisterRestore, fmt.Sprintf("restore-%s", uuid.New()))
 	err = register.RegisterTask(ctx)
@@ -936,6 +943,10 @@ func printRestoreMetrics() {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
+	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
+
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
@@ -1639,9 +1650,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
-		PDCli:   mgr.GetPDClient(),
-		EtcdCli: mgr.GetDomain().GetEtcdClient(),
-		Storage: util.ProtoV1Clone(u),
+		PDCli:            mgr.GetPDClient(),
+		EtcdCli:          mgr.GetDomain().GetEtcdClient(),
+		Storage:          util.ProtoV1Clone(u),
+		OperationContext: cfg.OperationContext,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2764,6 +2776,9 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 // Similar to resumeOrCreate, it first resolves the restoredTS then finds and deletes the matching paused task
 func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
+	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -2862,6 +2877,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// update config with restore ID to clean up checkpoint
 	cfg.RestoreID = deletedRestoreID
+	cfg.OperationContext.SetRestoreID(deletedRestoreID)
 
 	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
 	if len(cfg.CheckpointStorage) > 0 {

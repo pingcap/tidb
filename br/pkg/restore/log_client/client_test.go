@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -102,6 +104,70 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
 		ParamsList: nil,
 	},
+}
+
+func requireLockMetaInStorage(
+	t *testing.T,
+	ctx context.Context,
+	storage storeapi.Storage,
+	pathPrefix string,
+	resource operation.LockResourceType,
+) objstore.LockMeta {
+	t.Helper()
+
+	var metas []objstore.LockMeta
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		if !strings.HasPrefix(path, pathPrefix) {
+			return nil
+		}
+		content, err := storage.ReadFile(ctx, path)
+		if err != nil {
+			return err
+		}
+		var meta objstore.LockMeta
+		if err := json.Unmarshal(content, &meta); err != nil {
+			return nil
+		}
+		if meta.ResourceType == string(resource) {
+			metas = append(metas, meta)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	return metas[0]
+}
+
+func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := objstore.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := objstore.New(ctx, backend, nil)
+	require.NoError(t, err)
+
+	appendOpCtx, err := operation.NewContext("test append migration")
+	require.NoError(t, err)
+	appendOpCtx.SetRestoreID(123)
+	_, err = stream.MigrationExtensionWithOperationContext(stg, appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	require.NoError(t, err)
+
+	opCtx, err := operation.NewContext("test log restore")
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+	require.NoError(t, client.SetStorage(ctx, backend, nil))
+	client.SetRestoreID(456)
+	client.SetOperationContext(opCtx)
+
+	migs, err := client.GetLockedMigrations(ctx)
+	require.NoError(t, err)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
+
+	meta := requireLockMetaInStorage(t, ctx, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	require.Equal(t, opCtx.OperationID, meta.OperationID)
+	require.NotNil(t, meta.OperationStartedAt)
+	require.True(t, meta.OperationStartedAt.Equal(opCtx.StartedAt))
+	require.Equal(t, uint64(456), meta.RestoreID)
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {
