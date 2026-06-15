@@ -254,30 +254,12 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		return nil
 	}
 	_, err := jobsubmit.SubmitBatch(s.ctx, jobsubmit.SubmitOptions{
-		Store:             s.store,
-		SessPool:          s.sessPool,
-		SysTblMgr:         s.sysTblMgr,
-		MinJobIDRefresher: s.minJobIDRefresher,
-		ServerStateSyncer: s.serverStateSyncer,
-		BeforeInsertWithAssignedIDs: func() func(specs []*jobsubmit.JobSpec) func() {
-			savedJobIDs := make([]int64, len(jobWs))
-			return func(specs []*jobsubmit.JobSpec) func() {
-				currentJobIDs := make([]int64, 0, len(specs))
-				for i, spec := range specs {
-					if savedJobIDs[i] > 0 {
-						s.ddlJobDoneChMap.Delete(savedJobIDs[i])
-					}
-					s.ddlJobDoneChMap.Store(spec.Job.ID, make(chan struct{}, 1))
-					savedJobIDs[i] = spec.Job.ID
-					currentJobIDs = append(currentJobIDs, spec.Job.ID)
-				}
-				return func() {
-					for _, jobID := range currentJobIDs {
-						s.ddlJobDoneChMap.Delete(jobID)
-					}
-				}
-			}
-		}(),
+		Store:                       s.store,
+		SessPool:                    s.sessPool,
+		SysTblMgr:                   s.sysTblMgr,
+		MinJobIDRefresher:           s.minJobIDRefresher,
+		ServerStateSyncer:           s.serverStateSyncer,
+		BeforeInsertWithAssignedIDs: s.genJobDoneChannelsHook(len(jobWs)),
 	}, jobWrappersToSpecs(jobWs))
 	return errors.Trace(err)
 }
@@ -288,25 +270,30 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 // a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set table/db/job id of 'jobs'.
 func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
-	return jobsubmit.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWrappersToSpecs(jobWs), func() func(specs []*jobsubmit.JobSpec) func() {
-		savedJobIDs := make([]int64, len(jobWs))
-		return func(specs []*jobsubmit.JobSpec) func() {
-			currentJobIDs := make([]int64, 0, len(specs))
-			for i, spec := range specs {
-				if savedJobIDs[i] > 0 {
-					s.ddlJobDoneChMap.Delete(savedJobIDs[i])
-				}
-				s.ddlJobDoneChMap.Store(spec.Job.ID, make(chan struct{}, 1))
-				savedJobIDs[i] = spec.Job.ID
-				currentJobIDs = append(currentJobIDs, spec.Job.ID)
+	return jobsubmit.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWrappersToSpecs(jobWs), s.genJobDoneChannelsHook(len(jobWs)))
+}
+
+func (s *JobSubmitter) genJobDoneChannelsHook(jobCount int) func(specs []*jobsubmit.JobSpec) func() {
+	savedJobIDs := make([]int64, jobCount)
+	return func(specs []*jobsubmit.JobSpec) func() {
+		currentJobIDs := make([]int64, 0, len(specs))
+		// Job scheduler will start run them after txn commit, we want to make sure
+		// the channel exists before the jobs are submitted.
+		for i, spec := range specs {
+			if savedJobIDs[i] > 0 {
+				// In case of retry.
+				s.ddlJobDoneChMap.Delete(savedJobIDs[i])
 			}
-			return func() {
-				for _, jobID := range currentJobIDs {
-					s.ddlJobDoneChMap.Delete(jobID)
-				}
+			s.ddlJobDoneChMap.Store(spec.Job.ID, make(chan struct{}, 1))
+			savedJobIDs[i] = spec.Job.ID
+			currentJobIDs = append(currentJobIDs, spec.Job.ID)
+		}
+		return func() {
+			for _, jobID := range currentJobIDs {
+				s.ddlJobDoneChMap.Delete(jobID)
 			}
 		}
-	}())
+	}
 }
 
 func jobWrappersToSpecs(jobWs []*JobWrapper) []*jobsubmit.JobSpec {

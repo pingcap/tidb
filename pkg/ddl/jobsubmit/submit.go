@@ -103,6 +103,7 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
+		// BDR mode only affects the DDL not from CDC.
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
@@ -138,8 +139,12 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 	return results, nil
 }
 
-// GenGIDAndInsertJobsWithRetry allocates job-related global IDs and inserts DDL
-// jobs in the same transaction.
+// GenGIDAndInsertJobsWithRetry generates job-related global IDs and inserts DDL
+// jobs to the DDL job table with retry. Job ID allocation and job insertion are
+// in the same transaction, as we want to make sure DDL jobs are inserted in ID
+// order, then we can query from a min job ID when scheduling DDL jobs to
+// mitigate https://github.com/pingcap/tidb/issues/52905. So this function has
+// side effects, it will set table/db/job ID of the jobs in specs.
 func GenGIDAndInsertJobsWithRetry(
 	ctx context.Context,
 	ddlSe *sess.Session,
@@ -244,6 +249,8 @@ func idCountForTable(info *model.TableInfo) int {
 	return c
 }
 
+// getRequiredGIDCount returns the count of required global IDs for the jobs. It's calculated
+// as: the count of jobs + the count of IDs for the jobs which do NOT have pre-allocated ID.
 func getRequiredGIDCount(specs []*JobSpec) int {
 	count := len(specs)
 	for _, spec := range specs {
@@ -263,6 +270,10 @@ func getRequiredGIDCount(specs []*JobSpec) int {
 			count++
 		case model.ActionAlterTablePartitioning:
 			args := spec.Args.(*model.TablePartitionArgs)
+			// A new table ID would be needed for
+			// the global table, which cannot be the same as the current table id,
+			// since this table id will be removed in the final state when removing
+			// all the data with this table id.
 			count += 1 + len(args.PartInfo.Definitions)
 		case model.ActionTruncateTablePartition:
 			count += len(spec.Args.(*model.TruncateTableArgs).OldPartitionIDs)
@@ -276,6 +287,8 @@ func getRequiredGIDCount(specs []*JobSpec) int {
 	return count
 }
 
+// assignGIDsForJobs should be used with getRequiredGIDCount, and len(ids) must equal
+// what getRequiredGIDCount returns.
 func assignGIDsForJobs(specs []*JobSpec, ids []int64) {
 	alloc := &gidAllocator{ids: ids}
 	for _, spec := range specs {
@@ -316,6 +329,8 @@ func assignGIDsForJobs(specs []*JobSpec, ids []int64) {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 		case model.ActionRemovePartitioning:
+			// A special partition is used in this case, and we will use the ID
+			// of the partition as the new table ID.
 			pInfo := spec.Args.(*model.TablePartitionArgs).PartInfo
 			if !spec.IDAllocated {
 				alloc.assignIDsForPartitionInfo(pInfo)
@@ -338,6 +353,18 @@ func assignGIDsForJobs(specs []*JobSpec, ids []int64) {
 	}
 }
 
+// lockGlobalIDKey locks the global ID key in the meta store. It keeps trying if
+// meet write conflict, we cannot have a fixed retry count for this error, see this
+// https://github.com/pingcap/tidb/issues/27197#issuecomment-2216315057.
+// this part is same as how we implement pessimistic + repeatable read isolation
+// level in SQL executor, see doLockKeys.
+// NextGlobalID is a meta key, so we cannot use "select xx for update", if we store
+// it into a table row or using advisory lock, we will depends on a system table
+// that is created by us, cyclic. although we can create a system table without using
+// DDL logic, we will only consider change it when we have data dictionary and keep
+// it this way now.
+// TODO maybe we can unify the lock mechanism with SQL executor in the future, or
+// implement it inside TiKV client-go.
 func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transaction) (uint64, error) {
 	var (
 		iteration   uint
@@ -354,6 +381,8 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		if err == nil || !terror.ErrorEqual(kv.ErrWriteConflict, err) {
 			break
 		}
+		// ErrWriteConflict contains a conflict-commit-ts in most case, but it cannot
+		// be used as forUpdateTs, see comments inside handleAfterPessimisticLockError.
 		ver, err = ddlSe.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 		if err != nil {
 			break
@@ -361,6 +390,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		forUpdateTs = ver.Ver
 
 		kv.BackOff(iteration)
+		// Avoid it keep growing and overflow.
 		iteration = min(iteration+1, math.MaxInt)
 	}
 	return forUpdateTs, err
