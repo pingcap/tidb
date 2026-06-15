@@ -410,9 +410,10 @@ func (s *BaseScheduler) onRunning() error {
 				if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
 					return errors.Trace(err)
 				}
-				task.State = proto.TaskStatePausing
-				task.Error = subTaskErrs[0]
-				s.task.Store(task)
+				taskClone := *task
+				taskClone.State = proto.TaskStatePausing
+				taskClone.Error = subTaskErrs[0]
+				s.task.Store(&taskClone)
 				return nil
 			}
 			// we only store the first error as task error.

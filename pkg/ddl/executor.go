@@ -6965,13 +6965,15 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			if currentJob != nil && currentJob.IsPausingOrPausedBySystemForKVDiskFull() {
 				logutil.DDLLogger().Info("DDL job is auto-paused because TiKV disk is full", zap.Int64("jobID", jobID))
 				if currentJob.Error != nil {
-					return errors.Trace(currentJob.Error)
+					err = errors.Trace(currentJob.Error)
+					return err
 				}
 				message := ""
 				if currentJob.PauseReason != nil {
 					message = currentJob.PauseReason.Message
 				}
-				return dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(jobID, message)
+				err = dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(jobID, message)
+				return err
 			}
 			logutil.DDLLogger().Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue

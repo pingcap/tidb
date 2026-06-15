@@ -109,6 +109,9 @@ func (mgr *TaskManager) PauseTaskOnError(ctx context.Context, taskID int64, task
 		if err != nil {
 			return err
 		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return ErrTaskChanged
+		}
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_background_subtask
 			set state = %?,

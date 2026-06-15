@@ -218,6 +218,40 @@ func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
 	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
 	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
 	require.True(t, ctrl.Satisfied())
+
+	tests := []struct {
+		name        string
+		cntByState  map[proto.SubtaskState]int64
+		subTaskErrs []error
+	}{
+		{
+			name: "canceled subtasks present",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed:   1,
+				proto.SubtaskStateCanceled: 1,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+		{
+			name: "mixed error types",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr, errors.New("network error")},
+		},
+		{
+			name: "failed count and error count mismatch",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.False(t, shouldPauseOnKVDiskFull(&task, test.cntByState, test.subTaskErrs))
+		})
+	}
 }
 
 func TestSchedulerNotAllocateSlots(t *testing.T) {
