@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -318,29 +319,50 @@ func TestLoadData(t *testing.T) {
 }
 
 func TestLoadDataEscape(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
-	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
-	ctx := tk.Session().(sessionctx.Context)
+	cfg := config.CSVConfig{
+		FieldsTerminatedBy: "\t",
+		FieldsEscapedBy:    `\`,
+		LinesTerminatedBy:  "\n",
+		FieldNullDefinedBy: []string{`\N`},
+		AllowEmptyLine:     true,
+		QuotedNullIsText:   true,
+		UnescapedQuote:     true,
+	}
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{[]byte("1\ta string\n"), []string{"1|a string"}, trivialMsg},
-		{[]byte("2\tstr \\t\n"), []string{"2|str \t"}, trivialMsg},
-		{[]byte("3\tstr \\n\n"), []string{"3|str \n"}, trivialMsg},
-		{[]byte("4\tboth \\t\\n\n"), []string{"4|both \t\n"}, trivialMsg},
-		{[]byte("5\tstr \\\\\n"), []string{"5|str \\"}, trivialMsg},
-		{[]byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, trivialMsg},
-		{[]byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, trivialMsg},
-		{[]byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, trivialMsg},
-		{[]byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, trivialMsg},
+		{data: []byte("1\ta string\n"), expected: []string{"1|a string"}},
+		{data: []byte("2\tstr \\t\n"), expected: []string{"2|str \t"}},
+		{data: []byte("3\tstr \\n\n"), expected: []string{"3|str \n"}},
+		{data: []byte("4\tboth \\t\\n\n"), expected: []string{"4|both \t\n"}},
+		{data: []byte("5\tstr \\\\\n"), expected: []string{"5|str \\"}},
+		{data: []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), expected: []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}},
+		{data: []byte("7\trtn0ZbN\n"), expected: []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}},
+		{data: []byte("8\trtn0Zb\\N\n"), expected: []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}},
+		{data: []byte("9\ttab\\	tab\n"), expected: []string{"9|tab	tab"}},
 	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	for _, tt := range tests {
+		parser, err := mydump.NewCSVParser(
+			context.Background(),
+			&cfg,
+			mydump.NewStringReader(string(tt.data)),
+			int64(config.ReadBlockSize),
+			nil,
+			false,
+			nil,
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, parser.ReadRow())
+		row := parser.LastRow().Row
+		require.Len(t, row, 2)
+		require.Equal(t, tt.expected, []string{row[0].GetString() + "|" + row[1].GetString()})
+		parser.RecycleRow(parser.LastRow())
+
+		err = parser.ReadRow()
+		require.ErrorIs(t, errors.Cause(err), io.EOF)
+		require.NoError(t, parser.Close())
+	}
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
