@@ -7184,10 +7184,7 @@ def go_deps():
         sha256 = "7858b25e5f10af274357d4926f277cdeec6e10277cf38dac0fb47f1618386619",
         strip_prefix = "github.com/ClamChowderTiDB/client-go/v2@v2.0.8-0.20260611061953-4a4daf23c789",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ClamChowderTiDB/client-go/v2/com_github_clamchowdertidb_client_go_v2-v2.0.8-0.20260611061953-4a4daf23c789.zip",
-            "http://ats.apps.svc/gomod/github.com/ClamChowderTiDB/client-go/v2/com_github_clamchowdertidb_client_go_v2-v2.0.8-0.20260611061953-4a4daf23c789.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ClamChowderTiDB/client-go/v2/com_github_clamchowdertidb_client_go_v2-v2.0.8-0.20260611061953-4a4daf23c789.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ClamChowderTiDB/client-go/v2/com_github_clamchowdertidb_client_go_v2-v2.0.8-0.20260611061953-4a4daf23c789.zip",
+            "https://proxy.golang.org/github.com/!clam!chowder!ti!d!b/client-go/v2/@v/v2.0.8-0.20260611061953-4a4daf23c789.zip",
         ],
     )
     go_repository(
@@ -7198,10 +7195,7 @@ def go_deps():
         sha256 = "0da589beacd5f6c6f4ba4ae95348b7d9f2b9daa12659265e5a06bfa09c9542b2",
         strip_prefix = "github.com/ClamChowderTiDB/pd/client@v0.0.0-20260611055230-cb0a2298a8b9",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ClamChowderTiDB/pd/client/com_github_clamchowdertidb_pd_client-v0.0.0-20260611055230-cb0a2298a8b9.zip",
-            "http://ats.apps.svc/gomod/github.com/ClamChowderTiDB/pd/client/com_github_clamchowdertidb_pd_client-v0.0.0-20260611055230-cb0a2298a8b9.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ClamChowderTiDB/pd/client/com_github_clamchowdertidb_pd_client-v0.0.0-20260611055230-cb0a2298a8b9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ClamChowderTiDB/pd/client/com_github_clamchowdertidb_pd_client-v0.0.0-20260611055230-cb0a2298a8b9.zip",
+            "https://proxy.golang.org/github.com/!clam!chowder!ti!d!b/pd/client/@v/v0.0.0-20260611055230-cb0a2298a8b9.zip",
         ],
     )
     go_repository(
