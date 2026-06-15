@@ -19,10 +19,12 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,6 +57,8 @@ type conditionalPut struct {
 	// This will be called when the write is allowed and about to be performed.
 	// If `Verify()` returns an error, the write will be aborted.
 	Verify func(ctx VerifyWriteContext) error
+	// Local records local lock metadata input for conflict reporting.
+	Local LockMetaInput
 }
 
 // VerifyWriteContext is the verify write context
@@ -98,7 +102,7 @@ func (w conditionalPut) CommitTo(ctx context.Context, s storeapi.Storage) (uuid.
 		if w.Verify != nil {
 			err = multierr.Append(err, w.Verify(cx))
 		}
-		return multierr.Append(err, cx.assertOnlyMyIntent())
+		return multierr.Append(err, withLockContext(cx.assertOnlyMyIntent(), w.Target, w.Local))
 	}
 
 	if err := checkConflict(); err != nil {
@@ -124,8 +128,19 @@ func (w conditionalPut) CommitTo(ctx context.Context, s storeapi.Storage) (uuid.
 	return txnID, s.WriteFile(cx, w.Target, w.Content(txnID))
 }
 
-// assertNoOtherOfPrefixExpect asserts that there is no other file with the same prefix than the expect file.
-func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
+func lockBlockerFromPath(ctx context.Context, storage storeapi.Storage, path string) LockBlocker {
+	blocker := LockBlocker{Path: path}
+	meta, err := getLockMeta(ctx, storage, path)
+	if err != nil {
+		blocker.Err = err
+		return blocker
+	}
+	blocker.Meta = meta
+	return blocker
+}
+
+// conflictingObjectsOfPrefixExpect finds files with the same prefix except the expected file.
+func (cx VerifyWriteContext) conflictingObjectsOfPrefixExpect(pfx string, expect string) ([]LockBlocker, error) {
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
 	// Some object stores reject "." as a directory component in list prefixes.
@@ -133,17 +148,34 @@ func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect stri
 		dirName = ""
 	}
 
-	return cx.Storage.WalkDir(cx, &storeapi.WalkOption{
+	var blockers []LockBlocker
+	err := cx.Storage.WalkDir(cx, &storeapi.WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
 		// We'd better read a deleted intention...
 		IncludeTombstone: true,
-	}, func(path string, size int64) error {
-		if path != expect {
-			return fmt.Errorf("there is conflict file %s", path)
+	}, func(objectPath string, size int64) error {
+		if objectPath != expect {
+			blockers = append(blockers, lockBlockerFromPath(cx, cx.Storage, objectPath))
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return blockers, nil
+}
+
+// assertNoOtherOfPrefixExpect asserts that there is no other file with the same prefix than the expect file.
+func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
+	blockers, err := cx.conflictingObjectsOfPrefixExpect(pfx, expect)
+	if err != nil {
+		return err
+	}
+	if len(blockers) > 0 {
+		return ErrLocked{Path: cx.Target, Blockers: blockers}
+	}
+	return nil
 }
 
 // assertOnlyMyIntent asserts that there is no other intention file than our intention file.
@@ -151,43 +183,199 @@ func (cx VerifyWriteContext) assertOnlyMyIntent() error {
 	return cx.assertNoOtherOfPrefixExpect(cx.Target, cx.IntentFileName())
 }
 
+// LockMetaInput is the caller-provided metadata for a lock.
+type LockMetaInput struct {
+	OperationID        string
+	OperationStartedAt *time.Time
+	RestoreID          uint64
+	ResourceType       string
+	Hint               string
+}
+
 // LockMeta is the meta information of a lock.
 type LockMeta struct {
-	LockedAt   time.Time `json:"locked_at"`
-	LockerHost string    `json:"locker_host"`
-	LockerPID  int       `json:"locker_pid"`
-	TxnID      []byte    `json:"txn_id"`
-	Hint       string    `json:"hint"`
+	LockedAt           time.Time  `json:"locked_at"`
+	LockerHost         string     `json:"locker_host"`
+	LockerPID          int        `json:"locker_pid"`
+	TxnID              []byte     `json:"txn_id"`
+	Hint               string     `json:"hint"`
+	OperationID        string     `json:"operation_id,omitempty"`
+	OperationStartedAt *time.Time `json:"operation_started_at,omitempty"`
+	RestoreID          uint64     `json:"restore_id,omitempty"`
+	ResourceType       string     `json:"resource_type,omitempty"`
 }
 
 // String implements fmt.Stringer interface.
 func (l LockMeta) String() string {
-	return fmt.Sprintf("Locked(at: %s, host: %s, pid: %d, hint: %s)", l.LockedAt.Format(time.DateTime), l.LockerHost, l.LockerPID, l.Hint)
+	fields := []string{
+		fmt.Sprintf("at: %s", l.LockedAt.Format(time.DateTime)),
+		fmt.Sprintf("host: %s", l.LockerHost),
+		fmt.Sprintf("pid: %d", l.LockerPID),
+		fmt.Sprintf("hint: %s", l.Hint),
+	}
+	if l.OperationID != "" {
+		fields = append(fields, fmt.Sprintf("operation_id: %s", l.OperationID))
+	}
+	if l.OperationStartedAt != nil {
+		fields = append(fields, fmt.Sprintf("operation_started_at: %s", l.OperationStartedAt.Format(time.DateTime)))
+	}
+	if l.RestoreID != 0 {
+		fields = append(fields, fmt.Sprintf("restore_id: %d", l.RestoreID))
+	}
+	if l.ResourceType != "" {
+		fields = append(fields, fmt.Sprintf("resource_type: %s", l.ResourceType))
+	}
+	return fmt.Sprintf("Locked(%s)", strings.Join(fields, ", "))
+}
+
+func (i LockMetaInput) String() string {
+	fields := []string{fmt.Sprintf("hint: %s", i.Hint)}
+	if i.OperationID != "" {
+		fields = append(fields, fmt.Sprintf("operation_id: %s", i.OperationID))
+	}
+	if i.OperationStartedAt != nil {
+		fields = append(fields, fmt.Sprintf("operation_started_at: %s", i.OperationStartedAt.Format(time.DateTime)))
+	}
+	if i.RestoreID != 0 {
+		fields = append(fields, fmt.Sprintf("restore_id: %d", i.RestoreID))
+	}
+	if i.ResourceType != "" {
+		fields = append(fields, fmt.Sprintf("resource_type: %s", i.ResourceType))
+	}
+	return fmt.Sprintf("LockMetaInput(%s)", strings.Join(fields, ", "))
+}
+
+// LockBlocker is a lock object that blocks a local lock attempt.
+type LockBlocker struct {
+	Path string
+	Meta LockMeta
+	Err  error
+}
+
+func (b LockBlocker) String() string {
+	fields := []string{fmt.Sprintf("path: %s", b.Path)}
+	if b.Err != nil {
+		fields = append(fields, fmt.Sprintf("err: %s", b.Err))
+	} else {
+		fields = append(fields, fmt.Sprintf("meta: %s", b.Meta))
+	}
+	return fmt.Sprintf("Blocker(%s)", strings.Join(fields, ", "))
 }
 
 // ErrLocked is the error returned when the lock is held by others.
 type ErrLocked struct {
-	Meta LockMeta
+	Path     string
+	Meta     LockMeta
+	Local    LockMetaInput
+	Blockers []LockBlocker
 }
 
 // Error return the error.
 func (e ErrLocked) Error() string {
-	return fmt.Sprintf("locked, meta = %s", e.Meta)
+	fields := []string{"locked"}
+	if e.Path != "" {
+		fields = append(fields, fmt.Sprintf("path = %s", e.Path))
+	}
+	if !isZeroLockMeta(e.Meta) {
+		fields = append(fields, fmt.Sprintf("meta = %s", e.Meta))
+	}
+	if !isZeroLockMetaInput(e.Local) {
+		fields = append(fields, fmt.Sprintf("local = %s", e.Local))
+	}
+	for _, blocker := range e.Blockers {
+		fields = append(fields, fmt.Sprintf("conflict file %s", blocker.Path))
+		if blocker.Err != nil {
+			fields = append(fields, fmt.Sprintf("blocker_error = %s", blocker.Err))
+		} else {
+			fields = append(fields, fmt.Sprintf("blocker_meta = %s", blocker.Meta))
+		}
+	}
+	return strings.Join(fields, ", ")
+}
+
+func isZeroLockMeta(meta LockMeta) bool {
+	return meta.LockedAt.IsZero() && meta.LockerHost == "" && meta.LockerPID == 0 &&
+		len(meta.TxnID) == 0 && meta.Hint == "" && meta.OperationID == "" &&
+		meta.OperationStartedAt == nil && meta.RestoreID == 0 && meta.ResourceType == ""
+}
+
+func isZeroLockMetaInput(input LockMetaInput) bool {
+	return input.OperationID == "" && input.OperationStartedAt == nil &&
+		input.RestoreID == 0 && input.ResourceType == "" && input.Hint == ""
+}
+
+func withLockContext(err error, path string, local LockMetaInput) error {
+	if err == nil {
+		return nil
+	}
+	var locked ErrLocked
+	if !stderrors.As(err, &locked) {
+		return err
+	}
+	if locked.Path == "" {
+		locked.Path = path
+	}
+	if isZeroLockMetaInput(locked.Local) {
+		locked.Local = local
+	}
+	return locked
+}
+
+type lockMultiCauseError struct {
+	message string
+	primary error
+	causes  []error
+}
+
+func (e lockMultiCauseError) Error() string {
+	return e.message
+}
+
+func (e lockMultiCauseError) Unwrap() []error {
+	return e.causes
+}
+
+func (e lockMultiCauseError) Cause() error {
+	return e.primary
+}
+
+func lockErrorWithCauses(message string, primary error, causes ...error) error {
+	filtered := make([]error, 0, len(causes))
+	for _, cause := range causes {
+		if cause != nil {
+			filtered = append(filtered, cause)
+		}
+	}
+	if len(filtered) == 0 && primary != nil {
+		filtered = append(filtered, primary)
+	}
+	if len(filtered) == 0 {
+		return errors.New(message)
+	}
+	return lockMultiCauseError{
+		message: message,
+		primary: primary,
+		causes:  filtered,
+	}
 }
 
 // MakeLockMeta creates a LockMeta by the current node's metadata.
 // Including current time and hostname, etc..
-func MakeLockMeta(hint string) LockMeta {
+func MakeLockMeta(input LockMetaInput) LockMeta {
 	hname, err := os.Hostname()
 	if err != nil {
 		hname = fmt.Sprintf("UnknownHost(err=%s)", err)
 	}
 	now := time.Now()
 	meta := LockMeta{
-		LockedAt:   now,
-		LockerHost: hname,
-		Hint:       hint,
-		LockerPID:  os.Getpid(),
+		LockedAt:           now,
+		LockerHost:         hname,
+		Hint:               input.Hint,
+		LockerPID:          os.Getpid(),
+		OperationID:        input.OperationID,
+		OperationStartedAt: input.OperationStartedAt,
+		RestoreID:          input.RestoreID,
+		ResourceType:       input.ResourceType,
 	}
 	return meta
 }
@@ -218,12 +406,40 @@ func (l *RemoteLock) String() string {
 	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
 }
 
-func tryFetchRemoteLockInfo(ctx context.Context, storage storeapi.Storage, path string) error {
-	meta, err := getLockMeta(ctx, storage, path)
-	if err != nil {
-		return err
+func enrichErrLocked(ctx context.Context, storage storeapi.Storage, path string, local LockMetaInput, locked ErrLocked) ErrLocked {
+	if locked.Path == "" {
+		locked.Path = path
 	}
-	return ErrLocked{Meta: meta}
+	if isZeroLockMetaInput(locked.Local) {
+		locked.Local = local
+	}
+	if len(locked.Blockers) > 0 {
+		if isZeroLockMeta(locked.Meta) {
+			locked.Meta = locked.Blockers[0].Meta
+		}
+		return locked
+	}
+	if isZeroLockMeta(locked.Meta) {
+		blocker := lockBlockerFromPath(ctx, storage, path)
+		locked.Meta = blocker.Meta
+		if blocker.Err != nil {
+			locked.Blockers = []LockBlocker{blocker}
+		}
+	}
+	return locked
+}
+
+func annotateLockAttemptError(ctx context.Context, storage storeapi.Storage, path string, local LockMetaInput, err error, format string, args ...any) error {
+	message := fmt.Sprintf(format, args...)
+	var locked ErrLocked
+	if stderrors.As(err, &locked) {
+		locked = enrichErrLocked(ctx, storage, path, local, locked)
+		return lockErrorWithCauses(fmt.Sprintf("%s: %s", message, err), err, locked, err)
+	}
+	if meta, metaErr := getLockMeta(ctx, storage, path); metaErr == nil {
+		return errors.Annotatef(err, "%s; remote_lock_meta = %s", message, meta)
+	}
+	return errors.Annotate(err, message)
 }
 
 // TryLockRemote tries to create a "lock file" at the external storage.
@@ -231,11 +447,12 @@ func tryFetchRemoteLockInfo(ctx context.Context, storage storeapi.Storage, path 
 // Will return a `ErrLocked` if there is another process already creates the lock file.
 // This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
 // manually deleting the "lock file" in external storage.
-func TryLockRemote(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemote(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error) {
 	writer := conditionalPut{
 		Target: path,
+		Local:  input,
 		Content: func(txnID uuid.UUID) []byte {
-			meta := MakeLockMeta(hint)
+			meta := MakeLockMeta(input)
 			meta.TxnID = txnID[:]
 			res, err := json.Marshal(meta)
 			if err != nil {
@@ -253,8 +470,7 @@ func TryLockRemote(ctx context.Context, storage storeapi.Storage, path, hint str
 	lock.path = path
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
-		lockInfo := tryFetchRemoteLockInfo(ctx, storage, path)
-		err = errors.Annotatef(err, "failed to acquire lock on '%s': %s", path, lockInfo)
+		err = annotateLockAttemptError(ctx, storage, path, input, err, "failed to acquire lock on '%s'", path)
 	}
 	return
 }
@@ -310,7 +526,7 @@ func newReadLockName(path string) string {
 }
 
 // Locker is a locker.
-type Locker = func(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error)
+type Locker = func(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error)
 
 const (
 	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
@@ -319,14 +535,14 @@ const (
 )
 
 // LockWithRetry lock with retry.
-func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, path, hint string) (
+func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, path string, input LockMetaInput) (
 	lock RemoteLock, err error) {
 	const JitterMs = 5000
 
 	retry := utils.InitialRetryState(lockRetryTimes, 1*time.Second, 60*time.Second)
 	jitter := time.Duration(rand.Uint32()%JitterMs+(JitterMs/2)) * time.Millisecond
 	for {
-		lock, err = locker(ctx, storage, path, hint)
+		lock, err = locker(ctx, storage, path, input)
 		if err == nil {
 			return lock, nil
 		}
@@ -336,30 +552,97 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 		}
 
 		retryAfter := retry.ExponentialBackoff() + jitter
-		log.Info(
-			"Encountered lock, will retry",
-			logutil.ShortError(err),
-			zap.String("path", path),
+		fields := LockConflictLogFields(path, input, err)
+		fields = append(fields,
 			zap.Duration("retry-after", retryAfter),
 			zap.Int("remaining-attempts", retry.RemainingAttempts()),
+		)
+		log.Info(
+			"Encountered lock, will retry",
+			fields...,
 		)
 
 		select {
 		case <-ctx.Done():
-			err = ctx.Err()
-			return
+			return RemoteLock{}, lockErrorWithCauses(fmt.Sprintf("lock retry stopped: %s: %s", ctx.Err(), err), ctx.Err(), ctx.Err(), err)
 		case <-time.After(retryAfter):
 		}
 	}
 }
 
+// LockConflictLogFields returns structured fields for a failed lock attempt.
+func LockConflictLogFields(path string, input LockMetaInput, err error) []zap.Field {
+	fields := []zap.Field{
+		logutil.ShortError(err),
+		zap.String("path", path),
+	}
+	fields = append(fields, lockMetaInputLogFields("local", input)...)
+	var locked ErrLocked
+	if stderrors.As(err, &locked) {
+		fields = append(fields, zap.Int("remote_blocker_count", len(locked.Blockers)))
+		if len(locked.Blockers) > 0 {
+			fields = append(fields, lockBlockerLogFields(locked.Blockers, lockBlockerLogLimit)...)
+		} else if !isZeroLockMeta(locked.Meta) {
+			fields = append(fields, lockMetaLogFields("remote", locked.Meta)...)
+		}
+	}
+	return fields
+}
+
+func lockMetaInputLogFields(prefix string, input LockMetaInput) []zap.Field {
+	fields := []zap.Field{
+		zap.String(prefix+"_operation_id", input.OperationID),
+		zap.Uint64(prefix+"_restore_id", input.RestoreID),
+		zap.String(prefix+"_resource_type", input.ResourceType),
+		zap.String(prefix+"_hint", input.Hint),
+	}
+	if input.OperationStartedAt != nil {
+		fields = append(fields, zap.Time(prefix+"_operation_started_at", *input.OperationStartedAt))
+	}
+	return fields
+}
+
+func lockMetaLogFields(prefix string, meta LockMeta) []zap.Field {
+	fields := []zap.Field{
+		zap.String(prefix+"_operation_id", meta.OperationID),
+		zap.Uint64(prefix+"_restore_id", meta.RestoreID),
+		zap.String(prefix+"_resource_type", meta.ResourceType),
+		zap.String(prefix+"_hint", meta.Hint),
+	}
+	if meta.OperationStartedAt != nil {
+		fields = append(fields, zap.Time(prefix+"_operation_started_at", *meta.OperationStartedAt))
+	}
+	return fields
+}
+
+const lockBlockerLogLimit = 3
+
+func lockBlockerLogFields(blockers []LockBlocker, limit int) []zap.Field {
+	if len(blockers) < limit {
+		limit = len(blockers)
+	}
+	fields := make([]zap.Field, 0, limit*6)
+	for i := 0; i < limit; i++ {
+		prefix := fmt.Sprintf("remote_blocker_%d", i)
+		fields = append(fields, zap.String(prefix+"_path", blockers[i].Path))
+		if !isZeroLockMeta(blockers[i].Meta) {
+			fields = append(fields, lockMetaLogFields(prefix, blockers[i].Meta)...)
+		}
+		if blockers[i].Err != nil {
+			fields = append(fields, logutil.AShortError(prefix+"_error", blockers[i].Err))
+		}
+	}
+	return fields
+}
+
 // TryLockRemoteWrite try lock.
-func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error) {
 	target := writeLockName(path)
 	writer := conditionalPut{
 		Target: target,
+		Local:  input,
 		Content: func(txnID uuid.UUID) []byte {
-			meta := MakeLockMeta(hint)
+			meta := MakeLockMeta(input)
 			meta.TxnID = txnID[:]
 			res, err := json.Marshal(meta)
 			if err != nil {
@@ -372,7 +655,14 @@ func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hin
 			return res
 		},
 		Verify: func(ctx VerifyWriteContext) error {
-			return ctx.assertNoOtherOfPrefixExpect(path, ctx.IntentFileName())
+			blockers, err := ctx.conflictingObjectsOfPrefixExpect(path, ctx.IntentFileName())
+			if err != nil {
+				return err
+			}
+			if len(blockers) > 0 {
+				return ErrLocked{Path: target, Local: input, Blockers: blockers}
+			}
+			return nil
 		},
 	}
 
@@ -380,19 +670,20 @@ func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hin
 	lock.path = target
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
-		err = errors.Annotatef(err, "something wrong about the lock: %s", tryFetchRemoteLockInfo(ctx, storage, target))
+		err = annotateLockAttemptError(ctx, storage, target, input, err, "something wrong about the lock")
 	}
 	return
 }
 
 // TryLockRemoteRead try lock.
-func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error) {
 	target := newReadLockName(path)
 	writeLock := writeLockName(path)
 	writer := conditionalPut{
 		Target: target,
+		Local:  input,
 		Content: func(txnID uuid.UUID) []byte {
-			meta := MakeLockMeta(hint)
+			meta := MakeLockMeta(input)
 			meta.TxnID = txnID[:]
 			res, err := json.Marshal(meta)
 			if err != nil {
@@ -405,7 +696,14 @@ func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint
 			return res
 		},
 		Verify: func(ctx VerifyWriteContext) error {
-			return ctx.assertNoOtherOfPrefixExpect(writeLock, "")
+			blockers, err := ctx.conflictingObjectsOfPrefixExpect(writeLock, "")
+			if err != nil {
+				return err
+			}
+			if len(blockers) > 0 {
+				return ErrLocked{Path: target, Local: input, Blockers: blockers}
+			}
+			return nil
 		},
 	}
 
@@ -413,8 +711,8 @@ func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint
 	lock.path = target
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
-		err = errors.Annotatef(err, "failed to commit the lock due to existing lock: "+
-			"something wrong about the lock: %s", tryFetchRemoteLockInfo(ctx, storage, writeLock))
+		err = annotateLockAttemptError(ctx, storage, writeLock, input, err,
+			"failed to commit the lock due to existing lock: something wrong about the lock")
 	}
 	return
 }
