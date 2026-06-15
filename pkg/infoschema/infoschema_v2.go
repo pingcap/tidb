@@ -354,11 +354,28 @@ func (isd *Data) addPartitions(item tableItem, tbl table.Table, changedPartition
 // GetPartitionedTableIDs returns all partitioned table IDs for the given schema version.
 // This is used to replace ListTablesWithSpecialAttribute(PartitionAttribute) in V2,
 // allowing partition tables to be loaded on-demand from the Sieve cache.
-// See design doc: explorer/partition-table-optimization-design.md
+//
+// pid2tid is a delta/MVCC btree keyed by (partitionID, schemaVersion). A partition's
+// latest record may sit at an older schemaVersion when the current version advanced due
+// to an unrelated DDL, or after a partition-only delta that only re-inserted the changed
+// partitions. So we must use the "latest entry <= schemaVersion" semantics (same as
+// searchPartitionItemByPartitionID / listPartitionTablesWithFilter) instead of exact
+// version matching, otherwise unchanged partition tables get silently missed.
 func (isd *Data) GetPartitionedTableIDs(schemaVersion int64) []int64 {
 	var tidSet map[int64]bool
-	isd.pid2tid.Load().Ascend(func(item partitionItem) bool {
-		if item.schemaVersion == schemaVersion && !item.tomb {
+	var lastPartitionID int64
+	// Descend iterates (partitionID, schemaVersion) in descending order. For each
+	// partitionID, the first entry with schemaVersion <= target is its latest valid record.
+	isd.pid2tid.Load().Descend(func(item partitionItem) bool {
+		if item.schemaVersion > schemaVersion {
+			return true
+		}
+		// Dedup: only the latest entry per partitionID matters.
+		if lastPartitionID != 0 && lastPartitionID == item.partitionID {
+			return true
+		}
+		lastPartitionID = item.partitionID
+		if !item.tomb {
 			if tidSet == nil {
 				tidSet = make(map[int64]bool)
 			}
