@@ -88,12 +88,19 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 
+	var bo backoffer
+retry:
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := bo.Backoff(ctx); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		goto retry
 	}
 
 	addr := string(resp.Kvs[0].Value)
@@ -152,8 +159,17 @@ retry:
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
+			// If the RPC error is caused by a canceled context (e.g. KILL QUERY),
+			// return immediately instead of resetting the connection and retrying.
+			// This prevents a canceled statement from blocking for minutes due to
+			// repeated resetConn + backoff cycles.
+			if ctx.Err() != nil {
+				return 0, 0, errors.Trace(ctx.Err())
+			}
 			sp.resetConn(ver, err)
-			bo.Backoff()
+			if err := bo.Backoff(ctx); err != nil {
+				return 0, 0, errors.Trace(err)
+			}
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -180,7 +196,10 @@ func (b *backoffer) Reset() {
 	b.Duration = backoffMin
 }
 
-func (b *backoffer) Backoff() {
+// Backoff sleeps for the current duration. If ctx is provided and canceled during
+// the sleep, it returns early with the context error. This prevents a canceled
+// context from being blocked by the full backoff duration.
+func (b *backoffer) Backoff(ctx ...context.Context) error {
 	if b.Duration == 0 {
 		b.Duration = backoffMin
 	}
@@ -188,7 +207,18 @@ func (b *backoffer) Backoff() {
 	if b.Duration > backoffMax {
 		b.Duration = backoffMax
 	}
+	if len(ctx) > 0 && ctx[0] != nil {
+		timer := time.NewTimer(b.Duration)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-ctx[0].Done():
+			return ctx[0].Err()
+		}
+	}
 	time.Sleep(b.Duration)
+	return nil
 }
 
 func (d *ClientDiscover) resetConn(version uint64, reason error) {
@@ -268,8 +298,14 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
+			// Same as Alloc: check ctx before resetting connection and retrying.
+			if ctx.Err() != nil {
+				return errors.Trace(ctx.Err())
+			}
 			sp.resetConn(ver, err)
-			bo.Backoff()
+			if err := bo.Backoff(ctx); err != nil {
+				return errors.Trace(err)
+			}
 			goto retry
 		}
 		return errors.Trace(err)
