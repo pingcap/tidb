@@ -260,7 +260,7 @@ func newSafePointKV(
 	codec tikv.Codec,
 	tlsConfig *tls.Config,
 ) (*metaservice.Info, []string, *tikv.EtcdSafePointKV, error) {
-	metaServiceInfo, groupAddrs, err := metaservice.FetchInfoWithGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
+	metaServiceInfo, groupAddrs, err := metaservice.GetInfoAndGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}

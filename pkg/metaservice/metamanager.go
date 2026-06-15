@@ -175,8 +175,8 @@ func FetchInfo(ctx context.Context, pdClient pd.Client, keyspaceMeta *keyspacepb
 	return GetInfo(keyspaceMeta, pdAddrs)
 }
 
-// FetchInfoWithGroupAddrs loads meta service info and returns resolved group addresses.
-func FetchInfoWithGroupAddrs(ctx context.Context, pdClient pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (*Info, []string, error) {
+// GetInfoAndGroupAddrs loads meta service info and returns resolved group addresses.
+func GetInfoAndGroupAddrs(ctx context.Context, pdClient pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (*Info, []string, error) {
 	info, err := FetchInfo(ctx, pdClient, keyspaceMeta)
 	if err != nil {
 		return nil, nil, err
