@@ -146,6 +146,8 @@ const (
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
 	// TiDBMVMaintainMemQuota controls the memory quota used by MV refresh / MV log purge internal maintenance sessions.
 	TiDBMVMaintainMemQuota = "tidb_mv_maintain_mem_quota" // Bytes.
+	// TiDBMVMaintainIsolationReadEngines controls the isolation read engines used by MV refresh / MV log purge internal maintenance sessions.
+	TiDBMVMaintainIsolationReadEngines = "tidb_mv_maintain_isolation_read_engines"
 	// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
 	TiDBMViewMaintainImportThreads = "tidb_mview_maintain_import_threads"
 	// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
