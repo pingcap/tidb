@@ -130,7 +130,7 @@ func TestSplitScatter(t *testing.T) {
 	for _, key := range splitKeys {
 		noScatterSplitKeys = append(noScatterSplitKeys, append([]byte(nil), key...))
 	}
-	_, err := noScatterClient.SplitKeys(ctx, noScatterSplitKeys, false)
+	_, err := noScatterClient.SplitKeys(ctx, noScatterSplitKeys)
 	require.NoError(t, err)
 	require.Positive(t, noScatterPDClient.splitRegions.count)
 	require.Zero(t, noScatterPDClient.scatterRegions.regionCount)

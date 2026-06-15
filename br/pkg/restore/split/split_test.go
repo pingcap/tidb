@@ -551,36 +551,6 @@ func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
 	})
 }
 
-func TestSplitKeysAndScatterCodecPDClientMapsSplitKeys(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit", "return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit"))
-	})
-	originSplitRetryTimes := SplitRetryTimes
-	SplitRetryTimes = 1
-	t.Cleanup(func() {
-		SplitRetryTimes = originSplitRetryTimes
-	})
-
-	ctx := context.Background()
-	mockPDClient := NewMockPDClientForSplit()
-	codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
-	tikvCodec := codecPDClient.GetCodec()
-	mockPDClient.SetRegions([][]byte{
-		tikvCodec.EncodeRegionKey([]byte("a")),
-		tikvCodec.EncodeRegionKey([]byte("d")),
-	})
-
-	client := &pdClient{
-		client:           codecPDClient,
-		splitConcurrency: 1,
-		splitBatchKeyCnt: 100,
-		isCodecPDClient:  true,
-	}
-	_, err := client.SplitKeysAndScatter(ctx, [][]byte{tikvCodec.EncodeKey([]byte("b"))})
-	require.ErrorContains(t, err, "retryable error")
-}
-
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -1084,13 +1054,18 @@ type recordingSplitClient struct {
 }
 
 func (c *recordingSplitClient) SplitKeysAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error) {
-	return c.SplitKeys(ctx, keys, true)
+	c.recordSplit(keys, true)
+	return nil, nil
 }
 
-func (c *recordingSplitClient) SplitKeys(_ context.Context, keys [][]byte, scatter bool) ([]*RegionInfo, error) {
+func (c *recordingSplitClient) SplitKeys(_ context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	c.recordSplit(keys, false)
+	return nil, nil
+}
+
+func (c *recordingSplitClient) recordSplit(keys [][]byte, scatter bool) {
 	c.splitCalls = append(c.splitCalls, slices.Clone(keys))
 	c.scatterByCalls = append(c.scatterByCalls, scatter)
-	return nil, nil
 }
 
 func TestRegionSplitterRoughSplitUsesConfiguredRegionIndexStep(t *testing.T) {

@@ -157,11 +157,7 @@ func (rs *RegionSplitter) splitKeys(ctx context.Context, sortedKeys [][]byte, sc
 	if scatter {
 		return rs.client.SplitKeysAndScatter(ctx, sortedKeys)
 	}
-	client, ok := rs.client.(splitClientWithScatterControl)
-	if !ok {
-		return nil, errors.New("split client does not support split without scatter")
-	}
-	return client.SplitKeys(ctx, sortedKeys, false)
+	return rs.client.SplitKeys(ctx, sortedKeys)
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.

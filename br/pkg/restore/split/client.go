@@ -69,6 +69,9 @@ type SplitClient interface {
 	// new regions. It returns the new regions that need to be called with
 	// WaitRegionsScattered.
 	SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error)
+	// SplitKeys splits the related regions of the keys without scattering the new
+	// regions.
+	SplitKeys(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error)
 
 	// SplitWaitAndScatter splits a region from a batch of keys, waits for the split
 	// is finished, and scatters the new regions. It will return the original region,
@@ -121,10 +124,6 @@ type SplitClient interface {
 	// encode from codec.EncodeBytes, and if it's codec V2, the passed key should
 	// NOT contain the keyspace.
 	GetCodecPDClient() *tikvclient.CodecPDClient
-}
-
-type splitClientWithScatterControl interface {
-	SplitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -631,10 +630,14 @@ func (c *pdClient) getEncodedKeys(start, end []byte) (encodedStart, encodedEnd [
 }
 
 func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
-	return c.SplitKeys(ctx, sortedSplitKeys, true)
+	return c.splitKeys(ctx, sortedSplitKeys, true)
 }
 
-func (c *pdClient) SplitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
+func (c *pdClient) SplitKeys(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	return c.splitKeys(ctx, sortedSplitKeys, false)
+}
+
+func (c *pdClient) splitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	if len(sortedSplitKeys) == 0 {
 		return nil, nil
 	}
