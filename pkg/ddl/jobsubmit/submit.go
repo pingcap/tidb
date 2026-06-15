@@ -119,7 +119,7 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 			}
 		}
 
-		SetJobStateToQueueing(job)
+		setJobStateToQueueing(job)
 
 		if opts.ServerStateSyncer != nil && opts.ServerStateSyncer.IsUpgradingState() && !HasSysDB(job) {
 			if err = PauseRunningJob(job, model.AdminCommandBySystem); err != nil {
@@ -493,8 +493,8 @@ func job2TableIDs(spec *JobSpec) string {
 	}
 }
 
-// SetJobStateToQueueing marks a job and its sub-jobs as queueing.
-func SetJobStateToQueueing(job *model.Job) {
+// setJobStateToQueueing marks a job and its sub-jobs as queueing.
+func setJobStateToQueueing(job *model.Job) {
 	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			sub.State = model.JobStateQueueing
