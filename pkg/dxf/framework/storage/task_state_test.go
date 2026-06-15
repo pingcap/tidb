@@ -183,12 +183,17 @@ func TestPauseTaskOnError(t *testing.T) {
 	taskErr := errdef.ErrKVDiskFull.GenWithStack("store 1 disk full")
 	require.NoError(t, gm.UpdateSubtaskStateAndError(ctx, ":4000", failedSubtasks[0].ID, proto.SubtaskStateFailed, taskErr))
 
+	require.ErrorIs(t, gm.PauseTaskOnError(ctx, task.ID, proto.TaskStatePending, proto.StepOne, taskErr), storage.ErrTaskChanged)
+	pausedSubtasks, err := gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePaused)
+	require.NoError(t, err)
+	require.Empty(t, pausedSubtasks)
+
 	require.NoError(t, gm.PauseTaskOnError(ctx, task.ID, proto.TaskStateRunning, proto.StepOne, taskErr))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePausing, task.State)
 	require.ErrorIs(t, task.Error, errdef.ErrKVDiskFull)
-	pausedSubtasks, err := gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePaused)
+	pausedSubtasks, err = gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePaused)
 	require.NoError(t, err)
 	require.Len(t, pausedSubtasks, 1)
 
