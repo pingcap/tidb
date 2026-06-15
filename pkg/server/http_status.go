@@ -604,7 +604,7 @@ func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
 
 	etcdAddr, err := ebd.EtcdAddrs()
 	if err != nil {
-		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+		logutil.BgLogger().Error("failed to get etcd addresses from EtcdBackend", zap.Error(err))
 		return
 	}
 
