@@ -308,8 +308,8 @@ func deriveHistoryGCInterval(mviewRefreshRetention, mlogPurgeRetention time.Dura
 	if interval < time.Second {
 		return time.Second
 	}
-	if interval > time.Hour {
-		return time.Hour
+	if interval > defaultMVHistoryGCInterval {
+		return defaultMVHistoryGCInterval
 	}
 	return interval
 }

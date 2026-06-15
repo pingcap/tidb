@@ -131,6 +131,15 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, job.TableID); err != nil {
 				return ver, errors.Trace(err)
 			}
+			if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
+				logutil.DDLLogger().Warn(
+					"drop table/view: failed to delete materialized view refresh alert",
+					zap.String("schemaName", job.SchemaName),
+					zap.String("tableName", tblInfo.Name.O),
+					zap.Int64("mviewID", job.TableID),
+					zap.Error(err),
+				)
+			}
 		}
 		if tblInfo.MaterializedViewLog != nil {
 			if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
@@ -1267,6 +1276,14 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", func() {
 		failpoint.Return(ver, errors.New("mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info"))
 	})
+	if err := w.deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx, args.OldMViewID); err != nil {
+		logutil.DDLLogger().Warn(
+			"refresh materialized view complete OUT OF PLACE cutover: failed to delete stale refresh alert",
+			zap.Int64("oldMViewID", args.OldMViewID),
+			zap.Int64("shadowTableID", args.ShadowTableID),
+			zap.Error(err),
+		)
+	}
 
 	if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, args.OldMViewID); err != nil {
 		return ver, errors.Trace(err)
@@ -1454,6 +1471,32 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (w *worker) deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx *jobContext, oldMViewID int64) error {
+	err := w.executeDeleteMViewRefreshAlert(jobCtx, oldMViewID, "mview-refresh-cutover-delete-refresh-alert")
+	if err != nil {
+		return errors.Trace(convertMViewRefreshAlertTableNotExistsErr(
+			err,
+			dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				"refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_alert does not exist",
+			),
+		))
+	}
+	return nil
+}
+
+func (w *worker) executeDeleteMViewRefreshAlert(jobCtx *jobContext, mviewID int64, resourceGroupTag string) error {
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	_, err := w.sess.Execute(
+		ctx,
+		buildDeleteMViewRefreshAlertSQL(mviewID),
+		resourceGroupTag,
+	)
+	return err
 }
 
 func convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err error) error {
