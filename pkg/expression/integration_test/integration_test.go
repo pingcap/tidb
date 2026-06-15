@@ -4618,7 +4618,20 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 	tk.MustExec("use test")
 	ensureMockEmbeddingProvider(t, tk)
 
+	enableNonStarterDeployModeForTest(t)
 	err := tk.ExecToErr(`
+		CREATE TABLE t_non_starter(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
+
+	err = tk.ExecToErr(`
 		CREATE TABLE t(
 			id INT PRIMARY KEY,
 			text TEXT,

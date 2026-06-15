@@ -703,6 +703,9 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 
 	tasks := make([]autoEmbeddingEvalTask, 0, len(rows))
 	for rowIdx, row := range rows {
+		if row == nil {
+			continue
+		}
 		gIdx := -1
 		for colIdx, gCol := range e.Table.Cols() {
 			if !gCol.IsGenerated() {

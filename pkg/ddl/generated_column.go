@@ -456,6 +456,9 @@ func checkGeneratedColForAutoEmbedding(name string, expr ast.ExprNode, isStored 
 	if !expression.ContainsAutoEmbedFnAST(expr) {
 		return nil
 	}
+	if err := expression.CheckEmbedTextAllowed(); err != nil {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack(err.Error())
+	}
 	if !expression.IsAutoEmbedFnCallAST(expr) {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("EMBED_TEXT() function must be the top-level function call in generated column expression. It cannot be nested inside other functions or expressions.")
 	}
