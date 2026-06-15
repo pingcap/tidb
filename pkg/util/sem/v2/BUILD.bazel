@@ -11,11 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/sem/v2",
     visibility = ["//visibility:public"],
     deps = [
-<<<<<<< HEAD
         "//br/pkg/storage",
-=======
-        "//pkg/objstore",
->>>>>>> f4471e607df (sem: make import external ID rule a no-op (#69179))
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",

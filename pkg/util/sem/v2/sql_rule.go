@@ -17,11 +17,7 @@ package sem
 import (
 	"net/url"
 
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/storage"
-=======
-	"github.com/pingcap/tidb/pkg/objstore"
->>>>>>> f4471e607df (sem: make import external ID rule a no-op (#69179))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -86,33 +82,9 @@ var AlterTableAttributesRule SQLRule = func(stmt ast.StmtNode) bool {
 	return false
 }
 
-<<<<<<< HEAD
-// ImportWithExternalIDRule SQLRule returns true if the SQL statement is related to importing data with an external ID.
-var ImportWithExternalIDRule SQLRule = func(stmt ast.StmtNode) bool {
-	switch importStmt := stmt.(type) {
-	case *ast.ImportIntoStmt:
-		u, err := url.Parse(importStmt.Path)
-		if err != nil {
-			return false
-		}
-		if storage.IsS3(u) {
-			values := u.Query()
-			for k := range values {
-				lowerK := strings.ToLower(k)
-				if lowerK == storage.S3ExternalID {
-					return true
-				}
-			}
-		}
-	default:
-		return false
-	}
-
-=======
 // ImportWithExternalIDRule SQLRule is kept for compatibility with existing SEM configs.
 // Import external ID checks are handled outside the restricted SQL rule list.
 var ImportWithExternalIDRule SQLRule = func(_ ast.StmtNode) bool {
->>>>>>> f4471e607df (sem: make import external ID rule a no-op (#69179))
 	return false
 }
 
