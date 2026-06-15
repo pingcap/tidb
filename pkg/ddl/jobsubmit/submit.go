@@ -101,11 +101,11 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if bdr.Denied(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
+					if bdr.IsDenied(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
 						return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if bdr.Denied(ast.BDRRole(bdrRole), job.Type, spec.Args) && !filter.IsSystemSchema(job.SchemaName) {
+			} else if bdr.IsDenied(ast.BDRRole(bdrRole), job.Type, spec.Args) && !filter.IsSystemSchema(job.SchemaName) {
 				return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}
@@ -347,16 +347,15 @@ func assignGIDsForJobs(specs []*JobSpec, ids []int64) {
 	}
 }
 
-// lockGlobalIDKey locks the global ID key in the meta store. It keeps trying if
-// meet write conflict, we cannot have a fixed retry count for this error, see this
-// https://github.com/pingcap/tidb/issues/27197#issuecomment-2216315057.
-// this part is same as how we implement pessimistic + repeatable read isolation
+// lockGlobalIDKey locks the global ID key in the meta store. It keeps retrying
+// on write conflicts because we cannot have a fixed retry count for this error;
+// see https://github.com/pingcap/tidb/issues/27197#issuecomment-2216315057.
+// This is the same as how we implement pessimistic + repeatable read isolation
 // level in SQL executor, see doLockKeys.
-// NextGlobalID is a meta key, so we cannot use "select xx for update", if we store
-// it into a table row or using advisory lock, we will depends on a system table
-// that is created by us, cyclic. although we can create a system table without using
-// DDL logic, we will only consider change it when we have data dictionary and keep
-// it this way now.
+// NextGlobalID is a meta key, so we cannot use "select xx for update". If we store
+// it into a table row or use an advisory lock, we will depend on a system table
+// that is created by us, which is cyclic. Although we can create a system table
+// without using DDL logic, keep it this way until we have a data dictionary.
 // TODO maybe we can unify the lock mechanism with SQL executor in the future, or
 // implement it inside TiKV client-go.
 func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transaction) (uint64, error) {

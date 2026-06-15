@@ -559,6 +559,8 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGIDRetryableError", `3*return(true)`)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/onGenGIDRetry", func() {
 		m := submitter.DDLJobDoneChMap()
+		// The retry hook runs after the transaction failure path cleans up
+		// registered job-done channels, and before the next retry registers new ones.
 		require.Empty(t, m.Keys())
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {

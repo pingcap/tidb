@@ -2231,7 +2231,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) && bdr.DeniedAddColumn(specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsAddColumnDenied(ast.BDRRole(bdrRole), specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 

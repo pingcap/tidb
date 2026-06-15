@@ -20,10 +20,14 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// DeniedAddColumn checks whether BDR primary role should reject an
+// IsAddColumnDenied checks whether BDR should reject an
 // add-column operation with the given column options. It allows adding a
 // nullable column, or a not-null column with a default value.
-func DeniedAddColumn(options []*ast.ColumnOption) bool {
+func IsAddColumnDenied(role ast.BDRRole, options []*ast.ColumnOption) bool {
+	if role != ast.BDRRolePrimary {
+		return false
+	}
+
 	var (
 		nullable     bool
 		notNull      bool
@@ -55,11 +59,15 @@ func DeniedAddColumn(options []*ast.ColumnOption) bool {
 	return true
 }
 
-// DeniedModifyColumn checks whether BDR primary role should reject a
+// IsModifyColumnDenied checks whether BDR should reject a
 // modify-column operation with the given field types and column options. It
 // allows changing the default value, or changing the default value together
 // with the column comment, when the field type is unchanged.
-func DeniedModifyColumn(newFieldType, oldFieldType types.FieldType, options []*ast.ColumnOption) bool {
+func IsModifyColumnDenied(role ast.BDRRole, newFieldType, oldFieldType types.FieldType, options []*ast.ColumnOption) bool {
+	if role != ast.BDRRolePrimary {
+		return false
+	}
+
 	if !newFieldType.Equal(&oldFieldType) {
 		return true
 	}
@@ -87,8 +95,8 @@ func DeniedModifyColumn(newFieldType, oldFieldType types.FieldType, options []*a
 	return true
 }
 
-// Denied checks whether the DDL is denied by BDR.
-func Denied(role ast.BDRRole, action model.ActionType, args model.JobArgs) (denied bool) {
+// IsDenied checks whether the DDL is denied by BDR.
+func IsDenied(role ast.BDRRole, action model.ActionType, args model.JobArgs) (denied bool) {
 	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
 	case ast.BDRRolePrimary:
