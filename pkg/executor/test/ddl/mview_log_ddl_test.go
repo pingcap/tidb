@@ -1579,7 +1579,7 @@ func TestPurgeMaterializedViewLogBeginFailure(t *testing.T) {
 	err = tk.ExecToErr("purge materialized view log on t_purge_begin_fail")
 	require.ErrorContains(t, err, "mock purge begin error")
 
-	tk.MustQuery("select count(*) from `$mlog$t_purge_begin_fail`").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from `$mlog$t_purge_begin_fail`").Check(testkit.Rows("3"))
 	tk.MustQuery(fmt.Sprintf(
 		"select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON like '%%mock purge begin error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
