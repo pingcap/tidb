@@ -26,11 +26,12 @@ import (
 type mockEtcdBackend struct {
 	kv.Storage
 	kv.EtcdBackend
-	pdAddrs []string
+	pdAddrs   []string
+	metaAddrs []string
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
-	return mebd.pdAddrs, nil
+	return mebd.metaAddrs, nil
 }
 
 func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
@@ -42,7 +43,7 @@ func (mebd *mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
 		PDAddrs: mebd.pdAddrs,
 		Group: &metaservice.Group{
 			GroupID: metaservice.GlobalGroupID,
-			Addrs:   mebd.pdAddrs,
+			Addrs:   mebd.metaAddrs,
 		},
 	}, nil
 }
@@ -57,9 +58,12 @@ func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	require.Empty(t, addrs)
 	require.Nil(t, etcdStore)
 
-	etcdStore, addrs, err = GetEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
+	etcdStore, addrs, err = GetEtcdAddrs(&mockEtcdBackend{
+		pdAddrs:   []string{"localhost:2379"},
+		metaAddrs: []string{"localhost:2389"},
+	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"localhost:2379"}, addrs)
+	require.Equal(t, []string{"localhost:2389"}, addrs)
 	require.NotNil(t, etcdStore)
 
 	cli, err := NewEtcdCli(nil)
