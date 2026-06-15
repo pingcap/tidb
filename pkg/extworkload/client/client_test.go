@@ -32,10 +32,9 @@ import (
 // service.
 type stubServer struct {
 	pb.UnimplementedExternalWorkloadControllerServer
-	lastHeader  *pb.RequestHeader
-	pingErr     *pb.Error
-	gcRecycleTs uint64
-	bgConfig    pb.GetBgTaskConfigResponse
+	lastHeader    *pb.RequestHeader
+	pingErr       *pb.Error
+	gcv2RecycleTs uint64
 }
 
 func (s *stubServer) Ping(_ context.Context, _ *pb.PingRequest) (*pb.Response, error) {
@@ -45,15 +44,10 @@ func (s *stubServer) Ping(_ context.Context, _ *pb.PingRequest) (*pb.Response, e
 	return &pb.Response{}, nil
 }
 
-func (s *stubServer) RecycleGC(_ context.Context, req *pb.RecycleGCRequest) (*pb.Response, error) {
+func (s *stubServer) RecycleGCV2(_ context.Context, req *pb.RecycleGCV2Request) (*pb.Response, error) {
 	s.lastHeader = req.GetHeader()
-	s.gcRecycleTs = req.GetSafePoint()
+	s.gcv2RecycleTs = req.GetSafePoint()
 	return &pb.Response{}, nil
-}
-
-func (s *stubServer) GetBgTaskConfig(_ context.Context, req *pb.GetBgTaskConfigRequest) (*pb.GetBgTaskConfigResponse, error) {
-	s.lastHeader = req.GetHeader()
-	return &s.bgConfig, nil
 }
 
 // startStubServer starts a stub ExternalWorkload on a bufconn-like real loopback
@@ -86,9 +80,7 @@ func startStubServer(t *testing.T, stub *stubServer) (Client, func()) {
 }
 
 func TestClientRoundTrip(t *testing.T) {
-	stub := &stubServer{
-		bgConfig: pb.GetBgTaskConfigResponse{WorkerCount: 3, AutoScaleEnabled: true},
-	}
+	stub := &stubServer{}
 	cli, cleanup := startStubServer(t, stub)
 	defer cleanup()
 
@@ -98,17 +90,11 @@ func TestClientRoundTrip(t *testing.T) {
 	require.NoError(t, cli.Ping(ctx))
 
 	// Headers and payload propagate verbatim.
-	require.NoError(t, cli.RecycleGC(ctx, 1234))
-	require.Equal(t, uint64(1234), stub.gcRecycleTs)
+	require.NoError(t, cli.RecycleGCV2(ctx, 1234))
+	require.Equal(t, uint64(1234), stub.gcv2RecycleTs)
 	require.Equal(t, uint32(42), stub.lastHeader.GetKeyspaceId())
 	require.Equal(t, "starter-ks", stub.lastHeader.GetKeyspaceName())
 	require.Equal(t, "starter-pool", stub.lastHeader.GetTidbPool())
-
-	// GetBgTaskConfig returns parsed scalar fields.
-	count, autoScale, err := cli.GetBgTaskConfig(ctx, "ddl")
-	require.NoError(t, err)
-	require.Equal(t, 3, count)
-	require.True(t, autoScale)
 }
 
 func TestClientErrorMapping(t *testing.T) {

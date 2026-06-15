@@ -48,18 +48,9 @@ type Client interface {
 	Close() error
 	Ping(ctx context.Context) error
 
-	GCClient
 	GCV2Client
-	BgTaskClient
-	RemoteQueryClient
 	TTLClient
 	AutoAnalyzeClient
-}
-
-// GCClient covers the GC v1 (delete-range) RPCs.
-type GCClient interface {
-	RegisterGC(ctx context.Context, deletionTs uint64) error
-	RecycleGC(ctx context.Context, safePoint uint64) error
 }
 
 // GCV2Client covers the keyspace-level GC RPCs.
@@ -67,19 +58,6 @@ type GCV2Client interface {
 	RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error
 	RecycleGCV2(ctx context.Context, safePoint uint64) error
 	UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error
-}
-
-// BgTaskClient covers the distributed background task RPCs.
-type BgTaskClient interface {
-	GetBgTaskConfig(ctx context.Context, workerType string) (workerCount int, autoScaleEnabled bool, err error)
-	RegisterBgTask(ctx context.Context, taskType, taskKey string, gTaskID, subTaskID int64, execID string) error
-	RecycleBgTask(ctx context.Context, gTaskID, subTaskID int64) error
-	UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*pb.SubtaskExecIDAssignment) error
-}
-
-// RemoteQueryClient covers the remote-query RPC.
-type RemoteQueryClient interface {
-	RegisterRemoteQuery(ctx context.Context, queryID, queryAddr string) error
 }
 
 // TTLClient covers the TTL RPCs.
@@ -114,7 +92,7 @@ func New(ctx context.Context, opt *Option, extraDialOpts ...grpc.DialOption) (Cl
 	}
 	dialOpts = append(dialOpts, extraDialOpts...)
 
-	conn, err := grpc.DialContext(ctx, host, dialOpts...) //nolint:staticcheck // grpc.NewClient lacks ctx-aware dial.
+	conn, err := grpc.DialContext(ctx, host, dialOpts...) //nolint:staticcheck // SA1019: keep DialContext for caller-supplied blocking dial options.
 	if err != nil {
 		return nil, errors.Annotate(err, "dial external workload controller")
 	}
@@ -161,22 +139,6 @@ func (c *grpcClient) Ping(ctx context.Context) error {
 	return mapResponse("Ping", resp, err)
 }
 
-func (c *grpcClient) RegisterGC(ctx context.Context, deletionTs uint64) error {
-	resp, err := c.stub.RegisterGC(ctx, &pb.RegisterGCRequest{
-		Header:     c.header(),
-		DeletionTs: deletionTs,
-	})
-	return mapResponse("RegisterGC", resp, err)
-}
-
-func (c *grpcClient) RecycleGC(ctx context.Context, safePoint uint64) error {
-	resp, err := c.stub.RecycleGC(ctx, &pb.RecycleGCRequest{
-		Header:    c.header(),
-		SafePoint: safePoint,
-	})
-	return mapResponse("RecycleGC", resp, err)
-}
-
 func (c *grpcClient) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error {
 	resp, err := c.stub.RegisterGCV2(ctx, &pb.RegisterGCV2Request{
 		Header:     c.header(),
@@ -200,62 +162,6 @@ func (c *grpcClient) UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) err
 		GcLifeTime: gcLifeTime,
 	})
 	return mapResponse("UpdateGCLifeTime", resp, err)
-}
-
-func (c *grpcClient) GetBgTaskConfig(ctx context.Context, workerType string) (int, bool, error) {
-	resp, err := c.stub.GetBgTaskConfig(ctx, &pb.GetBgTaskConfigRequest{
-		Header:     c.header(),
-		WorkerType: workerType,
-	})
-	if err != nil {
-		return 0, false, errors.Annotate(err, "external workload rpc GetBgTaskConfig")
-	}
-	if e := resp.GetError(); e != nil && e.GetType() != pb.ErrorType_OK {
-		if e.GetType() == pb.ErrorType_PAUSED {
-			return 0, false, ErrControllerPaused
-		}
-		return 0, false, errors.Errorf("external workload rpc GetBgTaskConfig: %s", e.GetMessage())
-	}
-	return int(resp.GetWorkerCount()), resp.GetAutoScaleEnabled(), nil
-}
-
-func (c *grpcClient) RegisterBgTask(ctx context.Context, taskType, taskKey string, gTaskID, subTaskID int64, execID string) error {
-	resp, err := c.stub.RegisterBgTask(ctx, &pb.RegisterBgTaskRequest{
-		Header:       c.header(),
-		TaskType:     taskType,
-		TaskKey:      taskKey,
-		GlobalTaskId: gTaskID,
-		SubTaskId:    subTaskID,
-		ExecId:       execID,
-	})
-	return mapResponse("RegisterBgTask", resp, err)
-}
-
-func (c *grpcClient) RecycleBgTask(ctx context.Context, gTaskID, subTaskID int64) error {
-	resp, err := c.stub.RecycleBgTask(ctx, &pb.RecycleBgTaskRequest{
-		Header:       c.header(),
-		GlobalTaskId: gTaskID,
-		SubTaskId:    subTaskID,
-	})
-	return mapResponse("RecycleBgTask", resp, err)
-}
-
-func (c *grpcClient) UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*pb.SubtaskExecIDAssignment) error {
-	resp, err := c.stub.UpdateBgTaskExecID(ctx, &pb.UpdateBgTaskExecIDRequest{
-		Header:       c.header(),
-		GlobalTaskId: gTaskID,
-		Assignments:  assignments,
-	})
-	return mapResponse("UpdateBgTaskExecID", resp, err)
-}
-
-func (c *grpcClient) RegisterRemoteQuery(ctx context.Context, queryID, queryAddr string) error {
-	resp, err := c.stub.RegisterRemoteQuery(ctx, &pb.RegisterRemoteQueryRequest{
-		Header:       c.header(),
-		QueryId:      queryID,
-		QueryAddress: queryAddr,
-	})
-	return mapResponse("RegisterRemoteQuery", resp, err)
 }
 
 func (c *grpcClient) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {
@@ -308,17 +214,14 @@ func (c *grpcClient) RecycleAutoAnalyze(ctx context.Context, taskID uint64) erro
 }
 
 // respWithError is implemented by every controller response that surfaces a
-// top-level *pb.Error (i.e. anything returning pb.Response and the
-// GetBgTaskConfigResponse).
+// top-level *pb.Error.
 type respWithError interface {
 	GetError() *pb.Error
 }
 
 // mapResponse converts a gRPC (response, err) pair into a single error.
 //
-// It is used by every Register / Recycle / Update RPC that returns
-// pb.Response. GetBgTaskConfig has a non-standard response and is mapped
-// inline at the call site.
+// It is used by every Register / Recycle / Update RPC that returns pb.Response.
 func mapResponse(method string, resp respWithError, err error) error {
 	if err != nil {
 		return errors.Annotatef(err, "external workload rpc %s", method)

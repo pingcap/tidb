@@ -24,13 +24,7 @@ import (
 // workloads with the external workload controller; worker TiDBs consume them.
 const (
 	RoleMaster            = "master"
-	RoleGCWorker          = "gc"
 	RoleGCV2Worker        = "gcv2"
-	RoleDDLWorker         = "ddl"
-	RoleBatchWorker       = "batch"
-	RoleImportIntoWorker  = "import-into"
-	RoleSharedWorker      = "shared"
-	RoleRemoteQueryWorker = "remote-query"
 	RoleTTLTaskWorker     = "ttl"
 	RoleAutoAnalyzeWorker = "auto-analyze"
 )
@@ -73,28 +67,22 @@ func (w *ExternalWorkload) Valid() error {
 	if w.APIServerAddr == "" {
 		return fmt.Errorf("external-workload api-server must not be empty when enabled")
 	}
-	if w.TidbPool == "" {
-		return fmt.Errorf("external-workload tidb-pool must not be empty when enabled")
-	}
 	switch w.Role {
 	case RoleMaster:
-	case RoleGCWorker,
-		RoleGCV2Worker,
+	case RoleGCV2Worker,
 		RoleTTLTaskWorker,
-		RoleDDLWorker,
-		RoleBatchWorker,
-		RoleImportIntoWorker,
-		RoleSharedWorker,
-		RoleRemoteQueryWorker,
 		RoleAutoAnalyzeWorker:
-		if v := os.Getenv(EnvVarExecID); v != "" {
+		if v := strings.TrimSpace(os.Getenv(EnvVarExecID)); v != "" {
 			w.ExecID = v
 		}
-		if v := os.Getenv(EnvVarTiDBPool); v != "" {
+		if v := strings.TrimSpace(os.Getenv(EnvVarTiDBPool)); v != "" {
 			w.TidbPool = v
 		}
 	default:
 		return fmt.Errorf("invalid external-workload role %q", w.Role)
+	}
+	if w.TidbPool == "" {
+		return fmt.Errorf("external-workload tidb-pool must not be empty when enabled")
 	}
 	return nil
 }

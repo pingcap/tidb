@@ -333,7 +333,7 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) {
 		return
 	}
 	if err := extworkload.InitManager(ctx, meta, cfg); err != nil {
-		logutil.BgLogger().Warn("failed to initialise external workload manager", zap.Error(err))
+		logutil.BgLogger().Warn("failed to initialize external workload manager", zap.Error(err))
 	}
 }
 

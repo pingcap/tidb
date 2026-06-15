@@ -1767,8 +1767,10 @@ func (c *Config) Valid() error {
 	if err := c.TrxSummary.Valid(); err != nil {
 		return err
 	}
-	if err := c.ExternalWorkload.Valid(); err != nil {
-		return err
+	if c.DeployMode == deploymode.Starter {
+		if err := c.ExternalWorkload.Valid(); err != nil {
+			return err
+		}
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {

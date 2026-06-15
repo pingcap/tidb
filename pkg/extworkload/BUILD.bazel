@@ -16,7 +16,6 @@ go_library(
         "//pkg/metrics",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@org_uber_go_zap//:zap",
     ],

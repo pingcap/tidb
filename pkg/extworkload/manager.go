@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	externalworkloadpb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -31,15 +30,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// Worker type identifiers used in metric labels and as values for the
-// worker_type / task_type fields of background-subtask RPCs.
+// Worker type identifiers used in metric labels.
 const (
-	WorkerTypeDDL         = "ddl"
-	WorkerTypeImportInto  = "import-into"
-	WorkerTypeBatch       = "batch"
-	WorkerTypeGC          = "gc"
 	WorkerTypeGCV2        = "gcv2"
-	WorkerTypeRemoteQuery = "remote-query"
 	WorkerTypeTTL         = "ttl"
 	WorkerTypeAutoAnalyze = "auto-analyze"
 )
@@ -112,7 +105,10 @@ func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg 
 		return nil, err
 	}
 	if err := cli.Ping(dialCtx); err != nil {
-		_ = cli.Close()
+		if closeErr := cli.Close(); closeErr != nil {
+			logutil.BgLogger().Warn("failed to close external workload client after ping failure",
+				zap.Error(closeErr))
+		}
 		return nil, errors.Annotate(err, "ping external workload controller")
 	}
 	return cli, nil
@@ -125,20 +121,6 @@ func (m *manager) Meta() *keyspacepb.KeyspaceMeta { return m.meta }
 func bumpCounter(workerType, action string) {
 	metrics.ExternalWorkloadTaskCounter.WithLabelValues(workerType, action).Inc()
 }
-
-// GC v1.
-
-func (m *manager) RegisterGC(ctx context.Context, deletionTs uint64) error {
-	bumpCounter(WorkerTypeGC, metrics.WorkerActionRegister)
-	return m.cli.RegisterGC(ctx, deletionTs)
-}
-
-func (m *manager) RecycleGC(ctx context.Context, safePoint uint64) error {
-	bumpCounter(WorkerTypeGC, metrics.WorkerActionRecycle)
-	return m.cli.RecycleGC(ctx, safePoint)
-}
-
-// GC v2.
 
 func (m *manager) InitializeGCV2(ctx context.Context) error {
 	bumpCounter(WorkerTypeGCV2, metrics.WorkerActionInit)
@@ -164,35 +146,6 @@ func (m *manager) UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error 
 	return m.cli.UpdateGCLifeTime(ctx, gcLifeTime)
 }
 
-// Background task framework.
-
-func (m *manager) GetBgTaskConfig(ctx context.Context, workerType string) (int, bool, error) {
-	return m.cli.GetBgTaskConfig(ctx, workerType)
-}
-
-func (m *manager) RegisterBgTask(ctx context.Context, taskType, taskKey string, gTaskID, subTaskID int64, execID string) error {
-	bumpCounter(taskType, metrics.WorkerActionRegister)
-	return m.cli.RegisterBgTask(ctx, taskType, taskKey, gTaskID, subTaskID, execID)
-}
-
-func (m *manager) RecycleBgTask(ctx context.Context, taskType string, gTaskID, subTaskID int64) error {
-	bumpCounter(taskType, metrics.WorkerActionRecycle)
-	return m.cli.RecycleBgTask(ctx, gTaskID, subTaskID)
-}
-
-func (m *manager) UpdateBgTaskExecID(ctx context.Context, gTaskID int64, assignments []*externalworkloadpb.SubtaskExecIDAssignment) error {
-	return m.cli.UpdateBgTaskExecID(ctx, gTaskID, assignments)
-}
-
-// Remote query.
-
-func (m *manager) RegisterRemoteQuery(ctx context.Context, queryID, queryAddr string) error {
-	bumpCounter(WorkerTypeRemoteQuery, metrics.WorkerActionRegister)
-	return m.cli.RegisterRemoteQuery(ctx, queryID, queryAddr)
-}
-
-// TTL.
-
 func (m *manager) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {
 	bumpCounter(WorkerTypeTTL, metrics.WorkerActionRegister)
 	return m.cli.RegisterTTLTask(ctx, tableID, ttlJobEnable)
@@ -210,8 +163,6 @@ func (m *manager) RecycleTTLTask(ctx context.Context, completedJobCreateTime uin
 func (m *manager) UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error {
 	return m.cli.UpdateTTLJobEnable(ctx, ttlJobEnable)
 }
-
-// Auto-analyze.
 
 func (m *manager) RegisterAutoAnalyze(ctx context.Context, taskID uint64) error {
 	bumpCounter(WorkerTypeAutoAnalyze, metrics.WorkerActionRegister)

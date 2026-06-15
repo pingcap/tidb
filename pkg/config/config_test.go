@@ -1907,6 +1907,13 @@ func TestExternalWorkloadValid(t *testing.T) {
 	require.NoError(t, conf.Valid())
 
 	conf.ExternalWorkload.Enable = true
+	require.NoError(t, conf.Valid())
+
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf.DeployMode = deploymode.Starter
 	require.ErrorContains(t, conf.Valid(), "external-workload api-server must not be empty")
 
 	conf.ExternalWorkload.APIServerAddr = "http://127.0.0.1:1234"
@@ -1923,26 +1930,23 @@ func TestExternalWorkloadValid(t *testing.T) {
 }
 
 func TestExternalWorkloadWorkerEnvOverride(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
 	t.Setenv(EnvVarExecID, "exec-from-env")
 	t.Setenv(EnvVarTiDBPool, "pool-from-env")
 
 	for _, role := range []string{
-		RoleGCWorker,
 		RoleGCV2Worker,
 		RoleTTLTaskWorker,
-		RoleDDLWorker,
-		RoleBatchWorker,
-		RoleImportIntoWorker,
-		RoleSharedWorker,
-		RoleRemoteQueryWorker,
 		RoleAutoAnalyzeWorker,
 	} {
 		t.Run(role, func(t *testing.T) {
 			conf := NewConfig()
+			conf.DeployMode = deploymode.Starter
 			conf.ExternalWorkload = ExternalWorkload{
 				Enable:        true,
 				Role:          role,
-				TidbPool:      "pool-from-config",
 				APIServerAddr: "http://127.0.0.1:1234",
 				ExecID:        "exec-from-config",
 			}
@@ -1953,6 +1957,7 @@ func TestExternalWorkloadWorkerEnvOverride(t *testing.T) {
 	}
 
 	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
 	conf.ExternalWorkload = ExternalWorkload{
 		Enable:        true,
 		Role:          RoleMaster,
