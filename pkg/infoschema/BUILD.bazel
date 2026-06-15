@@ -92,9 +92,9 @@ go_test(
         "metrics_schema_test.go",
         "sieve_test.go",
     ],
-    embed = [":infoschema"],
-        flaky = True,
-    shard_count = 41,
+        embed = [":infoschema"],
+    flaky = True,
+    shard_count = 42,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
