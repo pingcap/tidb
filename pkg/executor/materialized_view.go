@@ -1821,6 +1821,13 @@ func (e *CompareMaterializedViewExec) readCompareMaterializedViewLastSuccessRead
 	if readTSONull {
 		return 0, errors.New("compare materialized view: LAST_SUCCESS_READ_TSO is NULL")
 	}
+	if readTSO > compareSnapshotTS {
+		return 0, errors.Errorf(
+			"compare materialized view: LAST_SUCCESS_READ_TSO %d is newer than compare snapshot %d",
+			readTSO,
+			compareSnapshotTS,
+		)
+	}
 	return readTSO, nil
 }
 

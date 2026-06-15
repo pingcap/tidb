@@ -3715,6 +3715,27 @@ func TestCompareMaterializedViewEmptyInputs(t *testing.T) {
 	tk.MustQuery("select count(*) from test.mv_compare_empty_output").Check(testkit.Rows("0"))
 }
 
+func TestCompareMaterializedViewRejectsReadTSOAfterSnapshot(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.time_zone = '+00:00'")
+	tk.MustExec("create table t_compare_tso_guard (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_tso_guard values (1, 10)")
+	tk.MustExec("create materialized view log on t_compare_tso_guard (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_tso_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_tso_guard group by a")
+
+	futureTSO := oracle.GoTimeToTS(time.Now().UTC().Add(time.Hour))
+	tk.MustExec(fmt.Sprintf(
+		"update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_tso_guard')",
+		futureTSO,
+	))
+
+	compareTS := nextCompareTimestamp(t, tk)
+	err := tk.QueryToErr(fmt.Sprintf("compare materialized view test.mv_compare_tso_guard as of timestamp '%s'", compareTS))
+	require.ErrorContains(t, err, "LAST_SUCCESS_READ_TSO")
+}
+
 func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
