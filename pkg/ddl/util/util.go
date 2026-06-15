@@ -59,6 +59,9 @@ const (
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// AddingDDLJobNotifyKey is the key in etcd to notify DDL scheduler that
+	// there is a new DDL job.
+	AddingDDLJobNotifyKey = "/tidb/ddl/add_ddl_job_general"
 	// ServerGlobalState is the path on etcd that is used to store the server global state.
 	ServerGlobalState = "/tidb/server/global_state"
 	// SessionTTL is the etcd session's TTL in seconds.

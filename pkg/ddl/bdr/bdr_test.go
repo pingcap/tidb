@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package bdr
 
 import (
 	"fmt"
@@ -76,7 +76,7 @@ func TestDeniedByBDRWhenAddColumn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := deniedByBDRWhenAddColumn(tt.options)
+			result := DeniedAddColumn(tt.options)
 			require.Equal(t, tt.expected, result)
 		})
 	}
@@ -122,7 +122,7 @@ func TestDeniedByBDRWhenModifyColumn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := deniedByBDRWhenModifyColumn(tt.newFieldType, tt.oldFieldType, tt.options)
+			result := DeniedModifyColumn(tt.newFieldType, tt.oldFieldType, tt.options)
 			require.Equal(t, tt.expected, result)
 		})
 	}
@@ -471,7 +471,8 @@ func TestDeniedByBDR(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, nil), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+		assert.Equal(t, tc.expected, Denied(tc.role, tc.action, nil),
+			fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 	}
 
 	// test special cases
@@ -528,7 +529,8 @@ func TestDeniedByBDR(t *testing.T) {
 			job.Encode(true)
 			args, err := model.GetModifyIndexArgs(job)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, args), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+			assert.Equal(t, tc.expected, Denied(tc.role, tc.action, args),
+				fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 		}
 	}
 }

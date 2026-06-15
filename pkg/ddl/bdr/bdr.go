@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package bdr
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -20,9 +20,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// In BDR mode(primary role), we allow add a new column to table if it is nullable
-// or not null with default value.
-func deniedByBDRWhenAddColumn(options []*ast.ColumnOption) bool {
+// DeniedAddColumn checks whether BDR primary role should reject an
+// add-column operation with the given column options. It allows adding a
+// nullable column, or a not-null column with a default value.
+func DeniedAddColumn(options []*ast.ColumnOption) bool {
 	var (
 		nullable     bool
 		notNull      bool
@@ -54,9 +55,11 @@ func deniedByBDRWhenAddColumn(options []*ast.ColumnOption) bool {
 	return true
 }
 
-// In BDR mode(primary role), we allow add or update comment for column, change default
-// value of one particular column. Other modify column operations are denied.
-func deniedByBDRWhenModifyColumn(newFieldType, oldFieldType types.FieldType, options []*ast.ColumnOption) bool {
+// DeniedModifyColumn checks whether BDR primary role should reject a
+// modify-column operation with the given field types and column options. It
+// allows changing the default value, or changing the default value together
+// with the column comment, when the field type is unchanged.
+func DeniedModifyColumn(newFieldType, oldFieldType types.FieldType, options []*ast.ColumnOption) bool {
 	if !newFieldType.Equal(&oldFieldType) {
 		return true
 	}
@@ -84,8 +87,8 @@ func deniedByBDRWhenModifyColumn(newFieldType, oldFieldType types.FieldType, opt
 	return true
 }
 
-// DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role ast.BDRRole, action model.ActionType, args model.JobArgs) (denied bool) {
+// Denied checks whether the DDL is denied by BDR.
+func Denied(role ast.BDRRole, action model.ActionType, args model.JobArgs) (denied bool) {
 	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
 	case ast.BDRRolePrimary:
@@ -111,7 +114,7 @@ func DeniedByBDR(role ast.BDRRole, action model.ActionType, args model.JobArgs) 
 			return false
 		}
 	default:
-		// if user do not set bdr role, we will not deny any ddl as `none`
+		// If user do not set bdr role, we will not deny any ddl as `none`.
 		return false
 	}
 
