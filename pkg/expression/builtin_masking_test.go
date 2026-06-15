@@ -63,6 +63,24 @@ func TestMaskFull(t *testing.T) {
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(0), d.GetInt64())
+
+	// Test REAL (DOUBLE) type - mask_full returns 0.0
+	realType := types.NewFieldType(mysql.TypeDouble)
+	realArg := &Constant{Value: types.NewFloat64Datum(123.456), RetType: realType}
+	f, err = newFunctionForTest(ctx, ast.MaskFull, realArg)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, float64(0), d.GetFloat64())
+
+	// Test DECIMAL type - mask_full returns zero decimal
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decArg := &Constant{Value: types.NewDecimalDatum(types.NewDecFromStringForTest("123.456")), RetType: decType}
+	f, err = newFunctionForTest(ctx, ast.MaskFull, decArg)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "0", d.GetMysqlDecimal().String())
 }
 
 func TestMaskNull(t *testing.T) {

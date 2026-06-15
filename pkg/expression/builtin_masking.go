@@ -59,6 +59,10 @@ func (c *maskFullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 			return nil, errIncorrectArgs.GenWithStackByArgs("mask_full")
 		}
 		return &builtinMaskFullIntSig{bf}, nil
+	case types.ETReal:
+		return &builtinMaskFullRealSig{bf}, nil
+	case types.ETDecimal:
+		return &builtinMaskFullDecimalSig{bf}, nil
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("mask_full")
 	}
@@ -176,6 +180,48 @@ func (b *builtinMaskFullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return 0, true, err
 	}
 	return 0, false, nil
+}
+
+type builtinMaskFullRealSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskFullRealSig) Clone() builtinFunc {
+	newSig := &builtinMaskFullRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskFullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	_, isNull, err := b.args[0].EvalReal(ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	return 0, false, nil
+}
+
+type builtinMaskFullDecimalSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskFullDecimalSig) Clone() builtinFunc {
+	newSig := &builtinMaskFullDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskFullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(ctx, row)
+	if isNull || err != nil {
+		return nil, true, err
+	}
+	return new(types.MyDecimal), false, nil
 }
 
 type maskNullFunctionClass struct {
