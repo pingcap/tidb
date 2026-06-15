@@ -1252,12 +1252,13 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		batchSize = int64(variable.DefTiDBMLogPurgeBatchSize)
 	}
 	totalPurgeRows := int64(0)
-	safePurgeTSOReady := false
 	safePurgeTSO := uint64(0)
 	lockedLastPurgedTSO := uint64(0)
 	lockedLastPurgedTSOReady := false
 	purgeJobID := uint64(0)
 	purgeHistRunningInserted := false
+	txnStarted := false
+	txnFinished := false
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
@@ -1306,6 +1307,30 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	)
 	sqlExec := purgeSctx.GetSQLExecutor()
 
+	deleteSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(releaseCtx, deleteSctx)
+	deleteSessVars := deleteSctx.GetSessionVars()
+	restoreDeleteMaintenanceVars, err := applyMVMaintenanceSessionVars(
+		deleteSessVars,
+		targetMaintainMemQuota,
+		targetMaintainIsolationReadEngines,
+		isInternalSQL,
+	)
+	if err != nil {
+		return err
+	}
+	defer restoreDeleteMaintenanceVars()
+	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeDeleteSession", deleteSessVars.MemQuotaQuery, targetMaintainMemQuota)
+	failpoint.InjectCall(
+		"mvMaintainIsolationReadEnginesAppliedOnPurgeDeleteSession",
+		variable.GetIsolationReadEnginesString(deleteSessVars),
+		targetMaintainIsolationReadEngines,
+	)
+	deleteSQLExec := deleteSctx.GetSQLExecutor()
+
 	histSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -1326,9 +1351,20 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	defer func() {
 		stopTaskMonitor()
 	}()
+	defer func() {
+		if !txnStarted || txnFinished {
+			return
+		}
+		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+		txnFinished = true
+	}()
 
 	finalizeFailure := func(purgeErr error) error {
 		purgeFailedReason, finalErr := taskCancelController.normalizeTaskFailure(purgeErr)
+		if txnStarted && !txnFinished {
+			_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+			txnFinished = true
+		}
 		if !purgeHistRunningInserted {
 			return errors.Trace(finalErr)
 		}
@@ -1380,190 +1416,159 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		}
 	})
 
-	for {
-		var beginErr error
-		failpoint.Inject("mockPurgeMaterializedViewLogBeginErr", func(val failpoint.Value) {
-			if v, ok := val.(bool); ok && v {
-				beginErr = errors.New("mock purge begin error")
-			}
-		})
-		if beginErr != nil {
-			return finalizeFailure(beginErr)
+	var beginErr error
+	failpoint.Inject("mockPurgeMaterializedViewLogBeginErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			beginErr = errors.New("mock purge begin error")
 		}
-		if _, err = sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
-			return finalizeFailure(err)
+	})
+	if beginErr != nil {
+		return finalizeFailure(beginErr)
+	}
+	if _, err = sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
+		return finalizeFailure(err)
+	}
+	txnStarted = true
+
+	lastPurgedTSO, hasLastPurgedTSO, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	lockedLastPurgedTSO = lastPurgedTSO
+	lockedLastPurgedTSOReady = hasLastPurgedTSO
+
+	txn, err := purgeSctx.Txn(true)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	purgeStartTS := txn.StartTS()
+	failpoint.Inject("mockPurgeMaterializedViewLogZeroStartTS", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			purgeStartTS = 0
 		}
+	})
+	if purgeStartTS == 0 {
+		return finalizeFailure(errors.New("purge materialized view log: invalid transaction start tso"))
+	}
+	safePurgeTSO = purgeStartTS
 
-		lastPurgedTSO, hasLastPurgedTSO, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
-		if err != nil {
-			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
-			if isMLogPurgeLockConflict(err) && totalPurgeRows > 0 {
-				if histErr := finalizeSuccess(); histErr != nil {
-					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-						errors.Annotate(histErr, "purge materialized view log: purge committed but failed to finalize purge history"),
-					)
-				}
-				applyMVRefreshStmtResult(
-					e.Ctx().GetSessionVars().StmtCtx,
-					newMVRefreshStmtResultFromWriteCounts(0, 0, totalPurgeRows),
-				)
-				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
-					"purge materialized view log on %s.%s stopped before deleting all eligible rows due to lock conflict after deleting %d rows; please retry later",
-					schemaName.O,
-					s.Table.Name.O,
-					totalPurgeRows,
-				))
-				return nil
-			}
-			return err
-		}
+	purgeJobID = purgeStartTS
+	if err := insertMLogPurgeHistRunning(
+		kctx,
+		histSQLExec,
+		purgeJobID,
+		mlogID,
+		schemaName.O,
+		baseTableMeta.Name.O,
+		purgeMethod,
+		histTime(purgeStart, histLoc),
+	); err != nil {
+		return finalizeFailure(err)
+	}
+	purgeHistRunningInserted = true
+	stopTaskMonitor, err = startMVTaskMonitor(
+		kctx,
+		e.GetSysSession,
+		func(sctx sessionctx.Context) {
+			e.ReleaseSysSession(releaseCtx, sctx)
+		},
+		taskCancelController,
+		fmt.Sprintf("mlog-purge-%d", purgeJobID),
+		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
+			return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
+		},
+		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
+			return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
+		},
+	)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
 
-		var batchErr error
-		batchPurgeRows := int64(0)
-
-		// Calculate safe purge tso once at the first successful lock acquisition.
-		if !safePurgeTSOReady {
-			lockedLastPurgedTSO = lastPurgedTSO
-			lockedLastPurgedTSOReady = hasLastPurgedTSO
-
-			txn, err := purgeSctx.Txn(true)
-			if err != nil {
-				_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
-				return errors.Trace(err)
-			}
-			purgeStartTS := txn.StartTS()
-			failpoint.Inject("mockPurgeMaterializedViewLogZeroStartTS", func(val failpoint.Value) {
-				if v, ok := val.(bool); ok && v {
-					purgeStartTS = 0
-				}
-			})
-			if purgeStartTS == 0 {
-				_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
-				return finalizeFailure(errors.New("purge materialized view log: invalid transaction start tso"))
-			}
-			safePurgeTSO = purgeStartTS
-
-			if !purgeHistRunningInserted {
-				purgeJobID = purgeStartTS
-				if err := insertMLogPurgeHistRunning(
-					kctx,
-					histSQLExec,
-					purgeJobID,
-					mlogID,
-					schemaName.O,
-					baseTableMeta.Name.O,
-					purgeMethod,
-					histTime(purgeStart, histLoc),
-				); err != nil {
-					_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
-					return errors.Trace(err)
-				}
-				purgeHistRunningInserted = true
-				stopTaskMonitor, err = startMVTaskMonitor(
-					kctx,
-					e.GetSysSession,
-					func(sctx sessionctx.Context) {
-						e.ReleaseSysSession(releaseCtx, sctx)
-					},
-					taskCancelController,
-					fmt.Sprintf("mlog-purge-%d", purgeJobID),
-					func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
-						return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
-					},
-					func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
-						return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
-					},
-				)
-				if err != nil {
-					_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
-					return finalizeFailure(err)
-				}
-				failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
-			}
-
-			// Collect all dependent MV IDs (Public + in-building CREATE MATERIALIZED VIEW jobs).
-			publicMVIDs, buildingMVIDs, collectErr := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
-			if collectErr != nil {
-				batchErr = collectErr
-			} else {
-				// If there are no dependent MVs, it is safe to purge up to the start tso of this transaction.
-				safePurgeTSO, batchErr = calcMaterializedViewLogSafePurgeTSO(
-					kctx,
-					sqlExec,
-					schemaName.O,
-					s.Table.Name.O,
-					purgeStartTS,
-					publicMVIDs,
-					buildingMVIDs,
-				)
-			}
-			safePurgeTSOReady = true
-		}
-
-		skipDeleteByCheckpoint := batchErr == nil && lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
-		if batchErr == nil && !skipDeleteByCheckpoint && safePurgeTSO > 0 {
-			batchPurgeRows, batchErr = purgeMaterializedViewLogData(
+	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	safePurgeTSO, err = calcMaterializedViewLogSafePurgeTSO(
+		kctx,
+		sqlExec,
+		schemaName.O,
+		s.Table.Name.O,
+		purgeStartTS,
+		publicMVIDs,
+		buildingMVIDs,
+	)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
+	if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
+		for {
+			batchPurgeRows, batchErr := purgeMaterializedViewLogData(
 				kctx,
-				sqlExec,
-				purgeSctx.GetSessionVars(),
+				deleteSQLExec,
+				deleteSessVars,
 				schemaName.O,
 				mlogName.O,
 				safePurgeTSO,
 				batchSize,
 			)
-		}
-		if batchErr == nil && batchPurgeRows < batchSize {
-			nextTime, shouldUpdateNextTime, deriveErr := deriveRuntimeMaterializedScheduleNextTime(
-				kctx,
-				scheduleEvalSctx,
-				purgeSctx,
-				mlogInfo.PurgeStartWith,
-				mlogInfo.PurgeNext,
-				isInternalSQL,
-				mlogInfo.DefinitionSQLMode,
-				func() {
-					logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(schemaName.O, mlogName.O, mlogInfo.PurgeNext)
-				},
-			)
-			if deriveErr != nil {
-				batchErr = deriveErr
-			} else {
-				var lastPurgedTSOToPersist *uint64
-				if !skipDeleteByCheckpoint {
-					lastPurgedTSOToPersist = &safePurgeTSO
-				}
-				batchErr = updateMaterializedViewLogPurgeInfoOnSuccess(
-					kctx,
-					sqlExec,
-					mlogID,
-					lastPurgedTSOToPersist,
-					nextTime,
-					shouldUpdateNextTime,
-				)
+			totalPurgeRows += batchPurgeRows
+			failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
+			if batchErr != nil {
+				return finalizeFailure(batchErr)
 			}
-		}
-		if batchErr != nil {
-			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
-			return finalizeFailure(batchErr)
-		}
-		if _, err = sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
-			return finalizeFailure(err)
-		}
-
-		totalPurgeRows += batchPurgeRows
-		if batchPurgeRows < batchSize {
-			if err := finalizeSuccess(); err != nil {
-				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-					errors.Annotate(err, "purge materialized view log: purge committed but failed to finalize purge history"),
-				)
+			if batchPurgeRows < batchSize {
+				break
 			}
-			applyMVRefreshStmtResult(
-				e.Ctx().GetSessionVars().StmtCtx,
-				newMVRefreshStmtResultFromWriteCounts(0, 0, totalPurgeRows),
-			)
-			return nil
 		}
 	}
+
+	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
+		kctx,
+		scheduleEvalSctx,
+		purgeSctx,
+		mlogInfo.PurgeStartWith,
+		mlogInfo.PurgeNext,
+		isInternalSQL,
+		mlogInfo.DefinitionSQLMode,
+		func() {
+			logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(schemaName.O, mlogName.O, mlogInfo.PurgeNext)
+		},
+	)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	var lastPurgedTSOToPersist *uint64
+	if !skipDeleteByCheckpoint {
+		lastPurgedTSOToPersist = &safePurgeTSO
+	}
+	if err = updateMaterializedViewLogPurgeInfoOnSuccess(
+		kctx,
+		sqlExec,
+		mlogID,
+		lastPurgedTSOToPersist,
+		nextTime,
+		shouldUpdateNextTime,
+	); err != nil {
+		return finalizeFailure(err)
+	}
+	if _, err = sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+		return finalizeFailure(err)
+	}
+	txnFinished = true
+
+	if err := finalizeSuccess(); err != nil {
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+			errors.Annotate(err, "purge materialized view log: purge committed but failed to finalize purge history"),
+		)
+	}
+	applyMVRefreshStmtResult(
+		e.Ctx().GetSessionVars().StmtCtx,
+		newMVRefreshStmtResultFromWriteCounts(0, 0, totalPurgeRows),
+	)
+	return nil
 }
 
 func calcMaterializedViewLogSafePurgeTSO(
@@ -1755,10 +1760,6 @@ func acquireMaterializedViewLogPurgeLock(
 	return rows[0].GetUint64(0), true, nil
 }
 
-func isMLogPurgeLockConflict(err error) bool {
-	return err != nil && errors.ErrorEqual(err, errMLogPurgeLockConflict)
-}
-
 func collectDependentMViewIDsForMLogPurge(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
@@ -1821,7 +1822,6 @@ func purgeMaterializedViewLogData(
 			failpoint.Return(int64(0), errors.New("mock purge mlog delete error"))
 		}
 	})
-
 	failpoint.Inject("mockPurgeMaterializedViewLogDeleteRows", func(val failpoint.Value) {
 		switch v := val.(type) {
 		case int:
