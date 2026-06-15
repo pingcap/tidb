@@ -105,9 +105,6 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 	err = s.addBatchDDLJobs2Table(jobWs)
 	var jobs string
 	for _, jobW := range jobWs {
-		if err == nil {
-			err = jobW.cacheErr
-		}
 		jobW.NotifyResult(err)
 		jobs += jobW.Job.String() + "; "
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, jobW.Job.Type.String(),

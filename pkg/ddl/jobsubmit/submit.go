@@ -46,9 +46,9 @@ import (
 
 // SubmitBatch validates and inserts DDL jobs into mysql.tidb_ddl_job without
 // starting any background submit loop, notification path, or history waiter.
-// It mutates the input specs in place: nil Args are replaced, jobs receive
-// their IDs, StartTS, BDR role, and queueing state, and upgrade-time submission
-// may also set the job AdminOperator while pausing user jobs.
+// It mutates the input specs in place: jobs receive their IDs, StartTS, BDR
+// role, and state. Upgrade-time submission may also set AdminOperator while
+// pausing user jobs. Callers must not treat the input specs as read-only.
 func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]SubmitResult, error) {
 	if len(specs) == 0 {
 		return nil, nil
@@ -61,10 +61,7 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 	}
 	defer opts.SessPool.Put(se)
 
-	minJobID := int64(0)
-	if opts.MinJobIDRefresher != nil {
-		minJobID = opts.MinJobIDRefresher.GetCurrMinJobID()
-	}
+	minJobID := opts.MinJobIDRefresher.GetCurrMinJobID()
 	found, err := opts.SysTblMgr.HasFlashbackClusterJob(ctx, minJobID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -91,12 +88,6 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]S
 	}
 
 	for _, spec := range specs {
-		if spec == nil || spec.Job == nil {
-			return nil, errors.Errorf("DDL job spec must contain a job")
-		}
-		if spec.Args == nil {
-			spec.Args = &model.EmptyArgs{}
-		}
 		job := spec.Job
 		if err = job.CheckInvolvingSchemaInfo(); err != nil {
 			return nil, err

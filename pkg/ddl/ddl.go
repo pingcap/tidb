@@ -225,7 +225,6 @@ type JobWrapper struct {
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
 	ResultCh []chan jobSubmitResult
-	cacheErr error
 }
 
 // NewJobWrapper creates a new JobWrapper.
