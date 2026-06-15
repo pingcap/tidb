@@ -4963,6 +4963,12 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = NewInfoSchemaIndexesExtractor()
 		case infoschema.TableViews:
 			p.Extractor = NewInfoSchemaViewsExtractor()
+		case infoschema.TableTiDBMViews:
+			p.Extractor = NewInfoSchemaTiDBMViewsExtractor()
+		case infoschema.TableTiDBMLogs:
+			p.Extractor = NewInfoSchemaTiDBMLogsExtractor()
+		case infoschema.TableTiDBTableMViewDependencies:
+			p.Extractor = NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		case infoschema.TableKeyColumn:
 			p.Extractor = NewInfoSchemaKeyColumnUsageExtractor()
 		case infoschema.TableConstraints:
