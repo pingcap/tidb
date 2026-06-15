@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -26,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
@@ -59,31 +56,6 @@ func (*testStandbyController) OnConnActive() {}
 func (*testStandbyController) OnServerCreated(*Server) {}
 
 func (*testStandbyController) OnServerShutdown(StandbyShutdownServer) {}
-
-type testEtcdBackend struct {
-	kv.Storage
-	addrs []string
-	tls   *tls.Config
-}
-
-func (s *testEtcdBackend) EtcdAddrs() ([]string, error) { return s.addrs, nil }
-func (s *testEtcdBackend) GetPDAddrs() ([]string, error) { return s.addrs, nil }
-func (*testEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) { return nil, nil }
-func (s *testEtcdBackend) TLSConfig() *tls.Config { return s.tls }
-func (*testEtcdBackend) StartGCWorker() error { return nil }
-
-func TestGetKeyspaceMetaServiceAddrs(t *testing.T) {
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	store := &testEtcdBackend{
-		addrs: []string{"127.0.0.1:2379", "127.0.0.1:2380"},
-		tls:   tlsCfg,
-	}
-
-	addrs, gotTLS, ok := GetKeyspaceMetaServiceAddrs(store)
-	require.True(t, ok)
-	require.Equal(t, store.addrs, addrs)
-	require.Same(t, tlsCfg, gotTLS)
-}
 
 func TestIssue46197(t *testing.T) {
 	ctx := context.Background()
