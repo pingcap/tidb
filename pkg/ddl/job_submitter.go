@@ -264,15 +264,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	return errors.Trace(err)
 }
 
-// GenGIDAndInsertJobsWithRetry generate job related global ID and inserts DDL jobs to the DDL job
-// table with retry. job id allocation and job insertion are in the same transaction,
-// as we want to make sure DDL jobs are inserted in id order, then we can query from
-// a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
-// so this function has side effect, it will set table/db/job id of 'jobs'.
-func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
-	return jobsubmit.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWrappersToSpecs(jobWs), s.genJobDoneChannelsHook(len(jobWs)))
-}
-
 func (s *JobSubmitter) genJobDoneChannelsHook(jobCount int) func(specs []*jobsubmit.JobSpec) func() {
 	savedJobIDs := make([]int64, jobCount)
 	return func(specs []*jobsubmit.JobSpec) func() {

@@ -46,6 +46,9 @@ import (
 
 // SubmitBatch validates and inserts DDL jobs into mysql.tidb_ddl_job without
 // starting any background submit loop, notification path, or history waiter.
+// It mutates the input specs in place: nil Args are replaced, jobs receive
+// their IDs, StartTS, BDR role, and queueing state, and upgrade-time submission
+// may also set the job AdminOperator while pausing user jobs.
 func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) ([]SubmitResult, error) {
 	if len(specs) == 0 {
 		return nil, nil
