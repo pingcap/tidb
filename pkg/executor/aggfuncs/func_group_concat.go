@@ -111,13 +111,13 @@ func (*baseGroupConcatDistinct4String) AllocPartialResult() (pr PartialResult, m
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
+	p.valSet, setSize = set.NewStringToStringMapWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
 }
 
 func (*baseGroupConcatDistinct4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
-	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToStringMapWithMemoryUsage()
 }
 
 func (e *baseGroupConcatDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

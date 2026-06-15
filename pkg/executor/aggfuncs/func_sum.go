@@ -395,13 +395,13 @@ type baseSumDistinct4Decimal struct {
 func (*baseSumDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringToDecimalSetWithMemoryUsage()
+	p.valSet, setSize = set.NewStringToDecimalMapWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
 func (*baseSumDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
-	p.valSet, _ = set.NewStringToDecimalSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToDecimalMapWithMemoryUsage()
 }
 
 func (e *baseSumDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

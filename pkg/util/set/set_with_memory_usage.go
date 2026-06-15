@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// StringToStringMapWithMemoryUsage is a string-string set with memory usage.
+// StringToStringMapWithMemoryUsage is a string-string map with memory usage.
 type StringToStringMapWithMemoryUsage struct {
 	hack.MemAwareMap[string, string]
 
@@ -29,10 +29,10 @@ type StringToStringMapWithMemoryUsage struct {
 	tracker *memory.Tracker
 }
 
-// NewStringToStringSetWithMemoryUsage builds a string set.
-func NewStringToStringSetWithMemoryUsage() (setWithMemoryUsage StringToStringMapWithMemoryUsage, delta int64) {
-	set := make(map[string]string)
-	delta = setWithMemoryUsage.Init(set)
+// NewStringToStringMapWithMemoryUsage builds a string map.
+func NewStringToStringMapWithMemoryUsage() (setWithMemoryUsage StringToStringMapWithMemoryUsage, delta int64) {
+	newMap := make(map[string]string)
+	delta = setWithMemoryUsage.Init(newMap)
 	return setWithMemoryUsage, delta
 }
 
@@ -46,12 +46,12 @@ func (s *StringToStringMapWithMemoryUsage) Insert(key string, val string) (delta
 	return delta
 }
 
-// SetTracker sets memory tracker for StringToStringSetWithMemoryUsage
+// SetTracker sets memory tracker for StringToStringMapWithMemoryUsage
 func (s *StringToStringMapWithMemoryUsage) SetTracker(t *memory.Tracker) {
 	s.tracker = t
 }
 
-// StringToDecimalMapWithMemoryUsage is a string-decimal set with memory usage.
+// StringToDecimalMapWithMemoryUsage is a string-decimal map with memory usage.
 type StringToDecimalMapWithMemoryUsage struct {
 	hack.MemAwareMap[string, *types.MyDecimal]
 
@@ -60,10 +60,10 @@ type StringToDecimalMapWithMemoryUsage struct {
 	tracker *memory.Tracker
 }
 
-// NewStringToDecimalSetWithMemoryUsage builds a string set.
-func NewStringToDecimalSetWithMemoryUsage() (setWithMemoryUsage StringToDecimalMapWithMemoryUsage, delta int64) {
-	set := make(map[string]*types.MyDecimal)
-	delta = setWithMemoryUsage.Init(set)
+// NewStringToDecimalMapWithMemoryUsage builds a string map.
+func NewStringToDecimalMapWithMemoryUsage() (setWithMemoryUsage StringToDecimalMapWithMemoryUsage, delta int64) {
+	newMap := make(map[string]*types.MyDecimal)
+	delta = setWithMemoryUsage.Init(newMap)
 	return setWithMemoryUsage, delta
 }
 
@@ -77,7 +77,7 @@ func (s *StringToDecimalMapWithMemoryUsage) Insert(key string, val *types.MyDeci
 	return delta
 }
 
-// SetTracker sets memory tracker for StringToDecimalSetWithMemoryUsage
+// SetTracker sets memory tracker for StringToDecimalMapWithMemoryUsage
 func (s *StringToDecimalMapWithMemoryUsage) SetTracker(t *memory.Tracker) {
 	s.tracker = t
 }
