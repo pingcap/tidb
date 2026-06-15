@@ -27,6 +27,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -232,6 +233,8 @@ type Config struct {
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
 	// LogProgress is true means the progress bar is printed to the log instead of stdout.
 	LogProgress bool `json:"log-progress" toml:"log-progress"`
+	// OperationContext identifies this command for lock metadata.
+	OperationContext operation.Context `json:"-" toml:"-"`
 
 	// CaseSensitive should not be used.
 	//
@@ -289,6 +292,11 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+}
+
+// EnsureOperationContext initializes command-scoped operation metadata once.
+func (cfg *Config) EnsureOperationContext(command string) error {
+	return cfg.OperationContext.Ensure(command)
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.

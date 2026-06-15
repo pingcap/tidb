@@ -33,6 +33,7 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/operation",
         "//br/pkg/pdutil",
         "//br/pkg/registry",
         "//br/pkg/restore",
