@@ -226,6 +226,9 @@ func mapResponse(method string, resp respWithError, err error) error {
 	if err != nil {
 		return errors.Annotatef(err, "external workload rpc %s", method)
 	}
+	if resp == nil {
+		return errors.Errorf("external workload rpc %s: empty response", method)
+	}
 	e := resp.GetError()
 	if e == nil || e.GetType() == pb.ErrorType_OK {
 		return nil

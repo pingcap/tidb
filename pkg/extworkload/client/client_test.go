@@ -111,6 +111,11 @@ func TestClientErrorMapping(t *testing.T) {
 	require.Contains(t, err.Error(), "boom")
 }
 
+func TestMapResponseNilResponse(t *testing.T) {
+	err := mapResponse("NilResponse", nil, nil)
+	require.ErrorContains(t, err, "external workload rpc NilResponse: empty response")
+}
+
 func TestNewClientValidation(t *testing.T) {
 	_, err := New(context.Background(), nil)
 	require.Error(t, err)
