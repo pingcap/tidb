@@ -159,6 +159,11 @@ func TestInitDeployMode(t *testing.T) {
 		require.Equal(t, "/tmp/flag-sql-cert.pem", cfg.Security.SSLCert)
 		require.Equal(t, "/tmp/flag-sql-key.pem", cfg.Security.SSLKey)
 	})
+
+	t.Run("wait-keyspace-enabled flag is removed", func(t *testing.T) {
+		fset := initFlagSet()
+		require.Nil(t, fset.Lookup("wait-keyspace-enabled"))
+	})
 }
 
 func TestSetVersionByConfigInNextGen(t *testing.T) {

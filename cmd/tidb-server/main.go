@@ -154,9 +154,6 @@ const (
 	nmStandby                     = "standby"
 	nmActivationTimeout           = "activation-timeout"
 	nmMaxIdleSeconds              = "max-idle-seconds"
-
-	// Serverless flag names
-	nmWaitKeyspaceEnabled = "wait-keyspace-enabled"
 )
 
 const (
@@ -230,9 +227,6 @@ var (
 	standbyMode       *bool
 	activationTimeout *uint
 	maxIdleSeconds    *uint
-
-	// Serverless flags
-	waitKeyspaceEnabled *bool
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -300,9 +294,6 @@ func initFlagSet() *flag.FlagSet {
 	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
 	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
 	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
-
-	// Serverless flags
-	waitKeyspaceEnabled = flagBoolean(fset, nmWaitKeyspaceEnabled, true, "wait for keyspace to become enabled during bootstrap")
 
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
@@ -535,7 +526,7 @@ func getServerlessInfo() (*keyspacepb.KeyspaceMeta, pd.Client, error) {
 			return nil, nil, err
 		}
 
-		if !*waitKeyspaceEnabled || keyspaceMeta.State == keyspacepb.KeyspaceState_ENABLED {
+		if keyspaceMeta.State == keyspacepb.KeyspaceState_ENABLED {
 			break
 		}
 
