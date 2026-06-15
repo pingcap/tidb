@@ -91,7 +91,7 @@ const (
 	// FlagSplitRegionIndexStep controls the split-key index step used by rough split during snapshot restore.
 	FlagSplitRegionIndexStep = "split-region-index-step"
 	// FlagCoarseScatter controls whether only rough split regions are scattered during snapshot restore.
-	FlagCoarseScatter = "corase-scatter"
+	FlagCoarseScatter = "coarse-scatter"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
@@ -277,7 +277,7 @@ type RestoreConfig struct {
 	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	RegionScanConcurrency uint          `json:"region-scan-concurrency" toml:"region-scan-concurrency"`
 	SplitRegionIndexStep  uint          `json:"split-region-index-step" toml:"split-region-index-step"`
-	CoarseScatter         bool          `json:"corase-scatter" toml:"corase-scatter"`
+	CoarseScatter         bool          `json:"coarse-scatter" toml:"coarse-scatter"`
 	StatsConcurrency      uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval    time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables

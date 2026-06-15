@@ -58,7 +58,7 @@ func TestSplitRegionIndexStepFlag(t *testing.T) {
 	t.Run("coarse scatter", func(t *testing.T) {
 		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
 		DefineRestoreFlags(flags)
-		require.NoError(t, flags.Set(FlagCoarseScatter, "true"))
+		require.NoError(t, flags.Set("coarse-scatter", "true"))
 
 		cfg := &RestoreConfig{}
 		require.NoError(t, cfg.ParseFromFlags(flags, true))
