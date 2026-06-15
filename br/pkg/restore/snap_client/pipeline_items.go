@@ -583,11 +583,15 @@ func (rc *SnapClient) registerSetTableModeToNormal(
 	for _, session := range sessions {
 		sessionPool <- session
 	}
-	if len(sessions) == 0 {
-		log.Panic("No session registered to this client.")
+	concurrency := uint(len(sessions))
+	if concurrency == 0 {
+		concurrency = 1
 	}
 
-	builder.RegisterPipelineTask("Set Table Mode To Normal", uint(len(sessions)), func(c context.Context, tbl *restoreutils.CreatedTable) error {
+	builder.RegisterPipelineTask("Set Table Mode To Normal", concurrency, func(c context.Context, tbl *restoreutils.CreatedTable) error {
+		if len(sessions) == 0 {
+			return errors.New("no session registered to this client")
+		}
 		if tbl.Table == nil || tbl.Table.Mode != model.TableModeRestore {
 			updateCh.Inc()
 			return nil
@@ -598,7 +602,7 @@ func (rc *SnapClient) registerSetTableModeToNormal(
 			return c.Err()
 		case se, ok := <-sessionPool:
 			if !ok {
-				log.Panic("Session pool closed before pipeline finished.")
+				return errors.New("session pool closed before pipeline finished")
 			}
 			session = se
 		}

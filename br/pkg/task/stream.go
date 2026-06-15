@@ -1793,8 +1793,12 @@ func restoreStream(
 	}
 
 	if cfg.ProtectTables {
-		// RestoreKVFiles can advance schema metadata directly. Wait before
-		// reading InfoSchema to find the restored tables to unprotect.
+		// RestoreKVFiles can advance schema metadata directly, bypassing the
+		// domain's normal schema load loop. Reload once before reading
+		// InfoSchema so SetTableModeToNormal can see the restored tables.
+		if err = client.GetDomain().Reload(); err != nil {
+			return errors.Annotate(err, "failed to reload schema info")
+		}
 		if err = waitUntilSchemaReload(ctx, client); err != nil {
 			return errors.Trace(err)
 		}
