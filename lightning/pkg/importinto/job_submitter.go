@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
@@ -41,20 +43,40 @@ type JobSubmitter interface {
 
 // DefaultJobSubmitter is the default implementation of JobSubmitter.
 type DefaultJobSubmitter struct {
-	sdk      importsdk.SDK
-	config   *config.Config
-	groupKey string
-	logger   log.Logger
+	sdk                           importsdk.SDK
+	config                        *config.Config
+	groupKey                      string
+	logger                        log.Logger
+	stripS3ExternalIDForImportSQL bool
+}
+
+// JobSubmitterOption is a function that configures the JobSubmitter.
+type JobSubmitterOption func(*DefaultJobSubmitter)
+
+// WithJobSubmitterStripS3ExternalIDForImportSQL strips explicit S3 external ID
+// from IMPORT INTO SQL resource parameters. The original source directory is
+// kept unchanged for Lightning's own storage access. Enable it only for callers
+// that need to keep compatibility with older IMPORT INTO planners that reject
+// explicit S3 external ID; newer planners can accept an explicit external ID
+// matching the target value.
+func WithJobSubmitterStripS3ExternalIDForImportSQL() JobSubmitterOption {
+	return func(s *DefaultJobSubmitter) {
+		s.stripS3ExternalIDForImportSQL = true
+	}
 }
 
 // NewJobSubmitter creates a new job submitter.
-func NewJobSubmitter(sdk importsdk.SDK, cfg *config.Config, groupKey string, logger log.Logger) JobSubmitter {
-	return &DefaultJobSubmitter{
+func NewJobSubmitter(sdk importsdk.SDK, cfg *config.Config, groupKey string, logger log.Logger, opts ...JobSubmitterOption) JobSubmitter {
+	submitter := &DefaultJobSubmitter{
 		sdk:      sdk,
 		config:   cfg,
 		groupKey: groupKey,
 		logger:   logger,
 	}
+	for _, opt := range opts {
+		opt(submitter)
+	}
+	return submitter
 }
 
 // SubmitTable submits an import job for a single table.
@@ -128,11 +150,34 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 	if cfg.Mydumper.SourceDir != "" {
 		u, err := url.Parse(cfg.Mydumper.SourceDir)
 		if err == nil {
-			opts.ResourceParameters = u.RawQuery
+			opts.ResourceParameters = buildResourceParametersForImportSQL(u, s.stripS3ExternalIDForImportSQL)
 		}
 	}
 
 	return opts
+}
+
+func buildResourceParametersForImportSQL(u *url.URL, stripS3ExternalID bool) string {
+	if !(stripS3ExternalID && objstore.IsS3Like(u)) {
+		return u.RawQuery
+	}
+
+	values := u.Query()
+	if !stripS3ExternalIDResourceParameters(values) {
+		return u.RawQuery
+	}
+	return values.Encode()
+}
+
+func stripS3ExternalIDResourceParameters(values url.Values) bool {
+	stripped := false
+	for key := range values {
+		if objstore.NormalizeQueryParameterKey(key) == s3like.S3ExternalID {
+			delete(values, key)
+			stripped = true
+		}
+	}
+	return stripped
 }
 
 func generateImportSQLForLog(tableMeta *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {

@@ -29,11 +29,28 @@ import (
 )
 
 func TestJobSubmitterSubmitTable(t *testing.T) {
+	const (
+		s3SourceDirWithExternalID  = "s3://bucket/path?role-arn=arn&external-id=remove&External_ID=remove-too&external%5Fid=remove-encoded&region=us-east-1&endpoint=http%3A%2F%2Fminio%3A9000"
+		s3ResourceParameters       = "endpoint=http%3A%2F%2Fminio%3A9000&region=us-east-1&role-arn=arn"
+		ossSourceDirWithExternalID = "oss://bucket/path?external-id=remove&role-arn=arn&region=us-east-1"
+		ossResourceParameters      = "region=us-east-1&role-arn=arn"
+		gcsSourceDir               = "gcs://bucket/path?external-id=keep&external_id=keep-too&region=us-east-1"
+	)
+
+	s3Cfg := config.NewConfig()
+	s3Cfg.Mydumper.SourceDir = s3SourceDirWithExternalID
+	ossCfg := config.NewConfig()
+	ossCfg.Mydumper.SourceDir = ossSourceDirWithExternalID
+	gcsCfg := config.NewConfig()
+	gcsCfg.Mydumper.SourceDir = gcsSourceDir
+
 	tests := []struct {
-		name      string
-		tableMeta *importsdk.TableMeta
-		setup     func(mockSDK *sdkmock.MockSDK)
-		wantErr   bool
+		name                string
+		tableMeta           *importsdk.TableMeta
+		cfg                 *config.Config
+		setup               func(t *testing.T, mockSDK *sdkmock.MockSDK)
+		wantErr             bool
+		jobSubmitterOptions []importinto.JobSubmitterOption
 	}{
 		{
 			name: "successful submission",
@@ -41,7 +58,7 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 				Database: "db",
 				Table:    "t1",
 			},
-			setup: func(mockSDK *sdkmock.MockSDK) {
+			setup: func(_ *testing.T, mockSDK *sdkmock.MockSDK) {
 				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).Return("IMPORT INTO ...", nil)
 				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
 			},
@@ -52,7 +69,7 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 				Database: "db",
 				Table:    "t1",
 			},
-			setup: func(mockSDK *sdkmock.MockSDK) {
+			setup: func(_ *testing.T, mockSDK *sdkmock.MockSDK) {
 				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).Return("", errors.New("gen error"))
 			},
 			wantErr: true,
@@ -63,11 +80,81 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 				Database: "db",
 				Table:    "t1",
 			},
-			setup: func(mockSDK *sdkmock.MockSDK) {
+			setup: func(_ *testing.T, mockSDK *sdkmock.MockSDK) {
 				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).Return("IMPORT INTO ...", nil)
 				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(0), errors.New("submit error"))
 			},
 			wantErr: true,
+		},
+		{
+			name: "keep s3 external id unless nextgen sem is enabled",
+			tableMeta: &importsdk.TableMeta{
+				Database: "db",
+				Table:    "t1",
+			},
+			cfg: s3Cfg,
+			setup: func(t *testing.T, mockSDK *sdkmock.MockSDK) {
+				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
+						require.Equal(t, "role-arn=arn&external-id=remove&External_ID=remove-too&external%5Fid=remove-encoded&region=us-east-1&endpoint=http%3A%2F%2Fminio%3A9000", opts.ResourceParameters)
+						require.Equal(t, s3SourceDirWithExternalID, s3Cfg.Mydumper.SourceDir)
+						return "IMPORT INTO ...", nil
+					})
+				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+			},
+		},
+		{
+			name:                "sanitize s3 external id when enabled for import sql resource parameters",
+			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL()},
+			tableMeta: &importsdk.TableMeta{
+				Database: "db",
+				Table:    "t1",
+			},
+			cfg: s3Cfg,
+			setup: func(t *testing.T, mockSDK *sdkmock.MockSDK) {
+				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
+						require.Equal(t, s3ResourceParameters, opts.ResourceParameters)
+						require.Equal(t, s3SourceDirWithExternalID, s3Cfg.Mydumper.SourceDir)
+						return "IMPORT INTO ...", nil
+					})
+				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+			},
+		},
+		{
+			name:                "sanitize oss external id as s3 like resource parameters",
+			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL()},
+			tableMeta: &importsdk.TableMeta{
+				Database: "db",
+				Table:    "t1",
+			},
+			cfg: ossCfg,
+			setup: func(t *testing.T, mockSDK *sdkmock.MockSDK) {
+				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
+						require.Equal(t, ossResourceParameters, opts.ResourceParameters)
+						require.Equal(t, ossSourceDirWithExternalID, ossCfg.Mydumper.SourceDir)
+						return "IMPORT INTO ...", nil
+					})
+				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+			},
+		},
+		{
+			name: "keep non s3 resource parameters unchanged",
+			tableMeta: &importsdk.TableMeta{
+				Database: "db",
+				Table:    "t1",
+			},
+			cfg: gcsCfg,
+			setup: func(t *testing.T, mockSDK *sdkmock.MockSDK) {
+				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
+						require.Equal(t, "external-id=keep&external_id=keep-too&region=us-east-1", opts.ResourceParameters)
+						require.Equal(t, gcsSourceDir, gcsCfg.Mydumper.SourceDir)
+						return "IMPORT INTO ...", nil
+					})
+				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+			},
 		},
 	}
 
@@ -77,9 +164,13 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 			defer ctrl.Finish()
 			mockSDK := sdkmock.NewMockSDK(ctrl)
 			groupKey := "g1"
-			submitter := importinto.NewJobSubmitter(mockSDK, config.NewConfig(), groupKey, log.L())
+			cfg := tt.cfg
+			if cfg == nil {
+				cfg = config.NewConfig()
+			}
+			submitter := importinto.NewJobSubmitter(mockSDK, cfg, groupKey, log.L(), tt.jobSubmitterOptions...)
 
-			tt.setup(mockSDK)
+			tt.setup(t, mockSDK)
 			job, err := submitter.SubmitTable(context.Background(), tt.tableMeta)
 			if tt.wantErr {
 				require.Error(t, err)
