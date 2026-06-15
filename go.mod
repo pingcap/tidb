@@ -92,7 +92,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260127035637-77643524c499
+	github.com/pingcap/kvproto v0.0.0-20260615070108-5e194658aed9
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -343,9 +343,9 @@ replace (
 )
 
 replace (
-	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260615022553-9a64381f8b33
-	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260415124818-8dac51c06b6c
-	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260613091450-a9536e9d9cda
+	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260615070108-5e194658aed9
+	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260615160850-9cb93524c21f
+	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260615154509-9be26310f245
 )
 
 replace github.com/ihciah/rust2go => git.pingcap.net/pingkai/rust2go v0.0.0-20260116050154-68094297cea8
