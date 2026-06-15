@@ -133,6 +133,20 @@ func TestMaxExecutionTime(t *testing.T) {
 
 	require.Nil(t, sv.SetSessionFromHook(vars, "99999")) // sets
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
+
+	vars.StmtCtx.InUpdateStmt = true
+	require.Equal(t, uint64(0), vars.GetMaxExecutionTime())
+
+	enableDML := GetSysVar(vardef.TiDBEnableMaxExecutionTimeForDML)
+	require.NotNil(t, enableDML)
+	require.Equal(t, vardef.Off, enableDML.Value)
+	require.NoError(t, enableDML.SetSessionFromHook(vars, vardef.On))
+	require.True(t, vars.EnableMaxExecutionTimeForDML)
+	require.Equal(t, uint64(99999), vars.GetMaxExecutionTime())
+
+	vars.StmtCtx.InUpdateStmt = false
+	vars.StmtCtx.InSelectStmt = true
+	require.Equal(t, uint64(99999), vars.GetMaxExecutionTime())
 }
 
 func TestTiDBMaxKeysRead(t *testing.T) {

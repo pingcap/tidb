@@ -324,14 +324,29 @@ func TestMaxExecutionTime(t *testing.T) {
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
 
-	// max_execution_time should be 0 if in non-select statement
+	// max_execution_time should be 0 for non-SELECT statements by default.
 	tk.MustExec("update MaxExecTime set age = age + 1 where id = 1000;")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
 	tk.MustExec("update /*+ MAX_EXECUTION_TIME(10000) */ MaxExecTime set age = age + 1 where id = 1000;")
-	// hint works, maybe we should just ignore this hint in non-select statement?
+	// The hint is parsed for non-SELECT statements, but MaxExecutionTime is still 0
+	// until tidb_enable_max_execution_time_for_dml is enabled.
 	require.Equal(t, uint64(10000), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
-	// but MaxExecutionTime is still 0
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
+
+	tk.MustQuery("select @@tidb_enable_max_execution_time_for_dml;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_max_execution_time_for_dml;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_enable_max_execution_time_for_dml = 1;")
+	tk.MustExec("update MaxExecTime set age = age + 1 where id = 1000;")
+	require.Equal(t, uint64(150), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustExec("update /*+ MAX_EXECUTION_TIME(10000) */ MaxExecTime set age = age + 1 where id = 1000;")
+	require.Equal(t, uint64(10000), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustExec("set @@tidb_enable_max_execution_time_for_dml = 0;")
+	tk.MustExec("set @@global.tidb_enable_max_execution_time_for_dml = 1;")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustQuery("select @@tidb_enable_max_execution_time_for_dml;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_enable_max_execution_time_for_dml = 0;")
+	tk.MustExec("set @@global.tidb_enable_max_execution_time_for_dml = 0;")
 
 	tk.MustExec("set @@global.MAX_EXECUTION_TIME = 0;")
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 0;")

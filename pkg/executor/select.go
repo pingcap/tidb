@@ -346,11 +346,11 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
 
-	// Set max_execution_time deadline for SELECT statements
-	maxExectionTime := seVars.GetMaxExecutionTime()
-	if maxExectionTime > 0 {
+	// Set max_execution_time deadline when it applies to the current statement.
+	maxExecutionTime := seVars.GetMaxExecutionTime()
+	if maxExecutionTime > 0 {
 		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
+			maxExecTimeMs := time.Duration(maxExecutionTime) * time.Millisecond
 			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
 		}
 	}

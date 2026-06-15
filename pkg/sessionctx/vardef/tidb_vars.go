@@ -1659,6 +1659,7 @@ const (
 	DefTiDBGCMaxWaitTime                              = 24 * 60 * 60
 	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
+	DefTiDBEnableMaxExecutionTimeForDML               = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
 	DefTiDBStatsCacheMemQuota                         = 0
 	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
