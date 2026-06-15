@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
@@ -231,20 +230,9 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	sessVars := sctx.GetSessionVars()
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
-	// QueryHasHints must reflect what the user wrote rather than what survives
-	// SEM filtering, so the "current query hints ignored, using bindSQL" warning
-	// still fires when every hint is stripped.
-	userWroteHints := len(tableHints) > 0
-	tableHints, restrictedHintWarns := filterRestrictedHints(tableHints)
-	for _, warn := range restrictedHintWarns {
-		sessVars.StmtCtx.AppendWarning(warn)
-	}
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
 		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
-	if userWroteHints {
-		originStmtHints.QueryHasHints = true
-	}
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -313,11 +301,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		var warns []error
 		if binding != nil && binding.IsBindingEnabled() {
 			hint.BindHint(stmtNode, binding.Hint)
-			bindingHints, bindingRestrictedWarns := filterRestrictedHints(binding.Hint.GetStmtHints())
-			for _, warn := range bindingRestrictedWarns {
-				sessVars.StmtCtx.AppendWarning(warn)
-			}
-			curStmtHints, _, curWarns := hint.ParseStmtHints(bindingHints,
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
@@ -913,25 +897,6 @@ func buildLogicalPlan(ctx context.Context, sctx planctx.PlanContext, node *resol
 		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(builder.GetVisitInfo())
 	}
 	return p, nil
-}
-
-// filterRestrictedHints drops optimizer hints that SEM restricts and returns a
-// warning for each stripped hint. It returns the input unchanged when SEM is
-// off or there is nothing to filter.
-func filterRestrictedHints(hints []*ast.TableOptimizerHint) ([]*ast.TableOptimizerHint, []error) {
-	if !semv2.IsEnabled() || len(hints) == 0 {
-		return hints, nil
-	}
-	filtered := make([]*ast.TableOptimizerHint, 0, len(hints))
-	var warns []error
-	for _, h := range hints {
-		if err := semv2.IsRestrictedHint(h.HintName.L); err != nil {
-			warns = append(warns, err)
-			continue
-		}
-		filtered = append(filtered, h)
-	}
-	return filtered, warns
 }
 
 // setVarHintChecker checks whether the variable name in set_var hint is valid.
