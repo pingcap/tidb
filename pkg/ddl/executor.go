@@ -6493,6 +6493,24 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		return errors.Trace(err)
 	}
 
+	// show create table will display the policy name in comment
+	// Disable some special charactor to avoid such case:
+	// mysql> create masking policy `p*/x` on t(id) as case when ...
+	//
+	// mysql> show create table t;
+	// +-------+---------------------------------------------------------------------------------------------------------------------------------------------+
+	// | Table | Create Table                                                                                                                                |
+	// +-------+---------------------------------------------------------------------------------------------------------------------------------------------+
+	// | t     | CREATE TABLE `t` (
+	//   `id` blob DEFAULT NULL /* MASKING POLICY `p*/x` ENABLED */
+	// ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin |
+	// +-------+---------------------------------------------------------------------------------------------------------------------------------------------+
+	// 1 row in set (0.001 sec)
+	//
+	if strings.ContainsAny(stmt.PolicyName.O, "/*") {
+		return errors.New("Cannot use charactor * or / in masking policy name")
+	}
+
 	policyInfo, err := buildMaskingPolicyInfo(
 		ctx,
 		schema,
