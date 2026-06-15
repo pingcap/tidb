@@ -297,10 +297,7 @@ func TestSetKeyspaceConfig(t *testing.T) {
 	})
 	defer restore()
 
-	input := struct {
-		Config        map[string]*string `json:"config"`
-		Preconditions map[string]*string `json:"preconditions,omitempty"`
-	}{
+	input := pdhttp.UpdateKeyspaceConfigParams{
 		Config: map[string]*string{
 			"serverless_is_bootstrapped_for_restore": &value,
 		},
@@ -310,18 +307,6 @@ func TestSetKeyspaceConfig(t *testing.T) {
 	}
 
 	require.NoError(t, SetKeyspaceConfig(context.Background(), "test-keyspace", input))
-
-	t.Run("typed nil pointer returns error", func(t *testing.T) {
-		restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
-			t:            t,
-			expectedName: "test-keyspace",
-		})
-		defer restore()
-
-		var params *pdhttp.UpdateKeyspaceConfigParams
-		err := SetKeyspaceConfig(context.Background(), "test-keyspace", params)
-		require.EqualError(t, err, "nil UpdateKeyspaceConfigParams")
-	})
 }
 
 func TestSetKeyspaceConfigWithoutPDHTTPClient(t *testing.T) {

@@ -339,7 +339,7 @@ func GetServerInfoByID(ctx context.Context, id string) (*serverinfo.ServerInfo, 
 }
 
 // SetKeyspaceConfig patches the keyspace config in merge style.
-func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config any) error {
+func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config pdhttp.UpdateKeyspaceConfigParams) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -348,35 +348,8 @@ func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config any) err
 		return errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
 	}
 
-	params, err := toUpdateKeyspaceConfigParams(config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = is.pdHTTPCli.UpdateKeyspaceConfig(ctx, keyspaceName, params)
+	_, err = is.pdHTTPCli.UpdateKeyspaceConfig(ctx, keyspaceName, &config)
 	return errors.Trace(err)
-}
-
-func toUpdateKeyspaceConfigParams(config any) (*pdhttp.UpdateKeyspaceConfigParams, error) {
-	if params, ok := config.(*pdhttp.UpdateKeyspaceConfigParams); ok {
-		if params == nil {
-			return nil, errors.New("nil UpdateKeyspaceConfigParams")
-		}
-		return params, nil
-	}
-	if params, ok := config.(pdhttp.UpdateKeyspaceConfigParams); ok {
-		return &params, nil
-	}
-
-	payload, err := json.Marshal(config)
-	if err != nil {
-		return nil, err
-	}
-
-	var params pdhttp.UpdateKeyspaceConfigParams
-	if err := json.Unmarshal(payload, &params); err != nil {
-		return nil, err
-	}
-	return &params, nil
 }
 
 // GetAllServerInfo gets all servers static information from etcd.
