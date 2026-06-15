@@ -317,7 +317,39 @@ func TestLoadData(t *testing.T) {
 	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataEscape(t *testing.T) {
+func TestLoadDataNULL(t *testing.T) {
+	testLoadDataNULL(t)
+	for _, tt := range []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{name: "TestLoadDataEscape", fn: testLoadDataEscape},
+		{name: "TestLoadDataSpecifiedColumns", fn: testLoadDataSpecifiedColumns},
+		{name: "TestLoadDataIgnoreLines", fn: testLoadDataIgnoreLines},
+		{name: "TestLoadDataReplace", fn: testLoadDataReplace},
+		{name: "TestLoadDataOverflowBigintUnsigned", fn: testLoadDataOverflowBigintUnsigned},
+	} {
+		t.Run(tt.name, tt.fn)
+	}
+}
+
+func TestLoadDataWithUppercaseUserVars(t *testing.T) {
+	testLoadDataWithUppercaseUserVars(t)
+	for _, tt := range []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{name: "TestLoadDataIntoPartitionedTable", fn: testLoadDataIntoPartitionedTable},
+		{name: "TestLoadDataFromServerFile", fn: testLoadDataFromServerFile},
+		{name: "TestFix56408", fn: testFix56408},
+		{name: "TestLoadDataAutoRandomError", fn: testLoadDataAutoRandomError},
+		{name: "TestLoadDataLowPrioritySetsKVLowPriority", fn: testLoadDataLowPrioritySetsKVLowPriority},
+	} {
+		t.Run(tt.name, tt.fn)
+	}
+}
+
+func testLoadDataEscape(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -344,7 +376,7 @@ func TestLoadDataEscape(t *testing.T) {
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
-func TestLoadDataSpecifiedColumns(t *testing.T) {
+func testLoadDataSpecifiedColumns(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -367,7 +399,7 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataIgnoreLines(t *testing.T) {
+func testLoadDataIgnoreLines(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -383,7 +415,7 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataNULL(t *testing.T) {
+func testLoadDataNULL(t *testing.T) {
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html
 	// - For the default FIELDS and LINES values, NULL is written as a field value of \N for output, and a field value of \N is read as NULL for input (assuming that the ESCAPED BY character is \).
 	// - If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value. This differs from the word NULL enclosed within FIELDS ENCLOSED BY characters, which is read as the string 'NULL'.
@@ -409,7 +441,7 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataReplace(t *testing.T) {
+func testLoadDataReplace(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
@@ -426,8 +458,8 @@ func TestLoadDataReplace(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-// TestLoadDataOverflowBigintUnsigned related to issue 6360
-func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
+// testLoadDataOverflowBigintUnsigned related to issue 6360
+func testLoadDataOverflowBigintUnsigned(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -443,7 +475,7 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataWithUppercaseUserVars(t *testing.T) {
+func testLoadDataWithUppercaseUserVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -459,7 +491,7 @@ func TestLoadDataWithUppercaseUserVars(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataIntoPartitionedTable(t *testing.T) {
+func testLoadDataIntoPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -477,7 +509,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
-func TestLoadDataFromServerFile(t *testing.T) {
+func testLoadDataFromServerFile(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -486,7 +518,7 @@ func TestLoadDataFromServerFile(t *testing.T) {
 	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
 }
 
-func TestFix56408(t *testing.T) {
+func testFix56408(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
@@ -505,11 +537,11 @@ func TestFix56408(t *testing.T) {
 	tk.MustExec("ADMIN CHECK TABLE a")
 }
 
-// TestLoadDataAutoRandomError tests that LOAD DATA returns proper error
+// testLoadDataAutoRandomError tests that LOAD DATA returns proper error
 // when inserting explicit values into AUTO_RANDOM column without
 // allow_auto_random_explicit_insert enabled.
 // See https://github.com/pingcap/tidb/issues/65585
-func TestLoadDataAutoRandomError(t *testing.T) {
+func testLoadDataAutoRandomError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -566,7 +598,7 @@ func (c *checkKVPrioClient) SendRequest(ctx context.Context, addr string, req *t
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-func TestLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
+func testLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
 	cli := &checkKVPrioClient{}
 	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
 		cli.Client = c
