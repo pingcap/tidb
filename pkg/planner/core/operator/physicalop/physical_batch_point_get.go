@@ -333,6 +333,9 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
 	}
+	for _, expr := range p.MaskingExprs {
+		sum += expr.MemoryUsage()
+	}
 	return
 }
 
@@ -761,6 +764,9 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	}
 	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
+	}
+	for _, expr := range p.MaskingExprs {
+		sum += expr.MemoryUsage()
 	}
 	return
 }

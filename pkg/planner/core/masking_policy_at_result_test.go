@@ -68,10 +68,10 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 		tk.MustExec("create masking policy p_union on t_union(val) as concat('[', val, ']') enable")
 
 		// Two different original values should NOT be deduplicated
-		// even though they mask to the same pattern
+		// even though they mask to the same pattern. Also verify the output
+		// values are actually masked (not raw).
 		result := tk.MustQuery("select val from t_union where id = 1 union distinct select val from t_union where id = 2")
-		rows := result.Rows()
-		require.Len(t, rows, 2)
+		result.Sort().Check(testkit.Rows("[value1]", "[value2]"))
 	})
 
 	// Test aggregate with HAVING
@@ -90,5 +90,19 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 		require.Contains(t, []string{"_B", "_C"}, rows[0][0])
 		require.Contains(t, []string{"_B", "_C"}, rows[1][0])
 		require.NotEqual(t, rows[0][0], rows[1][0])
+	})
+
+	// Test derived table: outer WHERE uses original values, output is masked
+	t.Run("derived table outer filter uses original values", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_derived")
+		tk.MustExec("create table t_derived(id int, val varchar(100))")
+		tk.MustExec("insert into t_derived values (1, 'apple'), (2, 'banana'), (3, 'cherry')")
+		tk.MustExec("create masking policy p_derived on t_derived(val) as concat('[', val, ']') enable")
+
+		// Outer WHERE should compare original values, not masked values.
+		// If masking were applied inside the derived table, the WHERE clause
+		// would see '[apple]' > 'a' (false) and return no rows.
+		result := tk.MustQuery("select val from (select val from t_derived) sub where val > 'apple' order by val")
+		result.Check(testkit.Rows("[banana]", "[cherry]"))
 	})
 }

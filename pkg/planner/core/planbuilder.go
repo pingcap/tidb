@@ -289,6 +289,10 @@ type PlanBuilder struct {
 	// When > 0, final masking projection should be skipped for inner SELECT/SET plans and
 	// applied only once on the completed set-operator result.
 	buildingSetOprOperands int
+	// buildingResultSetNode is true while building a subquery inside a FROM clause
+	// (i.e., inside buildResultSetNode). This prevents AT RESULT masking from being
+	// applied inside derived tables, where outer queries need to see original values.
+	buildingResultSetNode bool
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil

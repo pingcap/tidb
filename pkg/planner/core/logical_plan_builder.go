@@ -434,6 +434,11 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, isCTE bool) (p base.LogicalPlan, err error) {
 	//If it is building the CTE queries, we will mark them.
 	b.isCTE = isCTE
+	// Mark that we are inside a result-set node so that derived-table subqueries
+	// do not apply AT RESULT masking (the outer query needs original values).
+	oldBuildingResultSetNode := b.buildingResultSetNode
+	b.buildingResultSetNode = true
+	defer func() { b.buildingResultSetNode = oldBuildingResultSetNode }()
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
@@ -1566,13 +1571,9 @@ func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.Logic
 		}
 		expr, placeholder, err := getMaskingPolicyExpr(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
 		if err != nil {
-			// Log and skip this column — this can happen during DDL transitions
-			// (e.g., column rename where the expression still references the old name).
-			logutil.BgLogger().Warn("failed to build masking policy expression, skipping",
-				zap.String("policy", policy.Name.L),
-				zap.Error(err),
-			)
-			continue
+			// Fail-closed: returning an error is safer than skipping masking,
+			// which would leak the raw column value to the user.
+			return nil, errors.Trace(err)
 		}
 		if placeholder == nil {
 			continue
@@ -1974,7 +1975,7 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool, applyMasking bool) (base.LogicalPlan, []expression.Expression, int, error) {
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1985,20 +1986,6 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	newNames := make([]*types.FieldName, 0, len(fields))
-	var cachedMaskPlan base.LogicalPlan
-	var cachedMaskExprs []expression.Expression
-	getMaskExprs := func(p base.LogicalPlan) ([]expression.Expression, error) {
-		if cachedMaskPlan == p {
-			return cachedMaskExprs, nil
-		}
-		exprs, err := b.buildMaskingReplaceExprs(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-		cachedMaskPlan = p
-		cachedMaskExprs = exprs
-		return exprs, nil
-	}
 	for i, field := range fields {
 		if !field.Auxiliary {
 			oldLen++
@@ -2046,15 +2033,6 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		}
 
 		p = np
-		if applyMasking && !field.Auxiliary {
-			maskExprs, err := getMaskExprs(p)
-			if err != nil {
-				return nil, nil, 0, err
-			}
-			if maskExprs != nil {
-				newExpr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), newExpr, p.Schema(), maskExprs)
-			}
-		}
 		proj.Exprs = append(proj.Exprs, newExpr)
 
 		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
@@ -2313,6 +2291,7 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
 		})
 	}
 	u.SetSchema(expression.NewSchema(unionCols...))
@@ -2438,10 +2417,11 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		setOprPlan = proj
 	}
 
-	if b.buildingSetOprOperands == 1 && !b.isCTE && !b.buildingCTE {
+	if b.buildingSetOprOperands == 1 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
 		// Apply masking at the final result stage (AT RESULT semantics).
 		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
-		// For CTEs, we skip masking here because CTE definitions should preserve original values.
+		// For CTEs and derived tables, we skip masking here because they should
+		// preserve original values for correct outer filtering/joining.
 		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
 		if err != nil {
 			return nil, err
@@ -4775,7 +4755,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil, false)
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -4813,7 +4793,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// In such case plan `p` is not changed, so we don't have to build another projection.
 		if hasWindowFuncField {
 			// Now we build the window function fields.
-			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false, false)
+			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
 			if err != nil {
 				return nil, err
 			}
@@ -4873,7 +4853,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// For CTEs, we skip masking here because:
 	// 1. CTE definitions should preserve original values for correct filtering/joining
 	// 2. Masking is applied when CTE results are materialized to the final output
-	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE {
+	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
 		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
 		if err != nil {
 			return nil, err
