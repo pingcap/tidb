@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -432,17 +433,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	require.NoError(s.T(), err)
 	eligibleStoreCnt := 0
 	for _, store := range stores {
-		if store.StatusAddress == "" {
-			continue
-		}
-		isTiFlash := false
-		for _, label := range store.Labels {
-			if label.Key == "engine" && (label.Value == "tiflash" || label.Value == "tiflash_compute") {
-				isTiFlash = true
-				break
-			}
-		}
-		if !isTiFlash {
+		if store.StatusAddress != "" && !engine.IsTiFlash(store) {
 			eligibleStoreCnt++
 		}
 	}
