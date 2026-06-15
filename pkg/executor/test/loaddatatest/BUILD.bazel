@@ -13,6 +13,8 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/executor",
+        "//pkg/executor/importer",
+        "//pkg/lightning/config",
         "//pkg/lightning/mydump",
         "//pkg/meta/autoid",
         "//pkg/sessionctx",
