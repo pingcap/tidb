@@ -84,7 +84,7 @@ var AlterTableAttributesRule SQLRule = func(stmt ast.StmtNode) bool {
 
 // ImportWithExternalIDRule SQLRule is kept for compatibility with existing SEM configs.
 // Import external ID checks are handled outside the restricted SQL rule list.
-var ImportWithExternalIDRule SQLRule = func(stmt ast.StmtNode) bool {
+var ImportWithExternalIDRule SQLRule = func(_ ast.StmtNode) bool {
 	return false
 }
 
