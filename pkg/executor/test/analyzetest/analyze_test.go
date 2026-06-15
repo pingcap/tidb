@@ -740,7 +740,13 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
-	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
+	query := "show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''"
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(query).Rows()
+		return len(rows) == 1 && rows[0][3] == jobInfo && rows[0][7] == status && rows[0][8] == failReason
+	}, 3*time.Second, 10*time.Millisecond, comment)
+
+	rows := tk.MustQuery(query).Rows()
 	require.Equal(t, 1, len(rows), comment)
 	require.Equal(t, jobInfo, rows[0][3], comment)
 	require.Equal(t, status, rows[0][7], comment)
