@@ -463,9 +463,10 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		nextChunkCap = chunk.InitialCapacity
 	}
 	for remainingRows := requiredRows - task.outerResult.Len(); remainingRows > 0; remainingRows = requiredRows - task.outerResult.Len() {
-		chkCap := min(nextChunkCap, remainingRows, maxChunkSize)
+		fetchRequiredRows := min(remainingRows, maxChunkSize)
+		chkCap := min(nextChunkCap, fetchRequiredRows)
 		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, chkCap, maxChunkSize)
-		chk = chk.SetRequiredRows(remainingRows, maxChunkSize)
+		chk = chk.SetRequiredRows(fetchRequiredRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
 			return task, err
@@ -476,7 +477,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 		task.outerResult.Add(chk)
 		if rows >= chkCap && nextChunkCap < maxChunkSize {
-			nextChunkCap = min(nextChunkCap*2, maxChunkSize)
+			nextChunkCap = min(max(nextChunkCap*2, rows), maxChunkSize)
 		}
 	}
 	if task.outerResult.Len() == 0 {
