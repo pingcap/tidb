@@ -6496,6 +6496,21 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		return errors.Trace(err)
 	}
 
+	// Creating a masking policy on a table effectively modifies the table's schema behavior,
+	// so it requires ALTER privilege on the table in addition to the dynamic privilege.
+	if checker := privilege.GetPrivilegeManager(ctx); checker != nil {
+		if !checker.RequestVerification(
+			ctx.GetSessionVars().ActiveRoles,
+			schema.Name.L,
+			tbl.Meta().Name.L,
+			"",
+			mysql.AlterPriv,
+		) {
+			user := ctx.GetSessionVars().User
+			return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, tbl.Meta().Name.L)
+		}
+	}
+
 	policyInfo, err := buildMaskingPolicyInfo(
 		ctx,
 		schema,
