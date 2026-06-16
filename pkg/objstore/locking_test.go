@@ -374,6 +374,7 @@ func TestWriteLockConflictReportsMultipleReadLockBlockers(t *testing.T) {
 
 	var locked objstore.ErrLocked
 	require.True(t, errors.As(err, &locked))
+	require.Equal(t, 2, locked.BlockerCount)
 	require.Len(t, locked.Blockers, 2)
 	for _, blocker := range locked.Blockers {
 		require.Contains(t, blocker.Path, "test.lock.READ.")
@@ -381,6 +382,49 @@ func TestWriteLockConflictReportsMultipleReadLockBlockers(t *testing.T) {
 		require.Equal(t, "migration-read", blocker.Meta.LockType)
 		require.NoError(t, blocker.Err)
 	}
+}
+
+func TestWriteLockConflictSamplesReadLockBlockers(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	readInput := objstore.LockMetaInput{
+		OwnerID:  "read-op",
+		LockType: "migration-read",
+		Hint:     "reader",
+	}
+	var readLocks []objstore.RemoteLock
+	for range 5 {
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", readInput)
+		require.NoError(t, err)
+		readLocks = append(readLocks, lock)
+	}
+	t.Cleanup(func() {
+		for _, lock := range readLocks {
+			require.NoError(t, lock.Unlock(context.Background()))
+		}
+	})
+
+	localInput := objstore.LockMetaInput{OwnerID: "write-op", LockType: "migration-write", Hint: "writer"}
+	_, err := objstore.TryLockRemoteWrite(ctx, strg, "test.lock", localInput)
+	require.Error(t, err)
+
+	var locked objstore.ErrLocked
+	require.True(t, errors.As(err, &locked))
+	require.Equal(t, 5, locked.BlockerCount)
+	require.Len(t, locked.Blockers, 3)
+	for _, blocker := range locked.Blockers {
+		require.Contains(t, blocker.Path, "test.lock.READ.")
+		require.Equal(t, "read-op", blocker.Meta.OwnerID)
+		require.Equal(t, "migration-read", blocker.Meta.LockType)
+		require.NoError(t, blocker.Err)
+	}
+	require.ErrorContains(t, err, "omitted_conflict_files = 2")
+
+	fields := objstore.LockConflictLogFields("test.lock", localInput, err)
+	requireZapIntField(t, fields, "remote_blocker_count", 5)
+	requireZapStringField(t, fields, "remote_blocker_0_owner_id", "read-op")
+	requireZapStringField(t, fields, "remote_blocker_1_owner_id", "read-op")
+	requireZapStringField(t, fields, "remote_blocker_2_owner_id", "read-op")
 }
 
 func TestLockWithRetryCarriesLocalAndRemoteMetadata(t *testing.T) {
@@ -490,6 +534,17 @@ func requireZapStringField(t *testing.T, fields []zap.Field, key string, value s
 	for _, field := range fields {
 		if field.Key == key {
 			require.Equal(t, value, field.String)
+			return
+		}
+	}
+	require.Failf(t, "missing zap field", "field %q not found in %#v", key, fields)
+}
+
+func requireZapIntField(t *testing.T, fields []zap.Field, key string, value int64) {
+	t.Helper()
+	for _, field := range fields {
+		if field.Key == key {
+			require.Equal(t, value, field.Integer)
 			return
 		}
 	}

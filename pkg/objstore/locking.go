@@ -140,7 +140,7 @@ func lockBlockerFromPath(ctx context.Context, storage storeapi.Storage, path str
 }
 
 // conflictingObjectsOfPrefixExpect finds files with the same prefix except the expected file.
-func (cx VerifyWriteContext) conflictingObjectsOfPrefixExpect(pfx string, expect string) ([]LockBlocker, error) {
+func (cx VerifyWriteContext) conflictingObjectsOfPrefixExpect(pfx string, expect string) ([]LockBlocker, int, error) {
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
 	// Some object stores reject "." as a directory component in list prefixes.
@@ -149,6 +149,7 @@ func (cx VerifyWriteContext) conflictingObjectsOfPrefixExpect(pfx string, expect
 	}
 
 	var blockers []LockBlocker
+	blockerCount := 0
 	err := cx.Storage.WalkDir(cx, &storeapi.WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
@@ -156,24 +157,27 @@ func (cx VerifyWriteContext) conflictingObjectsOfPrefixExpect(pfx string, expect
 		IncludeTombstone: true,
 	}, func(objectPath string, size int64) error {
 		if objectPath != expect {
-			blockers = append(blockers, lockBlockerFromPath(cx, cx.Storage, objectPath))
+			blockerCount++
+			if len(blockers) < lockBlockerMetaLimit {
+				blockers = append(blockers, lockBlockerFromPath(cx, cx.Storage, objectPath))
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return blockers, nil
+	return blockers, blockerCount, nil
 }
 
 // assertNoOtherOfPrefixExpect asserts that there is no other file with the same prefix than the expect file.
 func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
-	blockers, err := cx.conflictingObjectsOfPrefixExpect(pfx, expect)
+	blockers, blockerCount, err := cx.conflictingObjectsOfPrefixExpect(pfx, expect)
 	if err != nil {
 		return err
 	}
-	if len(blockers) > 0 {
-		return ErrLocked{Path: cx.Target, Blockers: blockers}
+	if blockerCount > 0 {
+		return ErrLocked{Path: cx.Target, BlockerCount: blockerCount, Blockers: blockers}
 	}
 	return nil
 }
@@ -248,10 +252,11 @@ func (b LockBlocker) String() string {
 
 // ErrLocked is the error returned when the lock is held by others.
 type ErrLocked struct {
-	Path     string
-	Meta     LockMeta
-	Local    LockMetaInput
-	Blockers []LockBlocker
+	Path         string
+	Meta         LockMeta
+	Local        LockMetaInput
+	BlockerCount int
+	Blockers     []LockBlocker
 }
 
 // Error return the error.
@@ -266,11 +271,11 @@ func (e ErrLocked) Error() string {
 	if !isZeroLockMetaInput(e.Local) {
 		fields = append(fields, fmt.Sprintf("local = %s", e.Local))
 	}
-	blockerCount := len(e.Blockers)
-	if blockerCount > lockBlockerErrorLimit {
-		blockerCount = lockBlockerErrorLimit
+	sampledBlockerCount := len(e.Blockers)
+	if sampledBlockerCount > lockBlockerErrorLimit {
+		sampledBlockerCount = lockBlockerErrorLimit
 	}
-	for _, blocker := range e.Blockers[:blockerCount] {
+	for _, blocker := range e.Blockers[:sampledBlockerCount] {
 		fields = append(fields, fmt.Sprintf("conflict file %s", blocker.Path))
 		if blocker.Err != nil {
 			fields = append(fields, fmt.Sprintf("blocker_error = %s", blocker.Err))
@@ -278,13 +283,21 @@ func (e ErrLocked) Error() string {
 			fields = append(fields, fmt.Sprintf("blocker_meta = %s", blocker.Meta))
 		}
 	}
-	if omitted := len(e.Blockers) - blockerCount; omitted > 0 {
+	if omitted := e.remoteBlockerCount() - sampledBlockerCount; omitted > 0 {
 		fields = append(fields, fmt.Sprintf("omitted_conflict_files = %d", omitted))
 	}
 	return strings.Join(fields, ", ")
 }
 
 const lockBlockerErrorLimit = 3
+const lockBlockerMetaLimit = 3
+
+func (e ErrLocked) remoteBlockerCount() int {
+	if e.BlockerCount > len(e.Blockers) {
+		return e.BlockerCount
+	}
+	return len(e.Blockers)
+}
 
 func isZeroLockMeta(meta LockMeta) bool {
 	return meta.LockedAt.IsZero() && meta.LockerHost == "" && meta.LockerPID == 0 &&
@@ -568,7 +581,7 @@ func LockConflictLogFields(path string, input LockMetaInput, err error) []zap.Fi
 	fields = append(fields, lockMetaInputLogFields("local", input)...)
 	var locked ErrLocked
 	if stderrors.As(err, &locked) {
-		fields = append(fields, zap.Int("remote_blocker_count", len(locked.Blockers)))
+		fields = append(fields, zap.Int("remote_blocker_count", locked.remoteBlockerCount()))
 		if len(locked.Blockers) > 0 {
 			fields = append(fields, lockBlockerLogFields(locked.Blockers, lockBlockerLogLimit)...)
 		} else if !isZeroLockMeta(locked.Meta) {
@@ -634,12 +647,12 @@ func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path stri
 			return res
 		},
 		Verify: func(ctx VerifyWriteContext) error {
-			blockers, err := ctx.conflictingObjectsOfPrefixExpect(path, ctx.IntentFileName())
+			blockers, blockerCount, err := ctx.conflictingObjectsOfPrefixExpect(path, ctx.IntentFileName())
 			if err != nil {
 				return err
 			}
-			if len(blockers) > 0 {
-				return ErrLocked{Path: target, Local: input, Blockers: blockers}
+			if blockerCount > 0 {
+				return ErrLocked{Path: target, Local: input, BlockerCount: blockerCount, Blockers: blockers}
 			}
 			return nil
 		},
@@ -675,12 +688,12 @@ func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path strin
 			return res
 		},
 		Verify: func(ctx VerifyWriteContext) error {
-			blockers, err := ctx.conflictingObjectsOfPrefixExpect(writeLock, "")
+			blockers, blockerCount, err := ctx.conflictingObjectsOfPrefixExpect(writeLock, "")
 			if err != nil {
 				return err
 			}
-			if len(blockers) > 0 {
-				return ErrLocked{Path: target, Local: input, Blockers: blockers}
+			if blockerCount > 0 {
+				return ErrLocked{Path: target, Local: input, BlockerCount: blockerCount, Blockers: blockers}
 			}
 			return nil
 		},
