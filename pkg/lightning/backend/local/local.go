@@ -1118,9 +1118,10 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
-					// we need to increase the ref count before sending jobs to
-					// jobToWorkerCh, in case some job finished quickly and decrease
-					// the ref count to zero and cause the data being released.
+					// All jobs must be ref'd before sending any job to jobToWorkerCh.
+					// Jobs run asynchronously after they are sent. If an earlier job finishes
+					// before later jobs increase their refs, the ingest data can be released
+					// when its ref count drops to zero.
 					for _, job := range jobs {
 						job.ref(jobWg)
 					}
