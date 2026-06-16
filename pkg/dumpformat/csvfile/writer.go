@@ -15,7 +15,6 @@
 package csvfile
 
 import (
-	"bytes"
 	"database/sql"
 	"fmt"
 	"io"
@@ -33,7 +32,7 @@ type CSVWriter struct {
 	w     io.Writer
 	cfg   *Config
 	kinds []FieldKind
-	// buf is the reused per-row scratch for non-*bytes.Buffer sinks.
+	// buf is the reused per-row scratch.
 	buf []byte
 }
 
@@ -57,49 +56,33 @@ func (cw *CSVWriter) Write(row []sql.RawBytes) error {
 	if len(row) != len(cw.kinds) {
 		return fmt.Errorf("csvfile: row has %d fields, want %d", len(row), len(cw.kinds))
 	}
-	dst := cw.rowDst()
+	cw.buf = cw.buf[:0]
 	for i, val := range row {
 		if i > 0 {
-			dst = append(dst, cw.cfg.Separator...)
+			cw.buf = append(cw.buf, cw.cfg.Separator...)
 		}
-		dst = appendField(dst, val, val == nil, cw.kinds[i], cw.cfg)
+		cw.buf = appendField(cw.buf, val, val == nil, cw.kinds[i], cw.cfg)
 	}
-	dst = append(dst, cw.cfg.LineTerminator...)
-	return cw.emit(dst)
+	return cw.flush()
 }
 
 // WriteHeader writes a header row: each name as a quoted string field, separated
 // and terminated like a data row.
 func (cw *CSVWriter) WriteHeader(names [][]byte) error {
-	dst := cw.rowDst()
+	cw.buf = cw.buf[:0]
 	for i, name := range names {
 		if i > 0 {
-			dst = append(dst, cw.cfg.Separator...)
+			cw.buf = append(cw.buf, cw.cfg.Separator...)
 		}
-		dst = appendField(dst, name, false, KindString, cw.cfg)
+		cw.buf = appendField(cw.buf, name, false, KindString, cw.cfg)
 	}
-	dst = append(dst, cw.cfg.LineTerminator...)
-	return cw.emit(dst)
+	return cw.flush()
 }
 
-// rowDst returns the build target for one row. For a *bytes.Buffer sink it
-// returns the buffer's available capacity so the encoded row can be appended in
-// place (no extra copy); otherwise it reuses the internal scratch.
-func (cw *CSVWriter) rowDst() []byte {
-	if bb, ok := cw.w.(*bytes.Buffer); ok {
-		return bb.AvailableBuffer()
-	}
-	return cw.buf[:0]
-}
-
-// emit writes the encoded row to the sink. For the scratch path it keeps the
-// grown buffer for reuse; for the *bytes.Buffer path Write extends the buffer in
-// place when the row fit in the available capacity.
-func (cw *CSVWriter) emit(dst []byte) error {
-	if _, ok := cw.w.(*bytes.Buffer); !ok {
-		cw.buf = dst
-	}
-	_, err := cw.w.Write(dst)
+// flush appends the line terminator to the scratch and writes it to the sink.
+func (cw *CSVWriter) flush() error {
+	cw.buf = append(cw.buf, cw.cfg.LineTerminator...)
+	_, err := cw.w.Write(cw.buf)
 	return err
 }
 
