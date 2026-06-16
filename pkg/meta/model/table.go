@@ -801,6 +801,11 @@ type MaterializedViewInfo struct {
 	// for automatically scheduled MV refresh tasks. 0 means disabled.
 	AlertOverdueSec int64 `json:"alert_overdue_sec,omitempty"`
 
+	// AlertRefreshFailed controls whether refresh failures should be persisted into
+	// mysql.tidb_mview_refresh_alert and logged as Materialized_view_refresh_failed.
+	// false means disabled.
+	AlertRefreshFailed bool `json:"alert_refresh_failed,omitempty"`
+
 	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW session.
 	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
 
