@@ -2902,12 +2902,12 @@ create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b));
 insert into t2 values (null, 1);
 explain select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 id	estRows	task	access object	operator info
-IndexJoin_12	8000.00	root		anti semi join, inner:IndexLookUp_11, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
-├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
-│ └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp_11(Probe)	12500.00	root		
-  ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2, index:b(b)	range: decided by [eq(planner__core__integration.t2.b, planner__core__integration.t1.b)], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	12500.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexJoin_13	8000.00	root		anti semi join, inner:IndexLookUp_12, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
+├─TableReader_23(Build)	10000.00	root		data:TableFullScan_22
+│ └─TableFullScan_22	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_12(Probe)	12500.00	root		
+  ├─IndexRangeScan_10(Build)	12500.00	cop[tikv]	table:t2, index:b(b)	range: decided by [eq(planner__core__integration.t2.b, planner__core__integration.t1.b)], keep order:false, stats:pseudo
+  └─TableRowIDScan_11(Probe)	12500.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 a	b
 drop table if exists t;
