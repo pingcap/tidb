@@ -2937,6 +2937,78 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	require.True(t, data.GetRefCount() == 0, "ref count should be 0 after all jobs are done")
 }
 
+func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	local := &Backend{}
+	local.WorkerConcurrency.Store(1)
+
+	data := &refCountIngestData{
+		mockIngestData: mockIngestData{
+			{[]byte("b"), []byte("b")},
+			{[]byte("c"), []byte("c")},
+			{[]byte("d"), []byte("d")},
+			{[]byte("e"), []byte("e")},
+		},
+	}
+	jobs := []*regionJob{
+		{keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: engineapi.Range{Start: []byte("b"), End: []byte("c")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: engineapi.Range{Start: []byte("c"), End: []byte("d")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: engineapi.Range{Start: []byte("d"), End: []byte("e")}, ingestData: data, region: dummyRegionInfo},
+	}
+	jobRange := engineapi.Range{Start: []byte("a"), End: []byte("e")}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"a", "e"}: {
+			jobs: jobs,
+		},
+	}
+	t.Cleanup(func() {
+		fakeRegionJobs = nil
+	})
+
+	mockEngine := &mockEngineWithData{
+		data:   data,
+		ranges: []engineapi.Range{jobRange},
+	}
+	jobToWorkerCh := make(chan *regionJob)
+	var jobWg sync.WaitGroup
+	firstJobDone := make(chan struct{})
+
+	go func() {
+		job := <-jobToWorkerCh
+		job.done(&jobWg)
+		cancel()
+		close(firstJobDone)
+	}()
+
+	err := local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	require.NoError(t, err)
+	<-firstJobDone
+
+	waitDone := make(chan struct{})
+	go func() {
+		jobWg.Wait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+	case <-time.After(3 * time.Second):
+		for _, job := range jobs[2:] {
+			job.done(&jobWg)
+		}
+		<-waitDone
+		require.Fail(t, "jobWg.Wait should finish after generateAndSendJob returns", "ref'd jobs after the canceled send path must all be marked done")
+	}
+	require.Equal(t, int64(0), data.GetRefCount())
+}
+
 // mockEngineWithData is a mock engine that implements engineapi.Engine
 type mockEngineWithData struct {
 	data   engineapi.IngestData
