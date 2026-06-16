@@ -2991,31 +2991,10 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 	require.NoError(t, err)
 	<-firstJobDone
 
-	waitDone := make(chan struct{})
-	go func() {
-		jobWg.Wait()
-		close(waitDone)
-	}()
-
-	cleanupLeakedJobs := true
-	defer func() {
-		if !cleanupLeakedJobs {
-			return
-		}
-		for _, job := range jobs[2:] {
-			job.done(&jobWg)
-		}
-		<-waitDone
-	}()
 	require.Eventually(t, func() bool {
-		select {
-		case <-waitDone:
-			return true
-		default:
-			return false
-		}
+		return data.GetRefCount() == 0
 	}, 3*time.Second, 10*time.Millisecond, "ref'd jobs after the canceled send path must all be marked done")
-	cleanupLeakedJobs = false
+	jobWg.Wait()
 	require.Equal(t, int64(0), data.GetRefCount())
 }
 
