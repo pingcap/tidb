@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -257,7 +256,7 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 	defer tk.MustExec("drop user 'u_show_create_mlog'@'%'")
 	tkShow := testkit.NewTestKit(t, store)
 	require.NoError(t, tkShow.Session().Auth(&auth.UserIdentity{Username: "u_show_create_mlog", Hostname: "%"}, nil, nil, nil))
-	err := tkShow.ExecToErr("show create materialized view log on test.t_show_mlog")
+	err = tkShow.ExecToErr("show create materialized view log on test.t_show_mlog")
 	require.ErrorContains(t, err, "SHOW VIEW command denied")
 	tk.MustExec("grant show view on test.`$mlog$t_show_mlog` to 'u_show_create_mlog'@'%'")
 	err = tkShow.ExecToErr("show create materialized view log on test.t_show_mlog")
