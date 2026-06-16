@@ -389,24 +389,28 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
 	tk.MustExec("set @@tidb_executor_concurrency=15")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
+	const slowCopDelay = 100 * time.Millisecond
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", fmt.Sprintf("return(%d)", slowCopDelay/time.Millisecond)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+	})
+	assertQueryDuration := func(sql string, limit time.Duration) {
+		start := time.Now()
+		tk.MustQuery(sql)
+		require.Less(t, time.Since(start), limit)
+	}
+	// The aggregate index lookup has index and table lookup Cop stages; the
+	// remaining queries should complete in one delayed Cop wave.
+	twoCopWaveLimit := slowCopDelay * 3
+	singleCopWaveLimit := slowCopDelay * 2
 	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
-	start := time.Now()
-	tk.MustQuery("select sum(c) from t1 use index (idx_b) where b < 10;")
-	require.Less(t, time.Since(start), time.Millisecond*250)
+	assertQueryDuration("select sum(c) from t1 use index (idx_b) where b < 10;", twoCopWaveLimit)
 	// Test for index reader with partition table
-	start = time.Now()
-	tk.MustQuery("select id, b from t1 use index (idx_b) where b < 10;")
-	require.Less(t, time.Since(start), time.Millisecond*150)
+	assertQueryDuration("select id, b from t1 use index (idx_b) where b < 10;", singleCopWaveLimit)
 	// Test for table reader with partition table.
-	start = time.Now()
-	tk.MustQuery("select * from t1 where c < 10;")
-	require.Less(t, time.Since(start), time.Millisecond*150)
+	assertQueryDuration("select * from t1 where c < 10;", singleCopWaveLimit)
 	// 	// Test for table reader with 2 parts ranges.
-	start = time.Now()
-	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
-	require.Less(t, time.Since(start), time.Millisecond*150)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+	assertQueryDuration("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;", singleCopWaveLimit)
 }
 
 func TestDMLWithLiteCopWorker(t *testing.T) {
