@@ -88,12 +88,19 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 
+	var bo backoffer
+retry:
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := bo.Backoff(ctx); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		goto retry
 	}
 
 	addr := string(resp.Kvs[0].Value)

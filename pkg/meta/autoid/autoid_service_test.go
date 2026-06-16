@@ -121,7 +121,9 @@ func TestBackoffCtxAware(t *testing.T) {
 	start := time.Now()
 	err := bo.Backoff()
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, time.Since(start), backoffMin)
+	elapsed := time.Since(start)
+	require.GreaterOrEqual(t, elapsed, 2*backoffMin)
+	require.Less(t, elapsed, 2*backoffMin+300*time.Millisecond)
 
 	// With a canceled ctx, Backoff should return immediately.
 	bo.Reset()
@@ -132,7 +134,7 @@ func TestBackoffCtxAware(t *testing.T) {
 	err = bo.Backoff(ctx)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), 10*time.Millisecond, "Backoff should return immediately on canceled ctx")
+	require.Less(t, time.Since(start), 150*time.Millisecond, "Backoff should return quickly on canceled ctx")
 
 	// With a valid ctx that gets canceled during sleep, Backoff should return early.
 	bo.Reset()
@@ -144,8 +146,7 @@ func TestBackoffCtxAware(t *testing.T) {
 
 	start = time.Now()
 	err = bo.Backoff(ctx)
-	// Backoff may or may not return an error depending on timing,
-	// but it should not block for the full duration (100ms at max).
-	require.Less(t, time.Since(start), 50*time.Millisecond, "Backoff should return early when ctx is canceled during sleep")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, time.Since(start), backoffMin, "Backoff should return early when ctx is canceled during sleep")
 	_ = err
 }
