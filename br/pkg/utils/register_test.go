@@ -109,9 +109,14 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant")
-	time.Sleep(RegisterRetryInternal)
-	list, err = GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
+	// Once the failpoints are disabled the keepalive loop re-grants the lease and
+	// re-puts the key, but it may be sleeping RegisterRetryInternal between retries,
+	// so a single fixed sleep races with that tick. Poll until the task reappears.
+	require.Eventually(t, func() bool {
+		list, err = GetImportTasksFrom(ctx, client)
+		require.NoError(t, err)
+		return len(list.Tasks) > 0
+	}, 3*RegisterRetryInternal, time.Second)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
@@ -151,9 +156,14 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput")
-	time.Sleep(RegisterRetryInternal)
-	list, err = GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
+	// Once the failpoints are disabled the keepalive loop re-grants the lease and
+	// re-puts the key, but it may be sleeping RegisterRetryInternal between retries,
+	// so a single fixed sleep races with that tick. Poll until the task reappears.
+	require.Eventually(t, func() bool {
+		list, err = GetImportTasksFrom(ctx, client)
+		require.NoError(t, err)
+		return len(list.Tasks) > 0
+	}, 3*RegisterRetryInternal, time.Second)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
