@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -68,4 +69,13 @@ func WrapZapcoreWithKeyspace() zap.Option {
 		}
 		return core
 	})
+}
+
+// BuildAPIContext returns a V1 API context for the default keyspace and a
+// V2 API context scoped to keyspaceName otherwise.
+func BuildAPIContext(keyspaceName string) pd.APIContext {
+	if len(keyspaceName) == 0 {
+		return pd.NewAPIContextV1()
+	}
+	return pd.NewAPIContextV2(keyspaceName)
 }

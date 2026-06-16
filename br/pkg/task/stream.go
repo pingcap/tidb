@@ -961,15 +961,9 @@ func RunStreamResume(
 func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
-<<<<<<< HEAD
 	log.Info("starting", zap.String("cmd", cmdName))
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-||||||| parent of 978d72a8e1 (pd: replace client with NewClientWithAPIContext (#1899))
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-=======
 	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
->>>>>>> 978d72a8e1 (pd: replace client with NewClientWithAPIContext (#1899))
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err

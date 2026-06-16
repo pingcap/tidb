@@ -1900,7 +1900,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if isPhysicalBackend(rc.cfg) {
 		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
 		pdController, err := pdutil.NewPdController(
-			ctx, rc.keyspaceName, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
+			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(), rc.keyspaceName,
 		)
 		if err != nil {
 			log.L().Error("fail to create PD controller", zap.Error(err))

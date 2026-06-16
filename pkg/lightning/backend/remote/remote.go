@@ -151,7 +151,7 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(cfg.PdAddr, ",")
 	}
-	pdCtl, err := pdutil.NewPdController(ctx, cfg.KeyspaceName, pdAddrs, tls.TLSConfig(), tls.ToPDSecurityOption())
+	pdCtl, err := pdutil.NewPdController(ctx, pdAddrs, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		log.L().Error("fail to create pd controller", zap.Error(err))
 		return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()

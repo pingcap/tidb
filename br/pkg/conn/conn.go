@@ -168,7 +168,7 @@ func NewMgr(
 
 	log.Info("new mgr", zap.Strings("pdAddrs", pdAddrs))
 
-	controller, err := pdutil.NewPdController(ctx, keyspaceName, pdAddrs, tlsConf, securityOption)
+	controller, err := pdutil.NewPdController(ctx, pdAddrs, tlsConf, securityOption, keyspaceName)
 	if err != nil {
 		log.Error("failed to create pd controller", zap.Error(err))
 		return nil, errors.Trace(err)

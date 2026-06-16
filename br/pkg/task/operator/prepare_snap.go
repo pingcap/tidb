@@ -54,7 +54,7 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 			return nil, err
 		}
 	}
-	mgr, err := pdutil.NewPdController(ctx, cfg.KeyspaceName, cfg.PD, tc, cfg.TLS.ToPDSecurityOption())
+	mgr, err := pdutil.NewPdController(ctx, cfg.PD, tc, cfg.TLS.ToPDSecurityOption(), cfg.KeyspaceName)
 	if err != nil {
 		return nil, err
 	}
