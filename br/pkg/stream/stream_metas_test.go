@@ -2701,7 +2701,7 @@ func TestMigrationExtDryRunKeepsOperationContext(t *testing.T) {
 
 	est.DryRun(func(me MigrationExt) {
 		require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
-		require.Equal(t, opCtx.Extra, me.operationContext.Extra)
+		require.Equal(t, opCtx.RestoreID, me.operationContext.RestoreID)
 		require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
 	})
 }

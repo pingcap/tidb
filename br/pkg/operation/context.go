@@ -30,23 +30,15 @@ import (
 //
 // Initialize and update a Context at the command boundary before copying it into
 // lock-capable workers. Copies carry value snapshots of operation fields. A copy
-// made from an initialized Context shares extra-field logging dedupe state with
+// made from an initialized Context shares restore-ID logging dedupe state with
 // the original, so repeated SetRestoreID calls for the same restore ID do not
 // emit duplicate operation logs.
 type Context struct {
 	OperationID string    `json:"operation_id"`
 	StartedAt   time.Time `json:"operation_started_at"`
-	Extra       *Extra    `json:"extra,omitempty"`
+	RestoreID   uint64    `json:"restore_id,omitempty"`
 
 	logState *logState
-}
-
-// Extra carries optional business-specific fields propagated to lock metadata.
-//
-// These fields are separate from the command-scoped operation identity, but
-// still belong in Context so lock metadata has a single construction path.
-type Extra struct {
-	RestoreID uint64 `json:"restore_id,omitempty"`
 }
 
 type logState struct {
@@ -111,11 +103,11 @@ func (c *Context) SetRestoreID(restoreID uint64) {
 	if restoreID != 0 && !c.isInitialized() {
 		return
 	}
-	if c.restoreID() == restoreID {
+	if c.RestoreID == restoreID {
 		return
 	}
 
-	c.setRestoreID(restoreID)
+	c.RestoreID = restoreID
 	if restoreID == 0 {
 		return
 	}
@@ -134,26 +126,6 @@ func (c Context) isInitialized() bool {
 	return c.OperationID != "" && !c.StartedAt.IsZero()
 }
 
-func (c Context) restoreID() uint64 {
-	if c.Extra == nil {
-		return 0
-	}
-	return c.Extra.RestoreID
-}
-
-func (c *Context) setRestoreID(restoreID uint64) {
-	if restoreID == 0 {
-		c.Extra = nil
-		return
-	}
-	extra := Extra{}
-	if c.Extra != nil {
-		extra = *c.Extra
-	}
-	extra.RestoreID = restoreID
-	c.Extra = &extra
-}
-
 // LockMeta builds object-storage lock metadata from the BR operation context.
 func (c Context) LockMeta(resource LockResourceType, hint string) (objstore.LockMetaInput, error) {
 	if c.OperationID == "" {
@@ -170,7 +142,7 @@ func (c Context) LockMeta(resource LockResourceType, hint string) (objstore.Lock
 	return objstore.LockMetaInput{
 		OperationID:        c.OperationID,
 		OperationStartedAt: &startedAt,
-		RestoreID:          c.restoreID(),
+		RestoreID:          c.RestoreID,
 		ResourceType:       string(resource),
 		Hint:               hint,
 	}, nil
