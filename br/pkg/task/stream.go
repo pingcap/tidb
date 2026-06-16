@@ -1726,12 +1726,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	se, err := g.CreateSession(mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
 	// TODO: need keep the order of ssts for compatible of rewrite rules
