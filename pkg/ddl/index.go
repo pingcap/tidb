@@ -3266,117 +3266,11 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
-		var (
-			initialCapacity                        *TiKVClusterCapacity
-			blockSamplePrediction                  sampleTiKVIndexPredictionResult
-			blockSampleSingleReplicaPredictedBytes uint64
-			tikvReplicaCount                       uint64
-			tikvReplicaCountSource                 string
-			tikvReplicaCountPhysicalID             int64
-		)
+		precheckResult := addIndexTiKVSpacePrecheckResult{}
 		if !reorgInfo.mergingTmpIdx {
-			initialCapacityAvailable, err := canRunTiKVSpacePrecheck(w.store)
+			precheckResult, err = w.runAddIndexTiKVSpacePrecheck(ctx, w.sess.Session(), t, reorgInfo, taskKey)
 			if err != nil {
-				logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because PD gRPC client capability check failed",
-					zap.Int64("jobID", job.ID),
-					zap.String("task-key", taskKey),
-					zap.Error(err))
-				initialCapacityAvailable = false
-			}
-			precheckCtx := ctx
-			var cancelPrecheck context.CancelFunc
-			if !initialCapacityAvailable {
-				logutil.DDLLogger().Info("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because initial TiKV capacity is unavailable",
-					zap.Int64("jobID", job.ID),
-					zap.String("task-key", taskKey))
-			} else {
-				precheckCtx, cancelPrecheck = context.WithTimeout(ctx, addIndexSubmissionPrecheckTimeout)
-				initialCapacity, err = collectTiKVStoreCapacity(precheckCtx, w.store)
-				if err != nil {
-					msg := "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot failed"
-					if isContextDoneError(err) {
-						msg = "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because the submission-time precheck timed out while collecting TiKV capacity"
-					}
-					logutil.DDLLogger().Warn(msg,
-						zap.Int64("jobID", job.ID),
-						zap.String("task-key", taskKey),
-						zap.Error(err))
-					initialCapacity = nil
-				} else if initialCapacity == nil || initialCapacity.StoreCount == 0 {
-					logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot is empty",
-						zap.Int64("jobID", job.ID),
-						zap.String("task-key", taskKey))
-					initialCapacity = nil
-				}
-			}
-
-			predictionOK := true
-			clearPrediction := func() {
-				blockSamplePrediction = sampleTiKVIndexPredictionResult{}
-				blockSampleSingleReplicaPredictedBytes = 0
-				tikvReplicaCount = 0
-				tikvReplicaCountSource = ""
-				tikvReplicaCountPhysicalID = 0
-			}
-			skipPrediction := func(phase string, err error) {
-				msg := "skip TiKV index size prediction and space precheck for add-index task because prediction failed"
-				if isContextDoneError(err) {
-					msg = "skip TiKV index size prediction and space precheck for add-index task because the submission-time precheck timed out"
-				}
-				logutil.DDLLogger().Warn(msg,
-					zap.Int64("jobID", job.ID),
-					zap.String("task-key", taskKey),
-					zap.String("prediction-phase", phase),
-					zap.Error(err))
-				clearPrediction()
-				predictionOK = false
-			}
-			if initialCapacity != nil {
-				blockSamplePrediction, err = w.predictTiKVIndexBytesBlockSample(precheckCtx, w.sess.Session(), t, reorgInfo)
-				if err != nil {
-					skipPrediction("block-sample", err)
-				}
-				if predictionOK {
-					blockSampleSingleReplicaPredictedBytes = blockSamplePrediction.PredictedBytes
-					var weightedReplicaRows uint64
-					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID, weightedReplicaRows = w.resolveAddIndexTiKVReplicaScaling(
-						precheckCtx,
-						w.sess.Session(),
-						t,
-						blockSamplePrediction.physicalTables,
-					)
-					blockSamplePrediction.PredictedBytes = scalePredictedBytesByWeightedReplicaRows(
-						blockSamplePrediction.PredictedBytes,
-						blockSamplePrediction.totalRowCount,
-						weightedReplicaRows,
-					)
-					blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByWeightedReplicaRows(
-						blockSamplePrediction.MVCCOverheadBytes,
-						blockSamplePrediction.totalRowCount,
-						weightedReplicaRows,
-					)
-				}
-			}
-			if cancelPrecheck != nil {
-				cancelPrecheck()
-			}
-			if initialCapacity != nil && predictionOK {
-				enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
-				precheckLogFields := addIndexTiKVSpacePrecheckLogFields(
-					job.ID, taskKey, blockSamplePrediction, blockSampleSingleReplicaPredictedBytes,
-					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID,
-					initialCapacity, enforceTiKVSpacePrecheck)
-				precheckErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(initialCapacity, blockSamplePrediction.PredictedBytes, enforceTiKVSpacePrecheck)
-				if precheckErr != nil {
-					logutil.DDLLogger().Warn("insufficient TiKV space predicted for add-index task",
-						append(precheckLogFields, zap.Error(precheckErr))...)
-					if rejectErr != nil {
-						return rejectErr
-					}
-				} else {
-					logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
-						precheckLogFields...)
-				}
+				return err
 			}
 		}
 		taskMeta := &BackfillTaskMeta{
@@ -3386,20 +3280,20 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			CloudStorageURI:     w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			MergeTempIndex:      reorgInfo.mergingTmpIdx,
 			EstimateRowSize:     rowSize,
-			InitialTiKVCapacity: initialCapacity,
-			BlockSamplePredictedTiKVIndexAllReplicaBytes:    blockSamplePrediction.PredictedBytes,
-			BlockSamplePredictedTiKVIndexSingleReplicaBytes: blockSampleSingleReplicaPredictedBytes,
-			BlockSampleMVCCOverheadTotalBytes:               blockSamplePrediction.MVCCOverheadBytes,
-			BlockSampleUseStats:                             blockSamplePrediction.UseStats,
-			TiKVReplicaCount:                                tikvReplicaCount,
-			TiKVReplicaCountSource:                          tikvReplicaCountSource,
-			TiKVReplicaCountPhysicalID:                      tikvReplicaCountPhysicalID,
-			BlockSamplePredictionRegionCount:                blockSamplePrediction.SampledRegionCount,
-			BlockSamplePredictionRowCount:                   blockSamplePrediction.SampledRowCount,
-			BlockSamplePredictionReadErrorCount:             blockSamplePrediction.ReadErrorCount,
-			BlockSampleEncodedKeySharedPrefixAvg:            blockSamplePrediction.EncodedKeySharedPrefixAvgBytes,
-			BlockSampleRawKeySharedPrefixAvg:                blockSamplePrediction.RawKeySharedPrefixAvgBytes,
-			BlockSampleRawKeyLengthAvg:                      blockSamplePrediction.RawKeyLengthAvgBytes,
+			InitialTiKVCapacity: precheckResult.initialCapacity,
+			BlockSamplePredictedTiKVIndexAllReplicaBytes:    precheckResult.blockSamplePrediction.PredictedBytes,
+			BlockSamplePredictedTiKVIndexSingleReplicaBytes: precheckResult.blockSampleSingleReplicaPredictedBytes,
+			BlockSampleMVCCOverheadTotalBytes:               precheckResult.blockSamplePrediction.MVCCOverheadBytes,
+			BlockSampleUseStats:                             precheckResult.blockSamplePrediction.UseStats,
+			TiKVReplicaCount:                                precheckResult.tikvReplicaCount,
+			TiKVReplicaCountSource:                          precheckResult.tikvReplicaCountSource,
+			TiKVReplicaCountPhysicalID:                      precheckResult.tikvReplicaCountPhysicalID,
+			BlockSamplePredictionRegionCount:                precheckResult.blockSamplePrediction.SampledRegionCount,
+			BlockSamplePredictionRowCount:                   precheckResult.blockSamplePrediction.SampledRowCount,
+			BlockSamplePredictionReadErrorCount:             precheckResult.blockSamplePrediction.ReadErrorCount,
+			BlockSampleEncodedKeySharedPrefixAvg:            precheckResult.blockSamplePrediction.EncodedKeySharedPrefixAvgBytes,
+			BlockSampleRawKeySharedPrefixAvg:                precheckResult.blockSamplePrediction.RawKeySharedPrefixAvgBytes,
+			BlockSampleRawKeyLengthAvg:                      precheckResult.blockSamplePrediction.RawKeyLengthAvgBytes,
 			Version:                                         BackfillTaskMetaVersion1,
 		}
 
@@ -3966,6 +3860,122 @@ func summarizeIngestedSSTBytes(
 	return observation, nil
 }
 
+type addIndexTiKVSpacePrecheckResult struct {
+	initialCapacity                        *TiKVClusterCapacity
+	blockSamplePrediction                  sampleTiKVIndexPredictionResult
+	blockSampleSingleReplicaPredictedBytes uint64
+	tikvReplicaCount                       uint64
+	tikvReplicaCountSource                 string
+	tikvReplicaCountPhysicalID             int64
+}
+
+func (w *worker) runAddIndexTiKVSpacePrecheck(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tbl table.Table,
+	reorgInfo *reorgInfo,
+	taskKey string,
+) (addIndexTiKVSpacePrecheckResult, error) {
+	result := addIndexTiKVSpacePrecheckResult{}
+	jobID := reorgInfo.Job.ID
+	initialCapacityAvailable, err := canRunTiKVSpacePrecheck(w.store)
+	if err != nil {
+		logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because PD gRPC client capability check failed",
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey),
+			zap.Error(err))
+		initialCapacityAvailable = false
+	}
+	if !initialCapacityAvailable {
+		logutil.DDLLogger().Info("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because initial TiKV capacity is unavailable",
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey))
+		return result, nil
+	}
+
+	precheckCtx, cancelPrecheck := context.WithTimeout(ctx, addIndexSubmissionPrecheckTimeout)
+	defer cancelPrecheck()
+	initialCapacity, err := collectTiKVStoreCapacity(precheckCtx, w.store)
+	if err != nil {
+		msg := "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot failed"
+		if isContextDoneError(err) {
+			msg = "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because the submission-time precheck timed out while collecting TiKV capacity"
+		}
+		logutil.DDLLogger().Warn(msg,
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey),
+			zap.Error(err))
+		return result, nil
+	}
+	if initialCapacity == nil || initialCapacity.StoreCount == 0 {
+		logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot is empty",
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey))
+		return result, nil
+	}
+	result.initialCapacity = initialCapacity
+
+	blockSamplePrediction, err := w.predictTiKVIndexBytesBlockSample(precheckCtx, sctx, tbl, reorgInfo)
+	if err != nil {
+		msg := "skip TiKV index size prediction and space precheck for add-index task because prediction failed"
+		if isContextDoneError(err) {
+			msg = "skip TiKV index size prediction and space precheck for add-index task because the submission-time precheck timed out"
+		}
+		logutil.DDLLogger().Warn(msg,
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey),
+			zap.String("prediction-phase", "block-sample"),
+			zap.Error(err))
+		return result, nil
+	}
+
+	result.blockSampleSingleReplicaPredictedBytes = blockSamplePrediction.PredictedBytes
+	var weightedReplicaRows uint64
+	result.tikvReplicaCount, result.tikvReplicaCountSource, result.tikvReplicaCountPhysicalID, weightedReplicaRows = w.resolveAddIndexTiKVReplicaScaling(
+		precheckCtx,
+		sctx,
+		tbl,
+		blockSamplePrediction.physicalTables,
+	)
+	blockSamplePrediction.PredictedBytes = scalePredictedBytesByWeightedReplicaRows(
+		blockSamplePrediction.PredictedBytes,
+		blockSamplePrediction.totalRowCount,
+		weightedReplicaRows,
+	)
+	blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByWeightedReplicaRows(
+		blockSamplePrediction.MVCCOverheadBytes,
+		blockSamplePrediction.totalRowCount,
+		weightedReplicaRows,
+	)
+	result.blockSamplePrediction = blockSamplePrediction
+
+	enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
+	precheckLogFields := addIndexTiKVSpacePrecheckLogFields(
+		jobID, taskKey, result.blockSamplePrediction, result.blockSampleSingleReplicaPredictedBytes,
+		result.tikvReplicaCount, result.tikvReplicaCountSource, result.tikvReplicaCountPhysicalID,
+		result.initialCapacity, enforceTiKVSpacePrecheck)
+	precheckErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(
+		result.initialCapacity,
+		result.blockSamplePrediction.PredictedBytes,
+		result.blockSamplePrediction.UseStats,
+		enforceTiKVSpacePrecheck,
+	)
+	if precheckErr != nil {
+		if enforceTiKVSpacePrecheck && !result.blockSamplePrediction.UseStats {
+			precheckLogFields = append(precheckLogFields, zap.String("tikv_space_precheck_enforcement_skip_reason", "pseudo_stats"))
+		}
+		logutil.DDLLogger().Warn("insufficient TiKV space predicted for add-index task",
+			append(precheckLogFields, zap.Error(precheckErr))...)
+		if rejectErr != nil {
+			return result, rejectErr
+		}
+		return result, nil
+	}
+	logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
+		precheckLogFields...)
+	return result, nil
+}
+
 func checkTiKVSpaceForAddIndex(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64) error {
 	if capacity == nil {
 		return errors.New("initial TiKV capacity snapshot is nil")
@@ -3994,9 +4004,9 @@ func checkTiKVSpaceForAddIndex(capacity *TiKVClusterCapacity, predictedTiKVIndex
 	return nil
 }
 
-func evaluateAddIndexTiKVSpacePrecheck(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64, enforce bool) (checkErr, rejectErr error) {
+func evaluateAddIndexTiKVSpacePrecheck(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64, useStats bool, enforce bool) (checkErr, rejectErr error) {
 	checkErr = checkTiKVSpaceForAddIndex(capacity, predictedTiKVIndexBytes)
-	if checkErr != nil && enforce {
+	if checkErr != nil && enforce && useStats {
 		rejectErr = checkErr
 	}
 	return checkErr, rejectErr
@@ -4257,13 +4267,6 @@ func pdReplicateConfigMaxReplicas(replicateConfig map[string]any) (uint64, bool)
 	default:
 		return 0, false
 	}
-}
-
-func scalePredictedBytesByReplicaCount(predictedBytes, replicaCount uint64) uint64 {
-	if replicaCount <= 1 {
-		return predictedBytes
-	}
-	return saturatingMulUint64(predictedBytes, replicaCount)
 }
 
 func scalePredictedBytesByWeightedReplicaRows(predictedBytes uint64, totalRowCount int64, weightedReplicaRows uint64) uint64 {

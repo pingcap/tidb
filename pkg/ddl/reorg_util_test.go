@@ -1128,15 +1128,19 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 				{StoreID: 2, TotalBytes: 500, AvailableBytes: 80},
 			},
 		}
-		checkErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(capacity, 20, false)
+		checkErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(capacity, 20, true, false)
 		require.ErrorContains(t, checkErr, "TiKV cluster capacity")
 		require.NoError(t, rejectErr)
 
-		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 20, true)
+		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 20, true, true)
 		require.ErrorContains(t, checkErr, "TiKV cluster capacity")
 		require.EqualError(t, rejectErr, checkErr.Error())
 
-		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 0, true)
+		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 20, false, true)
+		require.ErrorContains(t, checkErr, "TiKV cluster capacity")
+		require.NoError(t, rejectErr)
+
+		checkErr, rejectErr = evaluateAddIndexTiKVSpacePrecheck(capacity, 0, true, true)
 		require.NoError(t, checkErr)
 		require.NoError(t, rejectErr)
 	})
@@ -1695,4 +1699,11 @@ func TestCollectTiKVStoreCapacity(t *testing.T) {
 			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), encodedKeyOf),
 			estimateSortedSampledIndexKVSharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs), rawKeyOf))
 	})
+}
+
+func scalePredictedBytesByReplicaCount(predictedBytes, replicaCount uint64) uint64 {
+	if replicaCount <= 1 {
+		return predictedBytes
+	}
+	return saturatingMulUint64(predictedBytes, replicaCount)
 }
