@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,16 +46,18 @@ import (
 )
 
 const (
-	testSQLFetchMVLogPurge     = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMVRefresh      = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLRefreshMV           = `REFRESH MATERIALIZED VIEW %n.%n FAST`
-	testSQLFindMVNextTime      = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLLockMVNextTime      = `SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
-	testSQLUpdateMVNextTime    = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`
-	testSQLPurgeMVLog          = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-	testSQLFindPurgeNextTime   = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLLockPurgeNextTime   = `SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
-	testSQLUpdatePurgeNextTime = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
+	testSQLFetchMVLogPurge        = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVLogAccumulation = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
+	testSQLCountMVLogRows         = `SELECT COUNT(*) FROM %n.%n`
+	testSQLFetchMVRefresh         = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLRefreshMV              = `REFRESH MATERIALIZED VIEW %n.%n FAST`
+	testSQLFindMVNextTime         = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLLockMVNextTime         = `SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdateMVNextTime       = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`
+	testSQLPurgeMVLog             = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
+	testSQLFindPurgeNextTime      = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLLockPurgeNextTime      = `SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdatePurgeNextTime    = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 )
 
 var (
@@ -389,10 +392,16 @@ type mockMVServiceHelper struct {
 	historyGCErr                      error
 	historyGCPanic                    bool
 	fetchLogs                         map[int64]*mvLog
+	fetchAccumulationTasks            map[int64]*mvLogAccumulationTask
+	fetchAccumulationRowCounts        map[int64]uint64
 	fetchViews                        map[int64]*mv
 	fetchLogsErr                      error
+	fetchAccumulationTasksErr         error
+	fetchAccumulationRowCountsErr     error
 	fetchViewsErr                     error
 	fetchLogsCalls                    atomic.Int32
+	fetchAccumulationTaskCalls        atomic.Int32
+	fetchAccumulationRowCountCalls    atomic.Int32
 	fetchViewCalls                    atomic.Int32
 	serverRefreshCalls                atomic.Int32
 	historyGCCalls                    atomic.Int32
@@ -419,9 +428,10 @@ type mockMVServiceHelper struct {
 	lastRefreshID int64
 	lastPurgeID   int64
 
-	syncRefreshAlertMu   sync.Mutex
-	lastRefreshAlertAt   time.Time
-	lastRefreshAlertSync []refreshAlertTask
+	syncRefreshAlertMu              sync.Mutex
+	lastRefreshAlertAt              time.Time
+	lastRefreshAlertSync            []refreshAlertTask
+	lastAccumulationRowCountTaskIDs []int64
 
 	metricsMu          sync.Mutex
 	taskDurationCounts map[string]int
@@ -491,6 +501,32 @@ func (m *mockMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.Sessi
 		return nil, m.fetchLogsErr
 	}
 	return m.fetchLogs, nil
+}
+
+func (m *mockMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Context, basic.SessionPool) (map[int64]*mvLogAccumulationTask, error) {
+	m.fetchAccumulationTaskCalls.Add(1)
+	if m.fetchAccumulationTasksErr != nil {
+		return nil, m.fetchAccumulationTasksErr
+	}
+	return m.fetchAccumulationTasks, nil
+}
+
+func (m *mockMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Context, _ basic.SessionPool, tasks map[int64]*mvLogAccumulationTask) (map[int64]uint64, error) {
+	m.fetchAccumulationRowCountCalls.Add(1)
+	if m.fetchAccumulationRowCountsErr != nil {
+		return nil, m.fetchAccumulationRowCountsErr
+	}
+	ids := make([]int64, 0, len(tasks))
+	ret := make(map[int64]uint64, len(tasks))
+	for id := range tasks {
+		ids = append(ids, id)
+		if rowCount, ok := m.fetchAccumulationRowCounts[id]; ok {
+			ret[id] = rowCount
+		}
+	}
+	slices.Sort(ids)
+	m.lastAccumulationRowCountTaskIDs = ids
+	return ret, nil
 }
 
 func (m *mockMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
@@ -1575,6 +1611,57 @@ func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {
 	expect202 := time.Unix(nextPurgeSec2, 0)
 	require.Equal(t, expect202, l202.nextPurge)
 	require.Equal(t, expect202.UnixMilli(), l202.orderTs)
+}
+
+func TestServerHelperLoadAllTiDBMVLogAccumulationTasksDefaultThreshold(t *testing.T) {
+	se := newRecordingSessionContext()
+	se.restrictedRows[testSQLFetchMVLogAccumulation] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(201)}).ToRow(),
+		chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(202)}).ToRow(),
+	}
+
+	baseTable, alertTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	disabledBaseTable, disabledTable := buildMockMVBaseAndMVLogTables(102, 202, 102)
+	disabledTable.Name = pmodel.NewCIStr("mlog_disabled")
+	disabledRows := uint64(0)
+	disabledTable.MaterializedViewLog.LogAccumulationAlertRows = &disabledRows
+	withMockInfoSchema(t, baseTable, alertTable, disabledBaseTable, disabledTable)
+
+	pool := recordingSessionPool{se: se}
+
+	got, err := (&serviceHelper{}).LoadAllTiDBMVLogAccumulationTasks(context.Background(), pool)
+	require.NoError(t, err)
+	require.Equal(t, []string{testSQLFetchMVLogAccumulation}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 1)
+	require.Empty(t, se.executedRestrictedArg[0])
+	require.Len(t, got, 1)
+	require.Equal(t, &mvLogAccumulationTask{
+		schemaName: "test",
+		mlogName:   "mlog1",
+		alertRows:  meta.DefaultMaterializedViewLogAccumulationAlertRows,
+	}, got[int64(201)])
+}
+
+func TestServerHelperLoadTiDBMVLogAccumulationRowCounts(t *testing.T) {
+	se := newRecordingSessionContext()
+	se.restrictedRows[testSQLCountMVLogRows] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(50)}).ToRow(),
+	}
+
+	pool := recordingSessionPool{se: se}
+	tasks := map[int64]*mvLogAccumulationTask{
+		201: {
+			schemaName: "test",
+			mlogName:   "mlog1",
+			alertRows:  50,
+		},
+	}
+
+	got, err := (&serviceHelper{}).LoadTiDBMVLogAccumulationRowCounts(context.Background(), pool, tasks)
+	require.NoError(t, err)
+	require.Equal(t, []string{testSQLCountMVLogRows}, se.executedRestrictedSQL)
+	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[0])
+	require.Equal(t, map[int64]uint64{201: 50}, got)
 }
 
 func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {

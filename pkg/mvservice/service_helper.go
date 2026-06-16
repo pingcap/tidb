@@ -335,6 +335,39 @@ func resolveMVIdentityByID(
 	return schemaName, mviewName, alertWarningSec, alertOverdueSec, true, nil
 }
 
+func resolveMVLogAccumulationAlertByID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvLogID int64,
+) (schemaName, mlogName string, alertRows uint64, enabled bool, found bool, err error) {
+	if mvLogID <= 0 {
+		return "", "", 0, false, false, errors.New("materialized view log id is invalid")
+	}
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	if !ok {
+		return "", "", 0, false, false, nil
+	}
+	mLogMeta := mLogTbl.Meta()
+	if mLogMeta == nil || mLogMeta.MaterializedViewLog == nil {
+		return "", "", 0, false, false, nil
+	}
+	alertRows, enabled = mLogMeta.MaterializedViewLog.EffectiveLogAccumulationAlertRows()
+	if !enabled {
+		return "", "", alertRows, false, true, nil
+	}
+	dbInfo, ok := infoSchema.SchemaByID(mLogMeta.DBID)
+	if !ok || dbInfo == nil {
+		return "", "", 0, false, false, nil
+	}
+	schemaName = dbInfo.Name.L
+	mlogName = mLogMeta.Name.L
+	if schemaName == "" || mlogName == "" {
+		return "", "", 0, false, false, nil
+	}
+	return schemaName, mlogName, alertRows, true, true, nil
+}
+
 // RefreshMV executes one incremental refresh round for a materialized view.
 //
 // It:
@@ -1302,6 +1335,91 @@ func (*serviceHelper) LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool 
 		newPending[mvLogID] = l
 	}
 	return newPending, nil
+}
+
+// LoadAllTiDBMVLogAccumulationTasks loads all MV logs that have accumulation alerting enabled.
+func (*serviceHelper) LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAccumulationTask, error) {
+	const fetchSQL = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, fetchSQL, nil)
+	if err != nil {
+		return nil, err
+	}
+	tasks := make(map[int64]*mvLogAccumulationTask)
+	for _, row := range rows {
+		if row.IsNull(0) {
+			continue
+		}
+		mvLogID := row.GetInt64(0)
+		if mvLogID <= 0 {
+			continue
+		}
+		schemaName, mlogName, alertRows, enabled, found, err := resolveMVLogAccumulationAlertByID(ctx, sctx, mvLogID)
+		if err != nil {
+			return nil, err
+		}
+		if !found || !enabled {
+			continue
+		}
+		tasks[mvLogID] = &mvLogAccumulationTask{
+			schemaName: schemaName,
+			mlogName:   mlogName,
+			alertRows:  alertRows,
+		}
+	}
+	return tasks, nil
+}
+
+// LoadTiDBMVLogAccumulationRowCounts loads the current row count for the specified MV log tasks.
+func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	tasks map[int64]*mvLogAccumulationTask,
+) (map[int64]uint64, error) {
+	const countSQL = `SELECT COUNT(*) FROM %n.%n`
+	if len(tasks) == 0 {
+		return map[int64]uint64{}, nil
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	rowCounts := make(map[int64]uint64, len(tasks))
+	for mvLogID, task := range tasks {
+		if task == nil {
+			continue
+		}
+		countRows, err := execRCRestrictedSQLWithSession(ctx, sctx, countSQL, []any{task.schemaName, task.mlogName})
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				continue
+			}
+			return nil, err
+		}
+		if len(countRows) != 1 {
+			return nil, fmt.Errorf("unexpected COUNT(*) result length for mvlog accumulation: %d", len(countRows))
+		}
+		if countRows[0].IsNull(0) {
+			return nil, errors.New("unexpected NULL COUNT(*) result for mvlog accumulation")
+		}
+		rowCount := countRows[0].GetInt64(0)
+		if rowCount < 0 {
+			return nil, fmt.Errorf("unexpected negative COUNT(*) result for mvlog accumulation: %d", rowCount)
+		}
+		rowCounts[mvLogID] = uint64(rowCount)
+	}
+	return rowCounts, nil
 }
 
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.

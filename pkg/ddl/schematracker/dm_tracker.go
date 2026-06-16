@@ -330,6 +330,10 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	var purgeMethod string
 	var purgeStartWith string
 	var purgeNext string
+	logAccumulationAlertRows, err := ddl.BuildMLogAccumulationAlertRows(s.AccumulationAlert)
+	if err != nil {
+		return err
+	}
 	if s.Purge != nil {
 		if s.Purge.Immediate {
 			return errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
@@ -351,12 +355,13 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:       baseTable.ID,
-		Columns:           s.Cols,
-		PurgeMethod:       purgeMethod,
-		PurgeStartWith:    purgeStartWith,
-		PurgeNext:         purgeNext,
-		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		BaseTableID:              baseTable.ID,
+		Columns:                  s.Cols,
+		PurgeMethod:              purgeMethod,
+		PurgeStartWith:           purgeStartWith,
+		PurgeNext:                purgeNext,
+		LogAccumulationAlertRows: logAccumulationAlertRows,
+		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
 		return err

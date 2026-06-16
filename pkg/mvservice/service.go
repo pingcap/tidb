@@ -53,7 +53,8 @@ type MVService struct {
 	ctx                 context.Context
 	sch                 *ServerConsistentHash
 
-	nextRefreshAlertScanMillis atomic.Int64
+	nextRefreshAlertScanMillis      atomic.Int64
+	nextMVLogAccumulationScanMillis atomic.Int64
 
 	refreshExecutor                 *TaskExecutor
 	purgeExecutor                   *TaskExecutor
@@ -84,6 +85,7 @@ type MVService struct {
 		runningMVLogPurgeCount atomic.Int64
 		alertWarningCount      atomic.Int64
 		alertOverdueCount      atomic.Int64
+		mvLogAccumulationCount atomic.Int64
 	}
 
 	mvRefreshMu struct {
@@ -114,6 +116,7 @@ const (
 	defaultMVTaskRetryMax                = 120 * time.Second
 	manualCancelBackoffDelay             = 2 * time.Minute
 	mvRefreshAlertScanInterval           = 30 * time.Second
+	mvLogAccumulationAlertScanInterval   = 20 * time.Minute
 	maxNextScheduleTs                    = 9e18
 
 	defaultCHReplicas = 100
@@ -121,8 +124,9 @@ const (
 	mvTaskDurationTypeRefresh = "mv_refresh"
 	mvTaskDurationTypePurge   = "mvlog_purge"
 
-	mvFetchTypeMLogPurge    = "fetch_mlog"
-	mvFetchTypeMViewRefresh = "fetch_mviews"
+	mvFetchTypeMLogPurge        = "fetch_mlog"
+	mvFetchTypeMLogAccumulation = "fetch_mlog_accumulation"
+	mvFetchTypeMViewRefresh     = "fetch_mviews"
 
 	mvTaskDurationTypeHistoryGC = "history_gc"
 
@@ -360,6 +364,20 @@ func (t *MVService) maybeLogRefreshAlertTasks(now time.Time) {
 		return
 	}
 	t.logMVRefreshAlerts(alertTasks)
+}
+
+func (t *MVService) maybeScanMVLogAccumulationAlerts(now time.Time) {
+	nowMillis := now.UnixMilli()
+	if next := t.nextMVLogAccumulationScanMillis.Load(); next > nowMillis {
+		return
+	}
+	t.nextMVLogAccumulationScanMillis.Store(now.Add(mvLogAccumulationAlertScanInterval).UnixMilli())
+
+	alertedCount, err := t.fetchAllMVLogAccumulationAlerts()
+	if err != nil {
+		return
+	}
+	t.metrics.mvLogAccumulationCount.Store(int64(alertedCount))
 }
 
 func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask, int64, int64) {
@@ -948,6 +966,51 @@ func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mvLog, error) {
 	return newPending, nil
 }
 
+// fetchAllMVLogAccumulationAlerts counts MV logs whose row count exceeds the configured alert threshold.
+func (t *MVService) fetchAllMVLogAccumulationAlerts() (int, error) {
+	start := mvsNow()
+	result := mvDurationResultSuccess
+	defer func() {
+		t.mh.observeTaskDuration(mvFetchTypeMLogAccumulation, result, mvsSince(start))
+	}()
+
+	candidates, err := t.fetchAllTiDBMVLogAccumulationTasks()
+	if err != nil {
+		result = mvDurationResultFailed
+		return 0, err
+	}
+	rowCounts, err := t.mh.LoadTiDBMVLogAccumulationRowCounts(t.ctx, t.sysSessionPool, candidates)
+	if err != nil {
+		result = mvDurationResultFailed
+		fields := append(t.runtimeLogFields(), zap.Error(err))
+		logutil.BgLogger().Warn("fetch mvlog accumulation row counts failed", fields...)
+		return 0, err
+	}
+	alertedCount := 0
+	for mvLogID, rowCount := range rowCounts {
+		task, ok := candidates[mvLogID]
+		if !ok || task == nil {
+			continue
+		}
+		if rowCount > task.alertRows {
+			alertedCount++
+		}
+	}
+	return alertedCount, nil
+}
+
+// fetchAllTiDBMVLogAccumulationTasks fetches accumulation metadata and filters out tasks not owned by this node.
+func (t *MVService) fetchAllTiDBMVLogAccumulationTasks() (map[int64]*mvLogAccumulationTask, error) {
+	newPending, err := t.mh.LoadAllTiDBMVLogAccumulationTasks(t.ctx, t.sysSessionPool)
+	if err != nil {
+		fields := append(t.runtimeLogFields(), zap.Error(err))
+		logutil.BgLogger().Warn("fetch all mvlog accumulation tasks failed", fields...)
+		return nil, err
+	}
+	filterUnownedTasks(t.sch, newPending)
+	return newPending, nil
+}
+
 // fetchAllTiDBMVRefresh fetches refresh metadata and filters out tasks not owned by this node.
 func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mv, error) {
 	start := mvsNow()
@@ -1166,6 +1229,7 @@ func (t *MVService) Run() {
 			t.mh.reportMetrics(t)
 			t.maybeGCOperationHistory(now)
 			t.maybeLogRefreshAlertTasks(now)
+			t.maybeScanMVLogAccumulationAlerts(now)
 			resetTimer(maintenanceTimer, t.basicInterval)
 		}
 

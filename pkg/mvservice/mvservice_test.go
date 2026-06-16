@@ -1084,6 +1084,99 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 }
 
+func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing.T) {
+	helper := &mockMVServiceHelper{
+		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
+			102: {schemaName: "test", mlogName: "mlog_102", alertRows: 1000},
+		},
+		fetchAccumulationRowCounts: map[int64]uint64{
+			101: 1500,
+			102: 2500,
+		},
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	defer svc.closeTaskExecutors()
+	setTaskOwnersForTest(svc, map[int64]uint32{
+		101: 10,
+		102: 30,
+	})
+
+	now := mvsNow()
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	svc.maybeScanMVLogAccumulationAlerts(now)
+	require.Equal(t, int32(1), helper.fetchAccumulationTaskCalls.Load())
+	require.Equal(t, int32(1), helper.fetchAccumulationRowCountCalls.Load())
+	require.Equal(t, []int64{101}, helper.lastAccumulationRowCountTaskIDs)
+	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+
+	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval / 2))
+	require.Equal(t, int32(1), helper.fetchAccumulationTaskCalls.Load())
+
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	helper.fetchAccumulationTasks = map[int64]*mvLogAccumulationTask{
+		101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
+		102: {schemaName: "test", mlogName: "mlog_102", alertRows: 1000},
+	}
+	helper.fetchAccumulationRowCounts = map[int64]uint64{
+		101: 1800,
+		102: 2800,
+	}
+	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval))
+	require.Equal(t, int32(2), helper.fetchAccumulationTaskCalls.Load())
+	require.Equal(t, int32(2), helper.fetchAccumulationRowCountCalls.Load())
+	require.Equal(t, []int64{101}, helper.lastAccumulationRowCountTaskIDs)
+	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+}
+
+func TestMVServiceMaybeScanMVLogAccumulationAlertsPreservesLastValueOnError(t *testing.T) {
+	helper := &mockMVServiceHelper{
+		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
+		},
+		fetchAccumulationRowCounts: map[int64]uint64{
+			101: 1500,
+		},
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	defer svc.closeTaskExecutors()
+	setTaskOwnersForTest(svc, map[int64]uint32{
+		101: 10,
+	})
+
+	now := mvsNow()
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	svc.maybeScanMVLogAccumulationAlerts(now)
+	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+
+	helper.fetchAccumulationRowCountsErr = errors.New("mock accumulation scan failed")
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval))
+	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+}
+
+func TestMVServiceMaybeScanMVLogAccumulationAlertsUsesStrictGreaterThan(t *testing.T) {
+	helper := &mockMVServiceHelper{
+		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 50},
+		},
+		fetchAccumulationRowCounts: map[int64]uint64{
+			101: 50,
+		},
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	defer svc.closeTaskExecutors()
+	setTaskOwnersForTest(svc, map[int64]uint32{
+		101: 10,
+	})
+
+	now := mvsNow()
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	svc.maybeScanMVLogAccumulationAlerts(now)
+	require.Equal(t, int64(0), svc.metrics.mvLogAccumulationCount.Load())
+	require.Equal(t, []int64{101}, helper.lastAccumulationRowCountTaskIDs)
+}
+
 func TestTaskQueueRingBufferFIFO(t *testing.T) {
 	var q taskQueue
 	mkReq := func(i int) taskRequest {
@@ -1198,6 +1291,40 @@ func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.
 		}
 		logTask.orderTs = next.UnixMilli()
 		ret[id] = logTask
+	}
+	return ret, nil
+}
+
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Context, basic.SessionPool) (map[int64]*mvLogAccumulationTask, error) {
+	h.fetchAccumulationTaskCalls.Add(1)
+	if h.fetchAccumulationTasksErr != nil {
+		return nil, h.fetchAccumulationTasksErr
+	}
+	if h.fetchAccumulationTasks == nil {
+		return map[int64]*mvLogAccumulationTask{}, nil
+	}
+	ret := make(map[int64]*mvLogAccumulationTask, len(h.fetchAccumulationTasks))
+	for id, task := range h.fetchAccumulationTasks {
+		if task == nil {
+			ret[id] = nil
+			continue
+		}
+		taskCopy := *task
+		ret[id] = &taskCopy
+	}
+	return ret, nil
+}
+
+func (h *fullChainMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Context, _ basic.SessionPool, tasks map[int64]*mvLogAccumulationTask) (map[int64]uint64, error) {
+	h.fetchAccumulationRowCountCalls.Add(1)
+	if h.fetchAccumulationRowCountsErr != nil {
+		return nil, h.fetchAccumulationRowCountsErr
+	}
+	ret := make(map[int64]uint64, len(tasks))
+	for id := range tasks {
+		if rowCount, ok := h.fetchAccumulationRowCounts[id]; ok {
+			ret[id] = rowCount
+		}
 	}
 	return ret, nil
 }
