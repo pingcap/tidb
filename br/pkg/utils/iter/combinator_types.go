@@ -9,13 +9,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 )
 
-type chunkMappingCfg struct {
-	chunkSize uint
-	quota     *util.WorkerPool
+type bufferedMappingCfg struct {
+	bufferSize uint
+	quota      *util.WorkerPool
 }
 
-type chunkMapping[T, R any] struct {
-	chunkMappingCfg
+type bufferedMapping[T, R any] struct {
+	bufferedMappingCfg
 	inner  TryNextor[T]
 	mapper func(context.Context, T) (R, error)
 
@@ -26,7 +26,7 @@ type chunkMapping[T, R any] struct {
 	results     chan IterResult[R]
 }
 
-func (m *chunkMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
+func (m *bufferedMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
 	if !m.started {
 		m.start(ctx)
 	}
@@ -55,10 +55,10 @@ func (m *chunkMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
 	}
 }
 
-func (m *chunkMapping[T, R]) start(ctx context.Context) {
+func (m *bufferedMapping[T, R]) start(ctx context.Context) {
 	m.started = true
-	m.outstanding = make(chan struct{}, m.chunkSize)
-	m.results = make(chan IterResult[R], m.chunkSize)
+	m.outstanding = make(chan struct{}, m.bufferSize)
+	m.results = make(chan IterResult[R], m.bufferSize)
 	ctx, m.cancel = context.WithCancel(ctx)
 
 	go func() {

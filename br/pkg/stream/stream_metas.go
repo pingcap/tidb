@@ -291,6 +291,8 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
+// TryParseTaggedBackupMetaFileNameWrapper parses the tagged backupmeta file name
+// from a backupmeta path after stripping its directory and meta suffix.
 func TryParseTaggedBackupMetaFileNameWrapper(filename string) (backupmetas.ParsedName, error) {
 	baseName := strings.TrimSuffix(path.Base(filename), metaSuffix)
 	return backupmetas.TryParseTaggedBackupMetaFileName(baseName)

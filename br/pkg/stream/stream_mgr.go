@@ -283,6 +283,7 @@ func (m *MetadataHelper) ReadFile(
 		return m.decodeCompressedData(decryptedData, rawLength, compressionType)
 	}
 
+	// unlock as soon as possible because the data slice is read only.
 	cref.mu.Lock()
 	cref.ref -= 1
 

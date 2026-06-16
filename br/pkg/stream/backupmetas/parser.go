@@ -36,7 +36,7 @@ const (
 )
 
 const (
-	flagHasDDLFiles = 1 << iota
+	flagNoDDLFiles = 1 << iota
 )
 
 var (
@@ -89,7 +89,7 @@ func (parsedName *ParsedName) HasDDLFiles() bool {
 	if !parsedName.HasFlags {
 		return true
 	}
-	return parsedName.Flags&flagHasDDLFiles != 0
+	return parsedName.Flags&flagNoDDLFiles == 0
 }
 
 // TryParseTaggedBackupMetaFileName parses the tagged backupmeta file-name format.
