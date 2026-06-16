@@ -1124,11 +1124,13 @@ func (local *Backend) generateAndSendJob(
 					for _, job := range jobs {
 						job.ref(jobWg)
 					}
-					for _, job := range jobs {
+					for i, job := range jobs {
 						select {
 						case <-egCtx.Done():
-							// this job is not put into jobToWorkerCh
-							job.done(jobWg)
+							for _, unsentJob := range jobs[i:] {
+								// These jobs are not put into jobToWorkerCh.
+								unsentJob.done(jobWg)
+							}
 							// if the context is canceled, it means worker has error.
 							return nil
 						case jobToWorkerCh <- job:
