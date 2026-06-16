@@ -184,18 +184,11 @@ func TestFileChunkProcess(t *testing.T) {
 			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
-<<<<<<< HEAD
 		err2 := processor.Process(ctx)
 		require.ErrorIs(t, err2, common.ErrEncodeKV)
+		require.ErrorContains(t, err2, "[Import:ErrCastValue]Value conversion failed for column '")
 		require.ErrorContains(t, err2, "encoding 2-th data row in this chunk")
 		require.ErrorContains(t, err2, "at offset 6")
-||||||| parent of 8ef9adda64 (pkg/lightning: unify import cast conversion error path (#2431))
-		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
-=======
-		err = processor.Process(ctx)
-		require.ErrorIs(t, err, common.ErrEncodeKV)
-		require.ErrorContains(t, err, "[Import:ErrCastValue]Value conversion failed for column '")
->>>>>>> 8ef9adda64 (pkg/lightning: unify import cast conversion error path (#2431))
 		require.True(t, ctrl.Satisfied())
 	})
 

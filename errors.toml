@@ -326,16 +326,14 @@ error = '''
 stream task already exists
 '''
 
-<<<<<<< HEAD
 ["BR:Stream:ErrStreamLogTaskHasNoStorage"]
 error = '''
 stream task has no storage
-||||||| parent of 8ef9adda64 (pkg/lightning: unify import cast conversion error path (#2431))
-=======
+'''
+
 ["Import:ErrCastValue"]
 error = '''
 Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
->>>>>>> 8ef9adda64 (pkg/lightning: unify import cast conversion error path (#2431))
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -3877,4 +3875,3 @@ snapshot is older than GC safe point %s
 error = '''
 option '%s' is no longer supported. Reason: %s
 '''
-
