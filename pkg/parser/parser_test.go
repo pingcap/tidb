@@ -5421,6 +5421,16 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PURGE NEXT 300",
 		},
 		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) ALERT ROWS 100",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) ALERT ROWS 100",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300 ALERT ROWS -1",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PURGE NEXT 300 ALERT ROWS -1",
+		},
+		{
 			"ALTER MATERIALIZED VIEW mv COMMENT = 'c2'",
 			true,
 			"ALTER MATERIALIZED VIEW `mv` COMMENT = 'c2'",

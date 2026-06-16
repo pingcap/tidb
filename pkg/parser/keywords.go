@@ -263,6 +263,7 @@ var Keywords = []KeywordsType{
 	{"AFTER", false, "unreserved"},
 	{"AGAINST", false, "unreserved"},
 	{"AGO", false, "unreserved"},
+	{"ALERT", false, "unreserved"},
 	{"ALGORITHM", false, "unreserved"},
 	{"ALWAYS", false, "unreserved"},
 	{"ANY", false, "unreserved"},
