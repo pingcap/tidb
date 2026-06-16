@@ -306,6 +306,15 @@ func (s *BaseScheduler) onPausing() error {
 		s.logger.Debug("on pausing state, this task keeps current state", zap.Stringer("state", task.State))
 		return nil
 	}
+	pausedFailed, err := s.pauseFailedSubtasksOnKVDiskFull(task, cntByStates)
+	if err != nil {
+		return err
+	}
+	if pausedFailed {
+		s.logger.Info("converted failed disk-full subtasks to paused, keep task pausing",
+			zap.Stringer("state", task.State))
+		return nil
+	}
 
 	s.logger.Info("all running subtasks paused, update the task to paused state")
 	if err = s.taskMgr.PausedTask(s.ctx, task.ID); err != nil {
@@ -314,6 +323,26 @@ func (s *BaseScheduler) onPausing() error {
 	task.State = proto.TaskStatePaused
 	s.task.Store(task)
 	return nil
+}
+
+func (s *BaseScheduler) pauseFailedSubtasksOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64) (bool, error) {
+	if cntByStates[proto.SubtaskStateFailed] == 0 {
+		return false, nil
+	}
+	subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
+	if err != nil {
+		s.logger.Warn("collect subtask error failed", zap.Error(err))
+		return false, err
+	}
+	if !shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+		return false, nil
+	}
+	if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+		return false, errors.Trace(err)
+	}
+	task.Error = subTaskErrs[0]
+	s.task.Store(task)
+	return true, nil
 }
 
 // handle task in paused state.

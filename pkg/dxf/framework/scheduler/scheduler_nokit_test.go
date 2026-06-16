@@ -279,6 +279,27 @@ func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
 	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
 	require.True(t, ctrl.Satisfied())
 
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, proto.TaskStatePausing, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePaused: 1,
+	}, nil)
+	taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePaused, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
 	tests := []struct {
 		name        string
 		cntByState  map[proto.SubtaskState]int64
