@@ -110,11 +110,9 @@ func (e *InsertValues) addWrittenRowsColMultiply(rowCount int64) {
 	if rowCount <= 0 || colCount <= 0 {
 		return
 	}
-	rowsColMultiply := int64(math.MaxInt64)
+	rowsColMultiply := rowCount * colCount
 	if rowCount > math.MaxInt64/colCount {
 		rowsColMultiply = math.MaxInt64
-	} else {
-		rowsColMultiply = rowCount * colCount
 	}
 	e.ruv2RowsColMultiply = addDMLRowsColMultiply(e.ruv2RowsColMultiply, rowsColMultiply)
 }
