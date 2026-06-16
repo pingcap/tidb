@@ -313,6 +313,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_count_col")
 	tk.MustExec("drop materialized view mv_alert")
 	tk.MustExec("drop materialized view mv_alert_zero")
+	tk.MustExec("drop materialized view mv_alert_failed")
 	tk.MustExec("drop materialized view mv_upper_agg")
 	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
