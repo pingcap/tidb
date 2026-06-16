@@ -48,6 +48,10 @@ var ErrNilKeyspaceMeta = errors.New("GetGroup: keyspace meta is nil")
 // ErrInvalidGroupID indicates the keyspace meta contains an invalid meta service group ID.
 var ErrInvalidGroupID = errors.New("invalid meta service group id: it must contain at least one letter and only contain letters, digits, '-' or '_'")
 
+// ErrKeyspaceLevelGCRequired indicates the keyspace must use keyspace-level GC
+// before it can be assigned to a dedicated meta service group.
+var ErrKeyspaceLevelGCRequired = errors.New("meta service group requires keyspace-level GC")
+
 // groupIDPattern validates keyspace meta service group IDs configured in keyspace meta.
 // Rules enforced by the pattern:
 //   - only ASCII letters, digits, '-' and '_' are allowed;
@@ -86,6 +90,14 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Group, 
 		groupID := val
 		if err := validateGroupID(groupID); err != nil {
 			return nil, err
+		}
+		if !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) {
+			return nil, errors.Annotatef(
+				ErrKeyspaceLevelGCRequired,
+				"keyspace %q configured meta service group %q",
+				keyspaceDescription(keyspaceMeta),
+				groupID,
+			)
 		}
 		addrsStr, addrsOk := keyspaceMeta.Config[GroupAddrsKey]
 		if !addrsOk {
