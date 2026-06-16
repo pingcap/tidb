@@ -15,17 +15,10 @@
 package keyspace
 
 import (
-<<<<<<< HEAD
-||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
-	"context"
-	"encoding/binary"
-=======
-	"context"
 	"crypto/tls"
-	"encoding/binary"
->>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 	"fmt"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
@@ -37,6 +30,13 @@ import (
 const (
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
+
+	// KeyspaceMetaConfigGCManagementType is the key for GC management type in keyspace meta config.
+	KeyspaceMetaConfigGCManagementType = "safe_point_version"
+	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC means this keyspace calculates GC safe point by itself.
+	KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC = "v2"
+	// KeyspaceMetaConfigGCManagementTypeGlobalGC means this keyspace uses global GC safe point.
+	KeyspaceMetaConfigGCManagementTypeGlobalGC = "global_gc"
 )
 
 // CodecV1 represents api v1 codec.
@@ -89,11 +89,19 @@ func BuildAPIContext(keyspaceName string) pd.APIContext {
 	return pd.NewAPIContextV2(keyspaceName)
 }
 
+// IsKeyspaceUseKeyspaceLevelGC returns true if keyspace meta config enables keyspace-level GC.
+func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if keyspaceMeta == nil {
+		return false
+	}
+	return keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType] == KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC
+}
+
 // NewEtcdSafePointKVWithCodec is used to add prefix when set keyspace.
 func NewEtcdSafePointKVWithCodec(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
 	if IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
-		etcdNameSpace = EtcdNamespace(codec)
+		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
 	}
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
 }

@@ -1535,7 +1535,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}()
 	}
 
-<<<<<<< HEAD
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:   mgr.GetPDClient(),
 		EtcdCli: mgr.GetDomain().GetEtcdClient(),
@@ -1545,21 +1544,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	sp := utils.BRServiceSafePoint{
-		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
-||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
-	sp := utils.BRServiceSafePoint{
-		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
-=======
 	sp := utils.ServiceSafePoint{
 		ServiceSafePointTS: restoreTS,
 		TTL:                utils.DefaultBRGCSafePointTTL,
 		ID:                 utils.MakeSafePointID(),
->>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 	}
 	g.Record("ServiceSafePointTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)

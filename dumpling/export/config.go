@@ -376,16 +376,12 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
-<<<<<<< HEAD
 	flags.String(flagExportTiDBRowID, "", "Controls the export of the '_tidb_rowid' column when dumping from TiDB. "+
 		"Options: 'off' (default) or 'int-pk-auto-inc'. 'int-pk-auto-inc' exports '_tidb_rowid' only for tables with "+
 		"a single INT-family PRIMARY KEY with AUTO_INCREMENT, using the PK value as '_tidb_rowid' if it does not exist in the table.")
-||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
-=======
 
 	flags.String(flagPDAddr, "pd", "cluster PD address")
 	flags.String(flagKeyspaceName, "", "keyspace name is used to start service gc safe point with certain keyspace")
->>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags

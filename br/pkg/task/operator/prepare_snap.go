@@ -219,22 +219,10 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectio
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
-<<<<<<< HEAD:br/pkg/task/operator/prepare_snap.go
-	sp := utils.BRServiceSafePoint{
-		ID:       spID,
-		TTL:      int64(cx.cfg.TTL.Seconds()),
-		BackupTS: cx.cfg.SafePoint,
-||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883)):br/pkg/task/operator/cmd.go
-	sp := utils.BRServiceSafePoint{
-		ID:       utils.MakeSafePointID(),
-		TTL:      int64(cx.cfg.TTL.Seconds()),
-		BackupTS: cx.cfg.SafePoint,
-=======
 	sp := utils.ServiceSafePoint{
-		ID:                 utils.MakeSafePointID(),
+		ID:                 spID,
 		TTL:                int64(cx.cfg.TTL.Seconds()),
 		ServiceSafePointTS: cx.cfg.SafePoint,
->>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883)):br/pkg/task/operator/cmd.go
 	}
 	if sp.ServiceSafePointTS == 0 {
 		rts, err := cx.pdMgr.GetMinResolvedTS(cx)

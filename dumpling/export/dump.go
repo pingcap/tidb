@@ -17,17 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 
-<<<<<<< HEAD
 	"git.pingcap.net/pingkai/semver/coreos/semver"
-||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
-	"github.com/coreos/go-semver/semver"
-=======
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 
->>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
