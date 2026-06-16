@@ -1184,16 +1184,18 @@ func TestMVServiceTaskResult(t *testing.T) {
 			}, testEventuallyWait, testEventuallyTick)
 		})
 
-		t.Run("manual_cancel_without_persist_forces_refetch", func(t *testing.T) {
+		t.Run("manual_cancel_without_persist_uses_local_backoff", func(t *testing.T) {
 			helper := &mockMVServiceHelper{
 				purgeErr: errMVTaskCanceledManually,
 			}
 			svc := newRunningMVServiceForTest(t, helper)
-			svc.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
+			now := mvsNow()
+			svc.lastMetaFetchMillis.Store(now.UnixMilli())
+			expectedNext := now.Add(manualCancelBackoffDelay)
 
 			l := &mvLog{
 				ID:        306,
-				nextPurge: mvsNow().Add(-time.Minute).Round(0),
+				nextPurge: now.Add(-time.Minute).Round(0),
 			}
 			svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 			svc.purgeMVLog([]*mvLog{l})
@@ -1201,12 +1203,13 @@ func TestMVServiceTaskResult(t *testing.T) {
 			waitExecutorFinishedCount(t, svc, 1)
 			require.Equal(t, int32(1), helper.purgeManualCancelBackoffCalls.Load())
 			require.Equal(t, int64(0), l.retryCount.Load())
-			require.Equal(t, int64(0), svc.lastMetaFetchMillis.Load())
+			require.Equal(t, now.UnixMilli(), svc.lastMetaFetchMillis.Load())
 
 			svc.mvLogPurgeMu.Lock()
-			_, ok := svc.mvLogPurgeMu.pending[l.ID]
+			item, ok := svc.mvLogPurgeMu.pending[l.ID]
 			svc.mvLogPurgeMu.Unlock()
-			require.False(t, ok)
+			require.True(t, ok)
+			require.Equal(t, expectedNext.UnixMilli(), item.Value.orderTs)
 		})
 	})
 
@@ -1313,16 +1316,18 @@ func TestMVServiceTaskResult(t *testing.T) {
 			}, testEventuallyWait, testEventuallyTick)
 		})
 
-		t.Run("manual_cancel_without_persist_forces_refetch", func(t *testing.T) {
+		t.Run("manual_cancel_without_persist_uses_local_backoff", func(t *testing.T) {
 			helper := &mockMVServiceHelper{
 				refreshErr: errMVTaskCanceledManually,
 			}
 			svc := newRunningMVServiceForTest(t, helper)
-			svc.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
+			now := mvsNow()
+			svc.lastMetaFetchMillis.Store(now.UnixMilli())
+			expectedNext := now.Add(manualCancelBackoffDelay)
 
 			m := &mv{
 				ID:          404,
-				nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+				nextRefresh: now.Add(-time.Minute).Round(0),
 			}
 			svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
 			svc.refreshMV([]*mv{m})
@@ -1330,12 +1335,13 @@ func TestMVServiceTaskResult(t *testing.T) {
 			waitExecutorFinishedCount(t, svc, 1)
 			require.Equal(t, int32(1), helper.refreshManualCancelBackoffCalls.Load())
 			require.Equal(t, int64(0), m.retryCount.Load())
-			require.Equal(t, int64(0), svc.lastMetaFetchMillis.Load())
+			require.Equal(t, now.UnixMilli(), svc.lastMetaFetchMillis.Load())
 
 			svc.mvRefreshMu.Lock()
-			_, ok := svc.mvRefreshMu.pending[m.ID]
+			item, ok := svc.mvRefreshMu.pending[m.ID]
 			svc.mvRefreshMu.Unlock()
-			require.False(t, ok)
+			require.True(t, ok)
+			require.Equal(t, expectedNext.UnixMilli(), item.Value.orderTs)
 		})
 	})
 }
