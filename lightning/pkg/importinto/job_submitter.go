@@ -59,9 +59,9 @@ type JobSubmitterOption func(*DefaultJobSubmitter)
 // that need to keep compatibility with older IMPORT INTO planners that reject
 // explicit S3 external ID; newer planners can accept an explicit external ID
 // matching the target value.
-func WithJobSubmitterStripS3ExternalIDForImportSQL() JobSubmitterOption {
+func WithJobSubmitterStripS3ExternalIDForImportSQL(strip bool) JobSubmitterOption {
 	return func(s *DefaultJobSubmitter) {
-		s.stripS3ExternalIDForImportSQL = true
+		s.stripS3ExternalIDForImportSQL = strip
 	}
 }
 
@@ -73,6 +73,7 @@ func NewJobSubmitter(sdk importsdk.SDK, cfg *config.Config, groupKey string, log
 		groupKey: groupKey,
 		logger:   logger,
 	}
+	WithJobSubmitterStripS3ExternalIDForImportSQL(cfg.TikvImporter.StripS3ExternalIDForImportSQL)(submitter)
 	for _, opt := range opts {
 		opt(submitter)
 	}

@@ -163,7 +163,7 @@ func NewImporter(
 func (i *Importer) buildOrchestrator() JobOrchestrator {
 	jobSubmitterOpts := make([]JobSubmitterOption, 0, 1)
 	if i.stripS3ExternalIDForImportSQL {
-		jobSubmitterOpts = append(jobSubmitterOpts, WithJobSubmitterStripS3ExternalIDForImportSQL())
+		jobSubmitterOpts = append(jobSubmitterOpts, WithJobSubmitterStripS3ExternalIDForImportSQL(true))
 	}
 	submitter := NewJobSubmitter(i.sdk, i.cfg, i.groupKey, i.logger.With(zap.String("component", "submitter")), jobSubmitterOpts...)
 
