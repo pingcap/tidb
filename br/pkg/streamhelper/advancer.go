@@ -71,10 +71,11 @@ type CheckpointAdvancer struct {
 
 	// The concurrency accessed task:
 	// both by the task listener and ticking.
-	task              *backuppb.StreamBackupTaskInfo
-	taskRange         []kv.KeyRange
-	checkpointStorage storeapi.Storage
-	taskMu            sync.Mutex
+	task                          *backuppb.StreamBackupTaskInfo
+	taskRange                     []kv.KeyRange
+	checkpointStorage             storeapi.Storage
+	lastExternalStorageCheckpoint uint64
+	taskMu                        sync.Mutex
 
 	// the read-only config.
 	// once tick begin, this should not be changed for now.
@@ -618,6 +619,7 @@ func (c *CheckpointAdvancer) closeGlobalCheckpointStorage() {
 		c.checkpointStorage.Close()
 		c.checkpointStorage = nil
 	}
+	c.lastExternalStorageCheckpoint = 0
 }
 
 func (c *CheckpointAdvancer) getGlobalCheckpointStorage(ctx context.Context) (storeapi.Storage, error) {
@@ -650,6 +652,7 @@ func (c *CheckpointAdvancer) writeGlobalCheckpointToStorage(ctx context.Context,
 	if err := storage.WriteFile(ctx, fileName, data); err != nil {
 		return errors.Annotate(err, "failed to write global checkpoint to external storage")
 	}
+	c.lastExternalStorageCheckpoint = checkpoint
 	metrics.ExternalStorageCheckpoint.WithLabelValues(c.task.Name).Set(float64(checkpoint))
 	log.Info("uploaded global checkpoint to external storage",
 		zap.String("category", "log backup advancer"),
@@ -670,6 +673,9 @@ func (c *CheckpointAdvancer) tryWriteGlobalCheckpointToStorage(ctx context.Conte
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))
 		return
 	}
+	if globalCheckpoint <= c.lastExternalStorageCheckpoint {
+		return
+	}
 	if err := c.writeGlobalCheckpointToStorage(writeCtx, globalCheckpoint); err != nil {
 		log.Warn("failed to upload global checkpoint to external storage, skip it",
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))
@@ -683,6 +689,7 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
+	defer func() { c.tryWriteGlobalCheckpointToStorage(ctx) }()
 	isLagged, err := c.isCheckpointLagged(ctx)
 	if err != nil {
 		// ignore the error, just log it
@@ -709,7 +716,6 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if p <= c.lastCheckpoint.safeTS() {
 		log.Info("updated log backup GC safe point.",
 			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
-		c.tryWriteGlobalCheckpointToStorage(ctx)
 	}
 	if p > c.lastCheckpoint.safeTS() {
 		log.Warn("update log backup GC safe point failed: stale.",

@@ -119,11 +119,25 @@ func (s writeBlockStorage) WriteFile(ctx context.Context, _ string, _ []byte) er
 type writeRecordStorage struct {
 	storeapi.Storage
 	writeCount *atomic.Int32
+	onWrite    func()
 }
 
 func (s writeRecordStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if s.onWrite != nil {
+		s.onWrite()
+	}
 	s.writeCount.Inc()
 	return s.Storage.WriteFile(ctx, name, data)
+}
+
+type blockGCRecordEnv struct {
+	*testEnv
+	blockAttempted atomic.Bool
+}
+
+func (e *blockGCRecordEnv) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	e.blockAttempted.Store(true)
+	return e.testEnv.BlockGCUntil(ctx, at)
 }
 
 func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
@@ -138,6 +152,7 @@ func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
 	storageDir := t.TempDir()
 	createCount := atomic.NewInt32(0)
 	closeCount := atomic.NewInt32(0)
+	writeCount := atomic.NewInt32(0)
 	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
 		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
 			createCount.Inc()
@@ -145,7 +160,10 @@ func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return &countingStorage{Storage: storage, closeCount: closeCount}, nil
+			return writeRecordStorage{
+				Storage:    &countingStorage{Storage: storage, closeCount: closeCount},
+				writeCount: writeCount,
+			}, nil
 		})
 	defer restoreFactory()
 
@@ -158,7 +176,8 @@ func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	require.Equal(t, int32(1), createCount.Load())
+	require.Equal(t, int32(0), createCount.Load())
+	require.Equal(t, int32(0), writeCount.Load())
 
 	_ = c.advanceCheckpoints()
 	require.NoError(t, adv.OnTick(ctx))
@@ -166,6 +185,11 @@ func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
 
 	checkpoint := c.advanceCheckpoints()
 	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(1), createCount.Load())
+
+	writesAfterCheckpoint := writeCount.Load()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, writesAfterCheckpoint, writeCount.Load())
 	require.Equal(t, int32(1), createCount.Load())
 
 	data, err := os.ReadFile(filepath.Join(storageDir, "v1", "global_checkpoint", "central_global.ts"))
@@ -223,7 +247,7 @@ func TestTickIgnoresGlobalCheckpointStorageFailure(t *testing.T) {
 	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
 }
 
-func TestTickDoesNotWriteGlobalCheckpointToStorageWhenBlockGCFailed(t *testing.T) {
+func TestTickWritesGlobalCheckpointToStorageAfterBlockGCAttemptFailed(t *testing.T) {
 	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
 	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
 
@@ -234,17 +258,25 @@ func TestTickDoesNotWriteGlobalCheckpointToStorageWhenBlockGCFailed(t *testing.T
 
 	storageDir := t.TempDir()
 	writeCount := atomic.NewInt32(0)
+	blockAttemptedBeforeWrite := atomic.NewBool(false)
+	var env *blockGCRecordEnv
 	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
 		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
 			storage, err := objstore.Create(ctx, backend, sendCreds)
 			if err != nil {
 				return nil, err
 			}
-			return writeRecordStorage{Storage: storage, writeCount: writeCount}, nil
+			return writeRecordStorage{
+				Storage:    storage,
+				writeCount: writeCount,
+				onWrite: func() {
+					blockAttemptedBeforeWrite.Store(env.blockAttempted.Load())
+				},
+			}, nil
 		})
 	defer restoreFactory()
 
-	env := newTestEnv(c, t)
+	env = &blockGCRecordEnv{testEnv: newTestEnv(c, t)}
 	env.task.Info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Local{
 			Local: &backup.Local{Path: storageDir},
@@ -256,8 +288,14 @@ func TestTickDoesNotWriteGlobalCheckpointToStorageWhenBlockGCFailed(t *testing.T
 	checkpoint := c.advanceCheckpoints()
 	env.ServiceGCSafePoint = checkpoint
 	require.ErrorContains(t, adv.OnTick(ctx), "failed to update service GC safe point")
-	require.Equal(t, int32(0), writeCount.Load())
-	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+	require.Equal(t, int32(1), writeCount.Load())
+	require.True(t, blockAttemptedBeforeWrite.Load())
+	require.Equal(t, float64(checkpoint), promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+
+	data, err := os.ReadFile(filepath.Join(storageDir, "v1", "global_checkpoint", "central_global.ts"))
+	require.NoError(t, err)
+	require.Len(t, data, 8)
+	require.Equal(t, checkpoint, binary.LittleEndian.Uint64(data))
 }
 
 func TestTickTimesOutGlobalCheckpointStorageWrite(t *testing.T) {
