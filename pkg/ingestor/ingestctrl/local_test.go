@@ -2997,15 +2997,25 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 		close(waitDone)
 	}()
 
-	select {
-	case <-waitDone:
-	case <-time.After(3 * time.Second):
+	cleanupLeakedJobs := true
+	defer func() {
+		if !cleanupLeakedJobs {
+			return
+		}
 		for _, job := range jobs[2:] {
 			job.done(&jobWg)
 		}
 		<-waitDone
-		require.Fail(t, "jobWg.Wait should finish after generateAndSendJob returns", "ref'd jobs after the canceled send path must all be marked done")
-	}
+	}()
+	require.Eventually(t, func() bool {
+		select {
+		case <-waitDone:
+			return true
+		default:
+			return false
+		}
+	}, 3*time.Second, 10*time.Millisecond, "ref'd jobs after the canceled send path must all be marked done")
+	cleanupLeakedJobs = false
 	require.Equal(t, int64(0), data.GetRefCount())
 }
 
