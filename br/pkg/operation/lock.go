@@ -19,10 +19,8 @@ import (
 	stderrors "errors"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"go.uber.org/zap"
 )
 
 // LockMetadataError marks local failures while constructing operation-aware lock metadata.
@@ -61,56 +59,7 @@ func lockMetaInput(operationContext Context, resource LockResourceType, hint str
 	return input, nil
 }
 
-// TryLockRemote acquires an object-storage lock with operation metadata.
-func TryLockRemote(
-	ctx context.Context,
-	storage storeapi.Storage,
-	path string,
-	operationContext Context,
-	resource LockResourceType,
-	hint string,
-) (objstore.RemoteLock, error) {
-	input, err := lockMetaInput(operationContext, resource, hint)
-	if err != nil {
-		return objstore.RemoteLock{}, err
-	}
-	return objstore.TryLockRemote(ctx, storage, path, input)
-}
-
-// TryLockRemoteRead acquires an object-storage read lock with operation metadata.
-func TryLockRemoteRead(
-	ctx context.Context,
-	storage storeapi.Storage,
-	path string,
-	operationContext Context,
-	resource LockResourceType,
-	hint string,
-) (objstore.RemoteLock, error) {
-	input, err := lockMetaInput(operationContext, resource, hint)
-	if err != nil {
-		return objstore.RemoteLock{}, err
-	}
-	return objstore.TryLockRemoteRead(ctx, storage, path, input)
-}
-
-// TryLockRemoteWrite acquires an object-storage write lock with operation metadata.
-func TryLockRemoteWrite(
-	ctx context.Context,
-	storage storeapi.Storage,
-	path string,
-	operationContext Context,
-	resource LockResourceType,
-	hint string,
-) (objstore.RemoteLock, error) {
-	input, err := lockMetaInput(operationContext, resource, hint)
-	if err != nil {
-		return objstore.RemoteLock{}, err
-	}
-	return objstore.TryLockRemoteWrite(ctx, storage, path, input)
-}
-
-// LockWithRetry acquires an object-storage lock with retry and operation metadata.
-func LockWithRetry(
+func lockWithRetry(
 	ctx context.Context,
 	locker objstore.Locker,
 	storage storeapi.Storage,
@@ -135,7 +84,7 @@ func LockWithRetryRead(
 	resource LockResourceType,
 	hint string,
 ) (objstore.RemoteLock, error) {
-	return LockWithRetry(ctx, objstore.TryLockRemoteRead, storage, path, operationContext, resource, hint)
+	return lockWithRetry(ctx, objstore.TryLockRemoteRead, storage, path, operationContext, resource, hint)
 }
 
 // LockWithRetryWrite acquires an object-storage write lock with retry and operation metadata.
@@ -147,24 +96,5 @@ func LockWithRetryWrite(
 	resource LockResourceType,
 	hint string,
 ) (objstore.RemoteLock, error) {
-	return LockWithRetry(ctx, objstore.TryLockRemoteWrite, storage, path, operationContext, resource, hint)
-}
-
-// LockConflictLogFields returns structured fields for an operation-aware failed lock attempt.
-func LockConflictLogFields(
-	path string,
-	operationContext Context,
-	resource LockResourceType,
-	hint string,
-	err error,
-) []zap.Field {
-	input, metaErr := operationContext.LockMeta(resource, hint)
-	if metaErr != nil {
-		return []zap.Field{
-			logutil.ShortError(err),
-			zap.String("path", path),
-			logutil.AShortError("lock_meta_error", metaErr),
-		}
-	}
-	return objstore.LockConflictLogFields(path, input, err)
+	return lockWithRetry(ctx, objstore.TryLockRemoteWrite, storage, path, operationContext, resource, hint)
 }

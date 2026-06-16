@@ -155,25 +155,25 @@ func TestLockMetaValidation(t *testing.T) {
 	}
 }
 
-func TestTryLockRemoteBuildsOperationMetadata(t *testing.T) {
+func TestLockWithRetryWriteBuildsOperationMetadata(t *testing.T) {
 	ctx := context.Background()
 	storage := createOperationTestStorage(t)
 	operationContext, err := NewContext("log-truncate")
 	require.NoError(t, err)
 	operationContext.SetRestoreID(123)
 
-	lock, err := TryLockRemote(
+	lock, err := LockWithRetryWrite(
 		ctx,
 		storage,
 		"test.lock",
 		operationContext,
-		LockResourceLogTruncateExclusive,
-		"truncate",
+		LockResourceMigrationWrite,
+		"writer",
 	)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, lock.Unlock(ctx)) }()
 
-	data, err := storage.ReadFile(ctx, "test.lock")
+	data, err := storage.ReadFile(ctx, "test.lock.WRIT")
 	require.NoError(t, err)
 	var meta objstore.LockMeta
 	require.NoError(t, json.Unmarshal(data, &meta))
@@ -181,14 +181,13 @@ func TestTryLockRemoteBuildsOperationMetadata(t *testing.T) {
 	require.NotNil(t, meta.OperationStartedAt)
 	require.True(t, meta.OperationStartedAt.Equal(operationContext.StartedAt))
 	require.Equal(t, uint64(123), meta.RestoreID)
-	require.Equal(t, string(LockResourceLogTruncateExclusive), meta.ResourceType)
-	require.Equal(t, "truncate", meta.Hint)
+	require.Equal(t, string(LockResourceMigrationWrite), meta.ResourceType)
+	require.Equal(t, "writer", meta.Hint)
 }
 
 func TestLockWithRetryRequiresOperationContext(t *testing.T) {
-	_, err := LockWithRetry(
+	_, err := LockWithRetryRead(
 		context.Background(),
-		objstore.TryLockRemoteRead,
 		createOperationTestStorage(t),
 		"test.lock",
 		Context{},

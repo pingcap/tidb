@@ -1128,12 +1128,15 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	lock, err := operation.TryLockRemote(ctx, extStorage, truncateLockPath,
-		cfg.OperationContext, operation.LockResourceLogTruncateExclusive, hintOnTruncateLock)
+	truncateLockMeta, err := cfg.OperationContext.LockMeta(
+		operation.LockResourceLogTruncateExclusive, hintOnTruncateLock)
+	if err != nil {
+		return errors.Annotate(err, "failed to build log truncate lock metadata")
+	}
+	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, truncateLockMeta)
 	if err != nil {
 		log.Warn("Failed to acquire log truncate lock",
-			operation.LockConflictLogFields(truncateLockPath,
-				cfg.OperationContext, operation.LockResourceLogTruncateExclusive, hintOnTruncateLock, err)...)
+			objstore.LockConflictLogFields(truncateLockPath, truncateLockMeta, err)...)
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
