@@ -269,7 +269,7 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 
 	tk.MustExec("create table t_no_mlog (a int)")
 	err = tk.QueryToErr("show create materialized view log on t_no_mlog")
-	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_no_mlog")
+	require.ErrorContains(t, err, "'test.t_no_mlog' is not BASE TABLE WITH MATERIALIZED VIEW LOG")
 }
 
 func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
