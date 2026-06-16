@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -575,4 +577,24 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
 	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	execCreate(t, tracker, fmt.Sprintf("create table test.`%s` (a int)", baseName))
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(fmt.Sprintf("create materialized view log on test.`%s` (a)", baseName), "", "")
+	require.NoError(t, err)
+
+	err = tracker.CreateMaterializedViewLog(sctx, stmt.(*ast.CreateMaterializedViewLogStmt))
+	require.NoError(t, err)
+
+	mlogName := model.MaterializedViewLogTableName(pmodel.NewCIStr(baseName))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName.O)))
+	mlogInfo := mustTableByName(t, tracker, "test", mlogName.O)
+	require.NotNil(t, mlogInfo.MaterializedViewLog)
 }
