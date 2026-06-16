@@ -39,6 +39,9 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 
 	s3Cfg := config.NewConfig()
 	s3Cfg.Mydumper.SourceDir = s3SourceDirWithExternalID
+	s3CfgWithStrip := config.NewConfig()
+	s3CfgWithStrip.Mydumper.SourceDir = s3SourceDirWithExternalID
+	s3CfgWithStrip.TikvImporter.StripS3ExternalIDForImportSQL = true
 	ossCfg := config.NewConfig()
 	ossCfg.Mydumper.SourceDir = ossSourceDirWithExternalID
 	gcsCfg := config.NewConfig()
@@ -105,7 +108,7 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 		},
 		{
 			name:                "sanitize s3 external id when enabled for import sql resource parameters",
-			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL()},
+			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL(true)},
 			tableMeta: &importsdk.TableMeta{
 				Database: "db",
 				Table:    "t1",
@@ -122,8 +125,25 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 			},
 		},
 		{
+			name: "sanitize s3 external id when config flag is enabled",
+			tableMeta: &importsdk.TableMeta{
+				Database: "db",
+				Table:    "t1",
+			},
+			cfg: s3CfgWithStrip,
+			setup: func(t *testing.T, mockSDK *sdkmock.MockSDK) {
+				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
+						require.Equal(t, s3ResourceParameters, opts.ResourceParameters)
+						require.Equal(t, s3SourceDirWithExternalID, s3CfgWithStrip.Mydumper.SourceDir)
+						return "IMPORT INTO ...", nil
+					})
+				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+			},
+		},
+		{
 			name:                "sanitize oss external id as s3 like resource parameters",
-			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL()},
+			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL(true)},
 			tableMeta: &importsdk.TableMeta{
 				Database: "db",
 				Table:    "t1",
