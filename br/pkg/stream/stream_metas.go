@@ -511,6 +511,10 @@ type MigrationExt struct {
 	Hooks Hooks
 }
 
+// WithOperationContext tags locks created by mutating migration operations.
+// Callers that use GetReadLock, AppendMigration, or MergeAndMigrateTo must set
+// an initialized operation context so those methods can fail before creating an
+// unowned lock.
 func (m MigrationExt) WithOperationContext(ctx operation.Context) MigrationExt {
 	m.operationContext = ctx
 	return m

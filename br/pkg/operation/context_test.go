@@ -17,6 +17,7 @@ package operation
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"testing"
 	"time"
 
@@ -197,6 +198,15 @@ func TestLockWithRetryRequiresOperationContext(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "operation ID")
+}
+
+func TestLockMetadataError(t *testing.T) {
+	baseErr := stderrors.New("missing metadata")
+
+	require.True(t, IsLockMetadataError(LockMetadataError{Err: baseErr}))
+	require.True(t, IsLockMetadataError(&LockMetadataError{Err: baseErr}))
+	require.False(t, IsLockMetadataError(baseErr))
+	require.Equal(t, "lock metadata error", (LockMetadataError{}).Error())
 }
 
 func createOperationTestStorage(t *testing.T) storeapi.Storage {

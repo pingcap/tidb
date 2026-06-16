@@ -241,7 +241,11 @@ func TestMakeLockMeta(t *testing.T) {
 				require.Nil(t, meta.OperationStartedAt)
 			} else {
 				require.NotNil(t, meta.OperationStartedAt)
-				require.Equal(t, *c.expectedStartedAt, *meta.OperationStartedAt)
+				expectedStartedAt := *c.expectedStartedAt
+				require.Equal(t, expectedStartedAt, *meta.OperationStartedAt)
+
+				*c.input.OperationStartedAt = c.input.OperationStartedAt.Add(time.Hour)
+				require.Equal(t, expectedStartedAt, *meta.OperationStartedAt)
 			}
 			require.Equal(t, c.expectedRestoreID, meta.RestoreID)
 			require.Equal(t, c.expectedResource, meta.ResourceType)
@@ -298,6 +302,25 @@ func TestLockMetaStringIncludesOperationFields(t *testing.T) {
 	require.Contains(t, got, "migration-write")
 	require.NotContains(t, strings.ToLower(got), "txn_id")
 	require.NotContains(t, strings.ToLower(got), "txn")
+}
+
+func TestErrLockedErrorLimitsBlockerOutput(t *testing.T) {
+	err := objstore.ErrLocked{
+		Path: "test.lock.WRIT",
+		Blockers: []objstore.LockBlocker{
+			{Path: "test.lock.READ.0", Meta: objstore.LockMeta{OperationID: "op-0"}},
+			{Path: "test.lock.READ.1", Meta: objstore.LockMeta{OperationID: "op-1"}},
+			{Path: "test.lock.READ.2", Meta: objstore.LockMeta{OperationID: "op-2"}},
+			{Path: "test.lock.READ.3", Meta: objstore.LockMeta{OperationID: "op-3"}},
+		},
+	}
+
+	got := err.Error()
+	require.Contains(t, got, "test.lock.READ.0")
+	require.Contains(t, got, "test.lock.READ.1")
+	require.Contains(t, got, "test.lock.READ.2")
+	require.NotContains(t, got, "test.lock.READ.3")
+	require.Contains(t, got, "omitted_conflict_files = 1")
 }
 
 func TestConflictLockReportsRemotePathAndMeta(t *testing.T) {

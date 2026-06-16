@@ -282,7 +282,11 @@ func (e ErrLocked) Error() string {
 	if !isZeroLockMetaInput(e.Local) {
 		fields = append(fields, fmt.Sprintf("local = %s", e.Local))
 	}
-	for _, blocker := range e.Blockers {
+	blockerCount := len(e.Blockers)
+	if blockerCount > lockBlockerErrorLimit {
+		blockerCount = lockBlockerErrorLimit
+	}
+	for _, blocker := range e.Blockers[:blockerCount] {
 		fields = append(fields, fmt.Sprintf("conflict file %s", blocker.Path))
 		if blocker.Err != nil {
 			fields = append(fields, fmt.Sprintf("blocker_error = %s", blocker.Err))
@@ -290,8 +294,13 @@ func (e ErrLocked) Error() string {
 			fields = append(fields, fmt.Sprintf("blocker_meta = %s", blocker.Meta))
 		}
 	}
+	if omitted := len(e.Blockers) - blockerCount; omitted > 0 {
+		fields = append(fields, fmt.Sprintf("omitted_conflict_files = %d", omitted))
+	}
 	return strings.Join(fields, ", ")
 }
+
+const lockBlockerErrorLimit = 3
 
 func isZeroLockMeta(meta LockMeta) bool {
 	return meta.LockedAt.IsZero() && meta.LockerHost == "" && meta.LockerPID == 0 &&
@@ -367,13 +376,18 @@ func MakeLockMeta(input LockMetaInput) LockMeta {
 		hname = fmt.Sprintf("UnknownHost(err=%s)", err)
 	}
 	now := time.Now()
+	var operationStartedAt *time.Time
+	if input.OperationStartedAt != nil {
+		startedAt := *input.OperationStartedAt
+		operationStartedAt = &startedAt
+	}
 	meta := LockMeta{
 		LockedAt:           now,
 		LockerHost:         hname,
 		Hint:               input.Hint,
 		LockerPID:          os.Getpid(),
 		OperationID:        input.OperationID,
-		OperationStartedAt: input.OperationStartedAt,
+		OperationStartedAt: operationStartedAt,
 		RestoreID:          input.RestoreID,
 		ResourceType:       input.ResourceType,
 	}

@@ -31,6 +31,9 @@ type LockMetadataError struct {
 }
 
 func (e LockMetadataError) Error() string {
+	if e.Err == nil {
+		return "lock metadata error"
+	}
 	return e.Err.Error()
 }
 
@@ -41,7 +44,11 @@ func (e LockMetadataError) Unwrap() error {
 // IsLockMetadataError returns whether err was caused by local lock metadata construction.
 func IsLockMetadataError(err error) bool {
 	var metadataErr LockMetadataError
-	return stderrors.As(err, &metadataErr)
+	if stderrors.As(err, &metadataErr) {
+		return true
+	}
+	var metadataErrPtr *LockMetadataError
+	return stderrors.As(err, &metadataErrPtr)
 }
 
 func lockMetaInput(operationContext Context, resource LockResourceType, hint string) (objstore.LockMetaInput, error) {
