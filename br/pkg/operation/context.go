@@ -18,7 +18,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,21 +30,11 @@ import (
 // Context carries the runtime identity of one BR operation.
 //
 // Initialize and update a Context at the command boundary before copying it into
-// lock-capable workers. Copies carry value snapshots of operation fields. A copy
-// made from an initialized Context shares restore-ID logging dedupe state with
-// the original, so repeated SetRestoreID calls for the same restore ID do not
-// emit duplicate operation logs.
+// lock-capable workers. Copies carry value snapshots of operation fields.
 type Context struct {
 	OperationID string    `json:"operation_id"`
 	StartedAt   time.Time `json:"operation_started_at"`
 	RestoreID   uint64    `json:"restore_id,omitempty"`
-
-	logState *logState
-}
-
-type logState struct {
-	mu               sync.Mutex
-	loggedRestoreIDs map[uint64]struct{}
 }
 
 // LockResourceType identifies the coarse resource protected by a lock file.
@@ -73,7 +62,6 @@ func (c *Context) Ensure(command string) error {
 		if c.StartedAt.IsZero() {
 			return errors.New("operation started time is required")
 		}
-		c.ensureLogState()
 		return nil
 	}
 
@@ -84,7 +72,6 @@ func (c *Context) Ensure(command string) error {
 
 	c.OperationID = operationID.String()
 	c.StartedAt = time.Now()
-	c.logState = newLogState()
 
 	host, err := os.Hostname()
 	if err != nil {
@@ -106,14 +93,20 @@ func (c *Context) SetRestoreID(restoreID uint64) {
 		return
 	}
 	if c.RestoreID == restoreID {
-		return
+		if restoreID == 0 {
+			return
+		}
+	} else if c.RestoreID != 0 && restoreID != 0 {
+		log.Warn("BR operation restore ID changed",
+			zap.String("operation_id", c.OperationID),
+			zap.Time("operation_started_at", c.StartedAt),
+			zap.Uint64("old_restore_id", c.RestoreID),
+			zap.Uint64("new_restore_id", restoreID),
+		)
 	}
 
 	c.RestoreID = restoreID
 	if restoreID == 0 {
-		return
-	}
-	if !c.markRestoreIDLogged(restoreID) {
 		return
 	}
 
@@ -158,27 +151,4 @@ func (c Context) lockHint(detail string) string {
 		fields = append(fields, "detail="+strconv.Quote(detail))
 	}
 	return strings.Join(fields, " ")
-}
-
-func (c *Context) ensureLogState() {
-	if c.logState == nil {
-		c.logState = newLogState()
-	}
-}
-
-func newLogState() *logState {
-	return &logState{loggedRestoreIDs: make(map[uint64]struct{})}
-}
-
-func (c *Context) markRestoreIDLogged(restoreID uint64) bool {
-	c.ensureLogState()
-
-	c.logState.mu.Lock()
-	defer c.logState.mu.Unlock()
-
-	if _, ok := c.logState.loggedRestoreIDs[restoreID]; ok {
-		return false
-	}
-	c.logState.loggedRestoreIDs[restoreID] = struct{}{}
-	return true
 }

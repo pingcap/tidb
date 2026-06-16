@@ -49,7 +49,8 @@ func TestEnsureRejectsIncompleteInitializedState(t *testing.T) {
 }
 
 func TestSetRestoreIDBehavior(t *testing.T) {
-	t.Run("initialized context records restore ID idempotently", func(t *testing.T) {
+	t.Run("initialized context records restore ID each time", func(t *testing.T) {
+		_, logs := withObservedLogs(t)
 		ctx, err := NewContext("log-restore")
 		require.NoError(t, err)
 
@@ -57,6 +58,7 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 		ctx.SetRestoreID(123)
 
 		require.Equal(t, uint64(123), ctx.RestoreID)
+		require.Equal(t, 2, logs.FilterMessage("BR operation restore ID resolved").Len())
 	})
 
 	t.Run("zero context ignores restore ID", func(t *testing.T) {
@@ -83,7 +85,7 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
 	})
 
-	t.Run("copied initialized context shares restore ID log dedupe state", func(t *testing.T) {
+	t.Run("copied initialized context records restore ID independently", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		ctx, err := NewContext("log-restore")
 		require.NoError(t, err)
@@ -94,7 +96,23 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 
 		require.Equal(t, uint64(123), ctx.RestoreID)
 		require.Equal(t, uint64(123), copiedCtx.RestoreID)
-		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
+		require.Equal(t, 2, logs.FilterMessage("BR operation restore ID resolved").Len())
+	})
+
+	t.Run("changed restore ID logs warning and updates value", func(t *testing.T) {
+		_, logs := withObservedLogs(t)
+		ctx, err := NewContext("log-restore")
+		require.NoError(t, err)
+
+		ctx.SetRestoreID(123)
+		ctx.SetRestoreID(456)
+
+		require.Equal(t, uint64(456), ctx.RestoreID)
+		require.Equal(t, 2, logs.FilterMessage("BR operation restore ID resolved").Len())
+		warnLogs := logs.FilterMessage("BR operation restore ID changed")
+		require.Equal(t, 1, warnLogs.Len())
+		require.Equal(t, uint64(123), loggedUint64Field(t, warnLogs.All()[0], "old_restore_id"))
+		require.Equal(t, uint64(456), loggedUint64Field(t, warnLogs.All()[0], "new_restore_id"))
 	})
 }
 
@@ -159,4 +177,16 @@ func withObservedLogs(t *testing.T) (*zap.Logger, *observer.ObservedLogs) {
 	})
 	t.Cleanup(restore)
 	return logger, logs
+}
+
+func loggedUint64Field(t *testing.T, entry observer.LoggedEntry, key string) uint64 {
+	t.Helper()
+
+	for _, field := range entry.Context {
+		if field.Key == key {
+			return uint64(field.Integer)
+		}
+	}
+	require.Failf(t, "missing log field", "field %s not found", key)
+	return 0
 }
