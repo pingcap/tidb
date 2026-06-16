@@ -2,15 +2,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "operation",
-    srcs = [
-        "context.go",
-        "lock.go",
-    ],
+    srcs = ["context.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/operation",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/objstore",
-        "//pkg/objstore/storeapi",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
@@ -24,11 +20,8 @@ go_test(
     srcs = ["context_test.go"],
     embed = [":operation"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 5,
     deps = [
-        "//pkg/objstore",
-        "//pkg/objstore/storeapi",
-        "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
