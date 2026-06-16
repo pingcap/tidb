@@ -69,37 +69,37 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, err error) {
+func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, allTopNMiss bool, err error) {
 	if val.IsNull() {
-		return statistics.DefaultRowEst(float64(c.NullCount)), nil
+		return statistics.DefaultRowEst(float64(c.NullCount)), false, nil
 	}
 	if c.StatsVer < statistics.Version2 {
 		// All the values are null.
 		if c.Histogram.Bounds.NumRows() == 0 {
-			return statistics.DefaultRowEst(0.0), nil
+			return statistics.DefaultRowEst(0.0), false, nil
 		}
 		if c.Histogram.NDV > 0 && c.OutOfRange(val) {
 			outOfRangeCnt := outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount()
-			return statistics.DefaultRowEst(outOfRangeCnt), nil
+			return statistics.DefaultRowEst(outOfRangeCnt), false, nil
 		}
 		if c.CMSketch != nil {
 			count, err := statistics.QueryValue(sctx, c.CMSketch, c.TopN, val)
-			return statistics.DefaultRowEst(float64(count)), errors.Trace(err)
+			return statistics.DefaultRowEst(float64(count)), false, errors.Trace(err)
 		}
 		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
-		return statistics.DefaultRowEst(histRowCount), nil
+		return statistics.DefaultRowEst(histRowCount), false, nil
 	}
 
 	// Stats version == 2
 	// All the values are null.
 	if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 {
-		return statistics.DefaultRowEst(0), nil
+		return statistics.DefaultRowEst(0), false, nil
 	}
 	// 1. try to find this value in TopN
 	if c.TopN != nil {
 		rowcount, ok := c.TopN.QueryTopN(sctx, encodedVal)
 		if ok {
-			return statistics.DefaultRowEst(float64(rowcount)), nil
+			return statistics.DefaultRowEst(float64(rowcount)), false, nil
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
@@ -109,18 +109,19 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
-		return statistics.DefaultRowEst(histCnt), nil
+		return statistics.DefaultRowEst(histCnt), false, nil
 	}
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
 	// or all values assumed to be contained within TopN.
 	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
-	return rowEstimate, nil
+	return rowEstimate, histNDV <= 0, nil
 }
 
 // getColumnRowCount estimates the row count by a slice of Range.
 func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var totalCount statistics.RowEstimate
+	var allTopNMissPointCount statistics.RowEstimate
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
@@ -153,13 +154,18 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 					continue
 				}
 				var cnt statistics.RowEstimate
-				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+				var allTopNMiss bool
+				cnt, allTopNMiss, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
 				if err != nil {
 					return statistics.DefaultRowEst(0), errors.Trace(err)
 				}
 				// If the current table row count has changed, we should scale the row count accordingly.
 				cnt.MultiplyAll(c.GetIncreaseFactor(realtimeRowCount))
-				totalCount.Add(cnt)
+				if allTopNMiss {
+					allTopNMissPointCount.Add(cnt)
+				} else {
+					totalCount.Add(cnt)
+				}
 			}
 			continue
 		}
@@ -171,7 +177,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			// case 2: it's a small range && using ver1 stats
 			if rangeVals != nil {
 				for _, val := range rangeVals {
-					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount, modifyCount)
+					cnt, _, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount, modifyCount)
 					if err != nil {
 						return statistics.DefaultRowEst(0), err
 					}
@@ -192,7 +198,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+			lowCnt, _, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
 			if err != nil {
 				return statistics.DefaultRowEst(0), errors.Trace(err)
 			}
@@ -203,7 +209,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			cnt.AddAll(float64(c.NullCount))
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
+			highCnt, _, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
 			if err != nil {
 				return statistics.DefaultRowEst(0), errors.Trace(err)
 			}
@@ -233,6 +239,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		totalCount.Add(cnt)
 	}
+	totalCount.Add(capAllTopNMissPointEstimate(allTopNMissPointCount, c.TotalRowCount(), realtimeRowCount, modifyCount))
 	totalCount.Clamp(1.0, float64(realtimeRowCount))
 	return totalCount, nil
 }
