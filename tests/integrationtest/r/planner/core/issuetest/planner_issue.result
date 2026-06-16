@@ -694,7 +694,7 @@ Sort	root		Column, Column, Column
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─Projection	root		cast(Column, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column, test.t1.cc2->Column, test.t1.cc1->Column
     └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-      └─Window	root		count(1)->Column#9 over(partition by test.t1.cc1)
+      └─Window	root		count(1)->Column over(partition by test.t1.cc1)
         └─Sort	root		test.t1.cc1
           └─ShuffleReceiver	root		
             └─TableReader	root		data:TableFullScan
@@ -961,7 +961,7 @@ id	task	access object	operator info
 HashJoin	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
 ├─Selection(Build)	root		not(isnull(test.t4.c))
 │ └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-│   └─Window	root		row_number()->Column#30 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+│   └─Window	root		row_number()->Column over(partition by test.t4.b order by test.t4.e rows between current row and current row)
 │     └─Sort	root		test.t4.b, test.t4.e
 │       └─ShuffleReceiver	root		
 │         └─TableReader	root		data:Selection
@@ -1482,3 +1482,68 @@ select * from t1 natural join t2 order by t1.a;
 a
 1
 drop table t1, t2;
+set @old_db := database();
+drop database if exists lock_db1;
+drop database if exists lock_db2;
+create database lock_db1;
+create database lock_db2;
+use lock_db1;
+create table t(id int primary key, v int);
+insert into t values (1, 100);
+select ue1_0.id from t ue1_0 where ue1_0.id=1 for update of t;
+id
+1
+Level	Code	Message
+Warning	1105	FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue1_0' in OF to make the lock target explicit.
+select ue1_0.id from t ue1_0 where ue1_0.id=1 for update of ue1_0;
+id
+1
+select * from t ue1_0 for update of t;
+id	v
+1	100
+Level	Code	Message
+Warning	1105	FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue1_0' in OF to make the lock target explicit.
+select * from t ue1_0 for update of t, t, ue1_0;
+id	v
+1	100
+Level	Code	Message
+Warning	1105	FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue1_0' in OF to make the lock target explicit.
+select * from t ue1_0 for update of lock_db1.t;
+id	v
+1	100
+Level	Code	Message
+Warning	1105	FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue1_0' in OF to make the lock target explicit.
+select * from t ue1_0 for update of lock_db1.ue1_0;
+id	v
+1	100
+select * from t ue1_0, t where ue1_0.id = t.id for update of t;
+id	v	id	v
+1	100	1	100
+select * from t, t ue1_0 where ue1_0.id = t.id for update of lock_db1.t;
+id	v	id	v
+1	100	1	100
+select * from t ue1_0 for update of non_exist_table;
+Error 1109 (42S02): Unknown table 'non_exist_table' in locking clause
+use lock_db2;
+create table t(id int primary key, v int);
+insert into t values (1, 200);
+select * from lock_db1.t ue1_0 for update of t;
+id	v
+1	100
+Level	Code	Message
+Warning	1105	FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue1_0' in OF to make the lock target explicit.
+select * from lock_db1.t ue1_0, lock_db2.t ue1_1 for update of t;
+id	v	id	v
+1	100	1	200
+Level	Code	Message
+Warning	1105	FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue1_0' in OF to make the lock target explicit.
+with cte_t as (select * from t) select * from cte_t for update of cte_t;
+id	v
+1	200
+set @old_db = ifnull(@old_db, 'test');
+set @stmt = concat('use ', @old_db);
+prepare _ldbstmt from @stmt;
+execute _ldbstmt;
+drop database if exists lock_db1;
+drop database if exists lock_db2;
+deallocate prepare _ldbstmt;

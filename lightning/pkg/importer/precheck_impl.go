@@ -32,12 +32,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -677,7 +678,7 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
@@ -938,7 +939,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
 		logutil.Logger(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil

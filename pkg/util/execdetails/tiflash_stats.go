@@ -21,6 +21,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/resource_manager"
@@ -631,13 +632,13 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) UpdateTiKVExecDetails(tikvDe
 	if tikvDetails == nil {
 		return
 	}
-	tikvDetails.UnpackedBytesSentMPPCrossZone += int64(networkTraffic.interZoneSendBytes)
-	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.interZoneSendBytes)
-	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.innerZoneSendBytes)
+	atomic.AddInt64(&tikvDetails.UnpackedBytesSentMPPCrossZone, int64(networkTraffic.interZoneSendBytes))
+	atomic.AddInt64(&tikvDetails.UnpackedBytesSentMPPTotal, int64(networkTraffic.interZoneSendBytes))
+	atomic.AddInt64(&tikvDetails.UnpackedBytesSentMPPTotal, int64(networkTraffic.innerZoneSendBytes))
 
-	tikvDetails.UnpackedBytesReceivedMPPCrossZone += int64(networkTraffic.interZoneReceiveBytes)
-	tikvDetails.UnpackedBytesReceivedMPPTotal += int64(networkTraffic.interZoneReceiveBytes)
-	tikvDetails.UnpackedBytesReceivedMPPTotal += int64(networkTraffic.innerZoneReceiveBytes)
+	atomic.AddInt64(&tikvDetails.UnpackedBytesReceivedMPPCrossZone, int64(networkTraffic.interZoneReceiveBytes))
+	atomic.AddInt64(&tikvDetails.UnpackedBytesReceivedMPPTotal, int64(networkTraffic.interZoneReceiveBytes))
+	atomic.AddInt64(&tikvDetails.UnpackedBytesReceivedMPPTotal, int64(networkTraffic.innerZoneReceiveBytes))
 }
 
 // Clone implements the deep copy of * TiFlashNetworkTrafficSummary
@@ -718,6 +719,9 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *ti
 // GetInterZoneTrafficBytes returns the inter zone network traffic bytes involved
 // between tiflash instances.
 func (networkTraffic *TiFlashNetworkTrafficSummary) GetInterZoneTrafficBytes() uint64 {
+	if networkTraffic == nil {
+		return 0
+	}
 	// NOTE: we only count the inter zone sent bytes here because tiflash count the traffic bytes
 	// of all sub request. For each sub request, both side with count the send and recv traffic.
 	// So here, we only use the send bytes as the overall traffic to avoid count the traffic twice.
@@ -734,7 +738,7 @@ func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSumma
 			if err := tiflashRU.Unmarshal(summary.GetRuConsumption()); err != nil {
 				return err
 			}
-			newRUDetails.Update(tiflashRU, 0)
+			newRUDetails.UpdateTiFlash(tiflashRU)
 		}
 	}
 	ruDetails.Merge(newRUDetails)

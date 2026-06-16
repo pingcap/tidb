@@ -177,7 +177,6 @@ select approx_count_distinct( a, b) from t;
 drop table if exists t;
 create table t(a char(10), b char(10));
 insert into t values('1', '222'), ('12', '22');
-select group_concat(distinct a, b) from t;
 
 # TestIssue10608
 drop table if exists t, s;
@@ -608,7 +607,6 @@ create table t(a int, b int);
 insert into t value(null, null);
 select group_concat(a), group_concat(distinct a) from t;
 insert into t value(1, null), (null, 1), (1, 2), (3, 4);
-select group_concat(a, b), group_concat(distinct a,b) from t;
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 select count(distinct a) from t;
 set @@session.tidb_opt_distinct_agg_push_down = 1;
@@ -784,6 +782,8 @@ select * from t group by b,d;
 --error 1055
 select * from t group by b,c;
 select * from t where c = d group by b, c;
+--error 1055
+select /* issue:68026 */ a from t where c = 1 or d = 1 group by b, c;
 select t.*, x.* from t, x where t.a = x.a group by t.a;
 select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
 select t.*, x.* from t, x where t.b = x.a group by t.b, t.d;
@@ -1073,6 +1073,8 @@ admin reload opt_rule_blacklist;
 
 # TestIssue61735AggregateTruncatedDecimal
 --enable_warnings
+select nullif(77.15, PI());
+select avg(nullif(77.15, PI()));
 select distinct avg(nullif(77.15, PI()));
 --disable_warnings
 

@@ -2503,7 +2503,11 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	result.AppendInt64(4, info.TableID)
 	result.AppendString(5, info.Step)
 	result.AppendString(6, info.Status)
-	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
+	if info.IsSourceFileSizeUnknown() {
+		result.AppendString(7, "N/A")
+	} else {
+		result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
+	}
 	if runInfo != nil {
 		// running import job
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
@@ -2566,7 +2570,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())
 	result.AppendString(18, runInfo.Percent())
-	result.AppendString(19, fmt.Sprintf("%s/s", units.BytesSize(float64(runInfo.Speed))))
+	result.AppendString(19, runInfo.SpeedStr())
 	result.AppendString(20, runInfo.ETA())
 }
 

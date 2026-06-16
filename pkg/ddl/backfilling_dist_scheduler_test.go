@@ -27,24 +27,46 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
+func newBackfillingSchedulerTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool tidbutil.DestroyableSessionPool) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(sessPool).AnyTimes()
+	return runtime
+}
+
+func backfillingSchedulerParamForTest(ctrl *gomock.Controller, store kv.Storage, sessPool tidbutil.DestroyableSessionPool) scheduler.Param {
+	return scheduler.Param{TaskRuntime: newBackfillingSchedulerTestRuntime(ctrl, store, sessPool)}
+}
+
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
+	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
+		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
+	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -145,6 +167,9 @@ func TestCalculateRegionBatch(t *testing.T) {
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	// init test env.
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -171,6 +196,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
+	ext.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
+		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
+	}
 	sch.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, "", 1, "", 0, proto.ExtraParams{}, task.Meta)
@@ -197,11 +225,11 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*external.SortedKVMeta{{
+		MetaGroups: []*globalsort.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			MultipleFilesStats: []external.MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
@@ -237,11 +265,11 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*external.SortedKVMeta{{
+		MetaGroups: []*globalsort.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			MultipleFilesStats: []external.MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},

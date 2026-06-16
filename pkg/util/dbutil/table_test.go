@@ -204,11 +204,11 @@ func TestTableStructEqual(t *testing.T) {
 	require.Equal(t, false, equal)
 }
 
-func TestSchemacmpEncode(t *testing.T) {
+func TestSchemaCmpEncode(t *testing.T) {
 	createTableSQL := "CREATE TABLE `test`.`atest` (`id` int(24), primary key(`id`))"
 	tableInfo, err := dbutiltest.GetTableInfoBySQL(createTableSQL, parser.New())
 	require.NoError(t, err)
 
 	table := schemacmp.Encode(tableInfo)
-	require.Equal(t, "CREATE TABLE `tbl`(`id` INT(24) NOT NULL, PRIMARY KEY (`id`)) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN", table.String())
+	require.Equal(t, "CREATE TABLE `tbl`(`id` INT(24) NOT NULL, PRIMARY KEY (`id`)) COLLATE utf8mb4_bin", table.String())
 }

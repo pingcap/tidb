@@ -913,6 +913,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexOnField:                                mysql.Message("Expression index on a column is not supported. Consider using a regular index instead", nil),
 	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
+	ErrInvalidLateralJoin:                                    mysql.Message("Invalid use of LATERAL: %s", nil),
 	ErrNonBooleanExprForCheckConstraint:                      mysql.Message("An expression of non-boolean type specified to a check constraint '%s'.", nil),
 	ErrColumnCheckConstraintReferencesOtherColumn:            mysql.Message("Column check constraint '%s' references other column.", nil),
 	ErrCheckConstraintNamedFunctionIsNotAllowed:              mysql.Message("An expression of a check constraint '%s' contains disallowed function: %s.", nil),
@@ -1149,6 +1150,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 	ErrMaskingPolicyExists:             mysql.Message("masking policy already exists", nil),
 	ErrMaskingPolicyNotExists:          mysql.Message("masking policy doesn't exist", nil),
+	ErrMaskingPolicyExprInvalidColumn:  mysql.Message("masking policy expression can only reference the target column '%-.64s'", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
@@ -1167,6 +1169,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrStorageClassInvalidSpec:                  mysql.Message("Invalid storage class: %s", nil),
 	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
 	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
+	ErrMaxKeysReadExceeded:                      mysql.Message("tidb_max_keys_read limit exceeded", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
@@ -1198,4 +1201,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
+	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
 }

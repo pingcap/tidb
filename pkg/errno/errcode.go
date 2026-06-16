@@ -919,6 +919,7 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrInvalidLateralJoin                                    = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
@@ -1153,6 +1154,7 @@ const (
 	ErrForbiddenDDL                       = 8267
 	ErrMaskingPolicyExists                = 8268
 	ErrMaskingPolicyNotExists             = 8269
+	ErrMaskingPolicyExprInvalidColumn     = 8275
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1170,6 +1172,9 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
+
+	// [8800, 8900) are reserved for a downstream fork
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
@@ -1186,4 +1191,5 @@ const (
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
 	ErrTiFlashBackfillIndex      = 9014
+	ErrUserPrefixMismatch        = 20003
 )

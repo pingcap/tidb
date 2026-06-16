@@ -70,10 +70,14 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 		}
 	}
 	predicates = predicatesWithoutVCol
-	retainedPredicates, _, err := p.Children()[0].PredicatePushDown(predicates)
+	retainedPredicates, child, err := p.Children()[0].PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, err
 	}
+	if _, ok := child.(*LogicalTableDual); ok {
+		return nil, child, nil
+	}
+	p.SetChild(0, child)
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
@@ -122,10 +126,19 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) (ba
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-func (p *LogicalUnionScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalUnionScan) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	// ref exhaustPhysicalPlans4LogicalUnionScan: it will push down the sort prop directly.
 	// in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
-	return p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
+	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		p.hasTiFlash = false
+		return &base.PossiblePropertiesInfo{}
+	}
+	childProps := childrenProperties[0]
+	p.hasTiFlash = false
+	return &base.PossiblePropertiesInfo{
+		Orders:     childProps.Orders,
+		HasTiFlash: false,
+	}
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.

@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -129,6 +130,34 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
+
+	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
+		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
+		longPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no_delete_flag")}}
+		paths := []*util.AccessPath{shortPath, longPath}
+
+		tblInfo := &model.TableInfo{
+			Indices: []*model.IndexInfo{shortPath.Index, longPath.Index},
+		}
+
+		ignored := []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete_flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained := removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("Idx_Contract_Sys_No_Delete_Flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+	})
 }
 
 func TestRewriterPool(t *testing.T) {
@@ -1103,10 +1132,22 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "aaa"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+
 	for _, str := range []string{
-		"S3://bucket?External-id=abc",
-		"oss://bucket?External-id=abc",
-		"oSS://bucket?External-id=abc",
+		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
+		"oss://bucket?External-id=abc&role-arn=arn",
+		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1116,13 +1157,34 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
-		"s3://bucket",
-		"oss://bucket",
+		"s3://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?access-key=ak&secret-access-key=sk",
+		"s3://bucket?access_key=ak&secret_access_key=sk",
+		"oss://bucket?role-arn=arn",
+		"oss://bucket?role_arn=arn",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
 		err = checkNextGenS3PathWithSem(u)
 		require.NoError(t, err)
+	}
+
+	for _, str := range []string{
+		"s3://bucket",
+		"s3://bucket?access-key=&secret-access-key=",
+		"s3://bucket?access-key=ak",
+		"s3://bucket?secret-access-key=sk",
+		"s3://bucket?profile=dev",
+		"oss://bucket",
+		"oss://bucket?role-arn=",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 }
 

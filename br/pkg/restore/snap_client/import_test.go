@@ -16,7 +16,10 @@ package snapclient_test
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -29,6 +32,8 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/opt"
 )
 
 func TestGetKeyRangeByMode(t *testing.T) {
@@ -113,12 +118,12 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 type fakeImporterClient struct {
 	importclient.ImporterClient
 
-	speedLimit map[uint64]uint64
+	speedLimitReq map[uint64]*import_sstpb.SetDownloadSpeedLimitRequest
 }
 
 func newFakeImporterClient() *fakeImporterClient {
 	return &fakeImporterClient{
-		speedLimit: make(map[uint64]uint64),
+		speedLimitReq: make(map[uint64]*import_sstpb.SetDownloadSpeedLimitRequest),
 	}
 }
 
@@ -127,7 +132,11 @@ func (client *fakeImporterClient) SetDownloadSpeedLimit(
 	storeID uint64,
 	req *import_sstpb.SetDownloadSpeedLimitRequest,
 ) (*import_sstpb.SetDownloadSpeedLimitResponse, error) {
-	client.speedLimit[storeID] = req.SpeedLimit
+	client.speedLimitReq[storeID] = &import_sstpb.SetDownloadSpeedLimitRequest{
+		TaskId:     req.GetTaskId(),
+		SpeedLimit: req.GetSpeedLimit(),
+		TtlSeconds: req.GetTtlSeconds(),
+	}
 	return &import_sstpb.SetDownloadSpeedLimitResponse{}, nil
 }
 
@@ -174,7 +183,20 @@ func TestSnapImporter(t *testing.T) {
 	require.NoError(t, err)
 	err = importer.SetDownloadSpeedLimit(ctx, 1, 5)
 	require.NoError(t, err)
-	require.Equal(t, uint64(5), importClient.speedLimit[1])
+	setReq := importClient.speedLimitReq[1]
+	require.NotNil(t, setReq)
+	require.Equal(t, uint64(5), setReq.GetSpeedLimit())
+	require.NotEmpty(t, setReq.GetTaskId())
+	require.Equal(t, uint64(snapclient.DownloadRateLimitTTLSeconds), setReq.GetTtlSeconds())
+
+	err = importer.SetDownloadSpeedLimit(ctx, 1, 0)
+	require.NoError(t, err)
+	resetReq := importClient.speedLimitReq[1]
+	require.NotNil(t, resetReq)
+	require.Equal(t, uint64(0), resetReq.GetSpeedLimit())
+	require.Equal(t, setReq.GetTaskId(), resetReq.GetTaskId())
+	require.Equal(t, uint64(snapclient.DownloadRateLimitTTLSeconds), resetReq.GetTtlSeconds())
+
 	err = importer.SetRawRange(nil, nil)
 	require.Error(t, err)
 	files, rules := generateFiles()
@@ -207,4 +229,66 @@ func TestSnapImporterRaw(t *testing.T) {
 	}
 	err = importer.Close()
 	require.NoError(t, err)
+}
+
+type flowControlSplitClient struct {
+	split.SplitClient
+
+	t         *testing.T
+	inFlight  atomic.Int32
+	maxFlight int32
+}
+
+func (c *flowControlSplitClient) ScanRegions(
+	ctx context.Context,
+	key, endKey []byte,
+	limit int,
+	opts ...opt.GetRegionOption,
+) ([]*split.RegionInfo, error) {
+	cur := c.inFlight.Add(1)
+	defer c.inFlight.Add(-1)
+	require.LessOrEqual(c.t, cur, c.maxFlight)
+
+	return []*split.RegionInfo{
+		{
+			Region: &metapb.Region{
+				StartKey: key,
+				EndKey:   endKey,
+			},
+			Leader: &metapb.Peer{
+				StoreId: 1,
+			},
+		},
+	}, nil
+}
+
+func (*flowControlSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
+}
+
+func TestSnapImporterPDScanRequestFlowControl(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	maxFlight := 1
+	splitClient := &flowControlSplitClient{
+		t:         t,
+		maxFlight: int32(maxFlight),
+	}
+	importClient := newFakeImporterClient()
+	opt := snapclient.NewSnapFileImporterOptionsForTest(
+		splitClient, importClient, generateStores(), snapclient.RewriteModeKeyspace, 10,
+	)
+	opt.SetRegionScanConcurrency(uint(maxFlight))
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for range 200 {
+		wg.Go(func() {
+			_, err := importer.PaginateScanRegionForTest(ctx, []byte{}, []byte{})
+			require.NoError(t, err)
+		})
+	}
+	wg.Wait()
 }

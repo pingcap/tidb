@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1297,7 +1299,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	w := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
-	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {}, logclient.SplitFileThresholdDefault)
 	require.NoError(t, err)
 	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
@@ -1435,6 +1437,22 @@ func getDBMap() map[int64]*stream.DBReplace {
 	return replaces
 }
 
+func mustMarshalPITRIDMapBackupMeta(t *testing.T, schemaVersion uint32) []byte {
+	t.Helper()
+
+	backupMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: schemaVersion,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+		DbMaps: (&stream.TableMappingManager{
+			DBReplaceMap: getDBMap(),
+		}).ToProto(),
+	}
+	data, err := proto.Marshal(backupMeta)
+	require.NoError(t, err)
+	return data
+}
+
 func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -1479,6 +1497,25 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",
+			uint64(0), uint64(2), uint64(3))
+		require.NoError(t, err)
+		for startIdx, segmentID := 0, 0; startIdx < len(data); segmentID += 1 {
+			endIdx := min(startIdx+logclient.PITRIdMapBlockSize, len(data))
+			err = se.ExecuteInternal(ctx,
+				"REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);",
+				uint64(0), uint64(2), uint64(3), segmentID, data[startIdx:endIdx],
+			)
+			require.NoError(t, err)
+			startIdx = endIdx
+		}
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnStorage(t *testing.T) {
@@ -1536,6 +1573,21 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		storage, err := objstore.New(ctx, backend, nil)
+		require.NoError(t, err)
+		err = client.SetStorage(ctx, backend, nil)
+		require.NoError(t, err)
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
@@ -1667,7 +1719,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	}
 
 	// Create a log split strategy with the given rewrite rules.
-	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {}, logclient.SplitFileThresholdDefault)
 	require.NoError(t, err)
 
 	// Set up a mock strategy to control split behavior.
@@ -2514,4 +2566,30 @@ func (m *mockBatchProcessor) ProcessBatch(
 	cf string,
 ) ([]*logclient.KvEntryWithTS, error) {
 	return m.processFunc(ctx, files, entries, filterTS, cf)
+}
+
+func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
+	ctx := context.Background()
+	stg, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+	// is not parseable, so Load() returns an error and exercises the error path
+	// in GetLockedMigrations.
+	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	_, err = client.GetLockedMigrations(ctx)
+	require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+	var lingering []string
+	require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK",
+	}, func(p string, _ int64) error {
+		lingering = append(lingering, p)
+		return nil
+	}))
+	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }

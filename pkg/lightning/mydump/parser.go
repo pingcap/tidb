@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 type blockParser struct {
@@ -54,7 +54,7 @@ type blockParser struct {
 	columns []string
 
 	rowPool *zeropool.Pool[[]types.Datum]
-	lastRow Row
+	lastRow parsedef.Row
 	// the reader position we have parsed, if the underlying reader is not
 	// a compressed file, it's the file position we have parsed too.
 	// this value may go backward when failed to read quoted field, but it's
@@ -124,24 +124,6 @@ type Chunk struct {
 	Columns []string
 }
 
-// Row is the content of a row.
-type Row struct {
-	// RowID is the row id of the row.
-	// as objects of this struct is reused, this RowID is increased when reading
-	// next row.
-	RowID  int64
-	Row    []types.Datum
-	Length int
-}
-
-// MarshalLogArray implements the zapcore.ArrayMarshaler interface
-func (row Row) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
-	for _, r := range row.Row {
-		encoder.AppendString(r.String())
-	}
-	return nil
-}
-
 type escapeFlavor uint8
 
 const (
@@ -163,8 +145,8 @@ type Parser interface {
 	ScannedPos() (int64, error)
 	Close() error
 	ReadRow() error
-	LastRow() Row
-	RecycleRow(row Row)
+	LastRow() parsedef.Row
+	RecycleRow(row parsedef.Row)
 
 	// Columns returns the _lower-case_ column names corresponding to values in
 	// the LastRow.
@@ -317,6 +299,13 @@ func (parser *blockParser) readBlock() error {
 
 	n, err := parser.reader.ReadFull(parser.blockBuf)
 
+	// (n=0, ErrUnexpectedEOF) is only produced when the underlying reader
+	// itself reported truncation (e.g. zstd/gzip frame cut mid-block); a
+	// normal tail short read always carries n>0. Surface it instead of
+	// treating the truncated stream as a clean last chunk.
+	if err == io.ErrUnexpectedEOF && n == 0 {
+		return errors.Trace(err)
+	}
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true
@@ -603,12 +592,12 @@ func (parser *ChunkParser) ReadRow() error {
 }
 
 // LastRow is the copy of the row parsed by the last call to ReadRow().
-func (parser *blockParser) LastRow() Row {
+func (parser *blockParser) LastRow() parsedef.Row {
 	return parser.lastRow
 }
 
 // RecycleRow places the row object back into the allocation pool.
-func (parser *blockParser) RecycleRow(row Row) {
+func (parser *blockParser) RecycleRow(row parsedef.Row) {
 	// We need farther benchmarking to make sure whether send a pointer
 	// (instead of a slice) here can improve performance.
 	parser.rowPool.Put(row.Row[:0])

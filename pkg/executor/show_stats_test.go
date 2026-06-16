@@ -48,6 +48,20 @@ func TestShowStatsMeta(t *testing.T) {
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
+	result = tk.MustQuery("show stats_meta where table_name in ('t', 't1')")
+	require.Len(t, result.Rows(), 2)
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't1'")
+	require.Len(t, result.Rows(), 1)
+	result = tk.MustQuery("show stats_meta where db_name = 'mysql' and table_name = 't1'")
+	require.Len(t, result.Rows(), 0)
+	result = tk.MustQuery("show stats_meta where db_name = 'non-exist-db' or table_name in ('t1', 't')")
+	require.Len(t, result.Rows(), 2)
+	result = tk.MustQuery("show stats_meta where table_name = 't1' and 1=1")
+	require.Len(t, result.Rows(), 1)
+	result = tk.MustQuery("show stats_meta where table_name = 't1' and 1=0")
+	require.Len(t, result.Rows(), 0)
+	result = tk.MustQuery("show stats_meta where table_name like 't%'").Sort()
+	require.Len(t, result.Rows(), 2)
 
 	// Create different database to test the like pattern.
 	tk.MustExec("create database test2")
@@ -399,4 +413,41 @@ func TestShowAnalyzeStatus(t *testing.T) {
 		"merge global stats for test.t2 columns",
 		"analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate",
 	}, jobInfos)
+
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a int, b int, primary key(a))")
+	tk.MustExec(`insert into t3 values (1, 1), (2, 2)`)
+	tk.MustExec("analyze table t3")
+	tk.MustExec("delete from mysql.analyze_jobs")
+
+	originalTZ := tk.MustQuery("select @@time_zone").Rows()[0][0]
+	defer func() {
+		tk.MustExec("set @@time_zone = ?", originalTZ)
+	}()
+	tk.MustExec("set @@time_zone = '+08:00'")
+	tk.MustExec(`insert into mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		partition_name,
+		job_info,
+		processed_rows,
+		start_time,
+		state,
+		instance
+	) values (
+		'test',
+		't3',
+		'',
+		'analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate',
+		1,
+		CURRENT_TIMESTAMP - INTERVAL 1 MINUTE,
+		'running',
+		'127.0.0.1:4000'
+	)`)
+	rows = tk.MustQuery("show analyze status where table_name = 't3' and state = 'running'").Rows()
+	require.Len(t, rows, 1)
+	remainingDuration, err := time.ParseDuration(rows[0][11].(string))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, remainingDuration, time.Duration(0))
 }

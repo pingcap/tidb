@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -71,6 +72,9 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
+	origStatsLease := vardef.GetStatsLease()
+	defer vardef.SetStatsLease(origStatsLease)
+	vardef.SetStatsLease(3 * time.Second)
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))

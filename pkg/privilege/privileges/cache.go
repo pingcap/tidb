@@ -361,11 +361,12 @@ type MySQLPrivilege struct {
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
 
-	user         bTree[itemUser]
-	db           bTree[itemDB]
-	tablesPriv   bTree[itemTablesPriv]
-	columnsPriv  bTree[itemColumnsPriv]
-	defaultRoles bTree[itemDefaultRole]
+	user           bTree[itemUser]
+	db             bTree[itemDB]
+	tablesPriv     bTree[itemTablesPriv]
+	columnsPriv    bTree[itemColumnsPriv]
+	ColumnsPrivMap map[string][]columnsPrivRecord // Accelerate ColumnsPriv searching
+	defaultRoles   bTree[itemDefaultRole]
 
 	globalPriv  bTree[itemGlobalPriv]
 	dynamicPriv bTree[itemDynamicPriv]
@@ -628,6 +629,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList map[string]struct{
 		}
 	}
 	ret.columnsPriv.BTreeG = columnsPriv
+	ret.buildColumnsPrivMap()
 
 	defaultRoles := p.defaultRoles.Clone()
 	for u := range userList {
@@ -762,19 +764,27 @@ func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 func compareHost(x, y string) int {
 	// The more-specific, the smaller it is.
 	// The pattern '%' means “any host” and is least specific.
-	if y == `%` {
-		if x == `%` {
+	if x == "%" || y == "%" {
+		if x == "%" && y == "%" {
 			return 0
 		}
-		return -1
+		if y == "%" {
+			return -1
+		}
+		// x == '%'
+		return 1
 	}
 
 	// The empty string '' also means “any host” but sorts after '%'.
-	if y == "" {
-		if x == "" {
+	if x == "" || y == "" {
+		if x == "" && y == "" {
 			return 0
 		}
-		return -1
+		if y == "" {
+			return -1
+		}
+		// x == ""
+		return 1
 	}
 
 	// One of them end with `%`.
@@ -797,11 +807,10 @@ func compareHost(x, y string) int {
 	}
 
 	// For other case, the order is nondeterministic.
-	switch x < y {
-	case true:
-		return -1
-	case false:
+	if x > y {
 		return 1
+	} else if x < y {
+		return -1
 	}
 	return 0
 }
@@ -875,9 +884,23 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
 	return nil
 }
 
+func (p *MySQLPrivilege) buildColumnsPrivMap() {
+	columnsPrivMap := make(map[string][]columnsPrivRecord, p.columnsPriv.Len())
+	columnsPriv := p.columnsPriv.Clone()
+	columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		columnsPrivMap[itm.username] = slices.Clone(itm.data)
+		return true
+	})
+	p.ColumnsPrivMap = columnsPrivMap
+}
+
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(exec sqlexec.SQLExecutor) error {
-	return loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
+	if err := loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil)); err != nil {
+		return err
+	}
+	p.buildColumnsPrivMap()
+	return nil
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
@@ -1390,10 +1413,12 @@ func (record *tablesPrivRecord) match(user, host, db, table string) bool {
 }
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
+	// `SELECT COUNT(*) ...` requires a column-level SELECT privilege of any column,
+	// so we add a special case "*" here
 	return record.baseRecord.match(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
-		strings.EqualFold(record.ColumnName, col)
+		(strings.EqualFold(record.ColumnName, col) || col == "*" && (record.ColumnPriv&mysql.SelectPriv > 0))
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
@@ -1515,7 +1540,21 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	return nil
 }
 
-func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
+// MatchColumns is exported only for test
+func (p *MySQLPrivilege) MatchColumns(user, host, db, table, column string) *columnsPrivRecord {
+	if p.ColumnsPrivMap != nil {
+		if records, exists := p.ColumnsPrivMap[user]; exists {
+			for i := range records {
+				record := &records[i]
+				if record.match(user, host, db, table, column) {
+					return record
+				}
+			}
+			return nil
+		}
+		return nil
+	}
+
 	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
 	if exists {
 		for i := range item.data {
@@ -1579,6 +1618,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
+// `column == "*"` means it matches ANY column in the table.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	if priv == mysql.UsagePriv {
 		return true
@@ -1613,17 +1653,16 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		if tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
-				columnPriv |= tableRecord.ColumnPriv
+				columnPriv |= tableRecord.TablePriv
 			}
 		}
 	}
-	if tablePriv&priv > 0 || columnPriv&priv > 0 {
+	if tablePriv&priv > 0 {
 		return true
 	}
 
-	columnPriv = 0
 	for _, r := range roleList {
-		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
+		columnRecord := p.MatchColumns(r.Username, r.Hostname, db, table, column)
 		if columnRecord != nil {
 			columnPriv |= columnRecord.ColumnPriv
 		}

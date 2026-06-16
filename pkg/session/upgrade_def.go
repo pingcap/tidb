@@ -479,8 +479,34 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
+	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
+	version256 = 256
+
+	// version257
+	// Add tidb_enable_no_backslash_escapes_in_like global variable.
+	version257 = 257
+
+	// version258
+	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
+	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
+	version258 = 258
+
+	// version259
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version259 = 259
+
+	// Add mysql.tidb_masking_policy table.
+	version260 = 260
+
+	// version261
+	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	version261 = 261
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -494,7 +520,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version255
+var currentBootstrapVersion int64 = version261
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -674,6 +700,12 @@ var (
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
+		{version: version256, fn: upgradeToVer256},
+		{version: version257, fn: upgradeToVer257},
+		{version: version258, fn: upgradeToVer258},
+		{version: version259, fn: upgradeToVer259},
+		{version: version260, fn: upgradeToVer260},
+		{version: version261, fn: upgradeToVer261},
 	}
 )
 
@@ -2074,4 +2106,36 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
+}
+
+func upgradeToVer256(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
+}
+
+func upgradeToVer257(s sessionapi.Session, _ int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
+}
+
+func upgradeToVer258(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
+func upgradeToVer259(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
+}
+
+func upgradeToVer260(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
+}
+
+func upgradeToVer261(s sessionapi.Session, _ int64) {
+	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
 }

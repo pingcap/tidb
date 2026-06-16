@@ -1,0 +1,328 @@
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2), (3);
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (3, 'e');
+select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat order by t1.a;
+a	b
+1	a
+2	c
+3	d
+select * from t1, lateral (select b from t2 where t2.a = t1.a order by b limit 1) as lat order by t1.a;
+a	b
+1	a
+2	c
+3	d
+select * from t1, lateral (select count(*) as cnt from t2 where t2.a = t1.a) as lat order by t1.a;
+a	cnt
+1	2
+2	1
+3	2
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+Error 3809 (HY000): Invalid use of LATERAL: LEFT JOIN is not supported with LATERAL
+select * from t1 cross join lateral (select b from t2 where t2.a = t1.a) as lat;
+a	b
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+explain format='plan_tree' select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat;
+id	task	access object	operator info
+Apply	root		CARTESIAN inner join
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Limit(Probe)	root		offset:0, count:1
+  └─TableReader	root		data:Limit
+    └─Limit	cop[tikv]		offset:0, count:1
+      └─Selection	cop[tikv]		eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
+id	task	access object	operator info
+Apply	root		CARTESIAN inner join
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Limit(Probe)	root		offset:0, count:1
+  └─TableReader	root		data:Limit
+    └─Limit	cop[tikv]		offset:0, count:1
+      └─Selection	cop[tikv]		eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop table if exists t2;
+create table t2 (a int, b varchar(10));
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
+with recursive tr (level, b_col) as (
+select 1, ''
+union all
+select level + 1, lat.result_col
+from tr, lateral (select b as result_col from t2 where a = level order by b limit 1) as lat
+where level < 3
+)
+select * from tr where level > 0 order by level;
+level	b_col
+1	
+2	
+3	
+with recursive tr (level, b_col) as (
+select 1, cast(null as char(10))
+union all
+select level + 1, lat.result_col
+from tr, lateral (select b as result_col from t2 where a = level order by b limit 1) as lat
+where level < 3
+)
+select * from tr where level > 0 order by level;
+level	b_col
+1	NULL
+2	a
+3	c
+drop table if exists t1, t2, t3;
+create table t1 (a int);
+create table t2 (a int, b int);
+create table t3 (b int, c varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 10), (1, 20), (2, 30);
+insert into t3 values (10, 'x'), (20, 'y'), (30, 'z');
+select * from t1, t2, lateral (select c from t3 where t3.b = t2.b limit 1) as lat
+where t1.a = t2.a order by t1.a, t2.b;
+a	a	b	c
+1	1	10	x
+1	1	20	y
+2	2	30	z
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+insert into t1 values (1), (2);
+insert into t2 values (1, 100), (1, 200), (2, 300);
+select * from t1, lateral (
+select sum(b) as total from t2 where t2.a = t1.a
+) as lat order by t1.a;
+a	total
+1	300
+2	300
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (b int);
+insert into t1 values (1), (2);
+insert into t2 values (10), (20);
+select * from t1, lateral (select b from t2 limit 1) as lat order by t1.a;
+a	b
+1	10
+2	10
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+select * from t1 right join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+Error 3809 (HY000): Invalid use of LATERAL: RIGHT JOIN is not supported with LATERAL
+drop table if exists t1, t2, t3, t4;
+create table t1 (a int, b int, c int);
+create table t2 (a int, b int, c int);
+create table t3 (a int, b int, c int);
+create table t4 (a int, b int, c int);
+insert into t1 values (1, 10, 100), (2, 20, 200);
+insert into t2 values (1, 10, 101), (2, 20, 202);
+insert into t3 values (1, 10, 301), (2, 20, 302);
+insert into t4 values (1, 10, 401), (1, 10, 402), (2, 20, 403);
+explain format='plan_tree' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt;
+id	task	access object	operator info
+Projection	root		planner__core__lateral_join.t1.a, planner__core__lateral_join.t1.b, planner__core__lateral_join.t1.c, planner__core__lateral_join.t2.b, planner__core__lateral_join.t2.c, planner__core__lateral_join.t3.a, planner__core__lateral_join.t3.b, planner__core__lateral_join.t3.c, Column
+└─Apply	root		CARTESIAN inner join
+  ├─Projection(Build)	root		planner__core__lateral_join.t1.a, planner__core__lateral_join.t1.b, planner__core__lateral_join.t1.c, planner__core__lateral_join.t2.a, planner__core__lateral_join.t2.b, planner__core__lateral_join.t2.c, planner__core__lateral_join.t3.a, planner__core__lateral_join.t3.b, planner__core__lateral_join.t3.c
+  │ └─HashJoin	root		inner join, equal:[eq(planner__core__lateral_join.t2.b, planner__core__lateral_join.t3.b)]
+  │   ├─TableReader(Build)	root		data:Selection
+  │   │ └─Selection	cop[tikv]		not(isnull(planner__core__lateral_join.t3.b))
+  │   │   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │   └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)]
+  │     ├─TableReader(Build)	root		data:Selection
+  │     │ └─Selection	cop[tikv]		not(isnull(planner__core__lateral_join.t2.a)), not(isnull(planner__core__lateral_join.t2.b))
+  │     │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │     └─TableReader(Probe)	root		data:Selection
+  │       └─Selection	cop[tikv]		not(isnull(planner__core__lateral_join.t1.a))
+  │         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		funcs:count(Column)->Column
+    └─TableReader	root		data:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+        └─Selection	cop[tikv]		eq(planner__core__lateral_join.t4.a, planner__core__lateral_join.t2.a)
+          └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+select t1.a, t2.b, t3.c, dt.c from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select count(*) as c from t4 where t4.a=t2.a) as dt order by t1.a;
+a	b	c	c
+1	10	301	2
+2	20	302	1
+explain format='plan_tree' select * from t1 join t2 using(a) join t3 on t2.b=t3.b, lateral (select sum(t4.c) as s from t4 where t4.a=t2.a) as dt;
+id	task	access object	operator info
+Projection	root		planner__core__lateral_join.t1.a, planner__core__lateral_join.t1.b, planner__core__lateral_join.t1.c, planner__core__lateral_join.t2.b, planner__core__lateral_join.t2.c, planner__core__lateral_join.t3.a, planner__core__lateral_join.t3.b, planner__core__lateral_join.t3.c, Column
+└─Apply	root		CARTESIAN inner join
+  ├─Projection(Build)	root		planner__core__lateral_join.t1.a, planner__core__lateral_join.t1.b, planner__core__lateral_join.t1.c, planner__core__lateral_join.t2.a, planner__core__lateral_join.t2.b, planner__core__lateral_join.t2.c, planner__core__lateral_join.t3.a, planner__core__lateral_join.t3.b, planner__core__lateral_join.t3.c
+  │ └─HashJoin	root		inner join, equal:[eq(planner__core__lateral_join.t2.b, planner__core__lateral_join.t3.b)]
+  │   ├─TableReader(Build)	root		data:Selection
+  │   │ └─Selection	cop[tikv]		not(isnull(planner__core__lateral_join.t3.b))
+  │   │   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │   └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)]
+  │     ├─TableReader(Build)	root		data:Selection
+  │     │ └─Selection	cop[tikv]		not(isnull(planner__core__lateral_join.t2.a)), not(isnull(planner__core__lateral_join.t2.b))
+  │     │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │     └─TableReader(Probe)	root		data:Selection
+  │       └─Selection	cop[tikv]		not(isnull(planner__core__lateral_join.t1.a))
+  │         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		funcs:sum(Column)->Column
+    └─TableReader	root		data:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:sum(planner__core__lateral_join.t4.c)->Column
+        └─Selection	cop[tikv]		eq(planner__core__lateral_join.t4.a, planner__core__lateral_join.t2.a)
+          └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 'x'), (2, 'y');
+select t1.a, dt.mycol from t1, lateral (select b from t2 where t2.a = t1.a) as dt(mycol) order by t1.a;
+a	mycol
+1	x
+2	y
+select dt.id, dt.val from t1, lateral (select t2.a, t2.b from t2 where t2.a = t1.a) as dt(id, val) order by dt.id;
+id	val
+1	x
+2	y
+select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2) order by t1.a;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop table if exists category;
+create table category (id int primary key, parent_id int, name varchar(50), sort_order int, index idx_parent(parent_id, sort_order, name));
+insert into category values
+(1, null, 'root', 0),
+(2, 1, 'child_a', 1), (3, 1, 'child_b', 2), (4, 1, 'child_c', 3), (5, 1, 'child_d', 4),
+(6, 2, 'grandchild_a1', 1), (7, 2, 'grandchild_a2', 2), (8, 2, 'grandchild_a3', 3),
+(9, 3, 'grandchild_b1', 1), (10, 3, 'grandchild_b2', 2);
+with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+cross join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by parent_id, sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	name	depth
+1	root	1
+2	child_a	2
+3	child_b	2
+6	grandchild_a1	3
+7	grandchild_a2	3
+9	grandchild_b1	3
+10	grandchild_b2	3
+with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+inner join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by sort_order
+limit 2
+) as c on true
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	name	depth
+1	root	1
+2	child_a	2
+3	child_b	2
+6	grandchild_a1	3
+7	grandchild_a2	3
+9	grandchild_b1	3
+10	grandchild_b2	3
+with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree,
+lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by parent_id, sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	name	depth
+1	root	1
+2	child_a	2
+3	child_b	2
+6	grandchild_a1	3
+7	grandchild_a2	3
+9	grandchild_b1	3
+10	grandchild_b2	3
+explain format='plan_tree' with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+cross join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by parent_id, sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	task	access object	operator info
+Sort	root		Column, planner__core__lateral_join.category.id, planner__core__lateral_join.category.name
+└─Projection	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.name, Column
+  └─CTEFullScan	root	CTE:tree	data:CTE_0
+CTE_0	root		Recursive CTE
+├─Projection(Seed Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, 1->Column
+│ └─IndexReader	root		index:IndexRangeScan
+│   └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range:[NULL,NULL], keep order:false, stats:pseudo
+└─Projection(Recursive Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, cast(plus(Column, 1), bigint BINARY)->Column
+  └─Apply	root		CARTESIAN inner join
+    ├─Selection(Build)	root		lt(Column, 3)
+    │ └─CTETable	root		Scan on CTE_0
+    └─Limit(Probe)	root		offset:0, count:2
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:2
+          └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range: decided by [eq(planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.id)], keep order:true, stats:pseudo
+explain format='plan_tree' with recursive tree as (
+select id, parent_id, name, 1 as depth
+from category where parent_id is null
+union all
+select c.id, c.parent_id, c.name, tree.depth + 1
+from tree
+cross join lateral (
+select id, parent_id, name
+from category
+where parent_id = tree.id
+order by sort_order
+limit 2
+) as c
+where tree.depth < 3
+)
+select id, name, depth from tree order by depth, id, name;
+id	task	access object	operator info
+Sort	root		Column, planner__core__lateral_join.category.id, planner__core__lateral_join.category.name
+└─Projection	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.name, Column
+  └─CTEFullScan	root	CTE:tree	data:CTE_0
+CTE_0	root		Recursive CTE
+├─Projection(Seed Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, 1->Column
+│ └─IndexReader	root		index:IndexRangeScan
+│   └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range:[NULL,NULL], keep order:false, stats:pseudo
+└─Projection(Recursive Part)	root		planner__core__lateral_join.category.id, planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.name, cast(plus(Column, 1), bigint BINARY)->Column
+  └─Apply	root		CARTESIAN inner join
+    ├─Selection(Build)	root		lt(Column, 3)
+    │ └─CTETable	root		Scan on CTE_0
+    └─TopN(Probe)	root		planner__core__lateral_join.category.sort_order, offset:0, count:2
+      └─IndexReader	root		index:TopN
+        └─TopN	cop[tikv]		planner__core__lateral_join.category.sort_order, offset:0, count:2
+          └─IndexRangeScan	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range: decided by [eq(planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.id)], keep order:false, stats:pseudo
