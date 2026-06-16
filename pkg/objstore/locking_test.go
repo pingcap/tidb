@@ -199,38 +199,64 @@ func TestUnlockOnCleanUp(t *testing.T) {
 	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
 }
 
-func TestMakeLockMetaWithOperationInput(t *testing.T) {
+func TestMakeLockMeta(t *testing.T) {
 	startedAt := time.Date(2026, 6, 15, 1, 2, 3, 4, time.UTC)
-	meta := objstore.MakeLockMeta(objstore.LockMetaInput{
-		OperationID:        "op-1",
-		OperationStartedAt: &startedAt,
-		RestoreID:          42,
-		ResourceType:       "migration-read",
-		Hint:               "holder",
-	})
+	cases := []struct {
+		name                string
+		input               objstore.LockMetaInput
+		expectedOperationID string
+		expectedStartedAt   *time.Time
+		expectedRestoreID   uint64
+		expectedResource    string
+		expectedHint        string
+	}{
+		{
+			name: "operation input",
+			input: objstore.LockMetaInput{
+				OperationID:        "op-1",
+				OperationStartedAt: &startedAt,
+				RestoreID:          42,
+				ResourceType:       "migration-read",
+				Hint:               "holder",
+			},
+			expectedOperationID: "op-1",
+			expectedStartedAt:   &startedAt,
+			expectedRestoreID:   42,
+			expectedResource:    "migration-read",
+			expectedHint:        "holder",
+		},
+		{
+			name:         "minimal input",
+			input:        objstore.LockMetaInput{Hint: "minimal"},
+			expectedHint: "minimal",
+		},
+	}
 
-	require.Equal(t, "op-1", meta.OperationID)
-	require.Equal(t, &startedAt, meta.OperationStartedAt)
-	require.Equal(t, uint64(42), meta.RestoreID)
-	require.Equal(t, "migration-read", meta.ResourceType)
-	require.Equal(t, "holder", meta.Hint)
-	require.NotZero(t, meta.LockedAt)
-	require.NotEmpty(t, meta.LockerHost)
-	require.Equal(t, os.Getpid(), meta.LockerPID)
-}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			meta := objstore.MakeLockMeta(c.input)
 
-func TestMakeLockMetaMinimalInputOmitsOperationStartedAt(t *testing.T) {
-	meta := objstore.MakeLockMeta(objstore.LockMetaInput{Hint: "minimal"})
+			require.Equal(t, c.expectedOperationID, meta.OperationID)
+			if c.expectedStartedAt == nil {
+				require.Nil(t, meta.OperationStartedAt)
+			} else {
+				require.NotNil(t, meta.OperationStartedAt)
+				require.Equal(t, *c.expectedStartedAt, *meta.OperationStartedAt)
+			}
+			require.Equal(t, c.expectedRestoreID, meta.RestoreID)
+			require.Equal(t, c.expectedResource, meta.ResourceType)
+			require.Equal(t, c.expectedHint, meta.Hint)
+			require.NotZero(t, meta.LockedAt)
+			require.NotEmpty(t, meta.LockerHost)
+			require.Equal(t, os.Getpid(), meta.LockerPID)
 
-	require.Equal(t, "minimal", meta.Hint)
-	require.Empty(t, meta.OperationID)
-	require.Nil(t, meta.OperationStartedAt)
-	require.Zero(t, meta.RestoreID)
-	require.Empty(t, meta.ResourceType)
-
-	data, err := json.Marshal(meta)
-	require.NoError(t, err)
-	require.NotContains(t, string(data), "operation_started_at")
+			data, err := json.Marshal(meta)
+			require.NoError(t, err)
+			if c.expectedStartedAt == nil {
+				require.NotContains(t, string(data), "operation_started_at")
+			}
+		})
+	}
 }
 
 func TestLockMetaOldJSONCompatibility(t *testing.T) {
@@ -306,7 +332,6 @@ func TestConflictLockReportsRemotePathAndMeta(t *testing.T) {
 
 func TestWriteLockConflictReportsReadLockBlocker(t *testing.T) {
 	ctx := context.Background()
-	strg, _ := createMockStorage(t)
 	startedAt := time.Date(2026, 6, 15, 1, 2, 3, 0, time.UTC)
 	readInput := objstore.LockMetaInput{
 		OperationID:        "read-op",
@@ -314,13 +339,8 @@ func TestWriteLockConflictReportsReadLockBlocker(t *testing.T) {
 		ResourceType:       "migration-read",
 		Hint:               "reader",
 	}
-	lock, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", readInput)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, lock.Unlock(ctx)) }()
-
 	localInput := objstore.LockMetaInput{OperationID: "write-op", ResourceType: "migration-write", Hint: "writer"}
-	_, err = objstore.TryLockRemoteWrite(ctx, strg, "test.lock", localInput)
-	require.Error(t, err)
+	_, err := createReadWriteConflict(t, ctx, readInput, localInput)
 
 	var locked objstore.ErrLocked
 	require.True(t, errors.As(err, &locked))
@@ -371,7 +391,6 @@ func TestWriteLockConflictReportsMultipleReadLockBlockers(t *testing.T) {
 func TestLockWithRetryCarriesLocalAndRemoteMetadata(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	strg, _ := createMockStorage(t)
 	startedAt := time.Date(2026, 6, 15, 1, 2, 3, 0, time.UTC)
 	remoteInput := objstore.LockMetaInput{
 		OperationID:        "remote-op",
@@ -379,11 +398,8 @@ func TestLockWithRetryCarriesLocalAndRemoteMetadata(t *testing.T) {
 		ResourceType:       "migration-read",
 		Hint:               "reader",
 	}
-	lock, err := objstore.TryLockRemoteRead(context.Background(), strg, "test.lock", remoteInput)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, lock.Unlock(context.Background())) }()
-
 	localInput := objstore.LockMetaInput{OperationID: "local-op", ResourceType: "migration-write", Hint: "writer"}
+	strg, err := createReadWriteConflict(t, context.Background(), remoteInput, localInput)
 	_, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "test.lock", localInput)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled))
@@ -400,7 +416,6 @@ func TestLockWithRetryCarriesLocalAndRemoteMetadata(t *testing.T) {
 
 func TestLockConflictLogFieldsCarriesLocalAndRemoteMetadata(t *testing.T) {
 	ctx := context.Background()
-	strg, _ := createMockStorage(t)
 	startedAt := time.Date(2026, 6, 15, 1, 2, 3, 0, time.UTC)
 	remoteInput := objstore.LockMetaInput{
 		OperationID:        "remote-op",
@@ -408,13 +423,8 @@ func TestLockConflictLogFieldsCarriesLocalAndRemoteMetadata(t *testing.T) {
 		ResourceType:       "migration-read",
 		Hint:               "reader",
 	}
-	lock, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", remoteInput)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, lock.Unlock(context.Background())) }()
-
 	localInput := objstore.LockMetaInput{OperationID: "local-op", ResourceType: "migration-write", Hint: "writer"}
-	_, err = objstore.TryLockRemoteWrite(ctx, strg, "test.lock", localInput)
-	require.Error(t, err)
+	_, err := createReadWriteConflict(t, ctx, remoteInput, localInput)
 
 	fields := objstore.LockConflictLogFields("test.lock", localInput, err)
 	requireZapStringField(t, fields, "path", "test.lock")
@@ -464,6 +474,24 @@ func TestTryLockRemoteWritePreservesOriginalErrorWhenEnrichingErrLocked(t *testi
 	require.Len(t, locked.Blockers, 1)
 	require.Equal(t, "test.lock.READ.remote", locked.Blockers[0].Path)
 	require.Equal(t, "remote-op", locked.Blockers[0].Meta.OperationID)
+}
+
+func createReadWriteConflict(
+	t *testing.T,
+	ctx context.Context,
+	remoteInput objstore.LockMetaInput,
+	localInput objstore.LockMetaInput,
+) (storeapi.Storage, error) {
+	t.Helper()
+
+	strg, _ := createMockStorage(t)
+	lock, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", remoteInput)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lock.Unlock(context.Background())) })
+
+	_, err = objstore.TryLockRemoteWrite(ctx, strg, "test.lock", localInput)
+	require.Error(t, err)
+	return strg, err
 }
 
 func requireZapStringField(t *testing.T, fields []zap.Field, key string, value string) {

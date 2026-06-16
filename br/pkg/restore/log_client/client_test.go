@@ -126,7 +126,10 @@ func requireLockMetaInStorage(
 		}
 		var meta objstore.LockMeta
 		if err := json.Unmarshal(content, &meta); err != nil {
-			return nil
+			if strings.Contains(path, ".INTENT.") {
+				return nil
+			}
+			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
 		}
 		if meta.ResourceType == string(resource) {
 			metas = append(metas, meta)

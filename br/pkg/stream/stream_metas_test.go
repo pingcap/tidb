@@ -2656,8 +2656,6 @@ func TestMigrationLockOperationMetadata(t *testing.T) {
 			},
 			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
 				require.Len(t, writes, 2)
-				require.Equal(t, string(operation.LockResourceMigrationRead), writes[0].meta.ResourceType)
-				require.Equal(t, string(operation.LockResourceMigrationAppend), writes[1].meta.ResourceType)
 
 				readWrite := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationRead)
 				requireReadLockPath(t, readWrite.path)

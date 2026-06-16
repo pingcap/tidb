@@ -53,61 +53,54 @@ func TestEnsureRejectsIncompleteInitializedState(t *testing.T) {
 	require.ErrorContains(t, err, "operation started time")
 }
 
-func TestSetRestoreID(t *testing.T) {
-	ctx, err := NewContext("log-restore")
-	require.NoError(t, err)
+func TestSetRestoreIDBehavior(t *testing.T) {
+	t.Run("initialized context records restore ID idempotently", func(t *testing.T) {
+		ctx, err := NewContext("log-restore")
+		require.NoError(t, err)
 
-	ctx.SetRestoreID(123)
+		ctx.SetRestoreID(123)
+		ctx.SetRestoreID(123)
 
-	require.Equal(t, uint64(123), ctx.RestoreID)
-}
+		require.Equal(t, uint64(123), ctx.RestoreID)
+	})
 
-func TestSetRestoreIDIsIdempotent(t *testing.T) {
-	ctx, err := NewContext("log-restore")
-	require.NoError(t, err)
+	t.Run("zero context ignores restore ID", func(t *testing.T) {
+		_, logs := withObservedLogs(t)
+		var ctx Context
 
-	ctx.SetRestoreID(123)
-	ctx.SetRestoreID(123)
+		ctx.SetRestoreID(123)
 
-	require.Equal(t, uint64(123), ctx.RestoreID)
-}
+		require.Equal(t, uint64(0), ctx.RestoreID)
+		require.Equal(t, 0, logs.FilterMessage("BR operation restore ID resolved").Len())
+	})
 
-func TestSetRestoreIDOnZeroContextDoesNotLog(t *testing.T) {
-	_, logs := withObservedLogs(t)
-	var ctx Context
+	t.Run("ignored restore ID before Ensure can be recorded later", func(t *testing.T) {
+		_, logs := withObservedLogs(t)
+		var ctx Context
 
-	ctx.SetRestoreID(123)
+		ctx.SetRestoreID(123)
+		require.Equal(t, uint64(0), ctx.RestoreID)
 
-	require.Equal(t, uint64(0), ctx.RestoreID)
-	require.Equal(t, 0, logs.FilterMessage("BR operation restore ID resolved").Len())
-}
+		require.NoError(t, ctx.Ensure("log-restore"))
+		ctx.SetRestoreID(123)
 
-func TestSetRestoreIDBeforeEnsureDoesNotSuppressInitializedTransition(t *testing.T) {
-	_, logs := withObservedLogs(t)
-	var ctx Context
+		require.Equal(t, uint64(123), ctx.RestoreID)
+		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
+	})
 
-	ctx.SetRestoreID(123)
-	require.Equal(t, uint64(0), ctx.RestoreID)
+	t.Run("copied initialized context shares restore ID log dedupe state", func(t *testing.T) {
+		_, logs := withObservedLogs(t)
+		ctx, err := NewContext("log-restore")
+		require.NoError(t, err)
+		copiedCtx := ctx
 
-	require.NoError(t, ctx.Ensure("log-restore"))
-	ctx.SetRestoreID(123)
+		ctx.SetRestoreID(123)
+		copiedCtx.SetRestoreID(123)
 
-	require.Equal(t, uint64(123), ctx.RestoreID)
-	require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
-}
-
-func TestSetRestoreIDCopiedInitializedContextSharesLogDedupeState(t *testing.T) {
-	_, logs := withObservedLogs(t)
-	ctx, err := NewContext("log-restore")
-	require.NoError(t, err)
-	copiedCtx := ctx
-
-	ctx.SetRestoreID(123)
-	copiedCtx.SetRestoreID(123)
-
-	require.Equal(t, uint64(123), ctx.RestoreID)
-	require.Equal(t, uint64(123), copiedCtx.RestoreID)
-	require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
+		require.Equal(t, uint64(123), ctx.RestoreID)
+		require.Equal(t, uint64(123), copiedCtx.RestoreID)
+		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
+	})
 }
 
 func TestLockMeta(t *testing.T) {
@@ -129,23 +122,36 @@ func TestLockMeta(t *testing.T) {
 	require.Equal(t, "test hint", meta.Hint)
 }
 
-func TestLockMetaRequiresOperationID(t *testing.T) {
-	_, err := (Context{}).LockMeta(LockResourceMigrationRead, "test hint")
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "operation ID")
-}
-
-func TestLockMetaRequiresResourceType(t *testing.T) {
-	ctx := Context{
-		OperationID: "operation-id",
-		StartedAt:   time.Now(),
+func TestLockMetaValidation(t *testing.T) {
+	cases := []struct {
+		name        string
+		ctx         Context
+		resource    LockResourceType
+		expectedErr string
+	}{
+		{
+			name:        "missing operation ID",
+			ctx:         Context{},
+			resource:    LockResourceMigrationRead,
+			expectedErr: "operation ID",
+		},
+		{
+			name: "missing resource type",
+			ctx: Context{
+				OperationID: "operation-id",
+				StartedAt:   time.Now(),
+			},
+			expectedErr: "resource type",
+		},
 	}
 
-	_, err := ctx.LockMeta("", "test hint")
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "resource type")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := c.ctx.LockMeta(c.resource, "test hint")
+			require.Error(t, err)
+			require.ErrorContains(t, err, c.expectedErr)
+		})
+	}
 }
 
 func TestTryLockRemoteBuildsOperationMetadata(t *testing.T) {
