@@ -1236,32 +1236,32 @@
       {
         "SQL": "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_69 12487.50 root  MppVersion: 2, data:ExchangeSender_68",
-          "└─ExchangeSender_68 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_61 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "    ├─ExchangeReceiver_65(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_64 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection_63 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_62 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
-          "    └─Selection_67(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_66 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader_40 12487.50 root  MppVersion: 2, data:ExchangeSender_39",
+          "└─ExchangeSender_39 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_36(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_35 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_34 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_33 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─Selection_38(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      └─TableFullScan_37 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
-          "├─Sort_49(Build) 9990.00 root  test.t.a",
-          "│ └─TableReader_45 9990.00 root  MppVersion: 2, data:ExchangeSender_44",
-          "│   └─ExchangeSender_44 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─Selection_43 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "│       └─TableFullScan_42 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
-          "└─Sort_34(Probe) 9990.00 root  test.t.a",
-          "  └─TableReader_30 9990.00 root  MppVersion: 2, data:ExchangeSender_29",
-          "    └─ExchangeSender_29 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─Selection_28 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "        └─TableFullScan_27 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "MergeJoin_13 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
+          "├─Sort_51(Build) 9990.00 root  test.t.a",
+          "│ └─TableReader_47 9990.00 root  MppVersion: 2, data:ExchangeSender_46",
+          "│   └─ExchangeSender_46 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─Selection_45 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "│       └─TableFullScan_44 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "└─Sort_36(Probe) 9990.00 root  test.t.a",
+          "  └─TableReader_32 9990.00 root  MppVersion: 2, data:ExchangeSender_31",
+          "    └─ExchangeSender_31 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection_30 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "        └─TableFullScan_29 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -1276,64 +1276,64 @@
       {
         "SQL": "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_69 12487.50 root  MppVersion: 2, data:ExchangeSender_68",
-          "└─ExchangeSender_68 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_61 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "    ├─ExchangeReceiver_65(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_64 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection_63 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_62 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
-          "    └─Selection_67(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_66 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader_40 12487.50 root  MppVersion: 2, data:ExchangeSender_39",
+          "└─ExchangeSender_39 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_36(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_35 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_34 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_33 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─Selection_38(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      └─TableFullScan_37 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
-          "├─Sort_49(Build) 9990.00 root  test.t.a",
-          "│ └─TableReader_45 9990.00 root  MppVersion: 2, data:ExchangeSender_44",
-          "│   └─ExchangeSender_44 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─Selection_43 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "│       └─TableFullScan_42 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
-          "└─Sort_34(Probe) 9990.00 root  test.t.a",
-          "  └─TableReader_30 9990.00 root  MppVersion: 2, data:ExchangeSender_29",
-          "    └─ExchangeSender_29 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─Selection_28 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "        └─TableFullScan_27 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "MergeJoin_13 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
+          "├─Sort_51(Build) 9990.00 root  test.t.a",
+          "│ └─TableReader_47 9990.00 root  MppVersion: 2, data:ExchangeSender_46",
+          "│   └─ExchangeSender_46 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─Selection_45 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "│       └─TableFullScan_44 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "└─Sort_36(Probe) 9990.00 root  test.t.a",
+          "  └─TableReader_32 9990.00 root  MppVersion: 2, data:ExchangeSender_31",
+          "    └─ExchangeSender_31 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection_30 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "        └─TableFullScan_29 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_29 12487.50 root  MppVersion: 2, data:ExchangeSender_28",
-          "└─ExchangeSender_28 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_21 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "    ├─ExchangeReceiver_25(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_24 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection_23 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan_22 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
-          "    └─Selection_27(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan_26 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader_28 12487.50 root  MppVersion: 2, data:ExchangeSender_27",
+          "└─ExchangeSender_27 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_20 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_24(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_23 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_22 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_21 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    └─Selection_26(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      └─TableFullScan_25 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
-          "├─Sort_21(Build) 9990.00 root  test.t.a",
-          "│ └─TableReader_20 9990.00 root  MppVersion: 2, data:ExchangeSender_19",
-          "│   └─ExchangeSender_19 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─Selection_18 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "│       └─TableFullScan_17 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
-          "└─Sort_16(Probe) 9990.00 root  test.t.a",
-          "  └─TableReader_15 9990.00 root  MppVersion: 2, data:ExchangeSender_14",
-          "    └─ExchangeSender_14 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─Selection_13 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "        └─TableFullScan_12 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "MergeJoin_13 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
+          "├─Sort_23(Build) 9990.00 root  test.t.a",
+          "│ └─TableReader_22 9990.00 root  MppVersion: 2, data:ExchangeSender_21",
+          "│   └─ExchangeSender_21 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─Selection_20 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "│       └─TableFullScan_19 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "└─Sort_18(Probe) 9990.00 root  test.t.a",
+          "  └─TableReader_17 9990.00 root  MppVersion: 2, data:ExchangeSender_16",
+          "    └─ExchangeSender_16 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection_15 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "        └─TableFullScan_14 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1371,7 +1371,7 @@
       {
         "SQL": "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "HashJoin_8 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_56(Build) 9990.00 root  data:Selection_55",
           "│ └─Selection_55 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "│   └─TableFullScan_54 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -1386,7 +1386,7 @@
       {
         "SQL": "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "HashJoin_8 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_56(Build) 9990.00 root  data:Selection_55",
           "│ └─Selection_55 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "│   └─TableFullScan_54 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",

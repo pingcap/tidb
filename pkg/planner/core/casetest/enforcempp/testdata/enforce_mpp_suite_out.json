@@ -478,11 +478,11 @@
       {
         "SQL": "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
         "Plan": [
-          "MergeJoin_9 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
-          "├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
-          "│ └─TableFullScan_15 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "MergeJoin_11 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
+          "├─TableReader_18(Build) 10000.00 root  data:TableFullScan_17",
+          "│ └─TableFullScan_17 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -492,12 +492,12 @@
       {
         "SQL": "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
         "Plan": [
-          "IndexJoin_16 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
-          "├─TableReader_34(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_33",
-          "│ └─ExchangeSender_33 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_32 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableRangeScan_12",
-          "  └─TableRangeScan_12 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "IndexJoin_18 12500.00 root  inner join, inner:TableReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_36(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_35",
+          "│ └─ExchangeSender_35 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_34 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  data:TableRangeScan_14",
+          "  └─TableRangeScan_14 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -507,12 +507,12 @@
       {
         "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
         "Plan": [
-          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
-          "├─TableReader_33(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_32",
-          "│ └─ExchangeSender_32 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_31 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader_12(Probe) 10000.00 root  data:TableRangeScan_11",
-          "  └─TableRangeScan_11 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "IndexHashJoin_19 12500.00 root  inner join, inner:TableReader_14, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_35(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_34",
+          "│ └─ExchangeSender_34 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_33 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_14(Probe) 10000.00 root  data:TableRangeScan_13",
+          "  └─TableRangeScan_13 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -522,14 +522,14 @@
       {
         "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
         "Plan": [
-          "TableReader_48 12500.00 root  MppVersion: 2, data:ExchangeSender_47",
-          "└─ExchangeSender_47 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_46 12500.00 mpp[tiflash]  test.t.a",
-          "    └─HashJoin_41 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "      ├─ExchangeReceiver_44(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_43 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─TableFullScan_42 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─TableFullScan_45(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_28 12500.00 root  MppVersion: 2, data:ExchangeSender_27",
+          "└─ExchangeSender_27 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_26 12500.00 mpp[tiflash]  test.t.a",
+          "    └─HashJoin_21 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "      ├─ExchangeReceiver_24(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_23 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─TableFullScan_22 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan_25(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -649,7 +649,7 @@
       {
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
         "Plan": [
-          "MergeJoin_10 8000.00 root  anti semi join, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
+          "MergeJoin_11 8000.00 root  anti semi join, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
           "├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
           "│ └─TableFullScan_25 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
           "└─TableReader_23(Probe) 10000.00 root  data:TableFullScan_22",
