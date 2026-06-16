@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -1655,7 +1657,7 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 
 	var outputWriter *compareMaterializedViewOutputWriter
 	if e.stmt.OutputTable != nil {
-		outputWriter, err = e.openCompareMaterializedViewOutputWriter(ctx, schemaName, tblInfo, visibleCols)
+		outputWriter, err = e.openCompareMaterializedViewOutputWriter(ctx, tblInfo, visibleCols)
 		if err != nil {
 			return err
 		}
@@ -1908,7 +1910,6 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewSnapshotSession
 
 func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	ctx context.Context,
-	schemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 	visibleCols []*table.Column,
 ) (*compareMaterializedViewOutputWriter, error) {
@@ -1918,24 +1919,12 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ddlSctx.GetSQLExecutor().ExecuteInternal(
-		ctx,
-		"CREATE TABLE %n.%n LIKE %n.%n",
-		e.stmt.OutputTable.Schema.O,
-		e.stmt.OutputTable.Name.O,
-		schemaName.O,
-		tblInfo.Name.O,
-	); err != nil {
+	createSQL, err := buildCompareMaterializedViewOutputCreateTableSQL(ddlSctx, e.stmt.OutputTable, tblInfo, visibleCols, diffTypeColName)
+	if err != nil {
 		e.ReleaseSysSession(ctx, ddlSctx)
 		return nil, err
 	}
-	if _, err := ddlSctx.GetSQLExecutor().ExecuteInternal(
-		ctx,
-		"ALTER TABLE %n.%n ADD COLUMN %n VARCHAR(32) NOT NULL",
-		e.stmt.OutputTable.Schema.O,
-		e.stmt.OutputTable.Name.O,
-		diffTypeColName.O,
-	); err != nil {
+	if _, err := ddlSctx.GetSQLExecutor().ExecuteInternal(ctx, createSQL); err != nil {
 		e.ReleaseSysSession(ctx, ddlSctx)
 		return nil, err
 	}
@@ -1970,6 +1959,69 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		batchBytes:    resolveCompareMaterializedViewOutputWriterBatchBytes(),
 		release:       releaseInsertSession,
 	}, nil
+}
+
+func buildCompareMaterializedViewOutputCreateTableSQL(
+	sctx sessionctx.Context,
+	outputTable *ast.TableName,
+	tblInfo *model.TableInfo,
+	visibleCols []*table.Column,
+	diffTypeColName pmodel.CIStr,
+) (string, error) {
+	outputTblInfo := &model.TableInfo{
+		Name:    outputTable.Name,
+		Charset: tblInfo.Charset,
+		Collate: tblInfo.Collate,
+		State:   model.StatePublic,
+		Columns: make([]*model.ColumnInfo, 0, len(visibleCols)+1),
+	}
+	const outputColumnExcludedFlags = mysql.PriKeyFlag |
+		mysql.UniqueKeyFlag |
+		mysql.MultipleKeyFlag |
+		mysql.AutoIncrementFlag |
+		mysql.NoDefaultValueFlag |
+		mysql.OnUpdateNowFlag
+	for i, col := range visibleCols {
+		colInfo := col.ToInfo().Clone()
+		colInfo.Offset = i
+		colInfo.State = model.StatePublic
+		colInfo.FieldType.SetFlag(colInfo.GetFlag() &^ outputColumnExcludedFlags)
+		outputTblInfo.Columns = append(outputTblInfo.Columns, colInfo)
+	}
+	outputCharset, outputCollate := outputTblInfo.Charset, outputTblInfo.Collate
+	if outputCharset == "" {
+		outputCharset = mysql.DefaultCharset
+	}
+	if outputCollate == "" {
+		outputCollate = getDefaultCollate(outputCharset)
+	}
+	diffTypeCol := &model.ColumnInfo{
+		ID:     int64(len(outputTblInfo.Columns) + 1),
+		Name:   diffTypeColName,
+		Offset: len(outputTblInfo.Columns),
+		FieldType: *types.NewFieldTypeBuilder().
+			SetType(mysql.TypeVarchar).
+			SetFlen(32).
+			SetFlag(mysql.NotNullFlag).
+			SetCharset(outputCharset).
+			SetCollate(outputCollate).
+			BuildP(),
+		State: model.StatePublic,
+	}
+	outputTblInfo.Columns = append(outputTblInfo.Columns, diffTypeCol)
+
+	var tableDef bytes.Buffer
+	if err := ConstructResultOfShowCreateTable(sctx, outputTblInfo, autoid.Allocators{}, &tableDef); err != nil {
+		return "", err
+	}
+	sqlMode := sctx.GetSessionVars().SQLMode
+	tablePrefix := "CREATE TABLE " + stringutil.Escape(outputTable.Name.O, sqlMode)
+	tableDefSQL := tableDef.String()
+	if !strings.HasPrefix(tableDefSQL, tablePrefix) {
+		return "", errors.Errorf("compare materialized view: invalid output table DDL %q", tableDefSQL)
+	}
+	qualifiedName := stringutil.Escape(outputTable.Schema.O, sqlMode) + "." + stringutil.Escape(outputTable.Name.O, sqlMode)
+	return "CREATE TABLE " + qualifiedName + strings.TrimPrefix(tableDefSQL, tablePrefix), nil
 }
 
 func prepareCompareMaterializedViewSnapshotSession(

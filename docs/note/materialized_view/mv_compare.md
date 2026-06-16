@@ -1,20 +1,21 @@
 # Materialized View Compare (Implementation and Design Notes)
 
-This document describes the design and implementation plan for:
+This document describes the design and implementation notes for:
 
 ```sql
 COMPARE MATERIALIZED VIEW <mv> AS OF TIMESTAMP <ts_expr> [OUTPUT INTO TABLE <table>]
 ```
 
-Current status:
+Current implementation status:
 
-- Parser / AST / planner / executor skeleton exists.
-- Privilege skeleton tests exist.
-- Runtime compare logic is not implemented yet.
+- Parser / AST / planner / executor support is implemented.
+- Compare execution uses explicit snapshot semantics from `AS OF TIMESTAMP`.
+- The target MV metadata is resolved from the snapshot InfoSchema at the compare snapshot `S`, not from the current InfoSchema. This keeps the MV table ID, column schema, and refresh-info lookup consistent with snapshot `S`, including out-of-place refresh cutover cases.
+- `OUTPUT INTO TABLE` is implemented. The output table is created from the snapshot MV public-column schema plus the differ-type column; it does not inherit MV indexes, constraints, partitioning, or MV-specific metadata.
 
 ## Goals
 
-1. Compare current MV table data and base-query snapshot data with explicit snapshot semantics.
+1. Compare MV table data at snapshot `S` and base-query snapshot data at refresh watermark `R`.
 2. Preserve correctness under different read timestamps:
    - MV side reads at statement snapshot `S`.
    - Base-query side reads at refresh watermark `R` (`LAST_SUCCESS_READ_TSO`).
@@ -42,10 +43,13 @@ Semantics:
 
 1. Let `S` be the compare statement snapshot timestamp (from `AS OF TIMESTAMP`).
    - In execution terms, `S` is the read snapshot of this compare statement (the statement-level read TS / start TS).
-2. Read MV table and refresh-info row at snapshot `S`.
-3. Read `R = mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO` from that same snapshot `S`.
-4. Execute MV definition SQL on base tables at snapshot `R`.
-5. Compare `MV@S` vs `BaseQuery@R` by full-outer semantics on group keys.
+2. Load snapshot InfoSchema at `S` and resolve the target MV from that snapshot.
+   - The MV physical table ID used for refresh-info lookup must come from snapshot `S`.
+   - This is required when an out-of-place refresh cutover has changed the current MV physical table ID after `S`.
+3. Read MV table and refresh-info row at snapshot `S`.
+4. Read `R = mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO` from that same snapshot `S`.
+5. Execute MV definition SQL on base tables at snapshot `R`.
+6. Compare `MV@S` vs `BaseQuery@R` by full-outer semantics on group keys.
 
 Output behavior:
 
@@ -59,7 +63,9 @@ Output behavior:
    - TiDB automatically creates the target table;
    - if the target table already exists, the statement returns table-exists error;
    - execution requires `CREATE` and `INSERT` privileges on the target table schema.
-   - if target-table creation succeeds but compare later fails, the created table may remain; compare does not promise DDL rollback.
+   - the target table schema is built from snapshot `S` MV public columns plus the differ-type column;
+   - the target table does not copy MV indexes, constraints, partitioning, or MV-specific metadata;
+   - if target-table creation succeeds but compare later fails, the created table may remain; if output rows have already been flushed, committed batches may also remain.
 
 Privilege semantics:
 
@@ -90,20 +96,21 @@ The chosen semantics (`MV@S` vs `Base@R`) answers the operational question more 
 
 Use a utility executor (`CompareMaterializedViewExec`) to orchestrate two snapshot readers, then wire a full outer `HashJoinV1Exec` as the diff engine inside compare execution.
 
-### Phase 1: Resolve target and validate
+### Phase 1: Capture snapshot, resolve target, and validate
 
-1. Resolve target MV table and ensure `MaterializedView` metadata exists.
-2. Ensure MV is `Ready`.
-3. Check base-table `SELECT` privilege (`checkRefreshMaterializedViewBaseTableSelect`).
-4. If `OUTPUT INTO TABLE` is set:
+1. Evaluate compare statement `AS OF` to get `S` and validate stale-read TS.
+2. Load snapshot InfoSchema for `S`.
+3. Resolve the target MV table from snapshot InfoSchema `S` and ensure `MaterializedView` metadata exists.
+4. Ensure MV is `Ready` at snapshot `S`.
+5. Check base-table `SELECT` privilege against snapshot MV metadata (`checkRefreshMaterializedViewBaseTableSelect`).
+6. If `OUTPUT INTO TABLE` is set:
    - check target table does not exist;
    - check `CREATE` and `INSERT` privileges on the target schema.
 
-### Phase 2: Capture snapshots and read watermark
+### Phase 2: Read refresh watermark
 
-1. Evaluate compare statement `AS OF` to get `S` and validate stale-read TS.
-2. Read `LAST_SUCCESS_READ_TSO` from `mysql.tidb_mview_refresh_info` at snapshot `S`.
-3. Let `R = LAST_SUCCESS_READ_TSO`.
+1. Read `LAST_SUCCESS_READ_TSO` from `mysql.tidb_mview_refresh_info` at snapshot `S`, using the snapshot MV table ID from Phase 1.
+2. Let `R = LAST_SUCCESS_READ_TSO`.
 
 Rules:
 
@@ -117,6 +124,7 @@ Rules:
    - row shape: MV table public columns in MV order.
 2. Base reader at snapshot `R`:
    - SQL source: `mv.MaterializedView.SQLContent`;
+   - session SQL mode, time zone, and related definition-time settings restored from MV metadata;
    - field aliases rewritten to MV column names (same as complete-diff builder contract);
    - row shape aligned to MV columns.
 
@@ -164,7 +172,7 @@ This keeps full outer join concurrency and row-matching behavior reused from the
 
 Output table schema contract:
 
-1. Start from the MV public-column schema in MV column order.
+1. Start from the snapshot `S` MV public-column schema in MV column order.
 2. Add one extra column named `_Differ_type_`.
 3. If the MV already contains `_Differ_type_`, append a numeric suffix and use `_Differ_type_1`, `_Differ_type_2`, and so on until the name is unique.
 4. `_Differ_type_` values are:
@@ -172,9 +180,10 @@ Output table schema contract:
    - `mview_vacuum`
    - `mview_excessive`
 5. Row-value source in the output table is:
-   - `mview_differ`: write the current MV row values;
-   - `mview_excessive`: write the current MV row values;
+   - `mview_differ`: write the `MV@S` row values;
+   - `mview_excessive`: write the `MV@S` row values;
    - `mview_vacuum`: write the base-query row values from snapshot `R`.
+6. The output table keeps MV public column types/defaults/comments where applicable, but it does not inherit indexes, primary/unique constraints, foreign keys, check constraints, partitioning, TTL, placement, TiFlash replica, auto-id options, or MV-specific metadata.
 
 ## Contract with existing MV logic
 
@@ -200,64 +209,25 @@ For grouped MV, this keeps compare semantics aligned with COMPLETE DELTA APPLY d
 1. Correctness is the primary requirement, but the implementation should still avoid obviously poor performance.
 2. Summary mode should still count differing rows accurately; it cannot stop after the first mismatch.
 3. Output-table mode should stream diff rows and avoid retaining full diff in memory.
-4. The current design uses full-outer diff semantics for clarity and correctness. If a better execution strategy is introduced later, it should preserve the same compare semantics.
+4. Output-table writes are batched to avoid a single very large transaction.
+5. The current design uses full-outer diff semantics for clarity and correctness. If a better execution strategy is introduced later, it should preserve the same compare semantics.
 
 ## Code map (implementation landing)
 
-- Parser / AST (already present):
+- Parser / AST:
   - `pkg/parser/parser.y`
   - `pkg/parser/ast/misc.go`
-- Planner skeleton (already present):
+- Planner:
   - `pkg/planner/core/planbuilder.go` (`buildCompareMaterializedView`)
   - `pkg/planner/core/common_plans.go` (`CompareMaterializedView`)
-- Executor implementation (to fill):
+- Executor implementation:
   - `pkg/executor/materialized_view.go` (`CompareMaterializedViewExec`)
 - Reusable MV diff metadata helpers:
   - `pkg/planner/mview/mvmerge.go`
 
-## Suggested implementation stages
+## Test coverage
 
-### Stage 1: snapshot and metadata flow
-
-1. Implement `S` evaluation from compare `AS OF`.
-2. Read `R` from refresh-info at snapshot `S`.
-3. Add full validation/error paths.
-
-Acceptance:
-
-1. compare statement reaches deterministic precheck outcome.
-
-### Stage 2: dual-reader execution
-
-1. Build MV reader at `S` and base reader at `R`.
-2. Align base output columns to MV schema order.
-
-Acceptance:
-
-1. both readers can be drained independently with aligned row shape.
-
-### Stage 3: executor-level full outer join reuse
-
-1. Build `MV@S` / `Base@R` child executors with aligned schemas.
-2. Wire them into a full outer `HashJoinV1Exec` with the same nullable-key rules as COMPLETE DELTA APPLY.
-3. Consume join output and produce differing-row count plus per-row differ classification.
-
-Acceptance:
-
-1. insert-only/delete-only/update-only/mixed/no-op cases are correct.
-
-### Stage 4: output modes
-
-1. Summary row mode (`compare result` text output).
-2. `OUTPUT INTO TABLE` auto-create and persistence mode.
-
-Acceptance:
-
-1. output table mode auto-creates the target table, writes stable diff rows, and keeps existing privilege checks.
-
-## Test plan (minimum)
-
-1. Privilege path (existing skeleton) remains valid.
+1. Privilege path remains valid.
 2. Correctness cases:
    - no diff,
    - `mview_vacuum`,
@@ -268,6 +238,7 @@ Acceptance:
 4. `LAST_SUCCESS_READ_TSO` null/missing row/system-table missing.
 5. GC-safe-point rejection for snapshot `R`.
 6. `OUTPUT INTO TABLE` success, table-exists conflict, and `_Differ_type_` name-conflict handling.
+7. Snapshot metadata after out-of-place refresh cutover, including output table creation from snapshot MV schema rather than current MV indexes.
 
 ## Open follow-ups
 

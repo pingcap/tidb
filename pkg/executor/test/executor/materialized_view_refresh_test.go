@@ -3688,13 +3688,16 @@ func TestCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover(t *te
 	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_compare_oop_snapshot"))
 	require.NoError(t, err)
 	require.NotEqual(t, oldMViewID, mvTable.Meta().ID)
+	tk.MustExec("create index idx_current_s on mv_compare_oop_snapshot (s)")
+	require.NotEmpty(t, tk.MustQuery("show index from mv_compare_oop_snapshot").Rows())
 
-	rows := tk.MustQuery(fmt.Sprintf(
-		"compare materialized view test.mv_compare_oop_snapshot as of timestamp '%s'",
-		compareTS,
-	)).Rows()
+	compareSQL := fmt.Sprintf("compare materialized view test.mv_compare_oop_snapshot as of timestamp '%s'", compareTS)
+	rows := tk.MustQuery(compareSQL).Rows()
 	require.Len(t, rows, 1)
 	require.Contains(t, fmt.Sprint(rows[0][0]), "0 rows")
+
+	tk.MustExec(compareSQL + " output into table test.mv_compare_oop_snapshot_diff")
+	tk.MustQuery("show index from mv_compare_oop_snapshot_diff").Check(testkit.Rows())
 }
 
 func TestCompareMaterializedViewOutputWriterBatchesByTxnSize(t *testing.T) {
