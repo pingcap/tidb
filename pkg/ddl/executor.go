@@ -7357,7 +7357,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 				logutil.DDLLogger().Error("get current DDL job failed, check again", zap.Error(getCurrentJobErr))
 				continue
 			}
-			if currentJob != nil && currentJob.IsPausingOrPausedBySystemForKVDiskFull() {
+			if currentJob != nil && currentJob.IsPausedBySystemForKVDiskFull() {
 				logutil.DDLLogger().Info("DDL job is auto-paused because TiKV disk is full", zap.Int64("jobID", jobID))
 				if currentJob.Error != nil {
 					err = errors.Trace(currentJob.Error)

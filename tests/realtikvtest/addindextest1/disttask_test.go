@@ -171,31 +171,69 @@ func TestAddIndexDistAutoPauseOnKVDiskFull(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task=0;")
 	})
-	tk.MustExec("create table t(a int, b int);")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	failpointName := "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.State == model.JobStatePausing && job.HasPauseReason(model.JobPauseReasonKVDiskFull) {
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
 
-	failpointName := "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace"
-	testfailpoint.Enable(t, failpointName, "return()")
-	err := tk.ExecToErr("alter table t add index idx_b(b);")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
-	testfailpoint.Disable(t, failpointName)
+	runAutoPauseCase := func(alterSQL, checkSQL string, verifyJob func(*model.Job)) {
+		testfailpoint.Enable(t, failpointName, "return()")
+		err := tk.ExecToErr(alterSQL)
+		require.Error(t, err)
+		require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+		testfailpoint.Disable(t, failpointName)
 
-	rows := tk.MustQuery("select job_id, job_meta from mysql.tidb_ddl_job").Rows()
-	require.Len(t, rows, 1)
-	jobID := fmt.Sprint(rows[0][0])
-	job := model.Job{}
-	require.NoError(t, job.Decode([]byte(rows[0][1].(string))))
-	require.True(t, job.IsPausingOrPausedBySystemForKVDiskFull(), "job: %s", job.String())
-	require.NotNil(t, job.PauseReason)
-	require.Contains(t, job.PauseReason.Message, "TiKV disk full")
-	require.Zero(t, job.ErrorCount)
+		rows := tk.MustQuery("select job_id, job_meta from mysql.tidb_ddl_job").Rows()
+		require.Len(t, rows, 1)
+		jobID := fmt.Sprint(rows[0][0])
+		job := model.Job{}
+		require.NoError(t, job.Decode([]byte(rows[0][1].(string))))
+		require.True(t, job.IsPausedBySystemForKVDiskFull(), "job: %s", job.String())
+		require.NotNil(t, job.PauseReason)
+		require.Contains(t, job.PauseReason.Message, "TiKV disk full")
+		require.Zero(t, job.ErrorCount)
+		verifyJob(&job)
 
-	tk.MustExec("admin resume ddl jobs " + jobID)
-	require.Eventually(t, func() bool {
-		err := tk.ExecToErr("admin check index t idx_b;")
-		return err == nil
-	}, 30*time.Second, 200*time.Millisecond)
+		tk.MustExec("admin resume ddl jobs " + jobID)
+		require.Eventually(t, func() bool {
+			return tk.ExecToErr(checkSQL) == nil
+		}, 30*time.Second, 200*time.Millisecond)
+	}
+
+	t.Run("single add index", func(t *testing.T) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+		runAutoPauseCase(
+			"alter table t add index idx_b(b);",
+			"admin check index t idx_b;",
+			func(job *model.Job) {
+				require.Equal(t, model.ActionAddIndex, job.Type)
+			},
+		)
+	})
+
+	t.Run("multi-schema add index", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_multi;")
+		tk.MustExec("create table t_multi(a int, b int, c int);")
+		tk.MustExec("insert into t_multi values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+
+		runAutoPauseCase(
+			"alter table t_multi add column d int default 0, add index idx_b(b);",
+			"admin check index t_multi idx_b;",
+			func(job *model.Job) {
+				require.Equal(t, model.ActionMultiSchemaChange, job.Type)
+				require.NotNil(t, job.MultiSchemaInfo)
+				require.Len(t, job.MultiSchemaInfo.SubJobs, 2)
+				require.Equal(t, model.ActionAddColumn, job.MultiSchemaInfo.SubJobs[0].Type)
+				require.Equal(t, model.ActionAddIndex, job.MultiSchemaInfo.SubJobs[1].Type)
+			},
+		)
+		tk.MustQuery("select d from t_multi order by a;").Check(testkit.Rows("0", "0", "0"))
+	})
 }
 
 func TestAddIndexDistCancelWithPartition(t *testing.T) {
