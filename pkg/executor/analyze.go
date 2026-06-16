@@ -412,6 +412,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
+	failpoint.InjectCall("beforeUpdateStatsCacheAfterAnalyze")
 	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
 }
 

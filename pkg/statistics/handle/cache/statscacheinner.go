@@ -143,11 +143,19 @@ func (sc *StatsCache) Version() uint64 {
 	return sc.maxTblStatsVer.Load()
 }
 
+func (sc *StatsCache) shouldSkipTableUpdate(tbl *statistics.Table) bool {
+	current, ok := sc.c.Get(tbl.PhysicalID)
+	return ok && current != nil && current.Version > tbl.Version
+}
+
 // CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
 func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64) *StatsCache {
 	newCache := &StatsCache{c: sc.c.Copy()}
 	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
 	for _, tbl := range tables {
+		if newCache.shouldSkipTableUpdate(tbl) {
+			continue
+		}
 		id := tbl.PhysicalID
 		newCache.c.Put(id, tbl)
 	}
@@ -167,6 +175,9 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 // Update updates the new statistics table cache.
 func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, skipMoveForwardStatsCache bool) {
 	for _, tbl := range tables {
+		if sc.shouldSkipTableUpdate(tbl) {
+			continue
+		}
 		id := tbl.PhysicalID
 		metrics.UpdateCounter.Inc()
 		sc.c.Put(id, tbl)
