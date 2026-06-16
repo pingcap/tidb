@@ -204,7 +204,11 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N",
+		"Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
