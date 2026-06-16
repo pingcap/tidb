@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
@@ -293,6 +294,23 @@ func WriteInsert(
 }
 
 // WriteInsertInCsv writes TableDataIR to objectio.Writer in csv type
+// columnKinds maps Dumpling column type names to csvfile FieldKinds, mirroring
+// the Number/String/Bytes split that colTypeRowReceiverMap uses to pick a
+// RowReceiver.
+func columnKinds(colTypes []string) []csvfile.FieldKind {
+	kinds := make([]csvfile.FieldKind, len(colTypes))
+	for i, ct := range colTypes {
+		if _, ok := dataTypeString[ct]; ok {
+			kinds[i] = csvfile.KindString
+		} else if _, ok := dataTypeBin[ct]; ok {
+			kinds[i] = csvfile.KindBytes
+		} else {
+			kinds[i] = csvfile.KindNumber
+		}
+	}
+	return kinds
+}
+
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -312,13 +330,16 @@ func WriteInsertInCsv(
 	}
 
 	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, metrics, cfg.Labels)
-	opt := &csvOption{
-		nullValue:      cfg.CsvNullValue,
-		separator:      []byte(cfg.CsvSeparator),
-		delimiter:      []byte(cfg.CsvDelimiter),
-		lineTerminator: []byte(cfg.CsvLineTerminator),
-		binaryFormat:   DialectBinaryFormatMap[cfg.CsvOutputDialect],
+	csvCfg := &csvfile.Config{
+		NullValue:       []byte(cfg.CsvNullValue),
+		Separator:       []byte(cfg.CsvSeparator),
+		Delimiter:       []byte(cfg.CsvDelimiter),
+		LineTerminator:  []byte(cfg.CsvLineTerminator),
+		BinaryFormat:    csvfile.BinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
+		EscapeBackslash: cfg.EscapeBackslash,
 	}
+	// cw writes into bf; bf is swapped on flush below, so cw.Reset(bf) follows.
+	cw := csvfile.NewCSVWriter(bf, columnKinds(meta.ColumnTypes()), csvCfg)
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
 	ctx, cancel := tcontext.Background().WithLogger(pCtx.L()).WithCancel()
@@ -334,11 +355,10 @@ func WriteInsertInCsv(
 	}()
 
 	var (
-		row             = MakeRowReceiver(meta.ColumnTypes())
-		counter         uint64
-		lastCounter     uint64
-		escapeBackslash = cfg.EscapeBackslash
-		selectedFields  = meta.SelectedField()
+		row            = MakeRowReceiver(meta.ColumnTypes())
+		counter        uint64
+		lastCounter    uint64
+		selectedFields = meta.SelectedField()
 	)
 
 	defer func() {
@@ -363,15 +383,14 @@ func WriteInsertInCsv(
 	}()
 
 	if !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != "" {
-		for i, col := range meta.ColumnNames() {
-			bf.Write(opt.delimiter)
-			escapeCSV([]byte(col), bf, escapeBackslash, opt)
-			bf.Write(opt.delimiter)
-			if i != len(meta.ColumnTypes())-1 {
-				bf.Write(opt.separator)
-			}
+		colNames := meta.ColumnNames()
+		nameBytes := make([][]byte, len(colNames))
+		for i, col := range colNames {
+			nameBytes[i] = []byte(col)
 		}
-		bf.Write(opt.lineTerminator)
+		if err = cw.WriteHeader(nameBytes); err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
 	wp.currentFileSize += uint64(bf.Len())
 
@@ -384,10 +403,14 @@ func WriteInsertInCsv(
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
 			}
-			row.WriteToBufferInCsv(bf, escapeBackslash, opt)
+			if err = cw.Write(row.GetRawBytes()); err != nil {
+				return counter, errors.Trace(err)
+			}
+		} else {
+			// All columns are generated; emit only the line terminator.
+			bf.Write(csvCfg.LineTerminator)
 		}
 		counter++
-		bf.Write(opt.lineTerminator)
 		wp.currentFileSize += uint64(bf.Len() - lastBfSize)
 		if bf.Len() >= lengthLimit {
 			select {
@@ -400,6 +423,7 @@ func WriteInsertInCsv(
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
 					bf.Grow(lengthLimit - bfCap)
 				}
+				cw.Reset(bf)
 				AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 				lastCounter = counter
 			}
