@@ -43,13 +43,6 @@ func (w *withCompression) Create(ctx context.Context, name string, o *WriterOpti
 	return compressedWriter, nil
 }
 
-<<<<<<< HEAD
-||||||| parent of 671f64d831 ([main-8.5-keyspace] dumpling: add calculate export size (#1987))
-func (w *withCompression) GetPresignedFileURL(ctx context.Context, fileName string, expire time.Duration) (string, error) {
-	return w.ExternalStorage.GetPresignedFileURL(ctx, fileName, expire)
-}
-
-=======
 type CountingWriter struct {
 	w    ExternalFileWriter
 	size uint64
@@ -71,11 +64,6 @@ func (cw *CountingWriter) Size() uint64 {
 	return cw.size
 }
 
-func (w *withCompression) GetPresignedFileURL(ctx context.Context, fileName string, expire time.Duration) (string, error) {
-	return w.ExternalStorage.GetPresignedFileURL(ctx, fileName, expire)
-}
-
->>>>>>> 671f64d831 ([main-8.5-keyspace] dumpling: add calculate export size (#1987))
 func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	fileReader, err := w.ExternalStorage.Open(ctx, path, o)
 	if err != nil {
