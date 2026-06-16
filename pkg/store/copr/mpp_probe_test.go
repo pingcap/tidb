@@ -281,7 +281,7 @@ func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
 		return statsHandler.connBegins.Load() == 1
 	}, time.Second, 10*time.Millisecond)
 
-	GlobalMPPInfoManager.Prune(map[string]struct{}{})
+	Prune(map[string]struct{}{})
 
 	items, err := GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
 	require.NoError(t, err)
@@ -331,17 +331,22 @@ func TestMppInfoManager(t *testing.T) {
 	staleAddress, _, _ := startDiagnosticsGRPCServerForTest(t)
 	_, err := GetServerInfoByGRPC(context.Background(), staleAddress, diagnosticspb.ServerInfoType_All)
 	require.NoError(t, err)
-	manager.Add(&MPPInfo{
+	activeAddress := "789"
+	GlobalMPPInfoManager.Add(&MPPInfo{
 		Address:         staleAddress,
 		LogicalCPUCount: 456,
 		StartTimestamp:  789,
 	})
-	manager.Add(&MPPInfo{
-		Address:         "789",
+	GlobalMPPInfoManager.Add(&MPPInfo{
+		Address:         activeAddress,
 		LogicalCPUCount: 789,
 		StartTimestamp:  123,
 	})
-	manager.Prune(map[string]struct{}{"789": {}})
-	require.Nil(t, manager.Get(staleAddress))
-	require.NotNil(t, manager.Get("789"))
+	t.Cleanup(func() {
+		GlobalMPPInfoManager.Delete(staleAddress)
+		GlobalMPPInfoManager.Delete(activeAddress)
+	})
+	Prune(map[string]struct{}{activeAddress: {}})
+	require.Nil(t, GlobalMPPInfoManager.Get(staleAddress))
+	require.NotNil(t, GlobalMPPInfoManager.Get(activeAddress))
 }

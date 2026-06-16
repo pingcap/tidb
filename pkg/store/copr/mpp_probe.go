@@ -121,7 +121,7 @@ func (t *MppInfoManager) Get(address string) *MPPInfo {
 }
 
 // Prune deletes cached gRPC connections that are no longer in active stores.
-func (t *MppInfoManager) Prune(activeStores map[string]struct{}) {
+func Prune(activeStores map[string]struct{}) {
 	deletedAddrs := make(map[string]struct{})
 	connCache.Range(func(key, value any) bool {
 		cacheKey := key.(connCacheKey)
@@ -131,13 +131,14 @@ func (t *MppInfoManager) Prune(activeStores map[string]struct{}) {
 		}
 		if _, ok := deletedAddrs[address]; !ok {
 			deletedAddrs[address] = struct{}{}
+			GlobalMPPInfoManager.Delete(address)
 		}
 		deleteGRPCConnByKey(cacheKey, value)
 		return true
 	})
 }
 
-func fetchMPPStoreAddresses(ctx context.Context, pdClient pd.Client) (map[string]struct{}, error) {
+func fetchStoreAddresses(ctx context.Context, pdClient pd.Client) (map[string]struct{}, error) {
 	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
@@ -288,12 +289,12 @@ func (t *MPPFailedStoreProber) Run(pdClient pd.Client) {
 				if pdClient == nil {
 					continue
 				}
-				activeStores, err := fetchMPPStoreAddresses(t.ctx, pdClient)
+				activeStores, err := fetchStoreAddresses(t.ctx, pdClient)
 				if err != nil {
 					logutil.BgLogger().Warn("failed to fetch mpp stores for pruning mpp info", zap.Error(err))
 					continue
 				}
-				GlobalMPPInfoManager.Prune(activeStores)
+				Prune(activeStores)
 			}
 		}
 	}()
