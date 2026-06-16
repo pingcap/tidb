@@ -23,12 +23,13 @@ import (
 	"context"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 )
 
 // Manager coordinates TiDB background workloads with the external workload controller.
 type Manager interface {
-	// Role returns the role this TiDB is acting in (see config.Role* constants).
-	Role() string
+	// Role returns the role this TiDB is acting in.
+	Role() config.ExternalWorkloadRole
 	// Meta returns the keyspace metadata bound to this TiDB.
 	Meta() *keyspacepb.KeyspaceMeta
 

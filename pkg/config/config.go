@@ -1578,6 +1578,9 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
+	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1766,7 +1769,11 @@ func (c *Config) Valid() error {
 	if err := c.TrxSummary.Valid(); err != nil {
 		return err
 	}
-	if c.DeployMode == deploymode.Starter {
+	if c.DeployMode != deploymode.Starter {
+		if c.ExternalWorkload.isConfigured() {
+			return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+		}
+	} else {
 		if err := c.ExternalWorkload.Valid(); err != nil {
 			return err
 		}

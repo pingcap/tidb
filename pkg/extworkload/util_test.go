@@ -24,11 +24,11 @@ import (
 
 type stubManager struct {
 	Manager
-	role string
+	role config.ExternalWorkloadRole
 }
 
-func (s *stubManager) Role() string                   { return s.role }
-func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
+func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
+func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return nil }
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
 	restore := SetManagerForTest(nil)
@@ -43,7 +43,7 @@ func TestRolePredicatesWhenDisabled(t *testing.T) {
 
 func TestRolePredicatesDedicated(t *testing.T) {
 	cases := []struct {
-		role string
+		role config.ExternalWorkloadRole
 		pred func() bool
 	}{
 		{config.RoleMaster, IsMaster},
@@ -52,7 +52,7 @@ func TestRolePredicatesDedicated(t *testing.T) {
 		{config.RoleAutoAnalyzeWorker, IsAutoAnalyzeWorker},
 	}
 	for _, c := range cases {
-		t.Run(c.role, func(t *testing.T) {
+		t.Run(string(c.role), func(t *testing.T) {
 			restore := SetManagerForTest(&stubManager{role: c.role})
 			t.Cleanup(restore)
 			for _, other := range cases {

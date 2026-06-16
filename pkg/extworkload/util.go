@@ -31,6 +31,6 @@ func IsTTLTaskWorker() bool { return roleIs(config.RoleTTLTaskWorker) }
 // IsAutoAnalyzeWorker reports whether this TiDB should run auto-analyze jobs.
 func IsAutoAnalyzeWorker() bool { return roleIs(config.RoleAutoAnalyzeWorker) }
 
-func roleIs(role string) bool {
+func roleIs(role config.ExternalWorkloadRole) bool {
 	return IsEnabled() && globalManager.Role() == role
 }

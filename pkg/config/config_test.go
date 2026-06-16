@@ -1907,13 +1907,20 @@ func TestExternalWorkloadValid(t *testing.T) {
 	require.NoError(t, conf.Valid())
 
 	conf.ExternalWorkload.Enable = true
-	require.NoError(t, conf.Valid())
+	require.ErrorContains(t, conf.Valid(), "external-workload can only be configured when deploy-mode is starter")
+
+	conf = NewConfig()
+	confFile := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(confFile, []byte("[external-workload]\nenable = false\n"), 0644))
+	require.ErrorContains(t, conf.Load(confFile), "external-workload can only be configured when deploy-mode is starter")
 
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen kernel")
 	}
 
+	conf = NewConfig()
 	conf.DeployMode = deploymode.Starter
+	conf.ExternalWorkload.Enable = true
 	require.ErrorContains(t, conf.Valid(), "external-workload api-server must not be empty")
 
 	conf.ExternalWorkload.APIServerAddr = "http://127.0.0.1:1234"

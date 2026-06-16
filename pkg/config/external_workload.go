@@ -19,27 +19,28 @@ import (
 	"strings"
 )
 
-// External workload role names accepted by [external-workload].
+// ExternalWorkloadRole is the role name accepted by [external-workload].
+type ExternalWorkloadRole string
+
+// External workload roles accepted by the [external-workload] config.
 const (
-	RoleMaster            = "master"
-	RoleGCV2Worker        = "gcv2"
-	RoleTTLTaskWorker     = "ttl"
-	RoleAutoAnalyzeWorker = "auto-analyze"
+	// RoleMaster keeps the default TiDB behavior: all supported workloads run in this process.
+	RoleMaster            ExternalWorkloadRole = "master"
+	RoleGCV2Worker        ExternalWorkloadRole = "gcv2"
+	RoleTTLTaskWorker     ExternalWorkloadRole = "ttl"
+	RoleAutoAnalyzeWorker ExternalWorkloadRole = "auto-analyze"
 )
 
 // ExternalWorkload is the Starter-only [external-workload] section.
 type ExternalWorkload struct {
-	Enable        bool   `toml:"enable" json:"enable"`
-	Role          string `toml:"role" json:"role"`
-	TidbPool      string `toml:"tidb-pool" json:"tidb-pool"`
-	APIServerAddr string `toml:"api-server" json:"api-server"`
+	Enable        bool                 `toml:"enable" json:"enable,omitempty"`
+	Role          ExternalWorkloadRole `toml:"role" json:"role,omitempty"`
+	TidbPool      string               `toml:"tidb-pool" json:"tidb-pool,omitempty"`
+	APIServerAddr string               `toml:"api-server" json:"api-server,omitempty"`
 }
 
 func defaultExternalWorkload() ExternalWorkload {
-	return ExternalWorkload{
-		Enable: false,
-		Role:   RoleMaster,
-	}
+	return ExternalWorkload{}
 }
 
 // Valid normalizes and validates an enabled [external-workload] section.
@@ -47,7 +48,10 @@ func (w *ExternalWorkload) Valid() error {
 	if !w.Enable {
 		return nil
 	}
-	w.Role = strings.ToLower(strings.TrimSpace(w.Role))
+	w.Role = ExternalWorkloadRole(strings.ToLower(strings.TrimSpace(string(w.Role))))
+	if w.Role == "" {
+		w.Role = RoleMaster
+	}
 	w.APIServerAddr = strings.TrimSpace(w.APIServerAddr)
 	w.TidbPool = strings.TrimSpace(w.TidbPool)
 	if w.APIServerAddr == "" {
@@ -65,4 +69,12 @@ func (w *ExternalWorkload) Valid() error {
 		return fmt.Errorf("external-workload tidb-pool must not be empty when enabled")
 	}
 	return nil
+}
+
+func (w ExternalWorkload) isConfigured() bool {
+	role := ExternalWorkloadRole(strings.ToLower(strings.TrimSpace(string(w.Role))))
+	return w.Enable ||
+		role != "" ||
+		strings.TrimSpace(w.APIServerAddr) != "" ||
+		strings.TrimSpace(w.TidbPool) != ""
 }

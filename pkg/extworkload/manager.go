@@ -48,7 +48,7 @@ var _ Manager = (*manager)(nil)
 
 type manager struct {
 	cli  client.Client
-	role string
+	role config.ExternalWorkloadRole
 	meta *keyspacepb.KeyspaceMeta
 }
 
@@ -70,7 +70,7 @@ func InitManager(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg
 	}
 	globalManager = &manager{cli: cli, role: cfg.Role, meta: keyspaceMeta}
 	logutil.BgLogger().Info("external workload manager installed",
-		zap.String("role", cfg.Role),
+		zap.String("role", string(cfg.Role)),
 		zap.String("keyspace", keyspaceMeta.GetName()),
 		zap.Uint32("keyspace-id", keyspaceMeta.GetId()))
 	return nil
@@ -109,8 +109,8 @@ func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg 
 	return cli, nil
 }
 
-func (m *manager) Role() string                   { return m.role }
-func (m *manager) Meta() *keyspacepb.KeyspaceMeta { return m.meta }
+func (m *manager) Role() config.ExternalWorkloadRole { return m.role }
+func (m *manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
 
 // bumpCounter increments the per-event counter exposed by pkg/metrics.
 func bumpCounter(workerType, action string) {
