@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/google/uuid"
@@ -73,7 +74,7 @@ func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return
 	}
-	if meta.OperationID == "" || meta.ResourceType == "" || len(meta.TxnID) == 0 {
+	if meta.OwnerID == "" || meta.LockType == "" || len(meta.TxnID) == 0 {
 		return
 	}
 
@@ -98,18 +99,16 @@ func requireCapturedLockMeta(
 
 	var matches []capturedLockWrite
 	for _, write := range writes {
-		if write.meta.ResourceType == string(resource) {
+		if write.meta.LockType == string(resource) {
 			matches = append(matches, write)
 		}
 	}
 	require.Len(t, matches, 1)
 
 	meta := matches[0].meta
-	require.Equal(t, opCtx.OperationID, meta.OperationID)
-	require.NotNil(t, meta.OperationStartedAt)
-	require.True(t, meta.OperationStartedAt.Equal(opCtx.StartedAt))
-	require.Equal(t, uint64(123), meta.RestoreID)
-	require.NotEmpty(t, meta.Hint)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=123")
 	return matches[0]
 }
 
@@ -2661,7 +2660,7 @@ func TestMigrationLockOperationMetadata(t *testing.T) {
 				requireReadLockPath(t, readWrite.path)
 				appendWrite := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationAppend)
 				requireWriteLockPath(t, appendWrite.path, appendLockPrefix)
-				require.Equal(t, readWrite.meta.OperationID, appendWrite.meta.OperationID)
+				require.Equal(t, readWrite.meta.OwnerID, appendWrite.meta.OwnerID)
 			},
 		},
 		{

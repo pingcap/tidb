@@ -16,6 +16,8 @@ package operation
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,14 +140,24 @@ func (c Context) LockMeta(resource LockResourceType, hint string) (objstore.Lock
 		return objstore.LockMetaInput{}, errors.New("lock resource type is required")
 	}
 
-	startedAt := c.StartedAt
 	return objstore.LockMetaInput{
-		OperationID:        c.OperationID,
-		OperationStartedAt: &startedAt,
-		RestoreID:          c.RestoreID,
-		ResourceType:       string(resource),
-		Hint:               hint,
+		OwnerID:  c.OperationID,
+		LockType: string(resource),
+		Hint:     c.lockHint(hint),
 	}, nil
+}
+
+func (c Context) lockHint(detail string) string {
+	fields := []string{
+		"operation_started_at=" + c.StartedAt.Format(time.RFC3339),
+	}
+	if c.RestoreID != 0 {
+		fields = append(fields, "restore_id="+strconv.FormatUint(c.RestoreID, 10))
+	}
+	if detail != "" {
+		fields = append(fields, "detail="+strconv.Quote(detail))
+	}
+	return strings.Join(fields, " ")
 }
 
 func (c *Context) ensureLogState() {

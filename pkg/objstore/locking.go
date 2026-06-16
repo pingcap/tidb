@@ -185,24 +185,20 @@ func (cx VerifyWriteContext) assertOnlyMyIntent() error {
 
 // LockMetaInput is the caller-provided metadata for a lock.
 type LockMetaInput struct {
-	OperationID        string
-	OperationStartedAt *time.Time
-	RestoreID          uint64
-	ResourceType       string
-	Hint               string
+	OwnerID  string
+	LockType string
+	Hint     string
 }
 
 // LockMeta is the meta information of a lock.
 type LockMeta struct {
-	LockedAt           time.Time  `json:"locked_at"`
-	LockerHost         string     `json:"locker_host"`
-	LockerPID          int        `json:"locker_pid"`
-	TxnID              []byte     `json:"txn_id"`
-	Hint               string     `json:"hint"`
-	OperationID        string     `json:"operation_id,omitempty"`
-	OperationStartedAt *time.Time `json:"operation_started_at,omitempty"`
-	RestoreID          uint64     `json:"restore_id,omitempty"`
-	ResourceType       string     `json:"resource_type,omitempty"`
+	LockedAt   time.Time `json:"locked_at"`
+	LockerHost string    `json:"locker_host"`
+	LockerPID  int       `json:"locker_pid"`
+	TxnID      []byte    `json:"txn_id"`
+	OwnerID    string    `json:"owner_id,omitempty"`
+	LockType   string    `json:"lock_type,omitempty"`
+	Hint       string    `json:"hint"`
 }
 
 // String implements fmt.Stringer interface.
@@ -213,34 +209,22 @@ func (l LockMeta) String() string {
 		fmt.Sprintf("pid: %d", l.LockerPID),
 		fmt.Sprintf("hint: %s", l.Hint),
 	}
-	if l.OperationID != "" {
-		fields = append(fields, fmt.Sprintf("operation_id: %s", l.OperationID))
+	if l.OwnerID != "" {
+		fields = append(fields, fmt.Sprintf("owner_id: %s", l.OwnerID))
 	}
-	if l.OperationStartedAt != nil {
-		fields = append(fields, fmt.Sprintf("operation_started_at: %s", l.OperationStartedAt.Format(time.DateTime)))
-	}
-	if l.RestoreID != 0 {
-		fields = append(fields, fmt.Sprintf("restore_id: %d", l.RestoreID))
-	}
-	if l.ResourceType != "" {
-		fields = append(fields, fmt.Sprintf("resource_type: %s", l.ResourceType))
+	if l.LockType != "" {
+		fields = append(fields, fmt.Sprintf("lock_type: %s", l.LockType))
 	}
 	return fmt.Sprintf("Locked(%s)", strings.Join(fields, ", "))
 }
 
 func (i LockMetaInput) String() string {
 	fields := []string{fmt.Sprintf("hint: %s", i.Hint)}
-	if i.OperationID != "" {
-		fields = append(fields, fmt.Sprintf("operation_id: %s", i.OperationID))
+	if i.OwnerID != "" {
+		fields = append(fields, fmt.Sprintf("owner_id: %s", i.OwnerID))
 	}
-	if i.OperationStartedAt != nil {
-		fields = append(fields, fmt.Sprintf("operation_started_at: %s", i.OperationStartedAt.Format(time.DateTime)))
-	}
-	if i.RestoreID != 0 {
-		fields = append(fields, fmt.Sprintf("restore_id: %d", i.RestoreID))
-	}
-	if i.ResourceType != "" {
-		fields = append(fields, fmt.Sprintf("resource_type: %s", i.ResourceType))
+	if i.LockType != "" {
+		fields = append(fields, fmt.Sprintf("lock_type: %s", i.LockType))
 	}
 	return fmt.Sprintf("LockMetaInput(%s)", strings.Join(fields, ", "))
 }
@@ -304,13 +288,11 @@ const lockBlockerErrorLimit = 3
 
 func isZeroLockMeta(meta LockMeta) bool {
 	return meta.LockedAt.IsZero() && meta.LockerHost == "" && meta.LockerPID == 0 &&
-		len(meta.TxnID) == 0 && meta.Hint == "" && meta.OperationID == "" &&
-		meta.OperationStartedAt == nil && meta.RestoreID == 0 && meta.ResourceType == ""
+		len(meta.TxnID) == 0 && meta.Hint == "" && meta.OwnerID == "" && meta.LockType == ""
 }
 
 func isZeroLockMetaInput(input LockMetaInput) bool {
-	return input.OperationID == "" && input.OperationStartedAt == nil &&
-		input.RestoreID == 0 && input.ResourceType == "" && input.Hint == ""
+	return input.OwnerID == "" && input.LockType == "" && input.Hint == ""
 }
 
 func withLockContext(err error, path string, local LockMetaInput) error {
@@ -376,20 +358,13 @@ func MakeLockMeta(input LockMetaInput) LockMeta {
 		hname = fmt.Sprintf("UnknownHost(err=%s)", err)
 	}
 	now := time.Now()
-	var operationStartedAt *time.Time
-	if input.OperationStartedAt != nil {
-		startedAt := *input.OperationStartedAt
-		operationStartedAt = &startedAt
-	}
 	meta := LockMeta{
-		LockedAt:           now,
-		LockerHost:         hname,
-		Hint:               input.Hint,
-		LockerPID:          os.Getpid(),
-		OperationID:        input.OperationID,
-		OperationStartedAt: operationStartedAt,
-		RestoreID:          input.RestoreID,
-		ResourceType:       input.ResourceType,
+		LockedAt:   now,
+		LockerHost: hname,
+		Hint:       input.Hint,
+		LockerPID:  os.Getpid(),
+		OwnerID:    input.OwnerID,
+		LockType:   input.LockType,
 	}
 	return meta
 }
@@ -604,29 +579,19 @@ func LockConflictLogFields(path string, input LockMetaInput, err error) []zap.Fi
 }
 
 func lockMetaInputLogFields(prefix string, input LockMetaInput) []zap.Field {
-	fields := []zap.Field{
-		zap.String(prefix+"_operation_id", input.OperationID),
-		zap.Uint64(prefix+"_restore_id", input.RestoreID),
-		zap.String(prefix+"_resource_type", input.ResourceType),
+	return []zap.Field{
+		zap.String(prefix+"_owner_id", input.OwnerID),
+		zap.String(prefix+"_lock_type", input.LockType),
 		zap.String(prefix+"_hint", input.Hint),
 	}
-	if input.OperationStartedAt != nil {
-		fields = append(fields, zap.Time(prefix+"_operation_started_at", *input.OperationStartedAt))
-	}
-	return fields
 }
 
 func lockMetaLogFields(prefix string, meta LockMeta) []zap.Field {
-	fields := []zap.Field{
-		zap.String(prefix+"_operation_id", meta.OperationID),
-		zap.Uint64(prefix+"_restore_id", meta.RestoreID),
-		zap.String(prefix+"_resource_type", meta.ResourceType),
+	return []zap.Field{
+		zap.String(prefix+"_owner_id", meta.OwnerID),
+		zap.String(prefix+"_lock_type", meta.LockType),
 		zap.String(prefix+"_hint", meta.Hint),
 	}
-	if meta.OperationStartedAt != nil {
-		fields = append(fields, zap.Time(prefix+"_operation_started_at", *meta.OperationStartedAt))
-	}
-	return fields
 }
 
 const lockBlockerLogLimit = 3

@@ -57,7 +57,7 @@ func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return
 	}
-	if meta.OperationID == "" || meta.ResourceType == "" {
+	if meta.OwnerID == "" || meta.LockType == "" {
 		return
 	}
 
@@ -211,16 +211,15 @@ func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
 
 	var appendLocks []capturedLockWrite
 	for _, write := range writes {
-		if write.meta.ResourceType == string(operation.LockResourceMigrationAppend) {
+		if write.meta.LockType == string(operation.LockResourceMigrationAppend) {
 			appendLocks = append(appendLocks, write)
 		}
 	}
 	require.Len(t, appendLocks, 1)
 	meta := appendLocks[0].meta
-	require.Equal(t, coll.coll.operationContext.OperationID, meta.OperationID)
-	require.NotNil(t, meta.OperationStartedAt)
-	require.True(t, meta.OperationStartedAt.Equal(coll.coll.operationContext.StartedAt))
-	require.Equal(t, uint64(789), meta.RestoreID)
+	require.Equal(t, coll.coll.operationContext.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+coll.coll.operationContext.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=789")
 }
 
 type backupFileSetOp func(*restore.BackupFileSet)

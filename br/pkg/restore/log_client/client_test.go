@@ -131,7 +131,7 @@ func requireLockMetaInStorage(
 			}
 			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
 		}
-		if meta.ResourceType == string(resource) {
+		if meta.LockType == string(resource) {
 			metas = append(metas, meta)
 		}
 		return nil
@@ -167,10 +167,9 @@ func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
 	defer migs.ReadLock.UnlockOnCleanUp(ctx)
 
 	meta := requireLockMetaInStorage(t, ctx, stg, "v1/LOCK", operation.LockResourceMigrationRead)
-	require.Equal(t, opCtx.OperationID, meta.OperationID)
-	require.NotNil(t, meta.OperationStartedAt)
-	require.True(t, meta.OperationStartedAt.Equal(opCtx.StartedAt))
-	require.Equal(t, uint64(456), meta.RestoreID)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=456")
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {

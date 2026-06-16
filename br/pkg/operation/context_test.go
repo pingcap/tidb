@@ -109,12 +109,11 @@ func TestLockMeta(t *testing.T) {
 	meta, err := ctx.LockMeta(LockResourceMigrationRead, "test hint")
 
 	require.NoError(t, err)
-	require.Equal(t, "operation-id", meta.OperationID)
-	require.NotNil(t, meta.OperationStartedAt)
-	require.Equal(t, startedAt, *meta.OperationStartedAt)
-	require.Equal(t, uint64(123), meta.RestoreID)
-	require.Equal(t, string(LockResourceMigrationRead), meta.ResourceType)
-	require.Equal(t, "test hint", meta.Hint)
+	require.Equal(t, "operation-id", meta.OwnerID)
+	require.Equal(t, string(LockResourceMigrationRead), meta.LockType)
+	require.Contains(t, meta.Hint, "operation_started_at=2026-06-15T12:00:00Z")
+	require.Contains(t, meta.Hint, "restore_id=123")
+	require.Contains(t, meta.Hint, `detail="test hint"`)
 }
 
 func TestLockMetaValidation(t *testing.T) {
