@@ -282,7 +282,6 @@ func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
 	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
-
 }
 
 func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
