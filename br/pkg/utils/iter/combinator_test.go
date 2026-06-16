@@ -21,7 +21,7 @@ func TestParTrans(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 		return i + 100, nil
-	}, iter.WithChunkSize(128), iter.WithConcurrency(64))
+	}, iter.WithBufferSize(128), iter.WithConcurrency(64))
 	cx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	r := iter.CollectAll(cx, mapped)
@@ -99,7 +99,7 @@ func TestErrorDuringTransforming(t *testing.T) {
 			return 0, errors.New("meow")
 		}
 		return i, nil
-	}, iter.WithChunkSize(16), iter.WithConcurrency(8))
+	}, iter.WithBufferSize(16), iter.WithConcurrency(8))
 
 	coll := iter.CollectAll(context.TODO(), items)
 	req.ErrorContains(coll.Err, "meow")
@@ -109,7 +109,7 @@ func TestErrorBeforeTransforming(t *testing.T) {
 	req := require.New(t)
 	items := iter.Transform(iter.Fail[int](errors.New("meow")), func(context.Context, int) (int, error) {
 		return 0, nil
-	}, iter.WithChunkSize(1))
+	}, iter.WithBufferSize(1))
 
 	resultCh := make(chan iter.IterResult[[]int], 1)
 	go func() {

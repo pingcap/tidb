@@ -1056,6 +1056,7 @@ func TestReadAllEntries(t *testing.T) {
 		}, nextKvEntries)
 	}
 	{
+		data, file := generateKvData()
 		readGate := make(chan struct{})
 		helper := &logclient.FakeStreamMetadataHelper{Data: data, ReadGate: readGate}
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)

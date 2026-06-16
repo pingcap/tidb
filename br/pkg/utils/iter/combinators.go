@@ -17,7 +17,7 @@ func WithConcurrency(n uint) TransformConfig {
 	}
 }
 
-func WithChunkSize(n uint) TransformConfig {
+func WithBufferSize(n uint) TransformConfig {
 	return func(c *bufferedMappingCfg) {
 		c.bufferSize = n
 	}
