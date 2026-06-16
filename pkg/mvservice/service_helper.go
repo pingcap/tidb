@@ -1383,7 +1383,7 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	sysSessionPool basic.SessionPool,
 	tasks map[int64]*mvLogAccumulationTask,
 ) (map[int64]uint64, error) {
-	const countSQL = `SELECT COUNT(*) FROM %n.%n`
+	const countSQL = `SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n`
 	if len(tasks) == 0 {
 		return map[int64]uint64{}, nil
 	}
@@ -1394,13 +1394,21 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	defer sysSessionPool.Put(se)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	sctx := se.(sessionctx.Context)
+	origDistSQLScanConcurrency := sctx.GetSessionVars().DistSQLScanConcurrency()
+	sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
+	defer sctx.GetSessionVars().SetDistSQLScanConcurrency(origDistSQLScanConcurrency)
 
 	rowCounts := make(map[int64]uint64, len(tasks))
 	for mvLogID, task := range tasks {
 		if task == nil {
 			continue
 		}
-		countRows, err := execRCRestrictedSQLWithSession(ctx, sctx, countSQL, []any{task.schemaName, task.mlogName})
+		countRows, err := execRCRestrictedSQLWithSession(ctx, sctx, countSQL, []any{
+			task.schemaName,
+			task.mlogName,
+			task.schemaName,
+			task.mlogName,
+		})
 		if err != nil {
 			if infoschema.ErrTableNotExists.Equal(err) {
 				continue

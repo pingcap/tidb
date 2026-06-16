@@ -48,7 +48,7 @@ import (
 const (
 	testSQLFetchMVLogPurge        = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	testSQLFetchMVLogAccumulation = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
-	testSQLCountMVLogRows         = `SELECT COUNT(*) FROM %n.%n`
+	testSQLCountMVLogRows         = `SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n`
 	testSQLFetchMVRefresh         = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	testSQLRefreshMV              = `REFRESH MATERIALIZED VIEW %n.%n FAST`
 	testSQLFindMVNextTime         = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
@@ -139,6 +139,7 @@ type recordingSessionContext struct {
 	execErrs                               map[string]error
 	executedRestrictedSQL                  []string
 	executedRestrictedArg                  [][]any
+	restrictedDistSQLScanConcurrency       []int
 	restrictedMaintainQuota                []int64
 	restrictedMaintainIsolationReadEngines []string
 	restrictedMaxThreads                   []int64
@@ -235,6 +236,7 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	argsCopy := make([]any, len(args))
 	copy(argsCopy, args)
 	s.executedRestrictedArg = append(s.executedRestrictedArg, argsCopy)
+	s.restrictedDistSQLScanConcurrency = append(s.restrictedDistSQLScanConcurrency, s.GetSessionVars().DistSQLScanConcurrency())
 	s.restrictedMaintainQuota = append(s.restrictedMaintainQuota, s.GetSessionVars().MVMaintainMemQuota)
 	s.restrictedMaintainIsolationReadEngines = append(s.restrictedMaintainIsolationReadEngines, s.GetSessionVars().MVMaintainIsolationReadEngines)
 	s.restrictedMaxThreads = append(s.restrictedMaxThreads, s.GetSessionVars().TiFlashMaxThreads)
@@ -1655,6 +1657,7 @@ func TestServerHelperLoadAllTiDBMVLogAccumulationTasksSkipsDisabledByDefault(t *
 
 func TestServerHelperLoadTiDBMVLogAccumulationRowCounts(t *testing.T) {
 	se := newRecordingSessionContext()
+	se.GetSessionVars().SetDistSQLScanConcurrency(7)
 	se.restrictedRows[testSQLCountMVLogRows] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(50)}).ToRow(),
 	}
@@ -1671,7 +1674,9 @@ func TestServerHelperLoadTiDBMVLogAccumulationRowCounts(t *testing.T) {
 	got, err := (&serviceHelper{}).LoadTiDBMVLogAccumulationRowCounts(context.Background(), pool, tasks)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLCountMVLogRows}, se.executedRestrictedSQL)
-	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[0])
+	require.Equal(t, []any{"test", "mlog1", "test", "mlog1"}, se.executedRestrictedArg[0])
+	require.Equal(t, []int{1}, se.restrictedDistSQLScanConcurrency)
+	require.Equal(t, 7, se.GetSessionVars().DistSQLScanConcurrency())
 	require.Equal(t, map[int64]uint64{201: 50}, got)
 }
 
