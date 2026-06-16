@@ -363,7 +363,7 @@ func TestWriteLockConflictReportsReadLockBlocker(t *testing.T) {
 		Hint:               "reader",
 	}
 	localInput := objstore.LockMetaInput{OperationID: "write-op", ResourceType: "migration-write", Hint: "writer"}
-	_, err := createReadWriteConflict(t, ctx, readInput, localInput)
+	_, err := createReadWriteConflict(ctx, t, readInput, localInput)
 
 	var locked objstore.ErrLocked
 	require.True(t, errors.As(err, &locked))
@@ -422,7 +422,7 @@ func TestLockWithRetryCarriesLocalAndRemoteMetadata(t *testing.T) {
 		Hint:               "reader",
 	}
 	localInput := objstore.LockMetaInput{OperationID: "local-op", ResourceType: "migration-write", Hint: "writer"}
-	strg, err := createReadWriteConflict(t, context.Background(), remoteInput, localInput)
+	strg, err := createReadWriteConflict(context.Background(), t, remoteInput, localInput)
 	_, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "test.lock", localInput)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled))
@@ -447,7 +447,7 @@ func TestLockConflictLogFieldsCarriesLocalAndRemoteMetadata(t *testing.T) {
 		Hint:               "reader",
 	}
 	localInput := objstore.LockMetaInput{OperationID: "local-op", ResourceType: "migration-write", Hint: "writer"}
-	_, err := createReadWriteConflict(t, ctx, remoteInput, localInput)
+	_, err := createReadWriteConflict(ctx, t, remoteInput, localInput)
 
 	fields := objstore.LockConflictLogFields("test.lock", localInput, err)
 	requireZapStringField(t, fields, "path", "test.lock")
@@ -500,8 +500,8 @@ func TestTryLockRemoteWritePreservesOriginalErrorWhenEnrichingErrLocked(t *testi
 }
 
 func createReadWriteConflict(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	remoteInput objstore.LockMetaInput,
 	localInput objstore.LockMetaInput,
 ) (storeapi.Storage, error) {
