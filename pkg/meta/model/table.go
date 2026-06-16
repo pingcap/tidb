@@ -868,6 +868,9 @@ type MaterializedViewLogInfo struct {
 }
 
 const (
+	// MaterializedViewLogTableNamePrefix is the prefix of the physical table name for a materialized view log.
+	MaterializedViewLogTableNamePrefix = "$mlog$"
+
 	// MaterializedViewLogDMLTypeColumnName is the auto-added internal column on a materialized view log table,
 	// recording row operation type (I/U/D).
 	MaterializedViewLogDMLTypeColumnName = "_MLOG$_DML_TYPE"
@@ -876,6 +879,11 @@ const (
 	// recording row image kind (NEW=1, OLD=-1).
 	MaterializedViewLogOldNewColumnName = "_MLOG$_OLD_NEW"
 )
+
+// MaterializedViewLogTableName returns the physical materialized view log table name for a base table.
+func MaterializedViewLogTableName(baseTableName model.CIStr) model.CIStr {
+	return model.NewCIStr(MaterializedViewLogTableNamePrefix + baseTableName.O)
+}
 
 // Clone clones MaterializedViewLogInfo.
 func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {

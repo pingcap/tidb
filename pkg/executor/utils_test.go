@@ -181,6 +181,23 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	require.Equal(t, "", pwd)
 }
 
+func TestCancelMaterializedViewJobPrecheckErrorNotRewritten(t *testing.T) {
+	ctx := core.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	e := &CancelMaterializedViewJobExec{
+		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
+		stmt: &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobType(255),
+			JobID: 123,
+		},
+	}
+
+	err := e.Next(context.Background(), nil)
+	require.ErrorContains(t, err, "invalid materialized view job cancel type: 255")
+}
+
 type mockSQLExecutor struct {
 	calls []struct {
 		sql  string

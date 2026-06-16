@@ -337,6 +337,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.RefreshMaterializedViewStmt:
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
+	case *ast.CompareMaterializedViewStmt:
+		// The view name is not an existing table. Avoid resolving it as a normal table name.
+		p.flag |= inCreateOrDropTable
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -554,7 +557,13 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/MATERIALIZED VIEW/MATERIALIZED VIEW LOG/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateMaterializedViewLog || p.showTp == ast.ShowCreateSequence) {
+	if p.stmtTp == TypeShow &&
+		(p.showTp == ast.ShowCreateView ||
+			p.showTp == ast.ShowCreateMaterializedView ||
+			p.showTp == ast.ShowCreateMaterializedViewLog ||
+			p.showTp == ast.ShowMaterializedViewRemainLogs ||
+			p.showTp == ast.ShowMaterializedViewLogWaitPurge ||
+			p.showTp == ast.ShowCreateSequence) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
@@ -647,7 +656,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt:
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
@@ -1687,6 +1696,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 	tableInfo := table.Meta()
 	dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
+	if p.stmtTp == TypeSelect {
+		if err := CheckMViewShadowReadable(p.sctx.GetSessionVars(), tableInfo, tn.Name.O); err != nil {
+			p.err = err
+			return
+		}
+	}
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {

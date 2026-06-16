@@ -588,6 +588,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case *ast.RefreshMaterializedViewStmt:
 		return b.buildRefreshMaterializedView(ctx, x)
+	case *ast.CompareMaterializedViewStmt:
+		return b.buildCompareMaterializedView(ctx, x)
 	case *ast.PurgeMaterializedViewLogStmt:
 		return b.buildPurgeMaterializedViewLog(ctx, x)
 	case *ast.RefreshMaterializedViewImplementStmt:
@@ -3597,7 +3599,21 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			isSequence = table.Meta().IsSequence()
 		}
 		user := b.ctx.GetSessionVars().User
-		if isView {
+		if show.Tp == ast.ShowCreateMaterializedViewLog {
+			dbName := show.Table.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, show.Table.Name)
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, mlogName.L, "", err)
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, mlogName.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, mlogName.L, "", err)
+		} else if isView {
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
@@ -3633,6 +3649,23 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewRemainLogs:
+		var err error
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewLogWaitPurge:
+		var err error
+		dbName := show.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, show.Table.Name)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, mlogName.L, "", err)
 	case ast.ShowBackups:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"BACKUP_ADMIN"}, false, err)
@@ -5719,24 +5752,35 @@ func (b *PlanBuilder) buildRefreshMaterializedView(_ context.Context, stmt *ast.
 	var authErr error
 	if user := b.ctx.GetSessionVars().User; user != nil {
 		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
-			"ALTER",
+			"OPERATE VIEW",
 			user.AuthUsername,
 			user.AuthHostname,
 			stmt.ViewName.Name.L,
 		)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.OperateViewPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+	var showViewAuthErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		showViewAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"SHOW VIEW",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.ViewName.Name.L,
+		)
+	}
 
 	switch stmt.ObserveType {
 	case ast.RefreshMaterializedViewObserveNone:
 		// fallthrough to normal refresh
 	case ast.RefreshMaterializedViewObserveDryRun:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, stmt.ViewName.Name.L, "", showViewAuthErr)
 		p := &DryRunRefreshMaterializedView{Statement: stmt}
 		schema := newColumnsWithNames(1)
 		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
 		p.setSchemaAndNames(schema.col2Schema(), schema.names)
 		return p, nil
 	case ast.RefreshMaterializedViewObserveProfile:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, stmt.ViewName.Name.L, "", showViewAuthErr)
 		p := &ProfileRefreshMaterializedView{Statement: stmt}
 		schema := newColumnsWithNames(1)
 		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
@@ -5750,8 +5794,8 @@ func (b *PlanBuilder) buildRefreshMaterializedView(_ context.Context, stmt *ast.
 	return p, nil
 }
 
-func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast.PurgeMaterializedViewLogStmt) (base.Plan, error) {
-	dbName := stmt.Table.Schema.L
+func (b *PlanBuilder) buildCompareMaterializedView(_ context.Context, stmt *ast.CompareMaterializedViewStmt) (base.Plan, error) {
+	dbName := stmt.ViewName.Schema.L
 	if dbName == "" {
 		dbName = b.ctx.GetSessionVars().CurrentDB
 	}
@@ -5762,13 +5806,59 @@ func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast
 	var authErr error
 	if user := b.ctx.GetSessionVars().User; user != nil {
 		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
-			"ALTER",
+			"OPERATE VIEW",
 			user.AuthUsername,
 			user.AuthHostname,
-			stmt.Table.Name.L,
+			stmt.ViewName.Name.L,
 		)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.Table.Name.L, "", authErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.OperateViewPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+
+	if stmt.OutputTable != nil {
+		outputDBName := stmt.OutputTable.Schema.L
+		if outputDBName == "" {
+			outputDBName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if outputDBName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"CREATE",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"INSERT",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+	}
+
+	p := &CompareMaterializedView{Statement: stmt}
+	if stmt.OutputTable == nil {
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "compare result", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast.PurgeMaterializedViewLogStmt) (base.Plan, error) {
+	dbName := stmt.Table.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
 
 	p := &PurgeMaterializedViewLog{Statement: stmt}
 	return p, nil
@@ -5801,7 +5891,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
-			if spec.Tp == ast.AlterTableRenameTable || spec.Tp == ast.AlterTableExchangePartition {
+			switch spec.Tp {
+			case ast.AlterTableRenameTable, ast.AlterTableExchangePartition:
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
@@ -5822,16 +5913,16 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
-			} else if spec.Tp == ast.AlterTableDropPartition {
+			case ast.AlterTableDropPartition:
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
-			} else if spec.Tp == ast.AlterTableWriteable {
+			case ast.AlterTableWriteable:
 				b.visitInfo[0].alterWritable = true
-			} else if spec.Tp == ast.AlterTableAddStatistics {
+			case ast.AlterTableAddStatistics:
 				var selectErr, insertErr error
 				user := b.ctx.GetSessionVars().User
 				if user != nil {
@@ -5844,7 +5935,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 					v.Table.Name.L, "", selectErr)
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, mysql.SystemDB,
 					"stats_extended", "", insertErr)
-			} else if spec.Tp == ast.AlterTableDropStatistics {
+			case ast.AlterTableDropStatistics:
 				user := b.ctx.GetSessionVars().User
 				if user != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP STATS_EXTENDED", user.AuthUsername,
@@ -5852,7 +5943,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
 					"stats_extended", "", authErr)
-			} else if spec.Tp == ast.AlterTableAddConstraint {
+			case ast.AlterTableAddConstraint:
 				if b.ctx.GetSessionVars().User != nil && spec.Constraint != nil &&
 					spec.Constraint.Tp == ast.ConstraintForeignKey && spec.Constraint.Refer != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("REFERENCES", b.ctx.GetSessionVars().User.AuthUsername,
@@ -6124,10 +6215,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			return nil, plannererrors.ErrNoDB
 		}
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName, v.ViewName.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, v.ViewName.Name.L, "", authErr)
 	case *ast.DropMaterializedViewStmt:
 		dbName := v.ViewName.Schema.L
 		if dbName == "" {
@@ -6162,17 +6253,16 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
-		var createAuthErr, selectAuthErr, alterAuthErr error
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		var createAuthErr, selectAuthErr error
 		if user := b.ctx.GetSessionVars().User; user != nil {
-			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
+			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
 			selectAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
-			alterAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
 		}
-		// Creating a materialized view log requires CREATE TABLE privilege (on schema) and
-		// SELECT/ALTER privilege on the base table (spec requirement).
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName, v.Table.Name.L, "", createAuthErr)
+		// Creating a materialized view log creates a view-like maintenance object and
+		// reads base table metadata/columns.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, mlogName.L, "", createAuthErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, v.Table.Name.L, "", alterAuthErr)
 	case *ast.DropMaterializedViewLogStmt:
 		dbName := v.Table.Schema.L
 		if dbName == "" {
@@ -6181,11 +6271,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, v.Table.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, mlogName.L, "", authErr)
 	case *ast.AlterMaterializedViewLogStmt:
 		dbName := v.Table.Schema.L
 		if dbName == "" {
@@ -6194,16 +6285,29 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		// TODO: add action-specific privilege checks for ALTER MATERIALIZED VIEW LOG
+		// (for example base-table SELECT for future column-level actions).
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, v.Table.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, mlogName.L, "", authErr)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+func (b *PlanBuilder) materializedViewLogNameForBaseTable(ctx context.Context, dbName string, baseName pmodel.CIStr) pmodel.CIStr {
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if baseTable, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), baseName); err == nil {
+		return model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	}
+	return model.MaterializedViewLogTableName(baseName)
 }
 
 const (
@@ -6495,6 +6599,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowMaterializedViewLogs:
 		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowMaterializedViewRemainLogs:
+		names = []string{"mview_id", "mview_name", "mlog_id", "mlog_name", "remain_logs"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowMaterializedViewLogWaitPurge:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name", "wait_purge"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowTableStatus:
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",

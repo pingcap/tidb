@@ -1087,8 +1087,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	if err := checkTooLongTable(mlogNameCIStr); err != nil {
 		return err
 	}

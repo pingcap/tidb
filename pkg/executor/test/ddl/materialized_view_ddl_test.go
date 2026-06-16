@@ -732,6 +732,154 @@ func TestShowMaterializedViewLogs(t *testing.T) {
 		Check(testkit.Rows(otherExpected))
 	tk.MustQuery("show materialized view logs in test_show_mlog_other like '$mlog$%'").
 		Check(testkit.Rows(otherExpected))
+	tk.MustQuery("show materialized view logs in test_show_mlog_other like 'test_show_mlog_other.$mlog$%'").
+		Check(testkit.Rows())
+
+	tk.MustExec("create user 'show_mlog_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'show_mlog_u'@'%'")
+	tk.MustExec("grant select on test.t to 'show_mlog_u'@'%'")
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "show_mlog_u", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustQuery("show materialized view logs from test").Check(testkit.Rows())
+	tk.MustExec("grant alter on test.`$mlog$t` to 'show_mlog_u'@'%'")
+	tkUser.MustQuery("show materialized view logs from test").Check(testkit.Rows(expected))
+}
+
+func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_show_mv_status (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_show_mv_status (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_show_mv_status values (1, 10)")
+	tk.MustExec("create materialized view mv_show_status (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_show_mv_status group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_show_status"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_show_mv_status"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	mlogTable, ok := is.TableByID(context.Background(), baseTable.Meta().MaterializedViewBase.MLogID)
+	require.True(t, ok)
+
+	mvExpected := func(pending int64) string {
+		return fmt.Sprintf("%d mv_show_status %d %s %d", mvID, mlogTable.Meta().ID, mlogTable.Meta().Name.O, pending)
+	}
+	mlogExpected := func(pending int64) string {
+		return fmt.Sprintf(
+			"%d %s %d t_show_mv_status %d",
+			mlogTable.Meta().ID,
+			mlogTable.Meta().Name.O,
+			baseTable.Meta().ID,
+			pending,
+		)
+	}
+
+	tk.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
+	tk.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(1)))
+
+	tk.MustExec("insert into t_show_mv_status values (2, 20)")
+	tk.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(1)))
+	tk.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(1)))
+
+	tk.MustExec("refresh materialized view mv_show_status complete delta apply")
+	tk.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
+	tk.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
+
+	tk.MustExec("create user 'show_mv_status_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'show_mv_status_u'@'%'")
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "show_mv_status_u", Hostname: "%"}, nil, nil, nil))
+
+	err = tkUser.ExecToErr("show materialized view test.mv_show_status remain_logs")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+
+	tk.MustExec("grant show view on test.mv_show_status to 'show_mv_status_u'@'%'")
+	tkUser.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
+	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+
+	tk.MustExec("grant show view on test.`$mlog$t_show_mv_status` to 'show_mv_status_u'@'%'")
+	tkUser.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
+}
+
+func TestShowMaterializedViewRemainLogs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_remain_logs (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_remain_logs (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_remain_logs (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_remain_logs group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_remain_logs"))
+	require.NoError(t, err)
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_remain_logs"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	mlogID := baseTable.Meta().MaterializedViewBase.MLogID
+	mlogTable, ok := is.TableByID(context.Background(), mlogID)
+	require.True(t, ok)
+
+	expectedRow := func(remainLogs int64) string {
+		return fmt.Sprintf("%d mv_remain_logs %d %s %d", mvTable.Meta().ID, mlogID, mlogTable.Meta().Name.O, remainLogs)
+	}
+	tk.MustQuery("show materialized view mv_remain_logs remain_logs").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("insert into t_remain_logs values (1, 10), (1, 20), (2, 30)")
+	tk.MustQuery("show materialized view mv_remain_logs remain_logs").Check(testkit.Rows(expectedRow(3)))
+
+	tk.MustExec("refresh materialized view mv_remain_logs fast")
+	tk.MustQuery("show materialized view mv_remain_logs remain_logs").Check(testkit.Rows(expectedRow(0)))
+
+	err = tk.QueryToErr("show materialized view t_remain_logs remain_logs")
+	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
+	err = tk.ExecToErr("show materialized view mv_remain_logs unknown_option")
+	require.ErrorContains(t, err, "syntax error: expected REMAIN_LOGS")
+}
+
+func TestShowMaterializedViewLogWaitPurge(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_wait_purge (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_wait_purge (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_wait_purge (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_wait_purge group by a")
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_wait_purge"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	mlogID := baseTable.Meta().MaterializedViewBase.MLogID
+	mlogTable, ok := is.TableByID(context.Background(), mlogID)
+	require.True(t, ok)
+
+	expectedRow := func(waitPurge int64) string {
+		return fmt.Sprintf("%d %s %d t_wait_purge %d", mlogID, mlogTable.Meta().Name.O, baseTable.Meta().ID, waitPurge)
+	}
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("insert into t_wait_purge values (1, 10), (1, 20), (2, 30)")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("refresh materialized view mv_wait_purge fast")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(3)))
+
+	tk.MustExec("purge materialized view log on t_wait_purge")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("create temporary table t_wait_purge (a int)")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("create table t_wait_purge_no_log (a int)")
+	err = tk.QueryToErr("show materialized view log on t_wait_purge_no_log wait_purge")
+	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_wait_purge_no_log")
+	err = tk.ExecToErr("show materialized view log on t_wait_purge unknown_option")
+	require.ErrorContains(t, err, "syntax error: expected WAIT_PURGE")
 }
 
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
