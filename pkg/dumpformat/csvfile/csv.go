@@ -53,11 +53,19 @@ func appendEscaped(dst, s []byte, cfg *Config) []byte {
 	case cfg.EscapeBackslash:
 		return appendEscapedBackslash(dst, s, cfg)
 	case len(cfg.Delimiter) > 0:
-		// Double the delimiter, e.g. " -> "".
-		doubled := make([]byte, 0, 2*len(cfg.Delimiter))
-		doubled = append(doubled, cfg.Delimiter...)
-		doubled = append(doubled, cfg.Delimiter...)
-		return append(dst, bytes.ReplaceAll(s, cfg.Delimiter, doubled)...)
+		// Double each delimiter occurrence (e.g. " -> ""), writing straight into
+		// dst to avoid the intermediate copy that bytes.ReplaceAll would make.
+		d := cfg.Delimiter
+		for {
+			j := bytes.Index(s, d)
+			if j < 0 {
+				return append(dst, s...)
+			}
+			dst = append(dst, s[:j]...)
+			dst = append(dst, d...)
+			dst = append(dst, d...)
+			s = s[j+len(d):]
+		}
 	default:
 		return append(dst, s...)
 	}

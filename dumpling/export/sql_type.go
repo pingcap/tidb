@@ -232,12 +232,16 @@ func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bo
 
 // GetRawBytes implements Stringer.GetRawBytes.
 func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
-	rawBytes := make([]sql.RawBytes, len(r.receivers))
-	for i, receiver := range r.receivers {
-		raw := receiver.GetRawBytes()
-		rawBytes[i] = raw[0]
+	return r.AppendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
+}
+
+// AppendRawBytes appends each receiver's raw bytes to dst and returns it, so the
+// caller can reuse one slice across rows instead of allocating per row.
+func (r RowReceiverArr) AppendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
+	for _, receiver := range r.receivers {
+		dst = append(dst, receiver.GetRawBytes()[0])
 	}
-	return rawBytes
+	return dst
 }
 
 // SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
