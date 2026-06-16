@@ -21,8 +21,9 @@ import (
 )
 
 // IsAddColumnDenied checks whether BDR should reject an
-// add-column operation with the given column options. It allows adding a
-// nullable column, or a not-null column with a default value.
+// add-column operation with the given column options. It returns false for
+// any role other than ast.BDRRolePrimary without evaluating the options. It
+// allows adding a nullable column, or a not-null column with a default value.
 func IsAddColumnDenied(role ast.BDRRole, options []*ast.ColumnOption) bool {
 	if role != ast.BDRRolePrimary {
 		return false
@@ -61,8 +62,9 @@ func IsAddColumnDenied(role ast.BDRRole, options []*ast.ColumnOption) bool {
 
 // IsModifyColumnDenied checks whether BDR should reject a
 // modify-column operation with the given field types and column options. It
-// allows changing the default value, or changing the default value together
-// with the column comment, when the field type is unchanged.
+// returns false for any role other than ast.BDRRolePrimary without evaluating
+// the options. It allows changing the default value, or changing the default
+// value together with the column comment, when the field type is unchanged.
 func IsModifyColumnDenied(role ast.BDRRole, newFieldType, oldFieldType types.FieldType, options []*ast.ColumnOption) bool {
 	if role != ast.BDRRolePrimary {
 		return false
