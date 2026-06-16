@@ -636,7 +636,7 @@ func lockBlockerLogFields(blockers []LockBlocker, limit int) []zap.Field {
 		limit = len(blockers)
 	}
 	fields := make([]zap.Field, 0, limit*6)
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		prefix := fmt.Sprintf("remote_blocker_%d", i)
 		fields = append(fields, zap.String(prefix+"_path", blockers[i].Path))
 		if !isZeroLockMeta(blockers[i].Meta) {
