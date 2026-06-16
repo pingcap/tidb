@@ -682,11 +682,12 @@ type Migrations struct {
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
 func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (objstore.RemoteLock, error) {
-	input, err := m.operationContext.LockMeta(operation.LockResourceMigrationRead, hint)
-	if err != nil {
+	lock, err := operation.LockWithRetryRead(
+		ctx, m.s, lockPrefix, m.operationContext, operation.LockResourceMigrationRead, hint)
+	if operation.IsLockMetadataError(err) {
 		return objstore.RemoteLock{}, errors.Annotate(err, "failed to build migration read lock metadata")
 	}
-	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, input)
+	return lock, err
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -804,26 +805,27 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 // 2. Acquire write lock on append path (prevents concurrent appends)
 func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
 	readLock, appendLock objstore.RemoteLock, err error) {
-	readInput, err := m.operationContext.LockMeta(operation.LockResourceMigrationRead, hint+" (read)")
-	if err != nil {
+	readLock, err = operation.LockWithRetryRead(
+		ctx, m.s, lockPrefix, m.operationContext,
+		operation.LockResourceMigrationRead, hint+" (read)")
+	if operation.IsLockMetadataError(err) {
 		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
 			"failed to build migration read lock metadata")
 	}
-	appendInput, err := m.operationContext.LockMeta(operation.LockResourceMigrationAppend, hint+" (append)")
-	if err != nil {
-		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
-			"failed to build migration append lock metadata")
-	}
-
-	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
-	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, readInput)
 	if err != nil {
 		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
-	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, appendInput)
+	appendLock, err = operation.LockWithRetryWrite(
+		ctx, m.s, appendLockPrefix, m.operationContext,
+		operation.LockResourceMigrationAppend, hint+" (append)")
+	if operation.IsLockMetadataError(err) {
+		readLock.UnlockOnCleanUp(ctx)
+		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
+			"failed to build migration append lock metadata")
+	}
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)
@@ -942,11 +944,12 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	if !config.skipLockingInTest {
-		input, err := m.operationContext.LockMeta(operation.LockResourceMigrationWrite, "StreamTruncation: MergeMigration")
-		if err != nil {
+		lock, err := operation.LockWithRetryWrite(
+			ctx, m.s, lockPrefix, m.operationContext,
+			operation.LockResourceMigrationWrite, "StreamTruncation: MergeMigration")
+		if operation.IsLockMetadataError(err) {
 			return result, errors.Annotate(err, "failed to build migration write lock metadata")
 		}
-		lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, lockPrefix, input)
 		if err != nil {
 			result.MigratedTo = MigratedTo{
 				Warnings: []error{

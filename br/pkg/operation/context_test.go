@@ -15,10 +15,15 @@
 package operation
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -141,6 +146,63 @@ func TestLockMetaRequiresResourceType(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "resource type")
+}
+
+func TestTryLockRemoteBuildsOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	storage := createOperationTestStorage(t)
+	operationContext, err := NewContext("log-truncate")
+	require.NoError(t, err)
+	operationContext.SetRestoreID(123)
+
+	lock, err := TryLockRemote(
+		ctx,
+		storage,
+		"test.lock",
+		operationContext,
+		LockResourceLogTruncateExclusive,
+		"truncate",
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, lock.Unlock(ctx)) }()
+
+	data, err := storage.ReadFile(ctx, "test.lock")
+	require.NoError(t, err)
+	var meta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(data, &meta))
+	require.Equal(t, operationContext.OperationID, meta.OperationID)
+	require.NotNil(t, meta.OperationStartedAt)
+	require.True(t, meta.OperationStartedAt.Equal(operationContext.StartedAt))
+	require.Equal(t, uint64(123), meta.RestoreID)
+	require.Equal(t, string(LockResourceLogTruncateExclusive), meta.ResourceType)
+	require.Equal(t, "truncate", meta.Hint)
+}
+
+func TestLockWithRetryRequiresOperationContext(t *testing.T) {
+	_, err := LockWithRetry(
+		context.Background(),
+		objstore.TryLockRemoteRead,
+		createOperationTestStorage(t),
+		"test.lock",
+		Context{},
+		LockResourceMigrationRead,
+		"reader",
+	)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "operation ID")
+}
+
+func createOperationTestStorage(t *testing.T) storeapi.Storage {
+	t.Helper()
+
+	storage, err := objstore.New(context.Background(), &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: t.TempDir()},
+		},
+	}, nil)
+	require.NoError(t, err)
+	return storage
 }
 
 func withObservedLogs(t *testing.T) (*zap.Logger, *observer.ObservedLogs) {
