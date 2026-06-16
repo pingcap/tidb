@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -41,6 +43,8 @@ const (
 	DetectPeriod = 3 * time.Second
 	// DetectTimeoutLimit detect timeout
 	DetectTimeoutLimit = 2 * time.Second
+	// MPPInfoPruneInterval is the interval to prune cached MPP info.
+	MPPInfoPruneInterval = 3 * time.Minute
 	// MaxRecoveryTimeLimit wait TiFlash recovery,more than MPPStoreFailTTL
 	MaxRecoveryTimeLimit = 15 * time.Minute
 	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
@@ -91,17 +95,6 @@ type MppInfoManager struct {
 	lock         sync.Mutex
 }
 
-var mppInfoDeleteHook atomic.Pointer[func(string)]
-
-// SetMPPInfoDeleteHook installs a hook that is called when MPP info is deleted.
-func SetMPPInfoDeleteHook(hook func(string)) {
-	if hook != nil {
-		mppInfoDeleteHook.Store(&hook)
-		return
-	}
-	mppInfoDeleteHook.Store(nil)
-}
-
 // Add adds mppInfo
 func (t *MppInfoManager) Add(mppInfo *MPPInfo) {
 	t.lock.Lock()
@@ -114,10 +107,6 @@ func (t *MppInfoManager) Delete(address string) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	delete(t.cachedStores, address)
-
-	if hookPtr := mppInfoDeleteHook.Load(); hookPtr != nil && *hookPtr != nil {
-		(*hookPtr)(address)
-	}
 }
 
 // Get gets related info
@@ -129,6 +118,39 @@ func (t *MppInfoManager) Get(address string) *MPPInfo {
 		return nil
 	}
 	return ret
+}
+
+// Prune deletes mppInfo entries that are no longer in active stores.
+func (t *MppInfoManager) Prune(activeStores map[string]struct{}) {
+	deletedAddrs := make([]string, 0)
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	for address := range t.cachedStores {
+		if _, ok := activeStores[address]; ok {
+			continue
+		}
+		delete(t.cachedStores, address)
+		deletedAddrs = append(deletedAddrs, address)
+	}
+
+	for _, address := range deletedAddrs {
+		deleteGRPCConn(address)
+	}
+}
+
+func fetchMPPStoreAddresses(ctx context.Context, pdClient pd.Client) (map[string]struct{}, error) {
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	activeStores := make(map[string]struct{}, len(stores))
+	for _, store := range stores {
+		if !tikv.LabelFilterNoTiFlashWriteNode(store.GetLabels()) {
+			continue
+		}
+		activeStores[store.GetAddress()] = struct{}{}
+	}
+	return activeStores, nil
 }
 
 func (t *MPPStoreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
@@ -220,9 +242,6 @@ func (t *MPPFailedStoreProber) Add(ctx context.Context, address string, tikvClie
 	state.lock.lastLookupTime = time.Now()
 	logutil.Logger(ctx).Debug("add mpp store to failed list", zap.String("address", address))
 	t.failedMPPStores.Store(address, &state)
-
-	// When we find a failed store, info of this store should also be uncached
-	GlobalMPPInfoManager.Delete(address)
 }
 
 // IsRecovery check whether the store is recovery
@@ -248,7 +267,7 @@ func (t *MPPFailedStoreProber) IsRecovery(ctx context.Context, address string, r
 
 // Run a loop of scan
 // there can be only one background task
-func (t *MPPFailedStoreProber) Run() {
+func (t *MPPFailedStoreProber) Run(pdClient pd.Client) {
 	if !t.lock.TryLock() {
 		return
 	}
@@ -259,6 +278,8 @@ func (t *MPPFailedStoreProber) Run() {
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		pruneTicker := time.NewTicker(MPPInfoPruneInterval)
+		defer pruneTicker.Stop()
 
 		for {
 			select {
@@ -267,6 +288,16 @@ func (t *MPPFailedStoreProber) Run() {
 				return
 			case <-ticker.C:
 				t.scan(t.ctx)
+			case <-pruneTicker.C:
+				if pdClient == nil {
+					continue
+				}
+				activeStores, err := fetchMPPStoreAddresses(t.ctx, pdClient)
+				if err != nil {
+					logutil.BgLogger().Warn("failed to fetch mpp stores for pruning mpp info", zap.Error(err))
+					continue
+				}
+				GlobalMPPInfoManager.Prune(activeStores)
 			}
 		}
 	}()

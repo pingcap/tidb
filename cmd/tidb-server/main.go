@@ -583,7 +583,13 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
+	runMPPFailedStoreProber := func() {
+		copr.GlobalMPPFailedStoreProber.Run(nil)
+	}
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
+		runMPPFailedStoreProber = func() {
+			copr.GlobalMPPFailedStoreProber.Run(tikvStore.GetPDClient())
+		}
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
 		if pdhttpCli != nil {
@@ -598,7 +604,7 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 			}
 		}
 	}
-	copr.GlobalMPPFailedStoreProber.Run()
+	runMPPFailedStoreProber()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
