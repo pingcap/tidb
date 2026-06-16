@@ -346,6 +346,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2PlanDeriveStatsPaths)
 	prometheus.MustRegister(RUV2ResourceManagerReadCnt)
 	prometheus.MustRegister(RUV2ResourceManagerWriteCnt)
+	prometheus.MustRegister(RUV2WriteKeys)
+	prometheus.MustRegister(RUV2WriteSize)
 	prometheus.MustRegister(RUV2SessionParserTotal)
 	prometheus.MustRegister(RUV2TxnCnt)
 	prometheus.MustRegister(RUV2TiKVKVEngineCacheMiss)
@@ -403,6 +405,7 @@ func RegisterMetrics() {
 	// StmtSummary
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
 
 	// Channelz
 	setupChannelzCollector()

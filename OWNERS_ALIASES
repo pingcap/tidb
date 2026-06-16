@@ -45,6 +45,7 @@ aliases:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
+    - joechenrh
   sig-approvers-expression:
     - windtalker
     - XuHuaiyu
@@ -55,6 +56,7 @@ aliases:
     - D3Hunter
     - gmhdbjd
     - OliverS929
+    - joechenrh
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
@@ -76,15 +78,17 @@ aliases:
     - xhebox
     - tiancaiamao
     - YangKeao
-  sig-approvers-disttask:
+  sig-approvers-dxf:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - joechenrh
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
     - D3Hunter
+    - joechenrh
   sig-approvers-infoschema:
     - wjhuang2016
     - D3Hunter
@@ -122,6 +126,10 @@ aliases:
     - Benjamin2037
     - BornChanger
     - D3Hunter
+    - winoros
+    - time-and-fate
+    - AilinKid
+    - qw4990
   sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
@@ -178,7 +186,6 @@ aliases:
     - dhysum
     - fengou1
     - fzzf678
-    - gengliqi
     - ghazalfamilyusa
     - henrybw
     - iamxy
@@ -191,6 +198,7 @@ aliases:
     - nongfushanquan
     - pingyu
     - shihongzhi
+    - solotzg
     - spongedu
     - tangwz
     - tsthght
@@ -256,6 +264,7 @@ aliases:
     - fixdb
     - francis0407
     - fzhedu
+    - gengliqi
     - glorv
     - gozssky
     - guo-shaoge

@@ -283,6 +283,7 @@ func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
 		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
 		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
 		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		WriteKeys:               cfg.WriteKeys,
 		SessionParserTotal:      cfg.SessionParserTotal,
 		TxnCnt:                  cfg.TxnCnt,
 	}
@@ -3237,7 +3238,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
-	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
@@ -3677,11 +3678,11 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 // Note:
 //
 //	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
-//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	  0.8 is also a special value. For backward compatibility, when the variable is set to 0.8, we
 //	keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
-	if s.DefaultStrMatchSelectivity == vardef.DefTiDBDefaultStrMatchSelectivity {
-		return vardef.DefTiDBDefaultStrMatchSelectivity
+	if s.DefaultStrMatchSelectivity == vardef.DefOptSelectivityFactor {
+		return vardef.DefOptSelectivityFactor
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }

@@ -15,6 +15,7 @@
 package util
 
 import (
+	"io"
 	"strconv"
 	"testing"
 
@@ -209,45 +210,82 @@ func TestParseLengthEncodedInt(t *testing.T) {
 		num    uint64
 		isNull bool
 		n      int
+		err    error
 	}{
 		{
 			[]byte{'\xfb'},
 			uint64(0),
 			true,
 			1,
+			nil,
 		},
 		{
 			[]byte{'\x00'},
 			uint64(0),
 			false,
 			1,
+			nil,
 		},
 		{
 			[]byte{'\xfc', '\x01', '\x02'},
 			uint64(513),
 			false,
 			3,
+			nil,
 		},
 		{
 			[]byte{'\xfd', '\x01', '\x02', '\x03'},
 			uint64(197121),
 			false,
 			4,
+			nil,
 		},
 		{
 			[]byte{'\xfe', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07', '\x08'},
 			uint64(578437695752307201),
 			false,
 			9,
+			nil,
+		},
+		{
+			[]byte{},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
+		},
+		{
+			[]byte{'\xfc', '\x01'},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
+		},
+		{
+			[]byte{'\xfd', '\x01', '\x02'},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
+		},
+		{
+			[]byte{'\xfe'},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
 		},
 	}
 
 	for _, tc := range testCases {
-		num, isNull, n := ParseLengthEncodedInt(tc.buffer)
+		num, isNull, n, err := ParseLengthEncodedInt(tc.buffer)
 		require.Equal(t, tc.num, num)
 		require.Equal(t, tc.isNull, isNull)
 		require.Equal(t, tc.n, n)
-		require.Equal(t, tc.n, LengthEncodedIntSize(tc.num))
+		require.ErrorIs(t, err, tc.err)
+		if tc.err == nil {
+			require.Equal(t, tc.n, LengthEncodedIntSize(tc.num))
+		}
 	}
 }
 
@@ -272,6 +310,13 @@ func TestParseLengthEncodedBytes(t *testing.T) {
 	require.False(t, isNull)
 	require.Equal(t, 2, n)
 	require.Equal(t, "EOF", err.Error())
+
+	buffer = []byte{'\xfe'}
+	b, isNull, n, err = ParseLengthEncodedBytes(buffer)
+	require.Nil(t, b)
+	require.False(t, isNull)
+	require.Equal(t, 0, n)
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestParseNullTermString(t *testing.T) {

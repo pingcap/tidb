@@ -140,7 +140,6 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 // including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
 type SstRestoreManager struct {
 	restorer         restore.SstRestorer
-	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
@@ -153,41 +152,6 @@ func (s *SstRestoreManager) Close(ctx context.Context) {
 	if s.checkpointRunner != nil {
 		s.checkpointRunner.WaitForFinish(ctx, true)
 	}
-}
-
-func NewSstRestoreManager(
-	ctx context.Context,
-	metaClient split.SplitClient,
-	snapFileImporter *snapclient.SnapFileImporter,
-	concurrencyPerStore uint,
-	storeCount uint,
-	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
-) (*SstRestoreManager, error) {
-	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * storeCount
-	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
-	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
-
-	s := &SstRestoreManager{
-		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
-	}
-	if sstCheckpointMetaManager != nil {
-		var err error
-		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if snapFileImporter.GetMergeSst() {
-		log.Info("create batch sst restorer to restore SST files")
-		s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, checkpointRunner)
-	} else {
-		log.Info("create simple sst restorer to restore SST files")
-		s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
-	}
-	return s, nil
 }
 
 type LogClient struct {
@@ -203,6 +167,7 @@ type LogClient struct {
 	dom           *domain.Domain
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
+	rateLimit     uint64
 	// regionScanConcurrency controls max in-flight region scan requests to PD.
 	regionScanConcurrency uint
 
@@ -438,6 +403,10 @@ func (rc *LogClient) SetRawKVBatchClient(
 	return nil
 }
 
+func (rc *LogClient) SetRateLimit(rateLimit uint64) {
+	rc.rateLimit = rateLimit
+}
+
 func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
 }
@@ -571,6 +540,12 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// This poolSize is similar to full restore, as both workflows are comparable.
+	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
+	poolSize := concurrencyPerStore * 32 * uint(len(stores))
+	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
+	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
+
 	var createCallBacks []func(*snapclient.SnapFileImporter) error
 	var closeCallBacks []func(*snapclient.SnapFileImporter) error
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
@@ -579,6 +554,11 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
+	if rc.rateLimit != 0 {
+		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, rc.pdClient, sstWorkerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
+	}
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
@@ -589,15 +569,23 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.sstRestoreManager, err = NewSstRestoreManager(
-		ctx,
-		metaClient,
-		snapFileImporter,
-		concurrencyPerStore,
-		uint(len(stores)),
-		sstCheckpointMetaManager,
-	)
-	return errors.Trace(err)
+	sstRestoreManager := &SstRestoreManager{}
+	if sstCheckpointMetaManager != nil {
+		var err error
+		sstRestoreManager.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if snapFileImporter.GetMergeSst() {
+		log.Info("create batch sst restorer to restore SST files")
+		sstRestoreManager.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, sstRestoreManager.checkpointRunner)
+	} else {
+		log.Info("create simple sst restorer to restore SST files")
+		sstRestoreManager.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, sstRestoreManager.checkpointRunner)
+	}
+	rc.sstRestoreManager = sstRestoreManager
+	return nil
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
@@ -685,25 +673,27 @@ type LockedMigrations struct {
 	ReadLock objstore.RemoteLock
 }
 
-func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
+func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
 	ext := stream.MigrationExtension(rc.storage)
 	readLock, err := ext.GetReadLock(ctx, "restore stream")
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if retErr != nil {
+			readLock.UnlockOnCleanUp(ctx)
+		}
+	}()
 
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	ms := migs.ListAll()
-
-	lms := &LockedMigrations{
-		Migs:     ms,
+	return &LockedMigrations{
+		Migs:     migs.ListAll(),
 		ReadLock: readLock,
-	}
-	return lms, nil
+	}, nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
@@ -1522,11 +1512,106 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return wrapper.WithSplit(ctx, logIter, strategy), nil
+}
+
+// WrapLogFilesIterWithCheckpointFilter applies only the checkpoint skip filter to
+// the log files iterator, without performing any region splitting. Used when
+// pre-split has already been done and per-batch splitting is skipped, but
+// checkpoint-based file filtering still needs to happen.
+func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
+	ctx context.Context,
+	logIter LogIter,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+) (LogIter, error) {
+	// splitFileThreshold is unused here: Accumulate is never called on this path.
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(file *LogDataFileInfo) bool {
+		return strategy.ShouldSkip(file)
+	}), nil
+}
+
+// PreSplitRegions performs a full pre-scan over ALL DML files and issues region
+// splits based on the total cumulative data volume. This avoids the problem where
+// per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
+// boundary, producing insufficient splits for workloads that spread data across many
+// regions (e.g., secondary index builds).
+//
+// Returns (true, nil) when splits were successfully issued; (false, nil) when
+// there are no DML files to split; (false, err) on any failure. Callers that
+// receive true should skip the fallback per-batch split to avoid redundant
+// split+scatter work.
+func (rc *LogClient) PreSplitRegions(
+	ctx context.Context,
+	rules map[int64]*restoreutils.RewriteRules,
+	splitSize uint64,
+	splitKeys int64,
+) (bool, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
+	strategy := split.NewBaseSplitStrategy(rules)
+
+	logIter, err := rc.LoadDMLFiles(ctx)
+	if err != nil {
+		return false, errors.Annotate(err, "pre-split: load DML files")
+	}
+
+	var fileCount int
+	startTime := time.Now()
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
+		if r.Err != nil {
+			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
+		}
+		file := r.Item
+		if file.IsMeta {
+			continue
+		}
+		if _, exist := rules[file.TableId]; !exist {
+			continue
+		}
+		splitHelper, exist := strategy.TableSplitter[file.TableId]
+		if !exist {
+			splitHelper = split.NewSplitHelper()
+			strategy.TableSplitter[file.TableId] = splitHelper
+		}
+		splitHelper.Merge(split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
+			},
+		})
+		fileCount++
+	}
+	log.Info("pre-split: merged all files",
+		zap.Int("file-count", fileCount),
+		zap.Duration("merge-took", time.Since(startTime)))
+
+	if fileCount == 0 {
+		return false, nil
+	}
+
+	splitStart := time.Now()
+	accumulations := strategy.GetAccumulations()
+	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
+		return false, errors.Annotate(err, "pre-split: execute regions")
+	}
+	log.Info("pre-split: completed",
+		zap.Duration("split-took", time.Since(splitStart)),
+		zap.Duration("total-took", time.Since(startTime)))
+	return true, nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
