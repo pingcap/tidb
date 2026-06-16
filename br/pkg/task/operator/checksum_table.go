@@ -12,12 +12,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -435,11 +435,10 @@ type ChecksumResult struct {
 
 func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]ChecksumResult, error) {
 	log.Info("checksum tables", zap.Uint64("checksum ts", c.checksumTS))
-	pdClient := c.mgr.PDClient()
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: c.checksumTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		TTL:      gc.DefaultBRGCSafePointTTL,
+		ID:       gc.MakeSafePointID(),
 	}
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
@@ -448,14 +447,14 @@ func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]C
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+		if err := c.mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err := utils.StartServiceSafePointKeeper(cctx, pdClient, sp)
+	err := gc.StartServiceSafePointKeeper(cctx, sp, c.mgr.GetGCManager())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
