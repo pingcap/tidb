@@ -281,7 +281,6 @@ func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
 		return statsHandler.connBegins.Load() == 1
 	}, time.Second, 10*time.Millisecond)
 
-	GlobalMPPInfoManager.Add(&MPPInfo{Address: address})
 	GlobalMPPInfoManager.Prune(map[string]struct{}{})
 
 	items, err := GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
@@ -302,11 +301,14 @@ func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, int32(5), diagnosticsServer.calls.Load())
 	require.Eventually(t, func() bool {
-		return statsHandler.connBegins.Load() == 2
+		return statsHandler.connBegins.Load() == 3
 	}, time.Second, 10*time.Millisecond)
 }
 
 func TestMppInfoManager(t *testing.T) {
+	closeGRPCConnsForTest()
+	t.Cleanup(closeGRPCConnsForTest)
+
 	manager := &MppInfoManager{cachedStores: make(map[string]*MPPInfo)}
 	manager.Delete("123") // Should happen nothing
 	manager.Add(&MPPInfo{
@@ -326,8 +328,11 @@ func TestMppInfoManager(t *testing.T) {
 	info = manager.Get("123")
 	require.True(t, info == nil)
 
+	staleAddress, _, _ := startDiagnosticsGRPCServerForTest(t)
+	_, err := GetServerInfoByGRPC(context.Background(), staleAddress, diagnosticspb.ServerInfoType_All)
+	require.NoError(t, err)
 	manager.Add(&MPPInfo{
-		Address:         "456",
+		Address:         staleAddress,
 		LogicalCPUCount: 456,
 		StartTimestamp:  789,
 	})
@@ -337,6 +342,6 @@ func TestMppInfoManager(t *testing.T) {
 		StartTimestamp:  123,
 	})
 	manager.Prune(map[string]struct{}{"789": {}})
-	require.Nil(t, manager.Get("456"))
+	require.Nil(t, manager.Get(staleAddress))
 	require.NotNil(t, manager.Get("789"))
 }

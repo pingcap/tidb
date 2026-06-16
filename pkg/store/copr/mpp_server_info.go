@@ -50,50 +50,43 @@ func newConnCacheKey(address string, security config.Security) connCacheKey {
 	}
 }
 
-func getGRPCConn(address string, security config.Security) (*grpc.ClientConn, error) {
+func getGRPCConn(address string, security config.Security) (*grpc.ClientConn, connCacheKey, error) {
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
 		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, connCacheKey{}, errors.Trace(err)
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
 	key := newConnCacheKey(address, security)
 	if conn, ok := connCache.Load(key); ok {
-		return conn.(*grpc.ClientConn), nil
+		return conn.(*grpc.ClientConn), key, nil
 	}
 
 	conn, err := grpc.Dial(address, opt)
 	if err != nil {
-		return nil, err
+		return nil, connCacheKey{}, err
 	}
 	actual, loaded := connCache.LoadOrStore(key, conn)
 	if loaded {
 		if err := conn.Close(); err != nil {
 			log.Warn("close duplicated grpc connection warning", zap.Error(err))
 		}
-		return actual.(*grpc.ClientConn), nil
+		return actual.(*grpc.ClientConn), key, nil
 	}
-	return conn, nil
+	return conn, key, nil
 }
 
-func deleteGRPCConn(address string) {
-	connCache.Range(func(key, value any) bool {
-		cacheKey := key.(connCacheKey)
-		if cacheKey.address != address {
-			return true
+func deleteGRPCConnByKey(cacheKey connCacheKey, value any) {
+	conn := value.(*grpc.ClientConn)
+	if connCache.CompareAndDelete(cacheKey, conn) {
+		if err := conn.Close(); err != nil {
+			log.Warn("close grpc connection warning", zap.Error(err))
 		}
-		conn := value.(*grpc.ClientConn)
-		if connCache.CompareAndDelete(cacheKey, conn) {
-			if err := conn.Close(); err != nil {
-				log.Warn("close grpc connection warning", zap.Error(err))
-			}
-		}
-		return true
-	})
+	}
 }
 
 func closeGRPCConnsForTest() {
@@ -109,7 +102,7 @@ func closeGRPCConnsForTest() {
 // GetServerInfoByGRPC fetches server info from a diagnostics service.
 func GetServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
 	security := config.GetGlobalConfig().Security
-	conn, err := getGRPCConn(address, security)
+	conn, cacheKey, err := getGRPCConn(address, security)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +112,7 @@ func GetServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	defer cancel()
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
 	if err != nil {
+		deleteGRPCConnByKey(cacheKey, conn)
 		return nil, err
 	}
 	return r.Items, nil

@@ -120,22 +120,21 @@ func (t *MppInfoManager) Get(address string) *MPPInfo {
 	return ret
 }
 
-// Prune deletes mppInfo entries that are no longer in active stores.
+// Prune deletes cached gRPC connections that are no longer in active stores.
 func (t *MppInfoManager) Prune(activeStores map[string]struct{}) {
-	deletedAddrs := make([]string, 0)
-	t.lock.Lock()
-	defer t.lock.Unlock()
-	for address := range t.cachedStores {
+	deletedAddrs := make(map[string]struct{})
+	connCache.Range(func(key, value any) bool {
+		cacheKey := key.(connCacheKey)
+		address := cacheKey.address
 		if _, ok := activeStores[address]; ok {
-			continue
+			return true
 		}
-		delete(t.cachedStores, address)
-		deletedAddrs = append(deletedAddrs, address)
-	}
-
-	for _, address := range deletedAddrs {
-		deleteGRPCConn(address)
-	}
+		if _, ok := deletedAddrs[address]; !ok {
+			deletedAddrs[address] = struct{}{}
+		}
+		deleteGRPCConnByKey(cacheKey, value)
+		return true
+	})
 }
 
 func fetchMPPStoreAddresses(ctx context.Context, pdClient pd.Client) (map[string]struct{}, error) {
@@ -145,9 +144,6 @@ func fetchMPPStoreAddresses(ctx context.Context, pdClient pd.Client) (map[string
 	}
 	activeStores := make(map[string]struct{}, len(stores))
 	for _, store := range stores {
-		if !tikv.LabelFilterNoTiFlashWriteNode(store.GetLabels()) {
-			continue
-		}
 		activeStores[store.GetAddress()] = struct{}{}
 	}
 	return activeStores, nil
