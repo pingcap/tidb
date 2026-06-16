@@ -88,7 +88,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	expectedSQLMode := tk.Session().GetSessionVars().SQLMode
 
-	tk.MustExec("create materialized view log on t (a) purge start with cast('2026-01-02 03:04:05' as datetime) next cast('2026-01-02 03:14:05' as datetime)")
+	tk.MustExec("create materialized view log on t (a) purge start with cast('2026-01-02 03:04:05' as datetime) next cast('2026-01-02 03:14:05' as datetime) alert rows 1234")
 
 	// Physical table created.
 	tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='$mlog$t'").Check(testkit.Rows("1"))
@@ -112,6 +112,8 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.Equal(t, "DEFERRED", mlogInfo.PurgeMethod)
 	require.Equal(t, "CAST('2026-01-02 03:04:05' AS DATETIME)", mlogInfo.PurgeStartWith)
 	require.Equal(t, "CAST('2026-01-02 03:14:05' AS DATETIME)", mlogInfo.PurgeNext)
+	require.NotNil(t, mlogInfo.LogAccumulationAlertRows)
+	require.Equal(t, uint64(1234), *mlogInfo.LogAccumulationAlertRows)
 	require.Equal(t, expectedSQLMode, mlogInfo.DefinitionSQLMode)
 
 	// Meta columns should exist on the log table.
@@ -442,7 +444,7 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_show_mlog (a int, b int)")
-	tk.MustExec("create materialized view log on t_show_mlog (a, b) shard_row_id_bits = 2 pre_split_regions = 2 purge start with cast('2026-01-02 03:04:05' as datetime) next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view log on t_show_mlog (a, b) shard_row_id_bits = 2 pre_split_regions = 2 purge start with cast('2026-01-02 03:04:05' as datetime) next date_add(now(), interval 1 hour) alert rows 2048")
 
 	rows := tk.MustQuery("show create materialized view log on t_show_mlog").Rows()
 	require.Len(t, rows, 1)
@@ -452,6 +454,7 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
 	require.Contains(t, showCreate, "PURGE START WITH CAST('2026-01-02 03:04:05' AS DATETIME) NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
+	require.Contains(t, showCreate, "ALERT ROWS 2048")
 
 	tk.MustExec("create user 'u_show_create_mlog'@'%'")
 	defer tk.MustExec("drop user 'u_show_create_mlog'@'%'")
@@ -521,6 +524,51 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
 
 	tk.MustExec("create materialized view log on t (a) purge start with now() next date_add(now(), interval 1 hour)")
+}
+
+func TestCreateMaterializedViewLogAccumulationAlert(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_alert_default (a int)")
+	tk.MustExec("create table t_alert_zero (a int)")
+	tk.MustExec("create table t_alert_custom (a int)")
+	tk.MustExec("create table t_alert_negative (a int)")
+
+	err := tk.ExecToErr("create materialized view log on t_alert_negative (a) alert rows -1")
+	require.ErrorContains(t, err, "invalid ALERT ROWS value: -1 (must be non-negative)")
+
+	tk.MustExec("create materialized view log on t_alert_default (a)")
+	tk.MustExec("create materialized view log on t_alert_zero (a) alert rows 0")
+	tk.MustExec("create materialized view log on t_alert_custom (a) alert rows 2048")
+
+	getMLogInfo := func(baseTable string) *metamodel.MaterializedViewLogInfo {
+		is := dom.InfoSchema()
+		mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$"+baseTable))
+		require.NoError(t, err)
+		require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+		return mlogTable.Meta().MaterializedViewLog
+	}
+
+	defaultInfo := getMLogInfo("t_alert_default")
+	require.Nil(t, defaultInfo.LogAccumulationAlertRows)
+	defaultRows, defaultEnabled := defaultInfo.EffectiveLogAccumulationAlertRows()
+	require.False(t, defaultEnabled)
+	require.Equal(t, uint64(0), defaultRows)
+
+	zeroInfo := getMLogInfo("t_alert_zero")
+	require.NotNil(t, zeroInfo.LogAccumulationAlertRows)
+	require.Equal(t, uint64(0), *zeroInfo.LogAccumulationAlertRows)
+	zeroRows, zeroEnabled := zeroInfo.EffectiveLogAccumulationAlertRows()
+	require.False(t, zeroEnabled)
+	require.Equal(t, uint64(0), zeroRows)
+
+	customInfo := getMLogInfo("t_alert_custom")
+	require.NotNil(t, customInfo.LogAccumulationAlertRows)
+	require.Equal(t, uint64(2048), *customInfo.LogAccumulationAlertRows)
+	customRows, customEnabled := customInfo.EffectiveLogAccumulationAlertRows()
+	require.True(t, customEnabled)
+	require.Equal(t, uint64(2048), customRows)
 }
 
 func TestCreateMaterializedViewLogPurgeInfoNextTimeDerivation(t *testing.T) {

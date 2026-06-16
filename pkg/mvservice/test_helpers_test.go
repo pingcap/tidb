@@ -65,7 +65,19 @@ func setRefreshAlertCleanupOwnerForTest(svc *MVService, ownerHash uint32) {
 	})
 }
 
+func setTaskOwnersForTest(svc *MVService, taskHashes map[int64]uint32) {
+	overrides := make(map[string]uint32, len(taskHashes))
+	for id, hash := range taskHashes {
+		overrides[string(int64KeyToBinaryBytes(id))] = hash
+	}
+	setServiceHashOverridesForTest(svc, overrides)
+}
+
 func setServiceOwnersForTest(svc *MVService, ownerHashes map[string]uint32) {
+	setServiceHashOverridesForTest(svc, ownerHashes)
+}
+
+func setServiceHashOverridesForTest(svc *MVService, overrides map[string]uint32) {
 	svc.sch.mu.Lock()
 	svc.sch.ID = "nodeA"
 	svc.sch.chash.replicas = 1
@@ -75,7 +87,7 @@ func setServiceOwnersForTest(svc *MVService, ownerHashes map[string]uint32) {
 		mvHistoryGCOwnerKey:           10,
 		mvRefreshAlertCleanupOwnerKey: 10,
 	}
-	for key, hash := range ownerHashes {
+	for key, hash := range overrides {
 		mapping[key] = hash
 	}
 	svc.sch.chash.hashFunc = mustHash(mapping)

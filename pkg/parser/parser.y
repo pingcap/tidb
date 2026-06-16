@@ -318,6 +318,7 @@ import (
 	after                 "AFTER"
 	against               "AGAINST"
 	ago                   "AGO"
+	alert                 "ALERT"
 	algorithm             "ALGORITHM"
 	always                "ALWAYS"
 	any                   "ANY"
@@ -1446,6 +1447,8 @@ import (
 	MLogCreateOption                       "materialized view log create option"
 	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
+	MLogAccumulationAlertClauseOpt         "materialized view log optional ALERT ROWS clause"
+	MLogAccumulationAlertClause            "materialized view log ALERT ROWS clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
 	MLogNextOpt                            "materialized view log NEXT option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
@@ -5425,14 +5428,15 @@ MViewNextOpt:
 	}
 
 CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
 	{
 		opts := $10.(*mlogCreateOptions)
 		x := &ast.CreateMaterializedViewLogStmt{
-			Table:   $6.(*ast.TableName),
-			Cols:    $8.([]model.CIStr),
-			Options: opts.options,
-			Purge:   $11.(*ast.MLogPurgeClause),
+			Table:             $6.(*ast.TableName),
+			Cols:              $8.([]model.CIStr),
+			Options:           opts.options,
+			Purge:             $11.(*ast.MLogPurgeClause),
+			AccumulationAlert: $12.(*ast.MLogAccumulationAlertClause),
 		}
 		$$ = x
 	}
@@ -5516,6 +5520,22 @@ MLogPurgeClause:
 			startWith = $2.(ast.ExprNode)
 		}
 		$$ = &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: $4}
+	}
+
+MLogAccumulationAlertClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MLogAccumulationAlertClause)(nil)
+	}
+|	MLogAccumulationAlertClause
+	{
+		$$ = $1
+	}
+
+MLogAccumulationAlertClause:
+	"ALERT" "ROWS" SignedNum
+	{
+		$$ = &ast.MLogAccumulationAlertClause{Rows: $3.(int64)}
 	}
 
 MLogStartWithOpt:
@@ -7626,6 +7646,7 @@ UnReservedKeyword:
 |	"LASTVAL"
 |	"SETVAL"
 |	"AGO"
+|	"ALERT"
 |	"BACKUP"
 |	"BACKUPS"
 |	"CONCURRENCY"
