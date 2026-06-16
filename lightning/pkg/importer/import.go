@@ -352,11 +352,7 @@ func NewImportControllerWithPauser(
 	var pdHTTPCli pdhttp.Client
 	var etcdCli *clientv3.Client
 	var kvstore tidbkv.Storage
-<<<<<<< HEAD
 	apiContext := keyspace.BuildAPIContext(p.KeyspaceName)
-||||||| parent of bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
-=======
->>>>>>> bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
@@ -661,13 +657,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	// For physical backend, we need DBInfo.ID to operate the global autoid allocator.
 	if isPhysicalBackend(rc.cfg) {
-<<<<<<< HEAD
 		dbs, err := rc.preInfoGetter.FetchRemoteDBModels(ctx)
-||||||| parent of bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
-		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
-=======
-		dbs, err := tikv.FetchRemoteDBModels(ctx, rc.kvstore)
->>>>>>> bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
 		if err != nil {
 			return errors.Trace(err)
 		}

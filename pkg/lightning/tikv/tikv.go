@@ -35,12 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util/engine"
-||||||| parent of bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
-=======
 	model2 "github.com/pingcap/tidb/pkg/parser/model"
->>>>>>> bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"

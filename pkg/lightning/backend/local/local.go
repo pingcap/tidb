@@ -41,12 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/kv"
-||||||| parent of bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
-=======
-	kv2 "github.com/pingcap/tidb/pkg/kv"
->>>>>>> bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -273,7 +268,7 @@ type targetInfoGetter struct {
 	tls       *common.TLS
 	targetDB  *sql.DB
 	pdHTTPCli pdhttp.Client
-	kvstore   kv2.Storage
+	kvstore   kv.Storage
 }
 
 // NewTargetInfoGetter creates an TargetInfoGetter with local backend
@@ -283,12 +278,7 @@ func NewTargetInfoGetter(
 	tls *common.TLS,
 	db *sql.DB,
 	pdHTTPCli pdhttp.Client,
-<<<<<<< HEAD
-	_ kv.Storage,
-||||||| parent of bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
-=======
-	kvstore kv2.Storage,
->>>>>>> bcd35f392a ([main-8.5] lightning: fetch tidb schema via kv.Storage instead of TiDB's HTTP API (#2047))
+	kvstore kv.Storage,
 ) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:       tls,
