@@ -713,7 +713,7 @@ func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err er
 					zap.Time("manual_cancel_backoff_at", nextRetryAt),
 					zap.Error(backoffErr),
 				)
-				logutil.BgLogger().Warn("refresh MV manual cancel backoff persist failed, forcing metadata refetch", fields...)
+				logutil.BgLogger().Warn("refresh MV manual cancel backoff persist failed", fields...)
 			}
 			if applied {
 				if appliedNext.IsZero() {
@@ -723,8 +723,7 @@ func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err er
 				t.rescheduleMVSuccess(m, appliedNext)
 				return
 			}
-			t.lastMetaFetchMillis.Store(0)
-			t.removeMVTask(m)
+			t.rescheduleMV(m, nextRetryAt.UnixMilli())
 			return
 		}
 		retryCount := m.retryCount.Add(1)
@@ -763,7 +762,7 @@ func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err err
 					zap.Time("manual_cancel_backoff_at", nextRetryAt),
 					zap.Error(backoffErr),
 				)
-				logutil.BgLogger().Warn("purge MV log manual cancel backoff persist failed, forcing metadata refetch", fields...)
+				logutil.BgLogger().Warn("purge MV log manual cancel backoff persist failed", fields...)
 			}
 			if applied {
 				if appliedNext.IsZero() {
@@ -773,8 +772,7 @@ func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err err
 				t.rescheduleMVLogSuccess(l, appliedNext)
 				return
 			}
-			t.lastMetaFetchMillis.Store(0)
-			t.removeMVLogTask(l)
+			t.rescheduleMVLog(l, nextRetryAt.UnixMilli())
 			return
 		}
 		retryCount := l.retryCount.Add(1)
