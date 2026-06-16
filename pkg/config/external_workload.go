@@ -19,6 +19,7 @@ import (
 	"strings"
 )
 
+// External workload role names accepted by [external-workload].
 const (
 	RoleMaster            = "master"
 	RoleGCV2Worker        = "gcv2"
