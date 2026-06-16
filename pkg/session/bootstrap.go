@@ -1310,7 +1310,7 @@ const (
 	// Add REFRESH_FAILED and allow NULL ALERT_LEVEL in MV refresh alert table.
 	version227 = 227
 
-	// next version should start with 228
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
