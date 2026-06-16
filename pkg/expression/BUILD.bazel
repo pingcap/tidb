@@ -204,6 +204,7 @@ go_test(
         "function_traits_test.go",
         "grouping_sets_test.go",
         "helper_test.go",
+        "infer_pushdown_collation_test.go",
         "main_test.go",
         "scalar_function_test.go",
         "schema_test.go",
