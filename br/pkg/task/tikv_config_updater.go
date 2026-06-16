@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -10,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 func setConfig(ctx context.Context, g glue.Glue, storage kv.Storage, key string, value any) error {
@@ -19,6 +19,8 @@ func setConfig(ctx context.Context, g glue.Glue, storage kv.Storage, key string,
 		return errors.Trace(err)
 	}
 	defer se.Close()
+
+	value = convertBoolForTiKV(value)
 
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 
@@ -36,15 +38,18 @@ func setConfig(ctx context.Context, g glue.Glue, storage kv.Storage, key string,
 }
 
 func setConfigs(ctx context.Context, g glue.Glue, storage kv.Storage, values map[string]any) error {
-	var group errgroup.Group
-	for key, value := range values {
-		keySafe := key
-		valueSafe := value
-		group.Go(func() error {
-			return setConfig(ctx, g, storage, keySafe, valueSafe)
-		})
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
 	}
-	return group.Wait()
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if err := setConfig(ctx, g, storage, key, values[key]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureTiKVConfigFromFile(ctx context.Context, g glue.Glue, storage kv.Storage, path string) error {
@@ -57,6 +62,20 @@ func ensureTiKVConfigFromFile(ctx context.Context, g glue.Glue, storage kv.Stora
 		return errors.Trace(err)
 	}
 	return setConfigs(ctx, g, storage, convertToPlainKeys(configValues))
+}
+
+// convertBoolForTiKV converts Go boolean values to "true"/"false" strings.
+// This is necessary because ExecRestrictedSQL's EscapeSQL converts Go bools to
+// 0/1 integers, which TiKV's Rust bool parser doesn't accept (it only accepts
+// "true"/"false" string literals).
+func convertBoolForTiKV(value any) any {
+	if b, ok := value.(bool); ok {
+		if b {
+			return "true"
+		}
+		return "false"
+	}
+	return value
 }
 
 func convertToPlainKeys(values map[string]any) map[string]any {
