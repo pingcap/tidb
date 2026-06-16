@@ -90,13 +90,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 32,
-||||||| parent of 7fcd795b7e ([main-8.5-keyspace] *: cherry-pick upstream #66070, #64359, #64009 (#2318))
-    shard_count = 33,
-=======
     shard_count = 39,
->>>>>>> 7fcd795b7e ([main-8.5-keyspace] *: cherry-pick upstream #66070, #64359, #64009 (#2318))
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",

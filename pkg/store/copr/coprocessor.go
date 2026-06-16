@@ -2026,7 +2026,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				if err != nil {
 					return nil, err
 				}
-				return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task, ch)
+				return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
 			}
 
 			// Important: log enough context here even if the retry succeeds, so we can
