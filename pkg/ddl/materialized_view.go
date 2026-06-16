@@ -50,11 +50,8 @@ import (
 const (
 	mviewAttrAlertWarning                                 = "mview_alert_warning"
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
-<<<<<<< HEAD
 	materializedViewLogNamePrefix                         = "$mlog$"
-=======
 	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
->>>>>>> feature/release-8.5-materialized-view
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 )
 
