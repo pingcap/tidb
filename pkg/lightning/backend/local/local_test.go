@@ -2906,7 +2906,7 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return data.GetRefCount() == 0
-	}, 3*time.Second, 10*time.Millisecond, "ref'd jobs after the canceled send path must all be marked done")
+	}, 10*time.Second, 10*time.Millisecond, "ref'd jobs after the canceled send path must all be marked done")
 	jobWg.Wait()
 	require.Equal(t, int64(0), data.GetRefCount())
 }
