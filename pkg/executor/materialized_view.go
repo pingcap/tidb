@@ -90,6 +90,9 @@ const (
 	compareMaterializedViewDifferType         = "mview_differ"
 	compareMaterializedViewVacuumType         = "mview_vacuum"
 	compareMaterializedViewExcessiveType      = "mview_excessive"
+
+	compareMaterializedViewOutputWriterBatchSize     = 1024
+	compareMaterializedViewOutputWriterBatchBytesCap = 16 * 1024 * 1024
 )
 
 type compareMaterializedViewDiffLayout struct {
@@ -115,6 +118,9 @@ type compareMaterializedViewOutputWriter struct {
 	fieldTypes    []*types.FieldType
 	row           []types.Datum
 	mvColumnCount int
+	batchSize     int
+	batchBytes    int
+	pendingRows   int
 	release       func(context.Context)
 }
 
@@ -1655,14 +1661,14 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 		}()
 	}
 
-	baseQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, lastSuccessReadTSO, tblInfo.MaterializedView.SQLContent)
+	baseQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, lastSuccessReadTSO, tblInfo.MaterializedView, tblInfo.MaterializedView.SQLContent)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = baseQueryExec.Close() }()
 
 	mvQuerySQL := buildCompareMaterializedViewSelectSQL(schemaName, tblInfo.Name, visibleCols)
-	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, compareSnapshotTS, mvQuerySQL)
+	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, compareSnapshotTS, tblInfo.MaterializedView, mvQuerySQL)
 	if err != nil {
 		return err
 	}
@@ -1835,11 +1841,22 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
 	ctx context.Context,
 	defaultDB pmodel.CIStr,
 	snapshotTS uint64,
+	mviewInfo *model.MaterializedViewInfo,
 	sql string,
 ) (exec.Executor, error) {
 	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, defaultDB, snapshotTS)
 	if err != nil {
 		return nil, err
+	}
+	restoreDefinitionSession, err := initRefreshMaterializedViewSession(sctx.GetSessionVars(), mviewInfo)
+	if err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	snapshotCleanup := cleanup
+	cleanup = func() error {
+		restoreDefinitionSession()
+		return snapshotCleanup()
 	}
 
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
@@ -1927,16 +1944,6 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	releaseInsertSession := func(releaseCtx context.Context) {
 		e.ReleaseSysSession(releaseCtx, insertSctx)
 	}
-	if err := sessiontxn.NewTxn(ctx, insertSctx); err != nil {
-		releaseInsertSession(ctx)
-		return nil, err
-	}
-	txn, err := insertSctx.Txn(true)
-	if err != nil {
-		releaseInsertSession(ctx)
-		return nil, err
-	}
-	insertSctx.GetSessionVars().SetInTxn(true)
 
 	outputIS := domain.GetDomain(e.Ctx()).InfoSchema()
 	targetTable, err := outputIS.TableByName(context.Background(), e.stmt.OutputTable.Schema, e.stmt.OutputTable.Name)
@@ -1952,10 +1959,11 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	return &compareMaterializedViewOutputWriter{
 		sctx:          insertSctx,
 		targetTable:   targetTable,
-		txn:           txn,
 		fieldTypes:    fieldTypes,
 		row:           make([]types.Datum, len(writableCols)),
 		mvColumnCount: len(visibleCols),
+		batchSize:     compareMaterializedViewOutputWriterBatchSize,
+		batchBytes:    resolveCompareMaterializedViewOutputWriterBatchBytes(),
 		release:       releaseInsertSession,
 	}, nil
 }
@@ -2269,7 +2277,48 @@ func (e *compareMaterializedViewRecordSetExec) Close() error {
 	return e.closeErr
 }
 
+func resolveCompareMaterializedViewOutputWriterBatchBytes() int {
+	txnLimit := kv.TxnTotalSizeLimit.Load() / 4
+	if compareMaterializedViewOutputWriterBatchBytesCap > 0 && txnLimit > uint64(compareMaterializedViewOutputWriterBatchBytesCap) {
+		txnLimit = uint64(compareMaterializedViewOutputWriterBatchBytesCap)
+	}
+	return max(int(txnLimit), 1)
+}
+
+func (w *compareMaterializedViewOutputWriter) ensureTxn(ctx context.Context) error {
+	if w.txn != nil {
+		return nil
+	}
+	if err := sessiontxn.NewTxnInStmt(ctx, w.sctx); err != nil {
+		return err
+	}
+	txn, err := w.sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	w.txn = txn
+	w.pendingRows = 0
+	return nil
+}
+
+func (w *compareMaterializedViewOutputWriter) flushBatch(ctx context.Context) error {
+	if w.txn == nil {
+		return nil
+	}
+	w.sctx.StmtCommit(ctx)
+	if err := w.sctx.CommitTxn(ctx); err != nil {
+		return err
+	}
+	w.sctx.GetSessionVars().SetInTxn(false)
+	w.txn = nil
+	w.pendingRows = 0
+	return nil
+}
+
 func (w *compareMaterializedViewOutputWriter) writeRow(ctx context.Context, row chunk.Row, diffType string) error {
+	if err := w.ensureTxn(ctx); err != nil {
+		return err
+	}
 	useRight := diffType != compareMaterializedViewVacuumType
 	for colIdx := 0; colIdx < w.mvColumnCount; colIdx++ {
 		sourceColIdx := colIdx
@@ -2282,6 +2331,10 @@ func (w *compareMaterializedViewOutputWriter) writeRow(ctx context.Context, row 
 	if _, err := w.targetTable.AddRecord(w.sctx.GetTableCtx(), w.txn, w.row, table.WithCtx(ctx), table.DupKeyCheckLazy); err != nil {
 		return err
 	}
+	w.pendingRows++
+	if w.pendingRows >= w.batchSize || w.txn.Size() >= w.batchBytes {
+		return w.flushBatch(ctx)
+	}
 	return nil
 }
 
@@ -2289,8 +2342,7 @@ func (w *compareMaterializedViewOutputWriter) commit(ctx context.Context) error 
 	if w == nil || w.sctx == nil {
 		return nil
 	}
-	w.sctx.StmtCommit(ctx)
-	if err := w.sctx.CommitTxn(ctx); err != nil {
+	if err := w.flushBatch(ctx); err != nil {
 		return err
 	}
 	if w.release != nil {
@@ -2305,11 +2357,15 @@ func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) {
 	if w == nil || w.sctx == nil {
 		return
 	}
+	if w.txn != nil {
+		w.sctx.RollbackTxn(ctx)
+	}
 	if w.release != nil {
 		w.release(ctx)
 	}
 	w.sctx = nil
 	w.txn = nil
+	w.pendingRows = 0
 }
 
 // Next implements the Executor Next interface.

@@ -3666,6 +3666,69 @@ func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 		))
 }
 
+func TestCompareMaterializedViewOutputWriterBatchesByTxnSize(t *testing.T) {
+	const rowCount = 900
+
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_output_batch (a int not null, c varchar(1700) not null)")
+	tk.MustExec("create index idx_a on t_compare_output_batch (a)")
+	for start := 0; start < rowCount; start += 100 {
+		var sb strings.Builder
+		sb.WriteString("insert into t_compare_output_batch values ")
+		end := min(start+100, rowCount)
+		for i := start; i < end; i++ {
+			if i > start {
+				sb.WriteString(", ")
+			}
+			val := fmt.Sprintf("%04d_%s", i, strings.Repeat("x", 1500))
+			fmt.Fprintf(&sb, "(%d, '%s')", i, val)
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("create materialized view log on t_compare_output_batch (a, c) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_output_batch (a, mx, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, max(c), count(1) from t_compare_output_batch group by a")
+
+	origInMVMaintenance := tk.Session().GetSessionVars().InMaterializedViewMaintenance
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = true
+	mustExecInternal(t, tk, "delete from mv_compare_output_batch")
+	mustExecInternal(t, tk, "commit")
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = origInMVMaintenance
+
+	origTxnLimit := kv.TxnTotalSizeLimit.Load()
+	kv.TxnTotalSizeLimit.Store(1024 * 1024)
+	defer kv.TxnTotalSizeLimit.Store(origTxnLimit)
+
+	compareSQL := fmt.Sprintf(
+		"compare materialized view test.mv_compare_output_batch as of timestamp '%s' output into table test.mv_compare_output_batch_diff",
+		nextCompareTimestamp(t, tk),
+	)
+	tk.MustExec(compareSQL)
+	tk.MustQuery("select count(*) from test.mv_compare_output_batch_diff").Check(testkit.Rows(fmt.Sprint(rowCount)))
+}
+
+func TestCompareMaterializedViewUsesDefinitionTimeZone(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.time_zone = '+00:00'")
+	tk.MustExec("create table t_compare_tz (a int not null, ts timestamp not null, b int not null)")
+	tk.MustExec("insert into t_compare_tz values (1, '2025-12-31 23:30:00', 20), (1, '2026-01-01 00:30:00', 10)")
+	tk.MustExec("create materialized view log on t_compare_tz (a, ts, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_tz (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_tz where ts >= '2026-01-01 00:00:00' group by a")
+	tk.MustQuery("select a, s, cnt from mv_compare_tz").Check(testkit.Rows("1 10 1"))
+
+	tk.MustExec("set @@session.time_zone = '+08:00'")
+	compareSQL := fmt.Sprintf(
+		"compare materialized view test.mv_compare_tz as of timestamp '%s'",
+		nextCompareTimestamp(t, tk),
+	)
+	rows := tk.MustQuery(compareSQL).Rows()
+	require.Len(t, rows, 1)
+	require.Contains(t, fmt.Sprint(rows[0][0]), "0 rows")
+}
+
 func TestCompareMaterializedViewNullableGroupKeyMinMax(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
