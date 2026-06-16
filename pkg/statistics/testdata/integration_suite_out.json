@@ -24,10 +24,6 @@
       [
         "IndexReader 1.36 root  index:IndexRangeScan",
         "└─IndexRangeScan 1.36 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
-      ],
-      [
-        "IndexReader 1.00 root  index:IndexRangeScan",
-        "└─IndexRangeScan 1.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
       ]
     ]
   },
