@@ -882,7 +882,12 @@ const (
 
 // MaterializedViewLogTableName returns the physical materialized view log table name for a base table.
 func MaterializedViewLogTableName(baseTableName model.CIStr) model.CIStr {
-	return model.NewCIStr(MaterializedViewLogTableNamePrefix + baseTableName.O)
+	baseTableNameRunes := []rune(baseTableName.O)
+	maxBaseTableNameLength := mysql.MaxTableNameLength - len([]rune(MaterializedViewLogTableNamePrefix))
+	if len(baseTableNameRunes) > maxBaseTableNameLength {
+		baseTableNameRunes = baseTableNameRunes[:maxBaseTableNameLength]
+	}
+	return model.NewCIStr(MaterializedViewLogTableNamePrefix + string(baseTableNameRunes))
 }
 
 // Clone clones MaterializedViewLogInfo.
