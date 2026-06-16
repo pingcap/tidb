@@ -864,7 +864,7 @@ type MaterializedViewLogInfo struct {
 	PurgeNext string `json:"purge_next,omitempty"`
 
 	// LogAccumulationAlertRows is the user-specified threshold for emitting MV log accumulation alerts.
-	// nil means the CREATE statement did not specify ALERT ROWS and runtime uses the default threshold.
+	// nil means the CREATE statement did not specify ALERT ROWS and runtime keeps alerting disabled by default.
 	LogAccumulationAlertRows *uint64 `json:"log_accumulation_alert_rows,omitempty"`
 
 	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW LOG session.
@@ -872,10 +872,6 @@ type MaterializedViewLogInfo struct {
 }
 
 const (
-	// DefaultMaterializedViewLogAccumulationAlertRows is the default runtime threshold used when
-	// CREATE MATERIALIZED VIEW LOG does not explicitly specify ALERT ROWS.
-	DefaultMaterializedViewLogAccumulationAlertRows uint64 = 1000000
-
 	// MaterializedViewLogTableNamePrefix is the prefix of the physical table name for a materialized view log.
 	MaterializedViewLogTableNamePrefix = "$mlog$"
 
@@ -908,12 +904,9 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 }
 
 // EffectiveLogAccumulationAlertRows returns the runtime threshold and whether alerting is enabled.
-// A nil configured threshold means using the default value; an explicit zero disables alerting.
+// A nil configured threshold keeps alerting disabled by default; an explicit zero also disables alerting.
 func (i *MaterializedViewLogInfo) EffectiveLogAccumulationAlertRows() (uint64, bool) {
-	if i == nil || i.LogAccumulationAlertRows == nil {
-		return DefaultMaterializedViewLogAccumulationAlertRows, true
-	}
-	if *i.LogAccumulationAlertRows == 0 {
+	if i == nil || i.LogAccumulationAlertRows == nil || *i.LogAccumulationAlertRows == 0 {
 		return 0, false
 	}
 	return *i.LogAccumulationAlertRows, true

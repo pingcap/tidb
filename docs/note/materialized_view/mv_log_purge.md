@@ -238,8 +238,8 @@ CREATE MATERIALIZED VIEW LOG ON t (c1, c2) ALERT ROWS 100000;
 Semantics:
 
 1. `ALERT ROWS n` means: when the current MLog row count is strictly greater than `n`, the MLog is considered accumulated for monitoring.
-2. If the clause is omitted, runtime uses the default threshold `n = 1000000`.
-3. If user explicitly sets `ALERT ROWS 0`, alerting is disabled for this MLog.
+2. If the clause is omitted, alerting is disabled by default.
+3. If user explicitly sets `ALERT ROWS 0`, alerting is also disabled for this MLog.
 4. If user explicitly sets a negative value, `CREATE MATERIALIZED VIEW LOG` returns an error.
 
 Persistence / restore:

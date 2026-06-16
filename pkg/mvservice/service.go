@@ -375,7 +375,6 @@ func (t *MVService) maybeScanMVLogAccumulationAlerts(now time.Time) {
 	if !t.mvLogAccumulationScanRunning.CompareAndSwap(false, true) {
 		return
 	}
-	t.nextMVLogAccumulationScanMillis.Store(now.Add(mvLogAccumulationAlertScanInterval).UnixMilli())
 
 	go t.runMVLogAccumulationAlertScan()
 }
@@ -394,6 +393,7 @@ func (t *MVService) runMVLogAccumulationAlertScan() {
 		return
 	}
 	t.metrics.mvLogAccumulationCount.Store(int64(alertedCount))
+	t.nextMVLogAccumulationScanMillis.Store(mvsNow().Add(mvLogAccumulationAlertScanInterval).UnixMilli())
 }
 
 func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask, int64, int64) {

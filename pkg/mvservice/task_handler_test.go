@@ -1624,19 +1624,19 @@ func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {
 	require.Equal(t, expect202.UnixMilli(), l202.orderTs)
 }
 
-func TestServerHelperLoadAllTiDBMVLogAccumulationTasksDefaultThreshold(t *testing.T) {
+func TestServerHelperLoadAllTiDBMVLogAccumulationTasksSkipsDisabledByDefault(t *testing.T) {
 	se := newRecordingSessionContext()
 	se.restrictedRows[testSQLFetchMVLogAccumulation] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(201)}).ToRow(),
 		chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(202)}).ToRow(),
 	}
 
-	baseTable, alertTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	enabledBaseTable, enabledTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	enabledRows := uint64(2048)
+	enabledTable.MaterializedViewLog.LogAccumulationAlertRows = &enabledRows
+
 	disabledBaseTable, disabledTable := buildMockMVBaseAndMVLogTables(102, 202, 102)
-	disabledTable.Name = pmodel.NewCIStr("mlog_disabled")
-	disabledRows := uint64(0)
-	disabledTable.MaterializedViewLog.LogAccumulationAlertRows = &disabledRows
-	withMockInfoSchema(t, baseTable, alertTable, disabledBaseTable, disabledTable)
+	withMockInfoSchema(t, enabledBaseTable, enabledTable, disabledBaseTable, disabledTable)
 
 	pool := recordingSessionPool{se: se}
 
@@ -1649,7 +1649,7 @@ func TestServerHelperLoadAllTiDBMVLogAccumulationTasksDefaultThreshold(t *testin
 	require.Equal(t, &mvLogAccumulationTask{
 		schemaName: "test",
 		mlogName:   "mlog1",
-		alertRows:  meta.DefaultMaterializedViewLogAccumulationAlertRows,
+		alertRows:  enabledRows,
 	}, got[int64(201)])
 }
 

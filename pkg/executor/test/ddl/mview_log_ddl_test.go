@@ -553,8 +553,8 @@ func TestCreateMaterializedViewLogAccumulationAlert(t *testing.T) {
 	defaultInfo := getMLogInfo("t_alert_default")
 	require.Nil(t, defaultInfo.LogAccumulationAlertRows)
 	defaultRows, defaultEnabled := defaultInfo.EffectiveLogAccumulationAlertRows()
-	require.True(t, defaultEnabled)
-	require.Equal(t, metamodel.DefaultMaterializedViewLogAccumulationAlertRows, defaultRows)
+	require.False(t, defaultEnabled)
+	require.Equal(t, uint64(0), defaultRows)
 
 	zeroInfo := getMLogInfo("t_alert_zero")
 	require.NotNil(t, zeroInfo.LogAccumulationAlertRows)
