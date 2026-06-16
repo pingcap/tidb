@@ -51,6 +51,7 @@ go_test(
     deps = [
         "//lightning/pkg/importinto/mock",
         "//lightning/pkg/precheck",
+        "//pkg/executor/importer",
         "//pkg/importsdk",
         "//pkg/importsdk/mock",
         "//pkg/lightning/common",

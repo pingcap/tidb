@@ -99,6 +99,7 @@ type ShowContents struct {
 	Limit *ast.Limit
 
 	ImportJobID       *int64 // Used for SHOW LOAD DATA JOB <jobID>
+	ImportJobRaw      bool   // Used for SHOW RAW IMPORT JOB(S)
 	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
 }
