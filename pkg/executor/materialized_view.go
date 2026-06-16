@@ -1618,27 +1618,32 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
-	schemaName, targetTable, tblInfo, err := e.resolveCompareMaterializedViewTarget()
+	compareSnapshotTS, err := e.resolveCompareMaterializedViewSnapshotTS(ctx)
 	if err != nil {
 		return err
 	}
-	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
+	snapshotIS, err := domain.GetDomain(e.Ctx()).GetSnapshotInfoSchema(compareSnapshotTS)
+	if err != nil {
+		return err
+	}
+
+	schemaName, targetTable, tblInfo, err := e.resolveCompareMaterializedViewTarget(snapshotIS)
+	if err != nil {
+		return err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), snapshotIS, tblInfo.MaterializedView); err != nil {
 		return err
 	}
 	if err := e.checkCompareMaterializedViewOutputTableNotExists(); err != nil {
 		return err
 	}
 
-	compareSnapshotTS, err := e.resolveCompareMaterializedViewSnapshotTS(ctx)
-	if err != nil {
-		return err
-	}
 	lastSuccessReadTSO, err := e.readCompareMaterializedViewLastSuccessReadTSO(ctx, schemaName, tblInfo.ID, compareSnapshotTS)
 	if err != nil {
 		return err
 	}
 
-	diffMeta, err := mvmerge.BuildCompleteDiffSource(e.Ctx().GetPlanCtx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo)
+	diffMeta, err := mvmerge.BuildCompleteDiffSource(e.Ctx().GetPlanCtx(), snapshotIS, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -1770,8 +1775,7 @@ func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNot
 	return nil
 }
 
-func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget() (pmodel.CIStr, table.Table, *model.TableInfo, error) {
-	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget(is infoschema.InfoSchema) (pmodel.CIStr, table.Table, *model.TableInfo, error) {
 	schemaName := e.stmt.ViewName.Schema
 	if schemaName.O == "" {
 		if e.Ctx().GetSessionVars().CurrentDB == "" {

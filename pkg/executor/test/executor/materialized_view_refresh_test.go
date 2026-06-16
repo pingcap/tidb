@@ -3666,6 +3666,37 @@ func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 		))
 }
 
+func TestCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_oop_snapshot (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_oop_snapshot values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_compare_oop_snapshot (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_oop_snapshot (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_oop_snapshot group by a")
+
+	compareTS := nextCompareTimestamp(t, tk)
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_compare_oop_snapshot"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t_compare_oop_snapshot values (2, 3), (3, 4)")
+	tk.MustExec("refresh materialized view mv_compare_oop_snapshot complete out of place")
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_compare_oop_snapshot"))
+	require.NoError(t, err)
+	require.NotEqual(t, oldMViewID, mvTable.Meta().ID)
+
+	rows := tk.MustQuery(fmt.Sprintf(
+		"compare materialized view test.mv_compare_oop_snapshot as of timestamp '%s'",
+		compareTS,
+	)).Rows()
+	require.Len(t, rows, 1)
+	require.Contains(t, fmt.Sprint(rows[0][0]), "0 rows")
+}
+
 func TestCompareMaterializedViewOutputWriterBatchesByTxnSize(t *testing.T) {
 	const rowCount = 900
 
