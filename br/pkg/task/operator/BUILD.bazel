@@ -26,6 +26,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/metautil",
         "//br/pkg/pdutil",
+        "//br/pkg/restore",
         "//br/pkg/restore/log_client",
         "//br/pkg/stream",
         "//br/pkg/stream/crr/config",
