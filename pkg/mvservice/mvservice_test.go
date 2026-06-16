@@ -1105,10 +1105,12 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing
 	now := mvsNow()
 	svc.nextMVLogAccumulationScanMillis.Store(0)
 	svc.maybeScanMVLogAccumulationAlerts(now)
-	require.Equal(t, int32(1), helper.fetchAccumulationTaskCalls.Load())
-	require.Equal(t, int32(1), helper.fetchAccumulationRowCountCalls.Load())
+	require.Eventually(t, func() bool {
+		return helper.fetchAccumulationTaskCalls.Load() == 1 &&
+			helper.fetchAccumulationRowCountCalls.Load() == 1 &&
+			svc.metrics.mvLogAccumulationCount.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
 	require.Equal(t, []int64{101}, helper.lastAccumulationRowCountTaskIDs)
-	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
 
 	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval / 2))
 	require.Equal(t, int32(1), helper.fetchAccumulationTaskCalls.Load())
@@ -1123,10 +1125,12 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing
 		102: 2800,
 	}
 	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval))
-	require.Equal(t, int32(2), helper.fetchAccumulationTaskCalls.Load())
-	require.Equal(t, int32(2), helper.fetchAccumulationRowCountCalls.Load())
+	require.Eventually(t, func() bool {
+		return helper.fetchAccumulationTaskCalls.Load() == 2 &&
+			helper.fetchAccumulationRowCountCalls.Load() == 2 &&
+			svc.metrics.mvLogAccumulationCount.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
 	require.Equal(t, []int64{101}, helper.lastAccumulationRowCountTaskIDs)
-	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
 }
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsPreservesLastValueOnError(t *testing.T) {
@@ -1147,11 +1151,16 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsPreservesLastValueOnError(t *t
 	now := mvsNow()
 	svc.nextMVLogAccumulationScanMillis.Store(0)
 	svc.maybeScanMVLogAccumulationAlerts(now)
-	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+	require.Eventually(t, func() bool {
+		return svc.metrics.mvLogAccumulationCount.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
 
 	helper.fetchAccumulationRowCountsErr = errors.New("mock accumulation scan failed")
 	svc.nextMVLogAccumulationScanMillis.Store(0)
 	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval))
+	require.Eventually(t, func() bool {
+		return helper.fetchAccumulationRowCountCalls.Load() == 2
+	}, testEventuallyWait, testEventuallyTick)
 	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
 }
 
@@ -1173,8 +1182,53 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsUsesStrictGreaterThan(t *testi
 	now := mvsNow()
 	svc.nextMVLogAccumulationScanMillis.Store(0)
 	svc.maybeScanMVLogAccumulationAlerts(now)
+	require.Eventually(t, func() bool {
+		return helper.fetchAccumulationRowCountCalls.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
 	require.Equal(t, int64(0), svc.metrics.mvLogAccumulationCount.Load())
 	require.Equal(t, []int64{101}, helper.lastAccumulationRowCountTaskIDs)
+}
+
+func TestMVServiceMaybeScanMVLogAccumulationAlertsAsyncAndNonOverlapping(t *testing.T) {
+	helper := &mockMVServiceHelper{
+		fetchAccumulationTasks: map[int64]*mvLogAccumulationTask{
+			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
+		},
+		fetchAccumulationRowCounts: map[int64]uint64{
+			101: 1500,
+		},
+		accumulationRowCountEntered: make(chan struct{}, 2),
+		blockAccumulationRowCount:   make(chan struct{}),
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	defer svc.closeTaskExecutors()
+	setTaskOwnersForTest(svc, map[int64]uint32{
+		101: 10,
+	})
+
+	now := mvsNow()
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	done := make(chan struct{})
+	go func() {
+		svc.maybeScanMVLogAccumulationAlerts(now)
+		close(done)
+	}()
+
+	waitForSignal(t, helper.accumulationRowCountEntered, testEventuallyWait)
+	waitForSignal(t, done, testEventuallyWait)
+	require.Equal(t, int64(0), svc.metrics.mvLogAccumulationCount.Load())
+
+	svc.nextMVLogAccumulationScanMillis.Store(0)
+	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval))
+	require.Equal(t, int32(1), helper.fetchAccumulationTaskCalls.Load())
+	require.Equal(t, int32(1), helper.fetchAccumulationRowCountCalls.Load())
+
+	close(helper.blockAccumulationRowCount)
+	require.Eventually(t, func() bool {
+		return svc.metrics.mvLogAccumulationCount.Load() == 1 &&
+			helper.fetchAccumulationTaskCalls.Load() == 1 &&
+			helper.fetchAccumulationRowCountCalls.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestTaskQueueRingBufferFIFO(t *testing.T) {

@@ -72,6 +72,7 @@ type MVService struct {
 	nextHistoryGCAtMillis           atomic.Int64
 	historyGCRetryCount             atomic.Int64
 	historyGCRunning                atomic.Bool
+	mvLogAccumulationScanRunning    atomic.Bool
 
 	retryBaseDelayMillis atomic.Int64
 	retryMaxDelayMillis  atomic.Int64
@@ -371,7 +372,22 @@ func (t *MVService) maybeScanMVLogAccumulationAlerts(now time.Time) {
 	if next := t.nextMVLogAccumulationScanMillis.Load(); next > nowMillis {
 		return
 	}
+	if !t.mvLogAccumulationScanRunning.CompareAndSwap(false, true) {
+		return
+	}
 	t.nextMVLogAccumulationScanMillis.Store(now.Add(mvLogAccumulationAlertScanInterval).UnixMilli())
+
+	go t.runMVLogAccumulationAlertScan()
+}
+
+func (t *MVService) runMVLogAccumulationAlertScan() {
+	defer t.mvLogAccumulationScanRunning.Store(false)
+	defer func() {
+		if r := recover(); r != nil {
+			fields := append(t.runtimeLogFields(), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			logutil.BgLogger().Error("MVService mvlog accumulation scan panicked", fields...)
+		}
+	}()
 
 	alertedCount, err := t.fetchAllMVLogAccumulationAlerts()
 	if err != nil {

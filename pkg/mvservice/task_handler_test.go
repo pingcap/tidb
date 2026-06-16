@@ -432,6 +432,8 @@ type mockMVServiceHelper struct {
 	lastRefreshAlertAt              time.Time
 	lastRefreshAlertSync            []refreshAlertTask
 	lastAccumulationRowCountTaskIDs []int64
+	accumulationRowCountEntered     chan struct{}
+	blockAccumulationRowCount       chan struct{}
 
 	metricsMu          sync.Mutex
 	taskDurationCounts map[string]int
@@ -515,6 +517,15 @@ func (m *mockMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Conte
 	m.fetchAccumulationRowCountCalls.Add(1)
 	if m.fetchAccumulationRowCountsErr != nil {
 		return nil, m.fetchAccumulationRowCountsErr
+	}
+	if m.accumulationRowCountEntered != nil {
+		select {
+		case m.accumulationRowCountEntered <- struct{}{}:
+		default:
+		}
+	}
+	if m.blockAccumulationRowCount != nil {
+		<-m.blockAccumulationRowCount
 	}
 	ids := make([]int64, 0, len(tasks))
 	ret := make(map[int64]uint64, len(tasks))
