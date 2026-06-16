@@ -74,9 +74,9 @@ type AutoAnalyzeClient interface {
 	RecycleAutoAnalyze(ctx context.Context, taskID uint64) error
 }
 
-// New dials the controller at opt.ControllerAddr and returns a Client. Callers
+// New creates a controller client for opt.ControllerAddr and returns it. Callers
 // must Close it when finished.
-func New(ctx context.Context, opt *Option, extraDialOpts ...grpc.DialOption) (Client, error) {
+func New(opt *Option, extraDialOpts ...grpc.DialOption) (Client, error) {
 	if opt == nil {
 		return nil, errors.New("external workload client: nil option")
 	}
@@ -92,9 +92,9 @@ func New(ctx context.Context, opt *Option, extraDialOpts ...grpc.DialOption) (Cl
 	}
 	dialOpts = append(dialOpts, extraDialOpts...)
 
-	conn, err := grpc.DialContext(ctx, host, dialOpts...) //nolint:staticcheck // SA1019: keep DialContext for caller-supplied blocking dial options.
+	conn, err := grpc.NewClient(host, dialOpts...)
 	if err != nil {
-		return nil, errors.Annotate(err, "dial external workload controller")
+		return nil, errors.Annotate(err, "create external workload controller client")
 	}
 	return &grpcClient{
 		opt:  *opt,

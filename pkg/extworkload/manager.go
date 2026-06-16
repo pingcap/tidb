@@ -94,7 +94,7 @@ func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg 
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
-	cli, err := client.New(dialCtx, &client.Option{
+	cli, err := client.New(&client.Option{
 		KeyspaceID:     keyspaceMeta.GetId(),
 		KeyspaceName:   keyspaceMeta.GetName(),
 		TiDBPool:       cfg.TidbPool,

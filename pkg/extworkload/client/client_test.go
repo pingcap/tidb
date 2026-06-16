@@ -18,7 +18,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	pb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/stretchr/testify/require"
@@ -61,9 +60,7 @@ func startStubServer(t *testing.T, stub *stubServer) (Client, func()) {
 	pb.RegisterExternalWorkloadControllerServer(srv, stub)
 	go func() { _ = srv.Serve(ln) }()
 
-	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cli, err := New(dialCtx, &Option{
+	cli, err := New(&Option{
 		KeyspaceID:     42,
 		KeyspaceName:   "starter-ks",
 		TiDBPool:       "starter-pool",
@@ -117,12 +114,12 @@ func TestMapResponseNilResponse(t *testing.T) {
 }
 
 func TestNewClientValidation(t *testing.T) {
-	_, err := New(context.Background(), nil)
+	_, err := New(nil)
 	require.Error(t, err)
 
-	_, err = New(context.Background(), &Option{ControllerAddr: ""})
+	_, err = New(&Option{ControllerAddr: ""})
 	require.Error(t, err)
 
-	_, err = New(context.Background(), &Option{ControllerAddr: "://bad"})
+	_, err = New(&Option{ControllerAddr: "://bad"})
 	require.Error(t, err)
 }

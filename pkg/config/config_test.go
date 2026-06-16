@@ -1929,47 +1929,6 @@ func TestExternalWorkloadValid(t *testing.T) {
 	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
 }
 
-func TestExternalWorkloadWorkerEnvOverride(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("only for nextgen kernel")
-	}
-	t.Setenv(EnvVarExecID, "exec-from-env")
-	t.Setenv(EnvVarTiDBPool, "pool-from-env")
-
-	for _, role := range []string{
-		RoleGCV2Worker,
-		RoleTTLTaskWorker,
-		RoleAutoAnalyzeWorker,
-	} {
-		t.Run(role, func(t *testing.T) {
-			conf := NewConfig()
-			conf.DeployMode = deploymode.Starter
-			conf.ExternalWorkload = ExternalWorkload{
-				Enable:        true,
-				Role:          role,
-				APIServerAddr: "http://127.0.0.1:1234",
-				ExecID:        "exec-from-config",
-			}
-			require.NoError(t, conf.Valid())
-			require.Equal(t, "exec-from-env", conf.ExternalWorkload.ExecID)
-			require.Equal(t, "pool-from-env", conf.ExternalWorkload.TidbPool)
-		})
-	}
-
-	conf := NewConfig()
-	conf.DeployMode = deploymode.Starter
-	conf.ExternalWorkload = ExternalWorkload{
-		Enable:        true,
-		Role:          RoleMaster,
-		TidbPool:      "pool-from-config",
-		APIServerAddr: "http://127.0.0.1:1234",
-		ExecID:        "exec-from-config",
-	}
-	require.NoError(t, conf.Valid())
-	require.Equal(t, "exec-from-config", conf.ExternalWorkload.ExecID)
-	require.Equal(t, "pool-from-config", conf.ExternalWorkload.TidbPool)
-}
-
 func TestGetGlobalKeyspaceName(t *testing.T) {
 	conf := NewConfig()
 	require.Empty(t, conf.KeyspaceName)

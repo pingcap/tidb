@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -27,12 +26,6 @@ const (
 	RoleGCV2Worker        = "gcv2"
 	RoleTTLTaskWorker     = "ttl"
 	RoleAutoAnalyzeWorker = "auto-analyze"
-)
-
-// Environment variables consulted by Valid for non-master roles.
-const (
-	EnvVarExecID   = "EXEC_ID"
-	EnvVarTiDBPool = "TIDB_POOL"
 )
 
 // ExternalWorkload is the [external-workload] section of the TiDB configuration. It is
@@ -55,8 +48,7 @@ func defaultExternalWorkload() ExternalWorkload {
 }
 
 // Valid normalizes and validates a [external-workload] section. It is a no-op when
-// Enable is false. Worker roles may also pick up their ExecID / TidbPool from
-// environment variables (see EnvVar*).
+// Enable is false.
 func (w *ExternalWorkload) Valid() error {
 	if !w.Enable {
 		return nil
@@ -72,12 +64,6 @@ func (w *ExternalWorkload) Valid() error {
 	case RoleGCV2Worker,
 		RoleTTLTaskWorker,
 		RoleAutoAnalyzeWorker:
-		if v := strings.TrimSpace(os.Getenv(EnvVarExecID)); v != "" {
-			w.ExecID = v
-		}
-		if v := strings.TrimSpace(os.Getenv(EnvVarTiDBPool)); v != "" {
-			w.TidbPool = v
-		}
 	default:
 		return fmt.Errorf("invalid external-workload role %q", w.Role)
 	}
