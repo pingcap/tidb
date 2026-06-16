@@ -2144,6 +2144,11 @@ func newCompareMaterializedViewHashJoinExec(
 		buildCompareMaterializedViewOrdinalSlice(len(leftTypes)),
 		buildCompareMaterializedViewOrdinalSlice(len(rightTypes)),
 	}
+	// Compare always uses BaseQuery@R as the probe/left side and MV@S as the
+	// build/right side. This matches the full outer hash join builder setup for
+	// build=right, probe=left:
+	// - unmatched build rows are (NULL-left, right), handled by RightOuterJoin;
+	// - unmatched probe rows are (left, NULL-right), handled by LeftOuterJoin.
 	fullJoinBuildJoiner := join.NewJoiner(
 		ctx,
 		logicalop.RightOuterJoin,
