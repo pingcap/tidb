@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubManager is a minimal Manager for predicate tests.
 type stubManager struct {
 	Manager
 	role string

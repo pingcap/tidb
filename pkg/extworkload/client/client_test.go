@@ -18,17 +18,13 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	pb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
-// stubServer is a minimal ExternalWorkload server used to validate the client wire
-// surface. It records the last request header so tests can confirm the
-// client populates keyspace identity on every call, and surfaces controlled
-// responses (success, paused, generic error) without exercising the full
-// service.
 type stubServer struct {
 	pb.UnimplementedExternalWorkloadControllerServer
 	lastHeader    *pb.RequestHeader
@@ -49,8 +45,6 @@ func (s *stubServer) RecycleGCV2(_ context.Context, req *pb.RecycleGCV2Request) 
 	return &pb.Response{}, nil
 }
 
-// startStubServer starts a stub ExternalWorkload on a bufconn-like real loopback
-// listener and returns a ready Client plus a cleanup function.
 func startStubServer(t *testing.T, stub *stubServer) (Client, func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -76,17 +70,22 @@ func startStubServer(t *testing.T, stub *stubServer) (Client, func()) {
 	return cli, cleanup
 }
 
+func newTestContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 func TestClientRoundTrip(t *testing.T) {
 	stub := &stubServer{}
 	cli, cleanup := startStubServer(t, stub)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := newTestContext(t)
 
-	// Ping returns nil on Response.error == nil.
 	require.NoError(t, cli.Ping(ctx))
 
-	// Headers and payload propagate verbatim.
 	require.NoError(t, cli.RecycleGCV2(ctx, 1234))
 	require.Equal(t, uint64(1234), stub.gcv2RecycleTs)
 	require.Equal(t, uint32(42), stub.lastHeader.GetKeyspaceId())
@@ -99,10 +98,10 @@ func TestClientErrorMapping(t *testing.T) {
 	cli, cleanup := startStubServer(t, stub)
 	defer cleanup()
 
-	require.ErrorIs(t, cli.Ping(context.Background()), ErrControllerPaused)
+	require.ErrorIs(t, cli.Ping(newTestContext(t)), ErrControllerPaused)
 
 	stub.pingErr = &pb.Error{Type: pb.ErrorType_UNKNOWN, Message: "boom"}
-	err := cli.Ping(context.Background())
+	err := cli.Ping(newTestContext(t))
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrControllerPaused)
 	require.Contains(t, err.Error(), "boom")

@@ -52,12 +52,7 @@ type manager struct {
 	meta *keyspacepb.KeyspaceMeta
 }
 
-// InitManager builds and installs the global Manager for this TiDB process.
-//
-// It is a no-op outside Starter deploy mode, when the [external-workload] section
-// is disabled, or when a Manager is already installed. Errors from dialing
-// the controller propagate to the caller; main.go decides whether they are
-// fatal for the local role.
+// InitManager installs the global Manager when Starter external workload is enabled.
 func InitManager(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg config.ExternalWorkload) error {
 	if !deploymode.IsStarter() || !cfg.Enable {
 		return nil

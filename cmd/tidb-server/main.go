@@ -320,8 +320,6 @@ func initDeployMode(cfg *config.Config) error {
 	return deploymode.Set(cfg.DeployMode)
 }
 
-// initExternalWorkloadManager installs the external workload manager from the
-// current global config. Dial failures are logged and leave the manager disabled.
 func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) {
 	cfg := config.GetGlobalConfig().ExternalWorkload
 	if !cfg.Enable {

@@ -19,8 +19,6 @@ import (
 	"strings"
 )
 
-// Roles for the [external-workload] section. Master TiDBs register background
-// workloads with the external workload controller; worker TiDBs consume them.
 const (
 	RoleMaster            = "master"
 	RoleGCV2Worker        = "gcv2"
@@ -28,27 +26,22 @@ const (
 	RoleAutoAnalyzeWorker = "auto-analyze"
 )
 
-// ExternalWorkload is the [external-workload] section of the TiDB configuration. It is
-// only honored under Starter deploy mode; in all other deploy modes the
-// section is parsed but has no effect.
+// ExternalWorkload is the Starter-only [external-workload] section.
 type ExternalWorkload struct {
 	Enable        bool   `toml:"enable" json:"enable"`
 	Role          string `toml:"role" json:"role"`
 	TidbPool      string `toml:"tidb-pool" json:"tidb-pool"`
 	APIServerAddr string `toml:"api-server" json:"api-server"`
-	ExecID        string `toml:"exec-id" json:"exec-id"`
 }
 
 func defaultExternalWorkload() ExternalWorkload {
 	return ExternalWorkload{
-		Enable:   false,
-		Role:     RoleMaster,
-		TidbPool: "tidb-pool",
+		Enable: false,
+		Role:   RoleMaster,
 	}
 }
 
-// Valid normalizes and validates a [external-workload] section. It is a no-op when
-// Enable is false.
+// Valid normalizes and validates an enabled [external-workload] section.
 func (w *ExternalWorkload) Valid() error {
 	if !w.Enable {
 		return nil

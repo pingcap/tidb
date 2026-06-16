@@ -26,10 +26,6 @@ import (
 )
 
 // Manager coordinates TiDB background workloads with the external workload controller.
-//
-// Every method maps to a single controller RPC (see kvproto/externalworkloadpb).
-// Implementations are responsible for emitting metrics and surfacing
-// transport errors; callers do not need to wrap.
 type Manager interface {
 	// Role returns the role this TiDB is acting in (see config.Role* constants).
 	Role() string
@@ -66,9 +62,6 @@ type Manager interface {
 var globalManager Manager
 
 // GetManager returns the installed Manager, or nil if none is installed.
-//
-// Callers should check the return value (or use IsEnabled / role predicates
-// in util.go) before invoking methods.
 func GetManager() Manager { return globalManager }
 
 // SetManagerForTest installs m as the global manager and returns a restore

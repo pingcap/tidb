@@ -333,8 +333,7 @@ type Config struct {
 	// StarterParams contains Starter-only extension parameters.
 	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
-	// ExternalWorkload configures the external-workload subsystem. The section only takes
-	// effect under the Starter deploy mode; see pkg/config/external_workload.go.
+	// ExternalWorkload configures Starter-only external workload coordination.
 	ExternalWorkload ExternalWorkload `toml:"external-workload" json:"external-workload"`
 
 	// The following items are deprecated. We need to keep them here temporarily

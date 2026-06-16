@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net/url"
+	"strings"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
@@ -76,7 +77,7 @@ type AutoAnalyzeClient interface {
 
 // New creates a controller client for opt.ControllerAddr and returns it. Callers
 // must Close it when finished.
-func New(opt *Option, extraDialOpts ...grpc.DialOption) (Client, error) {
+func New(opt *Option) (Client, error) {
 	if opt == nil {
 		return nil, errors.New("external workload client: nil option")
 	}
@@ -84,15 +85,14 @@ func New(opt *Option, extraDialOpts ...grpc.DialOption) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	dialOpts := make([]grpc.DialOption, 0, len(extraDialOpts)+1)
+	var dialOpt grpc.DialOption
 	if opt.TLSConfig != nil {
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(opt.TLSConfig)))
+		dialOpt = grpc.WithTransportCredentials(credentials.NewTLS(opt.TLSConfig))
 	} else {
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		dialOpt = grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
-	dialOpts = append(dialOpts, extraDialOpts...)
 
-	conn, err := grpc.NewClient(host, dialOpts...)
+	conn, err := grpc.NewClient(host, dialOpt)
 	if err != nil {
 		return nil, errors.Annotate(err, "create external workload controller client")
 	}
@@ -104,6 +104,7 @@ func New(opt *Option, extraDialOpts ...grpc.DialOption) (Client, error) {
 }
 
 func parseHost(addr string) (string, error) {
+	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return "", errors.New("external workload client: empty controller address")
 	}
@@ -213,15 +214,10 @@ func (c *grpcClient) RecycleAutoAnalyze(ctx context.Context, taskID uint64) erro
 	return mapResponse("RecycleAutoAnalyze", resp, err)
 }
 
-// respWithError is implemented by every controller response that surfaces a
-// top-level *pb.Error.
 type respWithError interface {
 	GetError() *pb.Error
 }
 
-// mapResponse converts a gRPC (response, err) pair into a single error.
-//
-// It is used by every Register / Recycle / Update RPC that returns pb.Response.
 func mapResponse(method string, resp respWithError, err error) error {
 	if err != nil {
 		return errors.Annotatef(err, "external workload rpc %s", method)
