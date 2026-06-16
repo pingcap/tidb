@@ -35,7 +35,6 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -293,16 +292,6 @@ func (s *mockStore) EtcdAddrs() ([]string, error) {
 
 func (s *mockStore) GetPDAddrs() ([]string, error) {
 	return s.pdAddrs, nil
-}
-
-func (s *mockStore) MetaServiceInfo() (*metaservice.Info, error) {
-	return &metaservice.Info{
-		PDAddrs: s.pdAddrs,
-		Group: &metaservice.Group{
-			GroupID: metaservice.GlobalGroupID,
-			Addrs:   s.pdAddrs,
-		},
-	}, nil
 }
 
 func (s *mockStore) StartGCWorker() error {

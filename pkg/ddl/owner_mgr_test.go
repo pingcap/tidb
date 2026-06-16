@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -68,17 +67,6 @@ func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 
 func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return []string{"localhost:2379"}, nil
-}
-
-func (mebd *mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
-	addrs := []string{"localhost:2379"}
-	return &metaservice.Info{
-		PDAddrs: addrs,
-		Group: &metaservice.Group{
-			GroupID: metaservice.GlobalGroupID,
-			Addrs:   addrs,
-		},
-	}, nil
 }
 
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config {

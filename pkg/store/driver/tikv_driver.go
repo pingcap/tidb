@@ -259,12 +259,13 @@ func newSafePointKV(
 	pdCli pd.Client,
 	codec tikv.Codec,
 	tlsConfig *tls.Config,
-) (*metaservice.Info, []string, *tikv.EtcdSafePointKV, error) {
-	metaServiceInfo, groupAddrs, err := metaservice.GetInfoAndGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
+) (metaServiceInfo *metaservice.Info, pdAddrs []string, spkv *tikv.EtcdSafePointKV, err error) {
+	var groupAddrs []string
+	metaServiceInfo, groupAddrs, err = metaservice.GetInfoAndGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	spkv, err := tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
+	spkv, err = tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -341,7 +342,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 		cfg := config.GetGlobalConfig()
 		return strings.Split(cfg.Path, ","), nil
 	}
-	metaServiceInfo, err := s.MetaServiceInfo()
+	metaServiceInfo, err := s.getMetaServiceInfo()
 	if err != nil {
 		return nil, errors.Annotate(err, "get meta service info")
 	}
@@ -353,8 +354,8 @@ func (s *tikvStore) GetPDAddrs() ([]string, error) {
 	return metaservice.GetPDAddrs(context.Background(), s.GetPDClient(), false)
 }
 
-// MetaServiceInfo returns the cached or lazily built keyspace meta service info.
-func (s *tikvStore) MetaServiceInfo() (*metaservice.Info, error) {
+// getMetaServiceInfo returns the cached or lazily built keyspace meta service info.
+func (s *tikvStore) getMetaServiceInfo() (*metaservice.Info, error) {
 	if s.metaServiceInfo != nil {
 		return s.metaServiceInfo, nil
 	}

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -248,16 +247,6 @@ func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 
 func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
-}
-
-func (mebd *mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
-	return &metaservice.Info{
-		PDAddrs: mebd.pdAddrs,
-		Group: &metaservice.Group{
-			GroupID: metaservice.GlobalGroupID,
-			Addrs:   mebd.pdAddrs,
-		},
-	}, nil
 }
 
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }

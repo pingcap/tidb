@@ -168,7 +168,6 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
-        "//pkg/metaservice",
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

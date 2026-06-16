@@ -182,7 +182,6 @@ go_test(
         "//pkg/meta",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
-        "//pkg/metaservice",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
