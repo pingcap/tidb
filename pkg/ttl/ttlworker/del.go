@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -174,6 +175,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				zap.String("SQL", sql),
 				zap.Bool("needRetry", needRetry),
 			)
+			failpoint.InjectCall("getTTLDeleteError", err)
 
 			if needRetry {
 				if retryRows == nil {

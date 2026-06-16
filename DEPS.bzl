@@ -7181,13 +7181,10 @@ def go_deps():
         build_tags = ["intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "9423391f4d074fafbac670f25d2edfab724d5c3e1fbd4c0752bfaafa66c43e20",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260319064229-5cba4fc2f3a9",
+        sha256 = "7858b25e5f10af274357d4926f277cdeec6e10277cf38dac0fb47f1618386619",
+        strip_prefix = "github.com/ClamChowderTiDB/client-go/v2@v2.0.8-0.20260611061953-4a4daf23c789",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260319064229-5cba4fc2f3a9.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260319064229-5cba4fc2f3a9.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260319064229-5cba4fc2f3a9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260319064229-5cba4fc2f3a9.zip",
+            "https://proxy.golang.org/github.com/!clam!chowder!ti!d!b/client-go/v2/@v/v2.0.8-0.20260611061953-4a4daf23c789.zip",
         ],
     )
     go_repository(
@@ -7195,13 +7192,10 @@ def go_deps():
         build_tags = ["intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "4dd1c76715709a003999d2521f24c189e66e7b284a6c5836519c0913a52c5f36",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260310072508-b936d55fc33e",
+        sha256 = "0da589beacd5f6c6f4ba4ae95348b7d9f2b9daa12659265e5a06bfa09c9542b2",
+        strip_prefix = "github.com/ClamChowderTiDB/pd/client@v0.0.0-20260611055230-cb0a2298a8b9",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260310072508-b936d55fc33e.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260310072508-b936d55fc33e.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260310072508-b936d55fc33e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260310072508-b936d55fc33e.zip",
+            "https://proxy.golang.org/github.com/!clam!chowder!ti!d!b/pd/client/@v/v0.0.0-20260611055230-cb0a2298a8b9.zip",
         ],
     )
     go_repository(

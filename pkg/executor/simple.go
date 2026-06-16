@@ -2928,9 +2928,13 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 	var name string
 	if s.Name.L != "" {
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
-			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
+			// Resource group does not exist; fall back to default silently so that
+			// connectionInitSql-style usage (e.g. JDBC pools) does not break when
+			// the resource group has not been created yet.
+			name = resourcegroup.DefaultResourceGroupName
+		} else {
+			name = s.Name.L
 		}
-		name = s.Name.L
 	} else {
 		name = resourcegroup.DefaultResourceGroupName
 	}

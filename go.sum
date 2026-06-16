@@ -61,6 +61,10 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/toml v1.5.0 h1:W5quZX/G/csjUnuI8SUYlsHs9M38FC7znL0lIO+DvMg=
 github.com/BurntSushi/toml v1.5.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
+github.com/ClamChowderTiDB/client-go/v2 v2.0.8-0.20260611061953-4a4daf23c789 h1:KfjnJ4rVR4XO79yM7L1AtWvRmn4QlEB14EGQK6YrfBU=
+github.com/ClamChowderTiDB/client-go/v2 v2.0.8-0.20260611061953-4a4daf23c789/go.mod h1:ZneDDnz21EbwEDPcTfUceqAGIX77UD+zRkXzDswM/4s=
+github.com/ClamChowderTiDB/pd/client v0.0.0-20260611055230-cb0a2298a8b9 h1:NohG0xaenMNP6nyartuJmlNQ4hkcX/MB4CdzqYasPnI=
+github.com/ClamChowderTiDB/pd/client v0.0.0-20260611055230-cb0a2298a8b9/go.mod h1:Ie0yrRtxoVuFZhlvTXkifuT2NCHFKGmMKZTAyJP4lA8=
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
 github.com/DATA-DOG/go-sqlmock v1.5.0/go.mod h1:f/Ixk793poVmq4qj/V1dPUg2JEAKC73Q5eFN3EC/SaM=
 github.com/DataDog/zstd v1.5.5 h1:oWf5W7GtOLgp6bciQYDmhHHjdhYkALu6S/5Ni9ZgSvQ=
@@ -804,10 +808,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260319064229-5cba4fc2f3a9 h1:HS34CjLWzXPqdhmI+WQ2VfxH41gTSkssDq+BcWU433I=
-github.com/tikv/client-go/v2 v2.0.8-0.20260319064229-5cba4fc2f3a9/go.mod h1:ZneDDnz21EbwEDPcTfUceqAGIX77UD+zRkXzDswM/4s=
-github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e h1:QZZVH1lvNLCb3VndhRhW1dPFe9GITjJuNqOoFP0JeTw=
-github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e/go.mod h1:X3T+jK+4bLbDKgupmzvVXuySnCNV4Lfdm/bL8TAw3ik=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
