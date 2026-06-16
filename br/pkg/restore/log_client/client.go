@@ -708,7 +708,7 @@ type LockedMigrations struct {
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
-	ext := stream.MigrationExtensionWithOperationContext(rc.storage, rc.operationContext)
+	ext := stream.MigrationExtension(rc.storage).WithOperationContext(rc.operationContext)
 	readLock, err := ext.GetReadLock(ctx, "restore stream")
 	if err != nil {
 		return nil, err

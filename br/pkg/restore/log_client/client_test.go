@@ -149,7 +149,7 @@ func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
 	appendOpCtx, err := operation.NewContext("test append migration")
 	require.NoError(t, err)
 	appendOpCtx.SetRestoreID(123)
-	_, err = stream.MigrationExtensionWithOperationContext(stg, appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	_, err = stream.MigrationExtension(stg).WithOperationContext(appendOpCtx).AppendMigration(ctx, stream.NewMigration())
 	require.NoError(t, err)
 
 	opCtx, err := operation.NewContext("test log restore")

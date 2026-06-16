@@ -100,7 +100,7 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 
 	console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
 
-	est := stream.MigrationExtensionWithOperationContext(st, operationContext)
+	est := stream.MigrationExtension(st).WithOperationContext(operationContext)
 	est.Hooks = stream.NewProgressBarHooks(console)
 	migs, err := est.Load(ctx)
 	if err != nil {

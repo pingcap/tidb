@@ -2687,7 +2687,7 @@ func TestMigrationLockOperationMetadata(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			opCtx := testOperationContext(t)
 			capturingStorage := &lockCaptureStorage{Storage: tmp(t)}
-			est := MigrationExtensionWithOperationContext(capturingStorage, opCtx)
+			est := MigrationExtension(capturingStorage).WithOperationContext(opCtx)
 
 			require.NoError(t, c.run(ctx, est))
 
@@ -2699,7 +2699,7 @@ func TestMigrationLockOperationMetadata(t *testing.T) {
 
 func TestMigrationExtDryRunKeepsOperationContext(t *testing.T) {
 	opCtx := testOperationContext(t)
-	est := MigrationExtensionWithOperationContext(tmp(t), opCtx)
+	est := MigrationExtension(tmp(t)).WithOperationContext(opCtx)
 
 	est.DryRun(func(me MigrationExt) {
 		require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
@@ -2997,7 +2997,7 @@ func TestAppendingMigs(t *testing.T) {
 	pmig(s, 1, m)
 	pmig(s, 2, mig(del12))
 
-	est := MigrationExtensionWithOperationContext(s, testOperationContext(t))
+	est := MigrationExtension(s).WithOperationContext(testOperationContext(t))
 
 	res, err := est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(65))))
 	require.NoError(t, err)

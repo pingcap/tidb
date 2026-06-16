@@ -516,11 +516,6 @@ func (m MigrationExt) WithOperationContext(ctx operation.Context) MigrationExt {
 	return m
 }
 
-// MigrationExtensionWithOperationContext installs migration extension methods with operation context.
-func MigrationExtensionWithOperationContext(s storeapi.Storage, ctx operation.Context) MigrationExt {
-	return MigrationExtension(s).WithOperationContext(ctx)
-}
-
 type Hooks interface {
 	StartLoadingMetaForTruncating()
 	EndLoadingMetaForTruncating()

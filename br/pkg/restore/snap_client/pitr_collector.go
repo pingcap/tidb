@@ -417,7 +417,7 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 		return nil
 	}
 
-	est := stream.MigrationExtensionWithOperationContext(c.taskStorage, c.operationContext)
+	est := stream.MigrationExtension(c.taskStorage).WithOperationContext(c.operationContext)
 
 	m := stream.NewMigration()
 	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
