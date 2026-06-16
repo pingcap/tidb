@@ -24,7 +24,7 @@ type ExternalWorkloadRole string
 
 // External workload roles accepted by the [external-workload] config.
 const (
-	// RoleMaster keeps the default TiDB behavior: all supported workloads run in this process.
+	// RoleMaster is the regular TiDB role that reports background work to the controller.
 	RoleMaster            ExternalWorkloadRole = "master"
 	RoleGCV2Worker        ExternalWorkloadRole = "gcv2"
 	RoleTTLTaskWorker     ExternalWorkloadRole = "ttl"
