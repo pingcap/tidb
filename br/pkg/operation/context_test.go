@@ -62,7 +62,8 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 		ctx.SetRestoreID(123)
 		ctx.SetRestoreID(123)
 
-		require.Equal(t, uint64(123), ctx.RestoreID)
+		require.NotNil(t, ctx.Extra)
+		require.Equal(t, uint64(123), ctx.Extra.RestoreID)
 	})
 
 	t.Run("zero context ignores restore ID", func(t *testing.T) {
@@ -71,7 +72,7 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 
 		ctx.SetRestoreID(123)
 
-		require.Equal(t, uint64(0), ctx.RestoreID)
+		require.Nil(t, ctx.Extra)
 		require.Equal(t, 0, logs.FilterMessage("BR operation restore ID resolved").Len())
 	})
 
@@ -80,12 +81,13 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 		var ctx Context
 
 		ctx.SetRestoreID(123)
-		require.Equal(t, uint64(0), ctx.RestoreID)
+		require.Nil(t, ctx.Extra)
 
 		require.NoError(t, ctx.Ensure("log-restore"))
 		ctx.SetRestoreID(123)
 
-		require.Equal(t, uint64(123), ctx.RestoreID)
+		require.NotNil(t, ctx.Extra)
+		require.Equal(t, uint64(123), ctx.Extra.RestoreID)
 		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
 	})
 
@@ -98,9 +100,25 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 		ctx.SetRestoreID(123)
 		copiedCtx.SetRestoreID(123)
 
-		require.Equal(t, uint64(123), ctx.RestoreID)
-		require.Equal(t, uint64(123), copiedCtx.RestoreID)
+		require.NotNil(t, ctx.Extra)
+		require.NotNil(t, copiedCtx.Extra)
+		require.Equal(t, uint64(123), ctx.Extra.RestoreID)
+		require.Equal(t, uint64(123), copiedCtx.Extra.RestoreID)
 		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
+	})
+
+	t.Run("copied extra fields are value snapshots", func(t *testing.T) {
+		ctx, err := NewContext("log-restore")
+		require.NoError(t, err)
+		ctx.SetRestoreID(123)
+		copiedCtx := ctx
+
+		ctx.SetRestoreID(456)
+
+		require.NotNil(t, ctx.Extra)
+		require.NotNil(t, copiedCtx.Extra)
+		require.Equal(t, uint64(456), ctx.Extra.RestoreID)
+		require.Equal(t, uint64(123), copiedCtx.Extra.RestoreID)
 	})
 }
 
@@ -109,7 +127,7 @@ func TestLockMeta(t *testing.T) {
 	ctx := Context{
 		OperationID: "operation-id",
 		StartedAt:   startedAt,
-		RestoreID:   123,
+		Extra:       &Extra{RestoreID: 123},
 	}
 
 	meta, err := ctx.LockMeta(LockResourceMigrationRead, "test hint")
