@@ -287,6 +287,7 @@ go_test(
         "//pkg/sessiontxn",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/store/copr",
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/testkit",

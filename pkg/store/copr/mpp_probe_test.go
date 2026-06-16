@@ -205,7 +205,17 @@ func TestMppInfoManager(t *testing.T) {
 	require.Equal(t, info.Address, "123")
 	require.Equal(t, info.LogicalCPUCount, uint64(123))
 	require.Equal(t, info.StartTimestamp, int64(456))
+
+	deletedAddrs := make(chan string, 1)
+	SetMPPInfoDeleteHook(func(address string) {
+		deletedAddrs <- address
+	})
+	t.Cleanup(func() {
+		SetMPPInfoDeleteHook(nil)
+	})
+
 	manager.Delete("123")
+	require.Equal(t, "123", <-deletedAddrs)
 	require.Equal(t, len(manager.cachedStores), 0)
 	info = manager.Get("123")
 	require.True(t, info == nil)

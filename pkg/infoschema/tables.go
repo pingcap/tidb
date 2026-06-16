@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -2770,6 +2771,20 @@ type ServerInfoResult struct {
 	Err  error
 }
 
+type connCacheKey struct {
+	address         string
+	clusterSSLCA    string
+	clusterSSLCert  string
+	clusterSSLKey   string
+	clusterVerifyCN string
+}
+
+var connCache sync.Map
+
+func init() {
+	copr.SetMPPInfoDeleteHook(deleteGRPCConn)
+}
+
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
 func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) []ServerInfoResult {
 	wg := sync.WaitGroup{}
@@ -2831,9 +2846,18 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 	return rows
 }
 
-func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+func newConnCacheKey(address string, security config.Security) connCacheKey {
+	return connCacheKey{
+		address:         address,
+		clusterSSLCA:    security.ClusterSSLCA,
+		clusterSSLCert:  security.ClusterSSLCert,
+		clusterSSLKey:   security.ClusterSSLKey,
+		clusterVerifyCN: strings.Join(security.ClusterVerifyCN, "\x00"),
+	}
+}
+
+func getGRPCConn(address string, security config.Security) (*grpc.ClientConn, error) {
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
-	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
 		tlsConfig, err := clusterSecurity.ToTLSConfig()
@@ -2842,22 +2866,68 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
+
+	key := newConnCacheKey(address, security)
+	if conn, ok := connCache.Load(key); ok {
+		return conn.(*grpc.ClientConn), nil
+	}
+
 	conn, err := grpc.Dial(address, opt)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			log.Error("close grpc connection error", zap.Error(err))
+	actual, loaded := connCache.LoadOrStore(key, conn)
+	if loaded {
+		if err := conn.Close(); err != nil {
+			log.Warn("close duplicated grpc connection warning", zap.Error(err))
 		}
-	}()
+		return actual.(*grpc.ClientConn), nil
+	}
+	return conn, nil
+}
+
+func deleteGRPCConn(address string) {
+	connCache.Range(func(key, value any) bool {
+		cacheKey := key.(connCacheKey)
+		if cacheKey.address != address {
+			return true
+		}
+		deleteGRPCConnByKey(cacheKey, value.(*grpc.ClientConn))
+		return true
+	})
+}
+
+func deleteGRPCConnByKey(key connCacheKey, conn *grpc.ClientConn) {
+	if connCache.CompareAndDelete(key, conn) {
+		if err := conn.Close(); err != nil {
+			log.Warn("close grpc connection warning", zap.Error(err))
+		}
+	}
+}
+
+func closeGRPCConnsForTest() {
+	connCache.Range(func(key, value any) bool {
+		if err := value.(*grpc.ClientConn).Close(); err != nil {
+			log.Warn("close grpc connection warning", zap.Error(err))
+		}
+		connCache.Delete(key)
+		return true
+	})
+}
+
+func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+	security := config.GetGlobalConfig().Security
+	conn, err := getGRPCConn(address, security)
+	if err != nil {
+		return nil, err
+	}
 
 	cli := diagnosticspb.NewDiagnosticsClient(conn)
 	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
 	if err != nil {
+		deleteGRPCConnByKey(newConnCacheKey(address, security), conn)
 		return nil, err
 	}
 	return r.Items, nil

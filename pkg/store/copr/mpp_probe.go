@@ -91,6 +91,17 @@ type MppInfoManager struct {
 	lock         sync.Mutex
 }
 
+var mppInfoDeleteHook atomic.Pointer[func(string)]
+
+// SetMPPInfoDeleteHook installs a hook that is called when MPP info is deleted.
+func SetMPPInfoDeleteHook(hook func(string)) {
+	if hook != nil {
+		mppInfoDeleteHook.Store(&hook)
+		return
+	}
+	mppInfoDeleteHook.Store(nil)
+}
+
 // Add adds mppInfo
 func (t *MppInfoManager) Add(mppInfo *MPPInfo) {
 	t.lock.Lock()
@@ -103,6 +114,10 @@ func (t *MppInfoManager) Delete(address string) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	delete(t.cachedStores, address)
+
+	if hookPtr := mppInfoDeleteHook.Load(); hookPtr != nil && *hookPtr != nil {
+		(*hookPtr)(address)
+	}
 }
 
 // Get gets related info
