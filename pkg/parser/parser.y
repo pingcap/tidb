@@ -402,6 +402,7 @@ import (
 	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	delta                 "DELTA"
 	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
@@ -986,6 +987,7 @@ import (
 	BinlogStmt                    "Binlog base64 statement"
 	BRIEStmt                      "BACKUP or RESTORE statement"
 	CalibrateResourceStmt         "CALIBRATE RESOURCE statement"
+	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW ... JOB statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                    "COMMIT statement"
 	CreateTableStmt               "CREATE TABLE statement"
@@ -1443,10 +1445,9 @@ import (
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
-	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
-	RefreshOutOfPlaceOpt                   "REFRESH MATERIALIZED VIEW OUT OF PLACE option"
+	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5584,27 +5585,50 @@ PurgeMaterializedViewLogStmt:
 		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
 	}
 
-RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt RefreshMaterializedViewType RefreshOutOfPlaceOpt RefreshMaterializedViewObserveOpt
+CancelMaterializedViewJobStmt:
+	"CANCEL" "MATERIALIZED" "VIEW" "REFRESH" "JOB" Int64Num
 	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeRefresh,
+			JobID: $6.(int64),
+		}
+	}
+|	"CANCEL" "MATERIALIZED" "VIEW" "LOG" "PURGE" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
+			JobID: $7.(int64),
+		}
+	}
+
+RefreshMaterializedViewStmt:
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
+	{
+		completeType := $7.(ast.RefreshMaterializedViewCompleteType)
 		observeType := $8.(ast.RefreshMaterializedViewObserveType)
 		$$ = &ast.RefreshMaterializedViewStmt{
 			ViewName:      $4.(*ast.TableName),
 			WithAsyncMode: $5.(bool),
-			Type:          $6.(ast.RefreshMaterializedViewType),
-			OutOfPlace:    $7.(bool),
+			Type:          ast.RefreshMaterializedViewTypeComplete,
+			CompleteType:  completeType,
 			ObserveType:   observeType,
 		}
 	}
-
-RefreshMaterializedViewType:
-	"COMPLETE"
+|	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "FAST" AsOfClauseOpt RefreshMaterializedViewObserveOpt
 	{
-		$$ = ast.RefreshMaterializedViewTypeComplete
-	}
-|	"FAST"
-	{
-		$$ = ast.RefreshMaterializedViewTypeFast
+		var asOf *ast.AsOfClause
+		if $7 != nil {
+			asOf = $7.(*ast.AsOfClause)
+		}
+		observeType := $8.(ast.RefreshMaterializedViewObserveType)
+		$$ = &ast.RefreshMaterializedViewStmt{
+			ViewName:      $4.(*ast.TableName),
+			WithAsyncMode: $5.(bool),
+			Type:          ast.RefreshMaterializedViewTypeFast,
+			CompleteType:  ast.RefreshMaterializedViewCompleteTypeInPlace,
+			AsOf:          asOf,
+			ObserveType:   observeType,
+		}
 	}
 
 RefreshMaterializedViewObserveOpt:
@@ -5631,14 +5655,18 @@ RefreshWithAsyncModeOpt:
 		$$ = true
 	}
 
-RefreshOutOfPlaceOpt:
-	/* EMPTY */
+RefreshCompleteMode:
+	"IN" "PLACE"
 	{
-		$$ = false
+		$$ = ast.RefreshMaterializedViewCompleteTypeInPlace
 	}
 |	"OUT" "OF" "PLACE"
 	{
-		$$ = true
+		$$ = ast.RefreshMaterializedViewCompleteTypeOutOfPlace
+	}
+|	"DELTA" "APPLY"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeDeltaApply
 	}
 
 /******************************************************************
@@ -7212,6 +7240,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
+|	"DELTA"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
@@ -12806,6 +12835,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelMaterializedViewJobStmt
 |	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt

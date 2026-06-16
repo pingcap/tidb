@@ -724,12 +724,62 @@ func (i *MaterializedViewBaseInfo) Clone() *MaterializedViewBaseInfo {
 	return &ni
 }
 
+// MVInitBuildState records the initial-build state of a materialized view.
+//
+// Keep MVInitBuildReady as the zero value for compatibility with existing clusters,
+// whose persisted materialized view metadata does not contain this field.
+type MVInitBuildState byte
+
+const (
+	// MVInitBuildReady means the MV is ready for normal query and refresh.
+	MVInitBuildReady MVInitBuildState = iota
+	// MVInitBuildDeferred means the MV exists but its initial build has not started yet.
+	MVInitBuildDeferred
+	// MVInitBuildBuilding means the MV initial build is currently in progress.
+	MVInitBuildBuilding
+)
+
+// IsReady returns whether the initial build state allows normal query and refresh.
+func (s MVInitBuildState) IsReady() bool {
+	return s == MVInitBuildReady
+}
+
+// String implements fmt.Stringer.
+func (s MVInitBuildState) String() string {
+	switch s {
+	case MVInitBuildReady:
+		return "ready"
+	case MVInitBuildDeferred:
+		return "deferred"
+	case MVInitBuildBuilding:
+		return "building"
+	default:
+		return fmt.Sprintf("unknown(%d)", byte(s))
+	}
+}
+
+// AccessErrorMessage returns the user-facing error message for a non-ready MV access.
+func (s MVInitBuildState) AccessErrorMessage(objectName string) string {
+	switch s {
+	case MVInitBuildDeferred:
+		return fmt.Sprintf("materialized view %s is not ready: initial build has not completed", objectName)
+	case MVInitBuildBuilding:
+		return fmt.Sprintf("materialized view %s initial build is in progress", objectName)
+	default:
+		return ""
+	}
+}
+
 // MaterializedViewInfo is stored in TableInfo for a materialized view table.
 type MaterializedViewInfo struct {
 	// BaseTableIDs is the table IDs of the base tables referenced by this MV.
 	// For Stage-1, it contains exactly one element.
 	// A slice is used here to keep metadata extensible for future multi-base-table support.
 	BaseTableIDs []int64 `json:"base_table_ids"`
+
+	// InitBuildState controls whether the MV is ready for normal query/refresh.
+	// Zero value means ready for backward compatibility with legacy persisted metadata.
+	InitBuildState MVInitBuildState `json:"init_build_state,omitempty"`
 
 	// SQLContent is the SELECT statement in CREATE MATERIALIZED VIEW.
 	SQLContent string `json:"sql_content"`
@@ -766,6 +816,14 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 	ni := *i
 	ni.BaseTableIDs = append([]int64(nil), i.BaseTableIDs...)
 	return &ni
+}
+
+// GetInitBuildState returns the effective initial-build state.
+func (i *MaterializedViewInfo) GetInitBuildState() MVInitBuildState {
+	if i == nil {
+		return MVInitBuildReady
+	}
+	return i.InitBuildState
 }
 
 // MaterializedViewShadowInfo is stored in TableInfo for an out-of-place refresh shadow table.

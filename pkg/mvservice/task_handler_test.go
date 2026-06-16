@@ -32,7 +32,9 @@ import (
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -43,28 +45,76 @@ import (
 )
 
 const (
-	testSQLFetchMVLogPurge   = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMVRefresh    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLRefreshMV         = `REFRESH MATERIALIZED VIEW %n.%n FAST`
-	testSQLFindMVNextTime    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLPurgeMVLog        = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-	testSQLFindPurgeNextTime = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLFetchMVLogPurge     = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVRefresh      = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLRefreshMV           = `REFRESH MATERIALIZED VIEW %n.%n FAST`
+	testSQLFindMVNextTime      = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLLockMVNextTime      = `SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdateMVNextTime    = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`
+	testSQLPurgeMVLog          = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
+	testSQLFindPurgeNextTime   = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLLockPurgeNextTime   = `SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdatePurgeNextTime = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 )
 
 var (
+	testSQLMarkStaleMVRefreshHistOrphaned = fmt.Sprintf(
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET REFRESH_STATUS = '%s',
+	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
+	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
+	REFRESH_FAILED_REASON = IFNULL(REFRESH_FAILED_REASON, '%s')
+WHERE REFRESH_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, REFRESH_TIME) < %%?
+ORDER BY REFRESH_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvRefreshHistoryOrphanedReason,
+		historyGCDeleteBatchSize,
+	)
+	testSQLMarkStaleMVLogPurgeHistOrphaned = fmt.Sprintf(
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET PURGE_STATUS = '%s',
+	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
+	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
+	PURGE_FAILED_REASON = IFNULL(PURGE_FAILED_REASON, '%s')
+WHERE PURGE_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, PURGE_TIME) < %%?
+ORDER BY PURGE_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvLogPurgeHistoryOrphanedReason,
+		historyGCDeleteBatchSize,
+	)
 	testSQLDeleteMVRefreshHistBeforeTSO = fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
 	)
 	testSQLDeleteMVLogPurgeHistBeforeTSO = fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
 	)
-	testExpectedPurgeMVLogSQL = []string{
+	testSQLCountMVRefreshHist  = `SELECT COUNT(*), MIN(REFRESH_JOB_ID) FROM mysql.tidb_mview_refresh_hist`
+	testSQLCountMVLogPurgeHist = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.tidb_mlog_purge_hist`
+	testExpectedPurgeMVLogSQL  = []string{
 		testSQLPurgeMVLog,
 		testSQLFindPurgeNextTime,
 	}
 )
+
+func testSQLDeleteMVRefreshHistByCount(limit uint64) string {
+	return fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID >= %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+		limit,
+	)
+}
+
+func testSQLDeleteMVLogPurgeHistByCount(limit uint64) string {
+	return fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID >= %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+		limit,
+	)
+}
 
 type mockSessionPool struct{}
 
@@ -82,18 +132,59 @@ func (recordingSessionPool) Close()                         {}
 
 type recordingSessionContext struct {
 	*mock.Context
-	executedSQL             []string
-	execErrs                map[string]error
-	executedRestrictedSQL   []string
-	executedRestrictedArg   [][]any
-	restrictedMaintainQuota []int64
-	restrictedMaxThreads    []int64
-	restrictedStreamCount   []int64
-	restrictedBatchSize     []uint64
-	restrictedRows          map[string][]chunk.Row
-	restrictedErrs          map[string]error
-	restrictedAffectedRows  map[string][]uint64
-	restrictedAffectedPos   map[string]int
+	executedSQL                            []string
+	execErrs                               map[string]error
+	executedRestrictedSQL                  []string
+	executedRestrictedArg                  [][]any
+	restrictedMaintainQuota                []int64
+	restrictedMaintainIsolationReadEngines []string
+	restrictedMaxThreads                   []int64
+	restrictedMaxBytesBeforeExternalJoin   []int64
+	restrictedMaxBytesBeforeExternalAgg    []int64
+	restrictedMaxBytesBeforeExternalSort   []int64
+	restrictedMemQuotaQueryPerNode         []int64
+	restrictedQuerySpillRatio              []float64
+	restrictedStreamCount                  []int64
+	restrictedBatchSize                    []uint64
+	restrictedImportThreads                []int
+	restrictedImportDiskQuota              []string
+	restrictedMLogPurgeBatchSize           []int
+	restrictedMLogPurgeMinRate             []int
+	restrictedMLogPurgeRateBudgetRatio     []float64
+	restrictedRows                         map[string][]chunk.Row
+	restrictedErrs                         map[string]error
+	restrictedAffectedRows                 map[string][]uint64
+	restrictedAffectedPos                  map[string]int
+}
+
+type faultyGlobalAccessor struct {
+	*variable.MockGlobalAccessor
+	getErrs   map[string]error
+	getVals   map[string]string
+	failAfter map[string]int
+	getCalls  map[string]int
+}
+
+func (a *faultyGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+	if a.getCalls == nil {
+		a.getCalls = make(map[string]int)
+	}
+	a.getCalls[name]++
+	if okAfter, ok := a.failAfter[name]; ok && a.getCalls[name] > okAfter {
+		if err, ok := a.getErrs[name]; ok {
+			return "", err
+		}
+		return "", errors.New("mock global read failure")
+	}
+	if err, ok := a.getErrs[name]; ok {
+		if _, delayed := a.failAfter[name]; !delayed {
+			return "", err
+		}
+	}
+	if val, ok := a.getVals[name]; ok {
+		return val, nil
+	}
+	return a.MockGlobalAccessor.GetGlobalSysVar(name)
 }
 
 type mockCurrentVersionStore struct {
@@ -142,9 +233,20 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	copy(argsCopy, args)
 	s.executedRestrictedArg = append(s.executedRestrictedArg, argsCopy)
 	s.restrictedMaintainQuota = append(s.restrictedMaintainQuota, s.GetSessionVars().MVMaintainMemQuota)
+	s.restrictedMaintainIsolationReadEngines = append(s.restrictedMaintainIsolationReadEngines, s.GetSessionVars().MVMaintainIsolationReadEngines)
 	s.restrictedMaxThreads = append(s.restrictedMaxThreads, s.GetSessionVars().TiFlashMaxThreads)
+	s.restrictedMaxBytesBeforeExternalJoin = append(s.restrictedMaxBytesBeforeExternalJoin, s.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin)
+	s.restrictedMaxBytesBeforeExternalAgg = append(s.restrictedMaxBytesBeforeExternalAgg, s.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy)
+	s.restrictedMaxBytesBeforeExternalSort = append(s.restrictedMaxBytesBeforeExternalSort, s.GetSessionVars().TiFlashMaxBytesBeforeExternalSort)
+	s.restrictedMemQuotaQueryPerNode = append(s.restrictedMemQuotaQueryPerNode, s.GetSessionVars().TiFlashMaxQueryMemoryPerNode)
+	s.restrictedQuerySpillRatio = append(s.restrictedQuerySpillRatio, s.GetSessionVars().TiFlashQuerySpillRatio)
 	s.restrictedStreamCount = append(s.restrictedStreamCount, s.GetSessionVars().TiFlashFineGrainedShuffleStreamCount)
 	s.restrictedBatchSize = append(s.restrictedBatchSize, s.GetSessionVars().TiFlashFineGrainedShuffleBatchSize)
+	s.restrictedImportThreads = append(s.restrictedImportThreads, s.GetSessionVars().MViewMaintainImportThreads)
+	s.restrictedImportDiskQuota = append(s.restrictedImportDiskQuota, s.GetSessionVars().MViewMaintainImportDiskQuota)
+	s.restrictedMLogPurgeBatchSize = append(s.restrictedMLogPurgeBatchSize, s.GetSessionVars().MLogPurgeBatchSize)
+	s.restrictedMLogPurgeMinRate = append(s.restrictedMLogPurgeMinRate, s.GetSessionVars().MLogPurgeMinRate)
+	s.restrictedMLogPurgeRateBudgetRatio = append(s.restrictedMLogPurgeRateBudgetRatio, s.GetSessionVars().MLogPurgeRateBudgetRatio)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
 		if pos < len(seq) {
@@ -252,7 +354,7 @@ func TestLatestServerInfosByInstanceKeepsNewestDDLID(t *testing.T) {
 func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.finishedCount.Load() == expected
+		return svc.combinedTaskExecutorMetrics().finishedCount == expected
 	}, testEventuallyWait, testEventuallyTick)
 }
 
@@ -276,30 +378,50 @@ func (mockTaskHandlerServerHelper) getAllServerInfo(context.Context) (map[string
 
 type mockMVServiceHelper struct {
 	mockTaskHandlerServerHelper
-	refreshNext                 time.Time
-	purgeNext                   time.Time
-	refreshErr                  error
-	purgeErr                    error
-	refreshPanic                bool
-	purgePanic                  bool
-	currentTSO                  uint64
-	currentTSOErr               error
-	historyGCErr                error
-	historyGCPanic              bool
-	fetchLogs                   map[int64]*mvLog
-	fetchViews                  map[int64]*mv
-	fetchLogsErr                error
-	fetchViewsErr               error
-	fetchLogsCalls              atomic.Int32
-	fetchViewCalls              atomic.Int32
-	serverRefreshCalls          atomic.Int32
-	historyGCCalls              atomic.Int32
-	lastHistoryGCCurrentTSO     atomic.Uint64
-	lastMViewHistoryGCRetention atomic.Int64
-	lastMLogHistoryGCRetention  atomic.Int64
+	refreshNext                       time.Time
+	purgeNext                         time.Time
+	refreshErr                        error
+	purgeErr                          error
+	refreshPanic                      bool
+	purgePanic                        bool
+	currentTSO                        uint64
+	currentTSOErr                     error
+	historyGCErr                      error
+	historyGCPanic                    bool
+	fetchLogs                         map[int64]*mvLog
+	fetchViews                        map[int64]*mv
+	fetchLogsErr                      error
+	fetchViewsErr                     error
+	fetchLogsCalls                    atomic.Int32
+	fetchViewCalls                    atomic.Int32
+	serverRefreshCalls                atomic.Int32
+	historyGCCalls                    atomic.Int32
+	refreshManualCancelBackoffApplied bool
+	purgeManualCancelBackoffApplied   bool
+	refreshManualCancelBackoffNext    time.Time
+	purgeManualCancelBackoffNext      time.Time
+	refreshManualCancelBackoffNextSet bool
+	purgeManualCancelBackoffNextSet   bool
+	refreshManualCancelBackoffErr     error
+	purgeManualCancelBackoffErr       error
+	refreshManualCancelBackoffCalls   atomic.Int32
+	purgeManualCancelBackoffCalls     atomic.Int32
+	lastHistoryGCCurrentTSO           atomic.Uint64
+	lastMViewHistoryGCRetention       atomic.Int64
+	lastMLogHistoryGCRetention        atomic.Int64
+	syncRefreshAlertCalls             atomic.Int32
+	cleanupStaleRefreshAlertCalls     atomic.Int32
+	syncRefreshAlertErr               error
+	cleanupStaleRefreshAlertErr       error
+	lastMViewHistoryGCMaxRecords      atomic.Uint64
+	lastMLogHistoryGCMaxRecords       atomic.Uint64
 
 	lastRefreshID int64
 	lastPurgeID   int64
+
+	syncRefreshAlertMu   sync.Mutex
+	lastRefreshAlertAt   time.Time
+	lastRefreshAlertSync []refreshAlertTask
 
 	metricsMu          sync.Mutex
 	taskDurationCounts map[string]int
@@ -331,6 +453,36 @@ func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool,
 		panic("mock purge panic")
 	}
 	return m.purgeNext, m.purgeErr
+}
+
+func (m *mockMVServiceHelper) TryBackoffRefreshManualCancel(_ context.Context, _ basic.SessionPool, _ int64, next time.Time) (bool, time.Time, error) {
+	m.refreshManualCancelBackoffCalls.Add(1)
+	if !m.refreshManualCancelBackoffNextSet && m.refreshManualCancelBackoffNext.IsZero() {
+		m.refreshManualCancelBackoffNext = next
+	}
+	return m.refreshManualCancelBackoffApplied, m.refreshManualCancelBackoffNext, m.refreshManualCancelBackoffErr
+}
+
+func (m *mockMVServiceHelper) TryBackoffPurgeManualCancel(_ context.Context, _ basic.SessionPool, _ int64, next time.Time) (bool, time.Time, error) {
+	m.purgeManualCancelBackoffCalls.Add(1)
+	if !m.purgeManualCancelBackoffNextSet && m.purgeManualCancelBackoffNext.IsZero() {
+		m.purgeManualCancelBackoffNext = next
+	}
+	return m.purgeManualCancelBackoffApplied, m.purgeManualCancelBackoffNext, m.purgeManualCancelBackoffErr
+}
+
+func (m *mockMVServiceHelper) SyncMVRefreshAlertStates(_ context.Context, _ basic.SessionPool, updatedAt time.Time, states []refreshAlertTask) error {
+	m.syncRefreshAlertCalls.Add(1)
+	m.syncRefreshAlertMu.Lock()
+	defer m.syncRefreshAlertMu.Unlock()
+	m.lastRefreshAlertAt = updatedAt
+	m.lastRefreshAlertSync = append(m.lastRefreshAlertSync[:0], states...)
+	return m.syncRefreshAlertErr
+}
+
+func (m *mockMVServiceHelper) CleanupStaleMVRefreshAlerts(_ context.Context, _ basic.SessionPool) error {
+	m.cleanupStaleRefreshAlertCalls.Add(1)
+	return m.cleanupStaleRefreshAlertErr
 }
 
 func (m *mockMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
@@ -373,6 +525,8 @@ func (m *mockMVServiceHelper) PurgeMVHistoryBeforeTSO(
 	m.lastHistoryGCCurrentTSO.Store(currentTSO)
 	m.lastMViewHistoryGCRetention.Store(int64(mviewRefreshRetention))
 	m.lastMLogHistoryGCRetention.Store(int64(mlogPurgeRetention))
+	m.lastMViewHistoryGCMaxRecords.Store(defaultMVHistoryGCMaxRecords)
+	m.lastMLogHistoryGCMaxRecords.Store(defaultMVHistoryGCMaxRecords)
 	return m.historyGCErr
 }
 
@@ -679,6 +833,8 @@ func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
 	require.Equal(t, helper.currentTSO, helper.lastHistoryGCCurrentTSO.Load())
 	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastMViewHistoryGCRetention.Load())
 	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastMLogHistoryGCRetention.Load())
+	require.Equal(t, defaultMVHistoryGCMaxRecords, helper.lastMViewHistoryGCMaxRecords.Load())
+	require.Equal(t, defaultMVHistoryGCMaxRecords, helper.lastMLogHistoryGCMaxRecords.Load())
 	require.Eventually(t, func() bool {
 		return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
 	}, testEventuallyWait, testEventuallyTick)
@@ -941,7 +1097,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.purgeMVLog([]*mvLog{l})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.purgeExecutor.metrics.counters.failedCount.Load())
 			require.Eventually(t, func() bool {
 				svc.mvLogPurgeMu.Lock()
 				_, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -967,7 +1123,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.purgeMVLog([]*mvLog{l})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.purgeExecutor.metrics.counters.failedCount.Load())
 
 			svc.mvLogPurgeMu.Lock()
 			item, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -975,6 +1131,85 @@ func TestMVServiceTaskResult(t *testing.T) {
 			require.True(t, item.Value.nextPurge.Equal(nextPurge))
 			require.Equal(t, nextPurge.UnixMilli(), item.Value.orderTs)
 			svc.mvLogPurgeMu.Unlock()
+		})
+
+		t.Run("manual_cancel_applied_backoff", func(t *testing.T) {
+			expectedNext := mvsNow().Add(manualCancelBackoffDelay + time.Minute).Round(0)
+			helper := &mockMVServiceHelper{
+				purgeErr:                        errMVTaskCanceledManually,
+				purgeManualCancelBackoffApplied: true,
+				purgeManualCancelBackoffNext:    expectedNext,
+			}
+			svc := newRunningMVServiceForTest(t, helper)
+
+			l := &mvLog{
+				ID:        305,
+				nextPurge: mvsNow().Add(-time.Minute).Round(0),
+			}
+			svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+			svc.purgeMVLog([]*mvLog{l})
+
+			waitExecutorFinishedCount(t, svc, 1)
+			require.Equal(t, int32(1), helper.purgeManualCancelBackoffCalls.Load())
+			require.Equal(t, int64(0), l.retryCount.Load())
+
+			svc.mvLogPurgeMu.Lock()
+			item, ok := svc.mvLogPurgeMu.pending[l.ID]
+			require.True(t, ok)
+			require.True(t, item.Value.nextPurge.Equal(expectedNext))
+			require.Equal(t, expectedNext.UnixMilli(), item.Value.orderTs)
+			svc.mvLogPurgeMu.Unlock()
+		})
+
+		t.Run("manual_cancel_applied_clear_schedule", func(t *testing.T) {
+			helper := &mockMVServiceHelper{
+				purgeErr:                        errMVTaskCanceledManually,
+				purgeManualCancelBackoffApplied: true,
+				purgeManualCancelBackoffNextSet: true,
+			}
+			svc := newRunningMVServiceForTest(t, helper)
+
+			l := &mvLog{
+				ID:        307,
+				nextPurge: mvsNow().Add(-time.Minute).Round(0),
+			}
+			svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+			svc.purgeMVLog([]*mvLog{l})
+
+			waitExecutorFinishedCount(t, svc, 1)
+			require.Equal(t, int32(1), helper.purgeManualCancelBackoffCalls.Load())
+			require.Equal(t, int64(0), l.retryCount.Load())
+			require.Eventually(t, func() bool {
+				svc.mvLogPurgeMu.Lock()
+				_, ok := svc.mvLogPurgeMu.pending[l.ID]
+				svc.mvLogPurgeMu.Unlock()
+				return !ok
+			}, testEventuallyWait, testEventuallyTick)
+		})
+
+		t.Run("manual_cancel_without_persist_forces_refetch", func(t *testing.T) {
+			helper := &mockMVServiceHelper{
+				purgeErr: errMVTaskCanceledManually,
+			}
+			svc := newRunningMVServiceForTest(t, helper)
+			svc.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
+
+			l := &mvLog{
+				ID:        306,
+				nextPurge: mvsNow().Add(-time.Minute).Round(0),
+			}
+			svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+			svc.purgeMVLog([]*mvLog{l})
+
+			waitExecutorFinishedCount(t, svc, 1)
+			require.Equal(t, int32(1), helper.purgeManualCancelBackoffCalls.Load())
+			require.Equal(t, int64(0), l.retryCount.Load())
+			require.Equal(t, int64(0), svc.lastMetaFetchMillis.Load())
+
+			svc.mvLogPurgeMu.Lock()
+			_, ok := svc.mvLogPurgeMu.pending[l.ID]
+			svc.mvLogPurgeMu.Unlock()
+			require.False(t, ok)
 		})
 	})
 
@@ -991,7 +1226,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.refreshMV([]*mv{m})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.refreshExecutor.metrics.counters.failedCount.Load())
 			require.Eventually(t, func() bool {
 				svc.mvRefreshMu.Lock()
 				_, ok := svc.mvRefreshMu.pending[m.ID]
@@ -1017,7 +1252,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.refreshMV([]*mv{m})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.refreshExecutor.metrics.counters.failedCount.Load())
 
 			svc.mvRefreshMu.Lock()
 			item, ok := svc.mvRefreshMu.pending[m.ID]
@@ -1025,6 +1260,85 @@ func TestMVServiceTaskResult(t *testing.T) {
 			require.True(t, item.Value.nextRefresh.Equal(nextRefresh))
 			require.Equal(t, nextRefresh.UnixMilli(), item.Value.orderTs)
 			svc.mvRefreshMu.Unlock()
+		})
+
+		t.Run("manual_cancel_applied_backoff", func(t *testing.T) {
+			expectedNext := mvsNow().Add(manualCancelBackoffDelay + time.Minute).Round(0)
+			helper := &mockMVServiceHelper{
+				refreshErr:                        errMVTaskCanceledManually,
+				refreshManualCancelBackoffApplied: true,
+				refreshManualCancelBackoffNext:    expectedNext,
+			}
+			svc := newRunningMVServiceForTest(t, helper)
+
+			m := &mv{
+				ID:          403,
+				nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+			}
+			svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+			svc.refreshMV([]*mv{m})
+
+			waitExecutorFinishedCount(t, svc, 1)
+			require.Equal(t, int32(1), helper.refreshManualCancelBackoffCalls.Load())
+			require.Equal(t, int64(0), m.retryCount.Load())
+
+			svc.mvRefreshMu.Lock()
+			item, ok := svc.mvRefreshMu.pending[m.ID]
+			require.True(t, ok)
+			require.True(t, item.Value.nextRefresh.Equal(expectedNext))
+			require.Equal(t, expectedNext.UnixMilli(), item.Value.orderTs)
+			svc.mvRefreshMu.Unlock()
+		})
+
+		t.Run("manual_cancel_applied_clear_schedule", func(t *testing.T) {
+			helper := &mockMVServiceHelper{
+				refreshErr:                        errMVTaskCanceledManually,
+				refreshManualCancelBackoffApplied: true,
+				refreshManualCancelBackoffNextSet: true,
+			}
+			svc := newRunningMVServiceForTest(t, helper)
+
+			m := &mv{
+				ID:          405,
+				nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+			}
+			svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+			svc.refreshMV([]*mv{m})
+
+			waitExecutorFinishedCount(t, svc, 1)
+			require.Equal(t, int32(1), helper.refreshManualCancelBackoffCalls.Load())
+			require.Equal(t, int64(0), m.retryCount.Load())
+			require.Eventually(t, func() bool {
+				svc.mvRefreshMu.Lock()
+				_, ok := svc.mvRefreshMu.pending[m.ID]
+				svc.mvRefreshMu.Unlock()
+				return !ok
+			}, testEventuallyWait, testEventuallyTick)
+		})
+
+		t.Run("manual_cancel_without_persist_forces_refetch", func(t *testing.T) {
+			helper := &mockMVServiceHelper{
+				refreshErr: errMVTaskCanceledManually,
+			}
+			svc := newRunningMVServiceForTest(t, helper)
+			svc.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
+
+			m := &mv{
+				ID:          404,
+				nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+			}
+			svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+			svc.refreshMV([]*mv{m})
+
+			waitExecutorFinishedCount(t, svc, 1)
+			require.Equal(t, int32(1), helper.refreshManualCancelBackoffCalls.Load())
+			require.Equal(t, int64(0), m.retryCount.Load())
+			require.Equal(t, int64(0), svc.lastMetaFetchMillis.Load())
+
+			svc.mvRefreshMu.Lock()
+			_, ok := svc.mvRefreshMu.pending[m.ID]
+			svc.mvRefreshMu.Unlock()
+			require.False(t, ok)
 		})
 	})
 }
@@ -1154,7 +1468,8 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 		MemThreshold: defaultBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}, svc.GetTaskBackpressureConfig())
-	require.NotNil(t, svc.executor.backpressure.Load())
+	require.NotNil(t, svc.refreshExecutor.backpressure.Load())
+	require.NotNil(t, svc.purgeExecutor.backpressure.Load())
 
 	createTable := notifier.NewCreateTableEvent(&meta.TableInfo{ID: 1})
 	require.NoError(t, gotHandler(context.Background(), nil, createTable))
@@ -1352,28 +1667,52 @@ func TestServerHelperGetCurrentTSOInvalidVersion(t *testing.T) {
 func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 	installMockTimeForTest(t)
 
-	buildExpectedSQL := func(refreshExec, purgeExec int) []string {
-		sqls := make([]string, 0, refreshExec+purgeExec)
+	buildExpectedSQL := func(
+		refreshExec, purgeExec int,
+		refreshCountCapLimits, purgeCountCapLimits []uint64,
+	) []string {
+		sqls := make([]string, 0, refreshExec+purgeExec+len(refreshCountCapLimits)+len(purgeCountCapLimits)+4)
+		sqls = append(sqls, testSQLMarkStaleMVRefreshHistOrphaned)
 		for i := 0; i < refreshExec; i++ {
 			sqls = append(sqls, testSQLDeleteMVRefreshHistBeforeTSO)
 		}
+		sqls = append(sqls, testSQLCountMVRefreshHist)
+		for _, limit := range refreshCountCapLimits {
+			sqls = append(sqls, testSQLDeleteMVRefreshHistByCount(limit))
+		}
+		sqls = append(sqls, testSQLMarkStaleMVLogPurgeHistOrphaned)
 		for i := 0; i < purgeExec; i++ {
 			sqls = append(sqls, testSQLDeleteMVLogPurgeHistBeforeTSO)
+		}
+		sqls = append(sqls, testSQLCountMVLogPurgeHist)
+		for _, limit := range purgeCountCapLimits {
+			sqls = append(sqls, testSQLDeleteMVLogPurgeHistByCount(limit))
 		}
 		return sqls
 	}
 
 	testCases := []struct {
-		name                  string
-		currentTSO            uint64
-		mviewRetention        time.Duration
-		mlogRetention         time.Duration
-		refreshAffectedRows   []uint64
-		purgeAffectedRows     []uint64
-		expectRefreshExec     int
-		expectPurgeExec       int
-		assertArgsAreEqualTSO bool
-		assertArgsNotEqual    bool
+		name                     string
+		currentTSO               uint64
+		mviewRetention           time.Duration
+		mlogRetention            time.Duration
+		refreshTimeAffectedRows  []uint64
+		purgeTimeAffectedRows    []uint64
+		refreshCountRows         []chunk.Row
+		purgeCountRows           []chunk.Row
+		refreshTimeErr           error
+		refreshCountErr          error
+		purgeTimeErr             error
+		purgeCountErr            error
+		expectRefreshExec        int
+		expectPurgeExec          int
+		expectRefreshCountCap    []uint64
+		expectPurgeCountCap      []uint64
+		refreshCountAffectedRows []uint64
+		purgeCountAffectedRows   []uint64
+		assertArgsAreEqualTSO    bool
+		assertArgsNotEqual       bool
+		expectErrContains        []string
 	}{
 		{
 			name:                  "zero_retention",
@@ -1398,14 +1737,14 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 			currentTSO:     987654321,
 			mviewRetention: 0,
 			mlogRetention:  0,
-			refreshAffectedRows: []uint64{
+			refreshTimeAffectedRows: []uint64{
 				uint64(historyGCDeleteBatchSize),
 				uint64(historyGCDeleteBatchSize),
 				1,
 			},
-			purgeAffectedRows: []uint64{0},
-			expectRefreshExec: 3,
-			expectPurgeExec:   1,
+			purgeTimeAffectedRows: []uint64{0},
+			expectRefreshExec:     3,
+			expectPurgeExec:       1,
 		},
 		{
 			name:              "batch_delete_no_max_batches",
@@ -1415,11 +1754,72 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 			expectRefreshExec: 26,
 			expectPurgeExec:   1,
 		},
+		{
+			name:           "count_cap_delete_budget",
+			currentTSO:     987654321,
+			mviewRetention: 0,
+			mlogRetention:  0,
+			refreshCountRows: []chunk.Row{
+				chunk.MutRowFromDatums([]types.Datum{
+					types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords + historyGCDeleteBatchSize + 5)),
+					types.NewUintDatum(500),
+				}).ToRow(),
+			},
+			purgeCountRows: []chunk.Row{
+				chunk.MutRowFromDatums([]types.Datum{
+					types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords + 8)),
+					types.NewUintDatum(900),
+				}).ToRow(),
+			},
+			refreshTimeAffectedRows:  []uint64{0},
+			purgeTimeAffectedRows:    []uint64{0},
+			expectRefreshExec:        1,
+			expectPurgeExec:          1,
+			expectRefreshCountCap:    []uint64{uint64(historyGCDeleteBatchSize), 5},
+			expectPurgeCountCap:      []uint64{8},
+			refreshCountAffectedRows: []uint64{uint64(historyGCDeleteBatchSize), 5},
+			purgeCountAffectedRows:   []uint64{8},
+		},
+		{
+			name:                    "count_cap_under_limit",
+			currentTSO:              987654321,
+			mviewRetention:          0,
+			mlogRetention:           0,
+			refreshTimeAffectedRows: []uint64{0},
+			purgeTimeAffectedRows:   []uint64{0},
+			refreshCountRows: []chunk.Row{
+				chunk.MutRowFromDatums([]types.Datum{
+					types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+					types.NewUintDatum(500),
+				}).ToRow(),
+			},
+			purgeCountRows: []chunk.Row{
+				chunk.MutRowFromDatums([]types.Datum{
+					types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords - 1)),
+					types.NewUintDatum(900),
+				}).ToRow(),
+			},
+			expectRefreshExec: 1,
+			expectPurgeExec:   1,
+		},
+		{
+			name:                  "continue_after_refresh_retention_error",
+			currentTSO:            987654321,
+			mviewRetention:        0,
+			mlogRetention:         0,
+			refreshTimeErr:        errors.New("refresh retention gc failed"),
+			purgeTimeAffectedRows: []uint64{0},
+			expectRefreshExec:     1,
+			expectPurgeExec:       1,
+			expectErrContains:     []string{"purge mview refresh history by retention failed", "refresh retention gc failed"},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			se := newRecordingSessionContext()
+			se.restrictedAffectedRows[testSQLMarkStaleMVRefreshHistOrphaned] = []uint64{0}
+			se.restrictedAffectedRows[testSQLMarkStaleMVLogPurgeHistOrphaned] = []uint64{0}
 			if tc.name == "batch_delete_no_max_batches" {
 				const extraBatches = 25
 				refreshAffected := make([]uint64, extraBatches)
@@ -1429,12 +1829,36 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 				se.restrictedAffectedRows[testSQLDeleteMVRefreshHistBeforeTSO] = append(refreshAffected, 1)
 				se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistBeforeTSO] = []uint64{0}
 			} else {
-				if len(tc.refreshAffectedRows) > 0 {
-					se.restrictedAffectedRows[testSQLDeleteMVRefreshHistBeforeTSO] = tc.refreshAffectedRows
+				if len(tc.refreshTimeAffectedRows) > 0 {
+					se.restrictedAffectedRows[testSQLDeleteMVRefreshHistBeforeTSO] = tc.refreshTimeAffectedRows
 				}
-				if len(tc.purgeAffectedRows) > 0 {
-					se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistBeforeTSO] = tc.purgeAffectedRows
+				if len(tc.purgeTimeAffectedRows) > 0 {
+					se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistBeforeTSO] = tc.purgeTimeAffectedRows
 				}
+			}
+			for i, limit := range tc.expectRefreshCountCap {
+				se.restrictedAffectedRows[testSQLDeleteMVRefreshHistByCount(limit)] = []uint64{tc.refreshCountAffectedRows[i]}
+			}
+			for i, limit := range tc.expectPurgeCountCap {
+				se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistByCount(limit)] = []uint64{tc.purgeCountAffectedRows[i]}
+			}
+			if tc.refreshCountRows != nil {
+				se.restrictedRows[testSQLCountMVRefreshHist] = tc.refreshCountRows
+			}
+			if tc.purgeCountRows != nil {
+				se.restrictedRows[testSQLCountMVLogPurgeHist] = tc.purgeCountRows
+			}
+			if tc.refreshTimeErr != nil {
+				se.restrictedErrs[testSQLDeleteMVRefreshHistBeforeTSO] = tc.refreshTimeErr
+			}
+			if tc.refreshCountErr != nil {
+				se.restrictedErrs[testSQLCountMVRefreshHist] = tc.refreshCountErr
+			}
+			if tc.purgeTimeErr != nil {
+				se.restrictedErrs[testSQLDeleteMVLogPurgeHistBeforeTSO] = tc.purgeTimeErr
+			}
+			if tc.purgeCountErr != nil {
+				se.restrictedErrs[testSQLCountMVLogPurgeHist] = tc.purgeCountErr
 			}
 			pool := recordingSessionPool{se: se}
 
@@ -1445,19 +1869,134 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 				tc.mviewRetention,
 				tc.mlogRetention,
 			)
-			require.NoError(t, err)
-			require.Equal(t, buildExpectedSQL(tc.expectRefreshExec, tc.expectPurgeExec), se.executedRestrictedSQL)
-			require.Len(t, se.executedRestrictedArg, tc.expectRefreshExec+tc.expectPurgeExec)
+			if len(tc.expectErrContains) == 0 {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				for _, msg := range tc.expectErrContains {
+					require.ErrorContains(t, err, msg)
+				}
+			}
+			require.Equal(t, buildExpectedSQL(
+				tc.expectRefreshExec,
+				tc.expectPurgeExec,
+				tc.expectRefreshCountCap,
+				tc.expectPurgeCountCap,
+			), se.executedRestrictedSQL)
+			require.Len(t, se.executedRestrictedArg, len(se.executedRestrictedSQL))
 
+			refreshRetentionArgPos := 1
+			purgeOrphanArgPos := tc.expectRefreshExec + len(tc.expectRefreshCountCap) + 2
+			purgeTimeArgPos := purgeOrphanArgPos + 1
 			if tc.assertArgsAreEqualTSO {
-				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[0])
-				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[tc.expectRefreshExec])
+				require.Len(t, se.executedRestrictedArg[0], 1)
+				require.Len(t, se.executedRestrictedArg[purgeOrphanArgPos], 1)
+				require.Equal(t, se.executedRestrictedArg[0][0], se.executedRestrictedArg[purgeOrphanArgPos][0])
+				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[refreshRetentionArgPos])
+				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[purgeTimeArgPos])
 			}
 			if tc.assertArgsNotEqual {
-				require.NotEqual(t, se.executedRestrictedArg[0][0], se.executedRestrictedArg[tc.expectRefreshExec][0])
+				require.NotEqual(t, se.executedRestrictedArg[refreshRetentionArgPos][0], se.executedRestrictedArg[purgeTimeArgPos][0])
+			}
+			require.Empty(t, se.executedRestrictedArg[tc.expectRefreshExec+1])
+			argBase := tc.expectRefreshExec + 2
+			if len(tc.refreshCountRows) > 0 {
+				minJobID := tc.refreshCountRows[0].GetUint64(1)
+				for i := range tc.expectRefreshCountCap {
+					require.Equal(t, []any{minJobID}, se.executedRestrictedArg[argBase+i])
+				}
+			}
+			countPos := purgeTimeArgPos + tc.expectPurgeExec
+			require.Empty(t, se.executedRestrictedArg[countPos])
+			if len(tc.purgeCountRows) > 0 {
+				minJobID := tc.purgeCountRows[0].GetUint64(1)
+				for i := range tc.expectPurgeCountCap {
+					require.Equal(t, []any{minJobID}, se.executedRestrictedArg[countPos+1+i])
+				}
 			}
 		})
 	}
+}
+
+func TestServerHelperPurgeMVHistoryBeforeTSOTreatsNullStatusAsDeletable(t *testing.T) {
+	installMockTimeForTest(t)
+
+	se := newRecordingSessionContext()
+	se.restrictedAffectedRows[testSQLDeleteMVRefreshHistBeforeTSO] = []uint64{0}
+	se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistBeforeTSO] = []uint64{0}
+	se.restrictedRows[testSQLCountMVRefreshHist] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+			types.NewUintDatum(500),
+		}).ToRow(),
+	}
+	se.restrictedRows[testSQLCountMVLogPurgeHist] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+			types.NewUintDatum(900),
+		}).ToRow(),
+	}
+
+	err := (&serviceHelper{}).PurgeMVHistoryBeforeTSO(
+		context.Background(),
+		recordingSessionPool{se: se},
+		987654321,
+		0,
+		0,
+	)
+	require.NoError(t, err)
+	require.Contains(t, se.executedRestrictedSQL, testSQLDeleteMVRefreshHistBeforeTSO)
+	require.Contains(t, se.executedRestrictedSQL, testSQLDeleteMVLogPurgeHistBeforeTSO)
+	require.Contains(t, testSQLDeleteMVRefreshHistBeforeTSO, "REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running'")
+	require.Contains(t, testSQLDeleteMVLogPurgeHistBeforeTSO, "PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running'")
+	require.Contains(t, testSQLDeleteMVRefreshHistByCount(1), "REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running'")
+	require.Contains(t, testSQLDeleteMVLogPurgeHistByCount(1), "PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running'")
+}
+
+func TestServerHelperPurgeMVHistoryBeforeTSOReconcilesStaleRunningHistRows(t *testing.T) {
+	installMockTimeForTest(t)
+
+	currentTSO := oracle.ComposeTS(int64(36*time.Hour/time.Millisecond), 0)
+	expectedCutoffTime := oracle.GetTimeFromTS(oracle.ComposeTS(int64(12*time.Hour/time.Millisecond), 0))
+
+	se := newRecordingSessionContext()
+	se.restrictedAffectedRows[testSQLMarkStaleMVRefreshHistOrphaned] = []uint64{2}
+	se.restrictedAffectedRows[testSQLMarkStaleMVLogPurgeHistOrphaned] = []uint64{1}
+	se.restrictedAffectedRows[testSQLDeleteMVRefreshHistBeforeTSO] = []uint64{0}
+	se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistBeforeTSO] = []uint64{0}
+	se.restrictedRows[testSQLCountMVRefreshHist] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+			types.NewUintDatum(500),
+		}).ToRow(),
+	}
+	se.restrictedRows[testSQLCountMVLogPurgeHist] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+			types.NewUintDatum(900),
+		}).ToRow(),
+	}
+
+	err := (&serviceHelper{}).PurgeMVHistoryBeforeTSO(
+		context.Background(),
+		recordingSessionPool{se: se},
+		currentTSO,
+		0,
+		0,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		testSQLMarkStaleMVRefreshHistOrphaned,
+		testSQLDeleteMVRefreshHistBeforeTSO,
+		testSQLCountMVRefreshHist,
+		testSQLMarkStaleMVLogPurgeHistOrphaned,
+		testSQLDeleteMVLogPurgeHistBeforeTSO,
+		testSQLCountMVLogPurgeHist,
+	}, se.executedRestrictedSQL)
+	require.Equal(t, []any{expectedCutoffTime}, se.executedRestrictedArg[0])
+	require.Equal(t, []any{currentTSO}, se.executedRestrictedArg[1])
+	require.Equal(t, []any{expectedCutoffTime}, se.executedRestrictedArg[3])
+	require.Equal(t, []any{currentTSO}, se.executedRestrictedArg[4])
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
@@ -1500,6 +2039,25 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	}, se.executedRestrictedSQL)
 }
 
+func TestServerHelperRefreshMVManualCancelNormalized(t *testing.T) {
+	installMockTimeForTest(t)
+
+	se := newRecordingSessionContext()
+	se.restrictedErrs[testSQLRefreshMV] = errors.New("materialized view task canceled manually")
+	mvTable := &meta.TableInfo{
+		ID:    101,
+		Name:  pmodel.NewCIStr("mv1"),
+		State: meta.StatePublic,
+	}
+	withMockInfoSchema(t, mvTable)
+	pool := recordingSessionPool{se: se}
+
+	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 101)
+	require.ErrorIs(t, err, errMVTaskCanceledManually)
+	require.True(t, nextRefresh.IsZero())
+	require.Equal(t, []string{testSQLRefreshMV}, se.executedRestrictedSQL)
+}
+
 func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
 	installMockTimeForTest(t)
 
@@ -1524,12 +2082,29 @@ func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
 	vars.GlobalVarsAccessor = mockGlobalAccessor
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainMemQuota, "536870912"))
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMaxTiFlashThreads, "8"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMaxBytesBeforeTiFlashExternalJoin, "111"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, "222"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMaxBytesBeforeTiFlashExternalSort, "333"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashMemQuotaQueryPerNode, "444"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashQuerySpillRatio, "0.25"))
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashFineGrainedShuffleStreamCount, "16"))
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashFineGrainedShuffleBatchSize, "4096"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMViewMaintainImportThreads, "12"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMViewMaintainImportDiskQuota, "64gib"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainIsolationReadEngines, "tikv"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainIsolationReadEngines, "tidb"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tidb"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "2"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, "101"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, "202"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalSort, "303"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashMemQuotaQueryPerNode, "404"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashQuerySpillRatio, "0.75"))
 	require.NoError(t, vars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, "4"))
 	require.NoError(t, vars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, "1024"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMViewMaintainImportThreads, "3"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMViewMaintainImportDiskQuota, "8gib"))
 
 	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 101)
 	require.NoError(t, err)
@@ -1539,13 +2114,121 @@ func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
 		testSQLFindMVNextTime,
 	}, se.executedRestrictedSQL)
 	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tikv", "tikv"}, se.restrictedMaintainIsolationReadEngines)
 	require.Equal(t, []int64{8, 8}, se.restrictedMaxThreads)
+	require.Equal(t, []int64{111, 111}, se.restrictedMaxBytesBeforeExternalJoin)
+	require.Equal(t, []int64{222, 222}, se.restrictedMaxBytesBeforeExternalAgg)
+	require.Equal(t, []int64{333, 333}, se.restrictedMaxBytesBeforeExternalSort)
+	require.Equal(t, []int64{444, 444}, se.restrictedMemQuotaQueryPerNode)
+	require.Equal(t, []float64{0.25, 0.25}, se.restrictedQuerySpillRatio)
 	require.Equal(t, []int64{16, 16}, se.restrictedStreamCount)
 	require.Equal(t, []uint64{4096, 4096}, se.restrictedBatchSize)
+	require.Equal(t, []int{12, 12}, se.restrictedImportThreads)
+	require.Equal(t, []string{"64gib", "64gib"}, se.restrictedImportDiskQuota)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
 	require.Equal(t, int64(2), vars.TiFlashMaxThreads)
+	require.Equal(t, int64(101), vars.TiFlashMaxBytesBeforeExternalJoin)
+	require.Equal(t, int64(202), vars.TiFlashMaxBytesBeforeExternalGroupBy)
+	require.Equal(t, int64(303), vars.TiFlashMaxBytesBeforeExternalSort)
+	require.Equal(t, int64(404), vars.TiFlashMaxQueryMemoryPerNode)
+	require.Equal(t, float64(0.75), vars.TiFlashQuerySpillRatio)
 	require.Equal(t, int64(4), vars.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(1024), vars.TiFlashFineGrainedShuffleBatchSize)
+	require.Equal(t, 3, vars.MViewMaintainImportThreads)
+	require.Equal(t, "8gib", vars.MViewMaintainImportDiskQuota)
+	require.Equal(t, "tidb", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, "tidb", vars.MVMaintainIsolationReadEngines)
+}
+
+func TestServerHelperRefreshMVBestEffortWhenGlobalSessionVarsUnavailable(t *testing.T) {
+	installMockTimeForTest(t)
+
+	se := newRecordingSessionContext()
+	expectedNextRefresh := mvsNow().Add(time.Minute).Round(0)
+	se.restrictedRows[testSQLFindMVNextTime] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(expectedNextRefresh.Unix()),
+		}).ToRow(),
+	}
+	mvTable := &meta.TableInfo{
+		ID:    101,
+		Name:  pmodel.NewCIStr("mv1"),
+		State: meta.StatePublic,
+	}
+	withMockInfoSchema(t, mvTable)
+	pool := recordingSessionPool{se: se}
+
+	vars := se.GetSessionVars()
+	baseAccessor := variable.NewMockGlobalAccessor4Tests()
+	baseAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = &faultyGlobalAccessor{
+		MockGlobalAccessor: baseAccessor,
+		getErrs: map[string]error{
+			variable.TiDBMaxTiFlashThreads:              errors.New("mock global read failure"),
+			variable.TiDBMVMaintainIsolationReadEngines: errors.New("mock global read failure"),
+		},
+		failAfter: map[string]int{
+			variable.TiDBMVMaintainIsolationReadEngines: 1,
+		},
+		getVals: map[string]string{
+			variable.TiDBMVMaintainMemQuota:                   "536870912",
+			variable.TiDBMVMaintainIsolationReadEngines:       "tidb",
+			variable.TiDBMaxBytesBeforeTiFlashExternalJoin:    "111",
+			variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy: "222",
+			variable.TiDBMaxBytesBeforeTiFlashExternalSort:    "333",
+			variable.TiFlashMemQuotaQueryPerNode:              "444",
+			variable.TiFlashQuerySpillRatio:                   "not-a-float",
+			variable.TiFlashFineGrainedShuffleStreamCount:     "16",
+			variable.TiFlashFineGrainedShuffleBatchSize:       "4096",
+			variable.TiDBMViewMaintainImportThreads:           "12",
+			variable.TiDBMViewMaintainImportDiskQuota:         "bad-quota",
+		},
+	}
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tikv"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "2"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, "101"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, "202"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalSort, "303"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashMemQuotaQueryPerNode, "404"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashQuerySpillRatio, "0.75"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, "4"))
+	require.NoError(t, vars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, "1024"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMViewMaintainImportThreads, "3"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMViewMaintainImportDiskQuota, "8gib"))
+
+	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 101)
+	require.NoError(t, err)
+	require.Equal(t, expectedNextRefresh.Unix(), nextRefresh.Unix())
+	require.Equal(t, []string{
+		testSQLRefreshMV,
+		testSQLFindMVNextTime,
+	}, se.executedRestrictedSQL)
+	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tidb", "tidb"}, se.restrictedMaintainIsolationReadEngines)
+	require.Equal(t, []int64{2, 2}, se.restrictedMaxThreads)
+	require.Equal(t, []int64{111, 111}, se.restrictedMaxBytesBeforeExternalJoin)
+	require.Equal(t, []int64{222, 222}, se.restrictedMaxBytesBeforeExternalAgg)
+	require.Equal(t, []int64{333, 333}, se.restrictedMaxBytesBeforeExternalSort)
+	require.Equal(t, []int64{444, 444}, se.restrictedMemQuotaQueryPerNode)
+	require.Equal(t, []float64{0.75, 0.75}, se.restrictedQuerySpillRatio)
+	require.Equal(t, []int64{16, 16}, se.restrictedStreamCount)
+	require.Equal(t, []uint64{4096, 4096}, se.restrictedBatchSize)
+	require.Equal(t, []int{12, 12}, se.restrictedImportThreads)
+	require.Equal(t, []string{"8gib", "8gib"}, se.restrictedImportDiskQuota)
+	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
+	require.Equal(t, int64(2), vars.TiFlashMaxThreads)
+	require.Equal(t, int64(101), vars.TiFlashMaxBytesBeforeExternalJoin)
+	require.Equal(t, int64(202), vars.TiFlashMaxBytesBeforeExternalGroupBy)
+	require.Equal(t, int64(303), vars.TiFlashMaxBytesBeforeExternalSort)
+	require.Equal(t, int64(404), vars.TiFlashMaxQueryMemoryPerNode)
+	require.Equal(t, float64(0.75), vars.TiFlashQuerySpillRatio)
+	require.Equal(t, int64(4), vars.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(1024), vars.TiFlashFineGrainedShuffleBatchSize)
+	require.Equal(t, 3, vars.MViewMaintainImportThreads)
+	require.Equal(t, "8gib", vars.MViewMaintainImportDiskQuota)
+	require.Equal(t, "tikv", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value, vars.MVMaintainIsolationReadEngines)
 }
 
 func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
@@ -1606,6 +2289,20 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	require.Equal(t, "mv_base", se.executedRestrictedArg[0][1])
 }
 
+func TestServerHelperPurgeMVLogManualCancelNormalized(t *testing.T) {
+	installMockTimeForTest(t)
+
+	se := newRecordingSessionContext()
+	setupPurgeMVLogMetaForTest(t, se, nil)
+	se.restrictedErrs[testSQLPurgeMVLog] = errors.New("materialized view task canceled manually")
+	pool := recordingSessionPool{se: se}
+
+	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
+	require.ErrorIs(t, err, errMVTaskCanceledManually)
+	require.True(t, nextPurge.IsZero())
+	require.Equal(t, []string{testSQLPurgeMVLog}, se.executedRestrictedSQL)
+}
+
 func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	installMockTimeForTest(t)
 	se := newRecordingSessionContext()
@@ -1622,14 +2319,85 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	mockGlobalAccessor.SessionVars = vars
 	vars.GlobalVarsAccessor = mockGlobalAccessor
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainMemQuota, "536870912"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainIsolationReadEngines, "tikv"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMLogPurgeBatchSize, "4321"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMLogPurgeMinRate, "8765"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMLogPurgeRateBudgetRatio, "0.75"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainIsolationReadEngines, "tidb"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tidb"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeBatchSize, "1234"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeMinRate, "2345"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeRateBudgetRatio, "0.25"))
 
 	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
 	require.False(t, nextPurge.IsZero())
 	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
 	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tikv", "tikv"}, se.restrictedMaintainIsolationReadEngines)
+	require.Equal(t, []int{4321, 4321}, se.restrictedMLogPurgeBatchSize)
+	require.Equal(t, []int{8765, 8765}, se.restrictedMLogPurgeMinRate)
+	require.Equal(t, []float64{0.75, 0.75}, se.restrictedMLogPurgeRateBudgetRatio)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
+	require.Equal(t, "tidb", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, "tidb", vars.MVMaintainIsolationReadEngines)
+	require.Equal(t, 1234, vars.MLogPurgeBatchSize)
+	require.Equal(t, 2345, vars.MLogPurgeMinRate)
+	require.Equal(t, 0.25, vars.MLogPurgeRateBudgetRatio)
+}
+
+func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t *testing.T) {
+	installMockTimeForTest(t)
+	se := newRecordingSessionContext()
+	nextTimeRows := []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
+		}).ToRow(),
+	}
+	setupPurgeMVLogMetaForTest(t, se, nextTimeRows)
+
+	pool := recordingSessionPool{se: se}
+	vars := se.GetSessionVars()
+	baseAccessor := variable.NewMockGlobalAccessor4Tests()
+	baseAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = &faultyGlobalAccessor{
+		MockGlobalAccessor: baseAccessor,
+		getErrs: map[string]error{
+			variable.TiDBMVMaintainMemQuota:             errors.New("mock global read failure"),
+			variable.TiDBMVMaintainIsolationReadEngines: errors.New("mock global read failure"),
+			variable.TiDBMLogPurgeBatchSize:             errors.New("mock global read failure"),
+			variable.TiDBMLogPurgeMinRate:               errors.New("mock global read failure"),
+			variable.TiDBMLogPurgeRateBudgetRatio:       errors.New("mock global read failure"),
+		},
+		failAfter: map[string]int{
+			variable.TiDBMVMaintainIsolationReadEngines: 1,
+		},
+		getVals: map[string]string{
+			variable.TiDBMVMaintainIsolationReadEngines: "tidb",
+		},
+	}
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tikv"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeBatchSize, "3456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeMinRate, "4567"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeRateBudgetRatio, "0.35"))
+
+	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
+	require.NoError(t, err)
+	require.False(t, nextPurge.IsZero())
+	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
+	require.Equal(t, []int64{268435456, 268435456}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tidb", "tidb"}, se.restrictedMaintainIsolationReadEngines)
+	require.Equal(t, []int{3456, 3456}, se.restrictedMLogPurgeBatchSize)
+	require.Equal(t, []int{4567, 4567}, se.restrictedMLogPurgeMinRate)
+	require.Equal(t, []float64{0.35, 0.35}, se.restrictedMLogPurgeRateBudgetRatio)
+	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
+	require.Equal(t, "tikv", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value, vars.MVMaintainIsolationReadEngines)
+	require.Equal(t, 3456, vars.MLogPurgeBatchSize)
+	require.Equal(t, 4567, vars.MLogPurgeMinRate)
+	require.Equal(t, 0.35, vars.MLogPurgeRateBudgetRatio)
 }
 
 func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {
@@ -1684,4 +2452,374 @@ func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {
 			require.Equal(t, "mv_base", se.executedRestrictedArg[0][1])
 		})
 	}
+}
+
+func TestServerHelperTryBackoffRefreshManualCancel(t *testing.T) {
+	installMockTimeForTest(t)
+
+	t.Run("applied", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		expectedNext := mvsNow().UTC().Add(manualCancelBackoffDelay).Round(0)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockMVNextTime,
+			testSQLUpdateMVNextTime,
+			101,
+			expectedNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				next := mvsNow().UTC().Add(time.Minute).Round(0)
+				return &next, false, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.Equal(expectedNext))
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		require.True(t, ok)
+		require.True(t, gotNext.Equal(expectedNext))
+		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("keep_later_next_time", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		currentNext := mvsNow().UTC().Add(manualCancelBackoffDelay + time.Minute).Round(0)
+		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay).Round(0)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockMVNextTime,
+			testSQLUpdateMVNextTime,
+			101,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				return &currentNext, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.Equal(currentNext))
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		require.True(t, ok)
+		require.True(t, gotNext.Equal(currentNext))
+		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("no_next_schedule_clears_next_time", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockMVNextTime,
+			testSQLUpdateMVNextTime,
+			101,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				return nil, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		require.Nil(t, se.executedRestrictedArg[1][0])
+		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("locked_next_time_null_keeps_unscheduled", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+		resolverCalled := false
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockMVNextTime,
+			testSQLUpdateMVNextTime,
+			101,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				resolverCalled = true
+				next := mvsNow().UTC().Add(time.Hour)
+				return &next, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.False(t, resolverCalled)
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
+	})
+
+	t.Run("resolver_error_falls_back_to_cooldown", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockMVNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockMVNextTime,
+			testSQLUpdateMVNextTime,
+			101,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				return nil, false, errors.New("mock resolver error")
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.Equal(cooldownNext))
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		require.True(t, ok)
+		require.True(t, gotNext.Equal(cooldownNext))
+		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("lock_conflict", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedErrs[testSQLLockMVNextTime] = storeerr.ErrLockAcquireFailAndNoWaitSet
+		pool := recordingSessionPool{se: se}
+
+		applied, appliedNext, err := (&serviceHelper{}).TryBackoffRefreshManualCancel(context.Background(), pool, 101, mvsNow().UTC().Add(manualCancelBackoffDelay))
+		require.NoError(t, err)
+		require.False(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockMVNextTime}, se.executedRestrictedSQL)
+	})
+}
+
+func TestServerHelperSyncMVRefreshAlertStates(t *testing.T) {
+	installMockTimeForTest(t)
+
+	now := mvsNow().Round(0)
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+	states := []refreshAlertTask{
+		{
+			mviewID:         101,
+			schemaName:      "test",
+			mviewName:       "mv_warn",
+			lastSuccessTime: now.Add(-time.Minute),
+			alertLevel:      mvRefreshAlertLevelWarning,
+		},
+		{
+			mviewID:         102,
+			schemaName:      "test",
+			mviewName:       "mv_overdue",
+			lastSuccessTime: now.Add(-2 * time.Minute),
+			alertLevel:      mvRefreshAlertLevelOverdue,
+		},
+		{
+			mviewID: 103,
+		},
+		{
+			mviewID:            104,
+			metadataUnresolved: true,
+		},
+		{
+			mviewID: 0,
+		},
+		{
+			mviewID:    105,
+			schemaName: "test",
+			mviewName:  "mv_no_success",
+			alertLevel: mvRefreshAlertLevelWarning,
+		},
+	}
+
+	err := (&serviceHelper{}).SyncMVRefreshAlertStates(context.Background(), pool, now, states)
+	require.NoError(t, err)
+	upsertSQL := buildUpsertMVRefreshAlertSQL(now, []refreshAlertTask{states[0], states[1], states[5]})
+	require.Equal(t, []string{
+		buildDeleteMVRefreshAlertSQL([]int64{103}),
+		upsertSQL,
+	}, se.executedRestrictedSQL)
+	require.Contains(t, upsertSQL, "'mv_no_success', 'warning', NULL,")
+	require.Len(t, se.executedRestrictedArg, 2)
+	require.Empty(t, se.executedRestrictedArg[0])
+	require.Empty(t, se.executedRestrictedArg[1])
+}
+
+func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+
+	err := (&serviceHelper{}).CleanupStaleMVRefreshAlerts(context.Background(), pool)
+	require.NoError(t, err)
+	require.Equal(t, []string{buildCleanupStaleMVRefreshAlertSQL()}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 1)
+	require.Empty(t, se.executedRestrictedArg[0])
+}
+
+func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {
+	installMockTimeForTest(t)
+
+	t.Run("applied", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockPurgeNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		expectedNext := mvsNow().UTC().Add(manualCancelBackoffDelay).Round(0)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockPurgeNextTime,
+			testSQLUpdatePurgeNextTime,
+			201,
+			expectedNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				next := mvsNow().UTC().Add(time.Minute).Round(0)
+				return &next, false, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.Equal(expectedNext))
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockPurgeNextTime, testSQLUpdatePurgeNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		require.True(t, ok)
+		require.True(t, gotNext.Equal(expectedNext))
+		require.Equal(t, int64(201), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("keep_later_next_time", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		currentNext := mvsNow().UTC().Add(manualCancelBackoffDelay + time.Minute).Round(0)
+		se.restrictedRows[testSQLLockPurgeNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay).Round(0)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockPurgeNextTime,
+			testSQLUpdatePurgeNextTime,
+			201,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				return &currentNext, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.Equal(currentNext))
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockPurgeNextTime, testSQLUpdatePurgeNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		require.True(t, ok)
+		require.True(t, gotNext.Equal(currentNext))
+		require.Equal(t, int64(201), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("no_next_schedule_clears_next_time", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockPurgeNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockPurgeNextTime,
+			testSQLUpdatePurgeNextTime,
+			201,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				return nil, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockPurgeNextTime, testSQLUpdatePurgeNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
+		require.Len(t, se.executedRestrictedArg[1], 2)
+		require.Nil(t, se.executedRestrictedArg[1][0])
+		require.Equal(t, int64(201), se.executedRestrictedArg[1][1])
+	})
+
+	t.Run("locked_next_time_null_keeps_unscheduled", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		se.restrictedRows[testSQLLockPurgeNextTime] = []chunk.Row{
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow(),
+		}
+		pool := recordingSessionPool{se: se}
+		cooldownNext := mvsNow().UTC().Add(manualCancelBackoffDelay)
+		resolverCalled := false
+
+		applied, appliedNext, err := tryBackoffMVTaskManualCancel(
+			context.Background(),
+			pool,
+			testSQLLockPurgeNextTime,
+			testSQLUpdatePurgeNextTime,
+			201,
+			cooldownNext,
+			func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error) {
+				resolverCalled = true
+				next := mvsNow().UTC().Add(time.Hour)
+				return &next, true, nil
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.True(t, appliedNext.IsZero())
+		require.False(t, resolverCalled)
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+		require.Equal(t, []string{testSQLLockPurgeNextTime}, se.executedRestrictedSQL)
+		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
+	})
 }

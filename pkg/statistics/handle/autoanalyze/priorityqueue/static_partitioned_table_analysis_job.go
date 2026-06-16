@@ -164,6 +164,10 @@ func (j *StaticPartitionedTableAnalysisJob) ValidateAndPrepare(
 		callFailureHook(false)
 		return false, schemaNotExist
 	}
+	if valid, failReason, needRetry := checkTableReadyForAnalyze(tableInfo); !valid {
+		callFailureHook(needRetry)
+		return false, failReason
+	}
 	partitionInfo := tableInfo.GetPartitionInfo()
 	if partitionInfo == nil {
 		callFailureHook(false)

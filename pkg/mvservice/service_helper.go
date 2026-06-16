@@ -19,20 +19,25 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -40,7 +45,12 @@ import (
 )
 
 const (
-	historyGCDeleteBatchSize = 10000
+	historyGCDeleteBatchSize        = 10000
+	refreshAlertWriteBatchSize      = 128
+	mvHistoryHeartbeatTimeout       = 24 * time.Hour
+	mvHistoryOrphanedStatus         = "orphaned"
+	mvRefreshHistoryOrphanedReason  = "task heartbeat expired before refresh history finalize"
+	mvLogPurgeHistoryOrphanedReason = "task heartbeat expired before purge history finalize"
 )
 
 type serviceHelper struct {
@@ -100,6 +110,122 @@ func newServiceHelper() *serviceHelper {
 
 func (*serviceHelper) serverFilter(s serverInfo) bool {
 	return true
+}
+
+func buildDeleteMVRefreshAlertSQL(mviewIDs []int64) string {
+	var sql strings.Builder
+	sql.WriteString("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN (")
+	for i, mviewID := range mviewIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(&sql, "%?", mviewID)
+	}
+	sql.WriteString(")")
+	return sql.String()
+}
+
+func buildUpsertMVRefreshAlertSQL(updatedAt time.Time, states []refreshAlertTask) string {
+	var sql strings.Builder
+	sql.WriteString(`INSERT INTO mysql.tidb_mview_refresh_alert (
+MVIEW_ID,
+MV_SCHEMA,
+MV_NAME,
+ALERT_LEVEL,
+LAST_SUCCESS_TIME,
+UPDATED_AT
+) VALUES `)
+	for i, state := range states {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		var lastSuccessTime any
+		if !state.lastSuccessTime.IsZero() {
+			lastSuccessTime = state.lastSuccessTime.Round(0)
+		}
+		sqlescape.MustFormatSQL(
+			&sql,
+			"(%?, %?, %?, %?, %?, %?)",
+			state.mviewID,
+			state.schemaName,
+			state.mviewName,
+			state.alertLevel,
+			lastSuccessTime,
+			updatedAt.Round(0),
+		)
+	}
+	sql.WriteString(` ON DUPLICATE KEY UPDATE
+MV_SCHEMA = VALUES(MV_SCHEMA),
+MV_NAME = VALUES(MV_NAME),
+ALERT_LEVEL = VALUES(ALERT_LEVEL),
+LAST_SUCCESS_TIME = VALUES(LAST_SUCCESS_TIME),
+UPDATED_AT = VALUES(UPDATED_AT)`)
+	return sql.String()
+}
+
+func buildCleanupStaleMVRefreshAlertSQL() string {
+	return `DELETE a
+FROM mysql.tidb_mview_refresh_alert AS a
+LEFT JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
+WHERE i.MVIEW_ID IS NULL OR i.NEXT_TIME IS NULL`
+}
+
+func (*serviceHelper) SyncMVRefreshAlertStates(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	updatedAt time.Time,
+	states []refreshAlertTask,
+) error {
+	if len(states) == 0 {
+		return nil
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	defer sysSessionPool.Put(se)
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	deleteIDs := make([]int64, 0, len(states))
+	upsertStates := make([]refreshAlertTask, 0, len(states))
+	for _, state := range states {
+		if state.mviewID <= 0 {
+			continue
+		}
+		if state.metadataUnresolved {
+			continue
+		}
+		if state.alertLevel == "" {
+			deleteIDs = append(deleteIDs, state.mviewID)
+			continue
+		}
+		upsertStates = append(upsertStates, state)
+	}
+
+	for start := 0; start < len(deleteIDs); start += refreshAlertWriteBatchSize {
+		end := min(start+refreshAlertWriteBatchSize, len(deleteIDs))
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildDeleteMVRefreshAlertSQL(deleteIDs[start:end]), nil); err != nil {
+			return err
+		}
+	}
+	for start := 0; start < len(upsertStates); start += refreshAlertWriteBatchSize {
+		end := min(start+refreshAlertWriteBatchSize, len(upsertStates))
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildUpsertMVRefreshAlertSQL(updatedAt, upsertStates[start:end]), nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (*serviceHelper) CleanupStaleMVRefreshAlerts(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	_, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, buildCleanupStaleMVRefreshAlertSQL(), nil)
+	return err
 }
 
 func (*serviceHelper) getServerInfo() (serverInfo, error) {
@@ -239,6 +365,9 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 	defer restoreRefreshSessionVars()
 
 	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
+		if isMVTaskCanceledManually(err) {
+			return time.Time{}, errMVTaskCanceledManually
+		}
 		return time.Time{}, err
 	}
 
@@ -253,11 +382,17 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 	return nextRefresh, nil
 }
 
-type refreshSessionVars struct {
-	maintainMemQuota       int64
-	tiFlashMaxThreads      int64
-	fineGrainedStreamCount int64
-	fineGrainedBatchSize   uint64
+func getGlobalSystemVarBestEffort(ctx context.Context, sessVars *variable.SessionVars, varName string) (string, bool) {
+	val, err := sessVars.GetGlobalSystemVar(ctx, varName)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"mv service: failed to read global session var, fallback to current session value",
+			zap.String("var", varName),
+			zap.Error(err),
+		)
+		return "", false
+	}
+	return val, true
 }
 
 func applyMVRefreshSessionVarsFromGlobal(ctx context.Context, sessVars *variable.SessionVars) (func(), error) {
@@ -265,141 +400,315 @@ func applyMVRefreshSessionVarsFromGlobal(ctx context.Context, sessVars *variable
 		return nil, errors.New("mv service: session vars is nil")
 	}
 
-	maintainMemQuotaVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiDBMVMaintainMemQuota)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tidb_mv_maintain_mem_quota: %w", err)
+	target := variable.CaptureMViewExecutionSessionVars(sessVars)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainMemQuota); ok {
+		target.MaintainMemQuota = variable.TidbOptInt64(val, target.MaintainMemQuota)
 	}
-	maxThreadsVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiDBMaxTiFlashThreads)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tidb_max_tiflash_threads: %w", err)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxTiFlashThreads); ok {
+		target.TiFlashMaxThreads = variable.TidbOptInt64(val, target.TiFlashMaxThreads)
 	}
-	fineGrainedStreamCountVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiFlashFineGrainedShuffleStreamCount)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tiflash_fine_grained_shuffle_stream_count: %w", err)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxBytesBeforeTiFlashExternalJoin); ok {
+		target.TiFlashMaxBytesBeforeExtJoin = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtJoin)
 	}
-	fineGrainedBatchSizeVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiFlashFineGrainedShuffleBatchSize)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tiflash_fine_grained_shuffle_batch_size: %w", err)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy); ok {
+		target.TiFlashMaxBytesBeforeExtAgg = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtAgg)
 	}
-
-	target := refreshSessionVars{
-		maintainMemQuota:  variable.TidbOptInt64(maintainMemQuotaVal, variable.DefTiDBMVMaintainMemQuota),
-		tiFlashMaxThreads: variable.TidbOptInt64(maxThreadsVal, variable.DefTiFlashMaxThreads),
-		fineGrainedStreamCount: variable.TidbOptInt64(
-			fineGrainedStreamCountVal,
-			variable.DefTiFlashFineGrainedShuffleStreamCount,
-		),
-		fineGrainedBatchSize: uint64(variable.TidbOptInt64(
-			fineGrainedBatchSizeVal,
-			variable.DefTiFlashFineGrainedShuffleBatchSize,
-		)),
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxBytesBeforeTiFlashExternalSort); ok {
+		target.TiFlashMaxBytesBeforeExtSort = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtSort)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashMemQuotaQueryPerNode); ok {
+		target.TiFlashMemQuotaQueryPerNode = variable.TidbOptInt64(val, target.TiFlashMemQuotaQueryPerNode)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashQuerySpillRatio); ok {
+		querySpillRatio, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			logutil.BgLogger().Warn(
+				"mv service: failed to parse global session var, fallback to current session value",
+				zap.String("var", variable.TiFlashQuerySpillRatio),
+				zap.String("value", val),
+				zap.Error(err),
+			)
+		} else {
+			target.TiFlashQuerySpillRatio = querySpillRatio
+		}
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashFineGrainedShuffleStreamCount); ok {
+		target.FineGrainedStreamCount = variable.TidbOptInt64(val, target.FineGrainedStreamCount)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashFineGrainedShuffleBatchSize); ok {
+		target.FineGrainedBatchSize = uint64(variable.TidbOptInt64(val, int64(target.FineGrainedBatchSize)))
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMViewMaintainImportThreads); ok {
+		target.ImportThreads = variable.TidbOptInt(val, target.ImportThreads)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMViewMaintainImportDiskQuota); ok {
+		target.ImportDiskQuota = val
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainIsolationReadEngines); ok {
+		target.IsolationReadEngines = val
 	}
 	return applyRefreshSessionVars(sessVars, target)
 }
 
-func applyMVMaintainMemQuotaFromGlobal(ctx context.Context, sessVars *variable.SessionVars) (func(), error) {
+type mvMaintenanceSessionVarApplySpec struct {
+	varName        string
+	originValue    string
+	targetValue    string
+	onApplyError   func(error)
+	onRestoreError func(error)
+}
+
+func applyMVMaintenanceSessionVarBestEffort(
+	sessVars *variable.SessionVars,
+	spec mvMaintenanceSessionVarApplySpec,
+) (func(), error) {
 	if sessVars == nil {
 		return nil, errors.New("mv service: session vars is nil")
 	}
-
-	maintainMemQuotaVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiDBMVMaintainMemQuota)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tidb_mv_maintain_mem_quota: %w", err)
-	}
-	targetMaintainMemQuota := variable.TidbOptInt64(maintainMemQuotaVal, variable.DefTiDBMVMaintainMemQuota)
-	originMaintainMemQuota := sessVars.MVMaintainMemQuota
-	if originMaintainMemQuota == targetMaintainMemQuota {
+	if spec.originValue == spec.targetValue {
 		return func() {}, nil
 	}
 
-	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(targetMaintainMemQuota, 10)); err != nil {
-		return nil, fmt.Errorf("mv service: failed to apply tidb_mv_maintain_mem_quota on maintenance session: %w", err)
+	if err := sessVars.SetSystemVar(spec.varName, spec.targetValue); err != nil {
+		if spec.onApplyError != nil {
+			spec.onApplyError(err)
+		}
+		return func() {}, nil
 	}
 	return func() {
-		if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(originMaintainMemQuota, 10)); err != nil {
-			logutil.BgLogger().Warn(
-				"mv service: failed to restore tidb_mv_maintain_mem_quota after maintenance",
-				zap.Int64("originMaintainMemQuota", originMaintainMemQuota),
-				zap.Int64("currentMaintainMemQuota", targetMaintainMemQuota),
-				zap.Error(err),
-			)
+		if err := sessVars.SetSystemVar(spec.varName, spec.originValue); err != nil && spec.onRestoreError != nil {
+			spec.onRestoreError(err)
 		}
 	}, nil
 }
 
-func captureRefreshSessionVars(sessVars *variable.SessionVars) refreshSessionVars {
-	return refreshSessionVars{
-		maintainMemQuota:       sessVars.MVMaintainMemQuota,
-		tiFlashMaxThreads:      sessVars.TiFlashMaxThreads,
-		fineGrainedStreamCount: sessVars.TiFlashFineGrainedShuffleStreamCount,
-		fineGrainedBatchSize:   sessVars.TiFlashFineGrainedShuffleBatchSize,
-	}
-}
-
-func applyRefreshSessionVars(sessVars *variable.SessionVars, target refreshSessionVars) (func(), error) {
+func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *variable.SessionVars) (func(), error) {
 	if sessVars == nil {
 		return nil, errors.New("mv service: session vars is nil")
 	}
 
-	origin := captureRefreshSessionVars(sessVars)
-	if origin == target {
-		return func() {}, nil
+	originMaintainMemQuota := sessVars.MVMaintainMemQuota
+	targetMaintainMemQuota := originMaintainMemQuota
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainMemQuota); ok {
+		targetMaintainMemQuota = variable.TidbOptInt64(val, originMaintainMemQuota)
+	}
+	restoreMaintainMemQuota, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMVMaintainMemQuota,
+			originValue: strconv.FormatInt(originMaintainMemQuota, 10),
+			targetValue: strconv.FormatInt(targetMaintainMemQuota, 10),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply maintenance session var from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMVMaintainMemQuota),
+					zap.Int64("value", targetMaintainMemQuota),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mv_maintain_mem_quota after maintenance",
+					zap.Int64("originMaintainMemQuota", originMaintainMemQuota),
+					zap.Int64("currentMaintainMemQuota", targetMaintainMemQuota),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(target.maintainMemQuota, 10)); err != nil {
-		return nil, fmt.Errorf("mv service: failed to apply tidb_mv_maintain_mem_quota on refresh session: %w", err)
+	originIsolationReadEngines := sessVars.MVMaintainIsolationReadEngines
+	targetIsolationReadEngines := originIsolationReadEngines
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainIsolationReadEngines); ok {
+		targetIsolationReadEngines = val
 	}
-	if err := sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(target.tiFlashMaxThreads, 10)); err != nil {
-		restoreRefreshSessionVars(sessVars, origin, captureRefreshSessionVars(sessVars))
-		return nil, fmt.Errorf("mv service: failed to apply tidb_max_tiflash_threads on refresh session: %w", err)
+	restoreIsolationReadEngines, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMVMaintainIsolationReadEngines,
+			originValue: originIsolationReadEngines,
+			targetValue: targetIsolationReadEngines,
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply maintenance isolation read engines from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMVMaintainIsolationReadEngines),
+					zap.String("origin", originIsolationReadEngines),
+					zap.String("target", targetIsolationReadEngines),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mv_maintain_isolation_read_engines after maintenance",
+					zap.String("originIsolationReadEngines", originIsolationReadEngines),
+					zap.String("currentIsolationReadEngines", targetIsolationReadEngines),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restoreMaintainMemQuota()
+		return nil, err
 	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(target.fineGrainedStreamCount, 10)); err != nil {
-		restoreRefreshSessionVars(sessVars, origin, captureRefreshSessionVars(sessVars))
-		return nil, fmt.Errorf("mv service: failed to apply tiflash_fine_grained_shuffle_stream_count on refresh session: %w", err)
+	originPurgeBatchSize := sessVars.MLogPurgeBatchSize
+	targetPurgeBatchSize := originPurgeBatchSize
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeBatchSize); ok {
+		targetPurgeBatchSize = variable.TidbOptInt(val, originPurgeBatchSize)
 	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.fineGrainedBatchSize, 10)); err != nil {
-		restoreRefreshSessionVars(sessVars, origin, captureRefreshSessionVars(sessVars))
-		return nil, fmt.Errorf("mv service: failed to apply tiflash_fine_grained_shuffle_batch_size on refresh session: %w", err)
+	restorePurgeBatchSize, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeBatchSize,
+			originValue: strconv.Itoa(originPurgeBatchSize),
+			targetValue: strconv.Itoa(targetPurgeBatchSize),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge batch size from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeBatchSize),
+					zap.Int("origin", originPurgeBatchSize),
+					zap.Int("target", targetPurgeBatchSize),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_batch_size after maintenance",
+					zap.Int("originPurgeBatchSize", originPurgeBatchSize),
+					zap.Int("currentPurgeBatchSize", targetPurgeBatchSize),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
 	}
-
+	originPurgeMinRate := sessVars.MLogPurgeMinRate
+	targetPurgeMinRate := originPurgeMinRate
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeMinRate); ok {
+		targetPurgeMinRate = variable.TidbOptInt(val, originPurgeMinRate)
+	}
+	restorePurgeMinRate, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeMinRate,
+			originValue: strconv.Itoa(originPurgeMinRate),
+			targetValue: strconv.Itoa(targetPurgeMinRate),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge min rate from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeMinRate),
+					zap.Int("origin", originPurgeMinRate),
+					zap.Int("target", targetPurgeMinRate),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_min_rate after maintenance",
+					zap.Int("originPurgeMinRate", originPurgeMinRate),
+					zap.Int("currentPurgeMinRate", targetPurgeMinRate),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restorePurgeBatchSize()
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
+	}
+	originPurgeRateBudgetRatio := sessVars.MLogPurgeRateBudgetRatio
+	targetPurgeRateBudgetRatio := originPurgeRateBudgetRatio
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeRateBudgetRatio); ok {
+		parsed, parseErr := strconv.ParseFloat(val, 64)
+		if parseErr != nil {
+			logutil.BgLogger().Warn(
+				"mv service: failed to parse global session var, fallback to current session value",
+				zap.String("var", variable.TiDBMLogPurgeRateBudgetRatio),
+				zap.String("value", val),
+				zap.Error(parseErr),
+			)
+		} else {
+			targetPurgeRateBudgetRatio = parsed
+		}
+	}
+	restorePurgeRateBudgetRatio, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeRateBudgetRatio,
+			originValue: strconv.FormatFloat(originPurgeRateBudgetRatio, 'f', -1, 64),
+			targetValue: strconv.FormatFloat(targetPurgeRateBudgetRatio, 'f', -1, 64),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge rate budget ratio from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeRateBudgetRatio),
+					zap.Float64("origin", originPurgeRateBudgetRatio),
+					zap.Float64("target", targetPurgeRateBudgetRatio),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_rate_budget_ratio after maintenance",
+					zap.Float64("originPurgeRateBudgetRatio", originPurgeRateBudgetRatio),
+					zap.Float64("currentPurgeRateBudgetRatio", targetPurgeRateBudgetRatio),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restorePurgeMinRate()
+		restorePurgeBatchSize()
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
+	}
 	return func() {
-		restoreRefreshSessionVars(sessVars, origin, target)
+		restorePurgeRateBudgetRatio()
+		restorePurgeMinRate()
+		restorePurgeBatchSize()
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
 	}, nil
 }
 
-func restoreRefreshSessionVars(sessVars *variable.SessionVars, origin, current refreshSessionVars) {
-	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(origin.maintainMemQuota, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tidb_mv_maintain_mem_quota after refresh",
-			zap.Int64("originMaintainMemQuota", origin.maintainMemQuota),
-			zap.Int64("currentMaintainMemQuota", current.maintainMemQuota),
-			zap.Error(err),
-		)
-	}
-	if err := sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(origin.tiFlashMaxThreads, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tidb_max_tiflash_threads after refresh",
-			zap.Int64("originMaxThreads", origin.tiFlashMaxThreads),
-			zap.Int64("currentMaxThreads", current.tiFlashMaxThreads),
-			zap.Error(err),
-		)
-	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(origin.fineGrainedStreamCount, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tiflash_fine_grained_shuffle_stream_count after refresh",
-			zap.Int64("originFineGrainedStreamCount", origin.fineGrainedStreamCount),
-			zap.Int64("currentFineGrainedStreamCount", current.fineGrainedStreamCount),
-			zap.Error(err),
-		)
-	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(origin.fineGrainedBatchSize, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tiflash_fine_grained_shuffle_batch_size after refresh",
-			zap.Uint64("originFineGrainedBatchSize", origin.fineGrainedBatchSize),
-			zap.Uint64("currentFineGrainedBatchSize", current.fineGrainedBatchSize),
-			zap.Error(err),
-		)
-	}
+func applyRefreshSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
+	return variable.ApplyMViewExecutionSessionVarsWithConfig(
+		sessVars,
+		target,
+		variable.MViewExecutionSessionVarsApplyConfig{
+			MaintainMemQuotaVarName:             variable.TiDBMVMaintainMemQuota,
+			MaintainIsolationReadEnginesVarName: variable.TiDBMVMaintainIsolationReadEngines,
+			CaptureAppliedVars:                  variable.CaptureMViewExecutionSessionVars,
+			BestEffort:                          true,
+			OnApplyError: func(name, value string, err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply refresh session var from global setting, fallback to current session value",
+					zap.String("var", name),
+					zap.String("value", value),
+					zap.Error(err),
+				)
+			},
+			OnRestoreError: func(name, originValue, currentValue string, err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore refresh session var after refresh",
+					zap.String("var", name),
+					zap.String("origin", originValue),
+					zap.String("current", currentValue),
+					zap.Error(err),
+				)
+			},
+		},
+	)
 }
 
 // PurgeMVLog runs one auto-purge round for the specified MV log ID.
@@ -478,13 +787,16 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		return time.Time{}, errors.New("materialized view base table schema name is empty")
 	}
 
-	restoreMaintainMemQuota, err := applyMVMaintainMemQuotaFromGlobal(ctx, sctx.GetSessionVars())
+	restoreMaintainSessionVars, err := applyMVMaintenanceSessionVarsFromGlobal(ctx, sctx.GetSessionVars())
 	if err != nil {
 		return time.Time{}, err
 	}
-	defer restoreMaintainMemQuota()
+	defer restoreMaintainSessionVars()
 
 	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
+		if isMVTaskCanceledManually(err) {
+			return time.Time{}, errMVTaskCanceledManually
+		}
 		return time.Time{}, err
 	}
 
@@ -497,6 +809,266 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}
 	nextPurge = mvsUnix(rows[0].GetInt64(0), 0)
 	return nextPurge, nil
+}
+
+func (*serviceHelper) TryBackoffRefreshManualCancel(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	mvID int64,
+	nextRefresh time.Time,
+) (bool, time.Time, error) {
+	return tryBackoffMVTaskManualCancel(
+		ctx,
+		sysSessionPool,
+		`SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`,
+		mvID,
+		nextRefresh,
+		deriveMVRefreshManualCancelNextTime,
+	)
+}
+
+func (*serviceHelper) TryBackoffPurgeManualCancel(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	mvLogID int64,
+	nextPurge time.Time,
+) (bool, time.Time, error) {
+	return tryBackoffMVTaskManualCancel(
+		ctx,
+		sysSessionPool,
+		`SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`,
+		mvLogID,
+		nextPurge,
+		deriveMLogPurgeManualCancelNextTime,
+	)
+}
+
+type mvTaskManualCancelNextResolver func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error)
+
+func deriveMVRefreshManualCancelNextTime(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvID int64,
+) (*time.Time, bool, error) {
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mvTbl, ok := infoSchema.TableByID(ctx, mvID)
+	if !ok {
+		return nil, false, nil
+	}
+	mvMeta := mvTbl.Meta()
+	if mvMeta == nil || mvMeta.MaterializedView == nil {
+		return nil, false, errors.New("materialized view metadata is invalid")
+	}
+	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
+		ctx,
+		sctx,
+		mvMeta.MaterializedView.RefreshStartWith,
+		mvMeta.MaterializedView.RefreshNext,
+		mvMeta.MaterializedView.DefinitionSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if shouldUpdate && nextTime == nil {
+		if dbInfo, ok := infoschema.SchemaByTable(infoSchema, mvMeta); ok && dbInfo != nil {
+			logManualCancelMaterializedViewRefreshNextTimeUpdateNull(dbInfo.Name.O, mvMeta.Name.O, mvMeta.MaterializedView.RefreshNext)
+		} else {
+			logManualCancelMaterializedViewRefreshNextTimeUpdateNull("", mvMeta.Name.O, mvMeta.MaterializedView.RefreshNext)
+		}
+	}
+	return nextTime, shouldUpdate, nil
+}
+
+func deriveMLogPurgeManualCancelNextTime(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvLogID int64,
+) (*time.Time, bool, error) {
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mlogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	if !ok {
+		return nil, false, nil
+	}
+	mlogMeta := mlogTbl.Meta()
+	if mlogMeta == nil || mlogMeta.MaterializedViewLog == nil {
+		return nil, false, errors.New("materialized view log metadata is invalid")
+	}
+	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
+		ctx,
+		sctx,
+		mlogMeta.MaterializedViewLog.PurgeStartWith,
+		mlogMeta.MaterializedViewLog.PurgeNext,
+		mlogMeta.MaterializedViewLog.DefinitionSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if shouldUpdate && nextTime == nil {
+		if dbInfo, ok := infoschema.SchemaByTable(infoSchema, mlogMeta); ok && dbInfo != nil {
+			logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull(dbInfo.Name.O, mlogMeta.Name.O, mlogMeta.MaterializedViewLog.PurgeNext)
+		} else {
+			logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull("", mlogMeta.Name.O, mlogMeta.MaterializedViewLog.PurgeNext)
+		}
+	}
+	return nextTime, shouldUpdate, nil
+}
+
+func deriveMaterializedScheduleNextTimeForManualCancel(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	startExpr string,
+	nextExpr string,
+	scheduleSQLMode mysql.SQLMode,
+) (*time.Time, bool, error) {
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTimeUTC(
+		ctx,
+		sctx,
+		sctx,
+		startExpr,
+		nextExpr,
+		scheduleSQLMode,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if !shouldUpdate || nextAt == nil {
+		return nil, shouldUpdate, nil
+	}
+	goTime, err := nextAt.GoTime(time.UTC)
+	if err != nil {
+		return nil, false, err
+	}
+	return &goTime, true, nil
+}
+
+func logManualCancelMaterializedViewRefreshNextTimeUpdateNull(
+	schemaName string,
+	mvName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"refresh MV manual cancel backoff: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mvName),
+		zap.String("refreshNext", nextExpr),
+	)
+}
+
+func logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull(
+	schemaName string,
+	mlogName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"purge MV log manual cancel backoff: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mlogName),
+		zap.String("purgeNext", nextExpr),
+	)
+}
+
+func tryBackoffMVTaskManualCancel(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	lockSQL string,
+	updateSQL string,
+	objectID int64,
+	nextTime time.Time,
+	resolveExpectedNext mvTaskManualCancelNextResolver,
+) (bool, time.Time, error) {
+	if objectID <= 0 {
+		return false, time.Time{}, errors.New("mv service manual cancel backoff target id is invalid")
+	}
+	if nextTime.IsZero() {
+		return false, time.Time{}, errors.New("mv service manual cancel backoff target time is invalid")
+	}
+	nextTimeLoc := nextTime.Location()
+	nextTimeUTC := nextTime.UTC()
+
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	defer sysSessionPool.Put(se)
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+	sqlExec := sctx.GetSQLExecutor()
+	if _, err := sqlExec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return false, time.Time{}, err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = sqlExec.ExecuteInternal(ctx, "ROLLBACK")
+		}
+	}()
+
+	rows, err := execRestrictedSQLWithSession(ctx, sctx, lockSQL, []any{objectID})
+	if err != nil {
+		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+			return false, time.Time{}, nil
+		}
+		return false, time.Time{}, err
+	}
+	if len(rows) == 0 {
+		return false, time.Time{}, nil
+	}
+	if rows[0].IsNull(0) {
+		if _, err := sqlExec.ExecuteInternal(ctx, "COMMIT"); err != nil {
+			return false, time.Time{}, err
+		}
+		committed = true
+		return true, time.Time{}, nil
+	}
+
+	appliedNextUTC := nextTimeUTC
+	var appliedNextArg any = nextTimeUTC
+	clearAppliedNext := false
+	resolvedNext, shouldUpdate, err := resolveExpectedNext(ctx, sctx, objectID)
+	// If current metadata cannot provide a better schedule, keep the cooldown fallback
+	// instead of dropping the persisted backoff on the floor.
+	if err == nil {
+		if shouldUpdate {
+			if resolvedNext == nil {
+				appliedNextArg = nil
+				clearAppliedNext = true
+			} else {
+				appliedNextUTC = resolvedNext.UTC()
+				if appliedNextUTC.Before(nextTimeUTC) {
+					appliedNextUTC = nextTimeUTC
+				}
+				appliedNextArg = appliedNextUTC
+			}
+		}
+	} else {
+		logutil.BgLogger().Warn(
+			"derive materialized view task next schedule after manual cancel failed, fallback to cooldown",
+			zap.Int64("object_id", objectID),
+			zap.Time("cooldown_next_time_utc", nextTimeUTC),
+			zap.Error(err),
+		)
+	}
+	if _, err := execRCRestrictedSQLWithSession(ctx, sctx, updateSQL, []any{appliedNextArg, objectID}); err != nil {
+		return false, time.Time{}, err
+	}
+	if _, err := sqlExec.ExecuteInternal(ctx, "COMMIT"); err != nil {
+		return false, time.Time{}, err
+	}
+	committed = true
+	if clearAppliedNext {
+		return true, time.Time{}, nil
+	}
+	return true, appliedNextUTC.In(nextTimeLoc), nil
 }
 
 // GetCurrentTSO fetches current cluster TSO from TiDB.
@@ -529,14 +1101,56 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	mviewRefreshRetention time.Duration,
 	mlogPurgeRetention time.Duration,
 ) error {
-	deleteMVRefreshHistSQL := fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+	markRefreshHistoryRunningRowsOrphanedSQL := fmt.Sprintf(
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET REFRESH_STATUS = '%s',
+	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
+	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
+	REFRESH_FAILED_REASON = IFNULL(REFRESH_FAILED_REASON, '%s')
+WHERE REFRESH_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, REFRESH_TIME) < %%?
+ORDER BY REFRESH_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvRefreshHistoryOrphanedReason,
 		historyGCDeleteBatchSize,
 	)
-	deleteMVLogPurgeHistSQL := fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+	markLogPurgeHistoryRunningRowsOrphanedSQL := fmt.Sprintf(
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET PURGE_STATUS = '%s',
+	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
+	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
+	PURGE_FAILED_REASON = IFNULL(PURGE_FAILED_REASON, '%s')
+WHERE PURGE_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, PURGE_TIME) < %%?
+ORDER BY PURGE_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvLogPurgeHistoryOrphanedReason,
 		historyGCDeleteBatchSize,
 	)
+	deleteRefreshHistoryByCutoffTSOSQL := fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+		historyGCDeleteBatchSize,
+	)
+	deleteLogPurgeHistoryByCutoffTSOSQL := fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+		historyGCDeleteBatchSize,
+	)
+	const countRefreshHistorySQL = `SELECT COUNT(*), MIN(REFRESH_JOB_ID) FROM mysql.tidb_mview_refresh_hist`
+	const countLogPurgeHistorySQL = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.tidb_mlog_purge_hist`
+	deleteRefreshHistoryByCountLimitSQL := func(limit uint64) string {
+		return fmt.Sprintf(
+			`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID >= %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+			limit,
+		)
+	}
+	deleteLogPurgeHistoryByCountLimitSQL := func(limit uint64) string {
+		return fmt.Sprintf(
+			`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID >= %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+			limit,
+		)
+	}
 
 	calcCutoffTSO := func(retention time.Duration) uint64 {
 		cutoffTSO := currentTSO
@@ -545,6 +1159,10 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 			cutoffTSO = oracle.ComposeTS(cutoffPhysical, 0)
 		}
 		return cutoffTSO
+	}
+	calcHeartbeatCutoffTime := func(timeout time.Duration) time.Time {
+		cutoffPhysical := max(oracle.ExtractPhysical(currentTSO)-int64(timeout/time.Millisecond), 0)
+		return oracle.GetTimeFromTS(oracle.ComposeTS(cutoffPhysical, 0))
 	}
 
 	se, err := sysSessionPool.Get()
@@ -556,13 +1174,44 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	sctx := se.(sessionctx.Context)
 
-	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVRefreshHistSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
-		return err
+	var purgeErrs []error
+	if err := reconcileMVHistoryRunningRowsInBatches(ctx, sctx, markRefreshHistoryRunningRowsOrphanedSQL, calcHeartbeatCutoffTime(mvHistoryHeartbeatTimeout)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("reconcile stale mview refresh history running rows failed: %w", err))
 	}
-	return purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention))
+	if err := purgeMVHistoryByCutoffTSOInBatches(ctx, sctx, deleteRefreshHistoryByCutoffTSOSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by retention failed: %w", err))
+	}
+	if err := purgeMVHistoryByCountLimitInBatches(ctx, sctx, countRefreshHistorySQL, deleteRefreshHistoryByCountLimitSQL, defaultMVHistoryGCMaxRecords); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by count limit failed: %w", err))
+	}
+	if err := reconcileMVHistoryRunningRowsInBatches(ctx, sctx, markLogPurgeHistoryRunningRowsOrphanedSQL, calcHeartbeatCutoffTime(mvHistoryHeartbeatTimeout)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("reconcile stale mlog purge history running rows failed: %w", err))
+	}
+	if err := purgeMVHistoryByCutoffTSOInBatches(ctx, sctx, deleteLogPurgeHistoryByCutoffTSOSQL, calcCutoffTSO(mlogPurgeRetention)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by retention failed: %w", err))
+	}
+	if err := purgeMVHistoryByCountLimitInBatches(ctx, sctx, countLogPurgeHistorySQL, deleteLogPurgeHistoryByCountLimitSQL, defaultMVHistoryGCMaxRecords); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by count limit failed: %w", err))
+	}
+	if len(purgeErrs) > 0 {
+		return errors.Join(purgeErrs...)
+	}
+	return nil
 }
 
-func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTSO uint64) error {
+func reconcileMVHistoryRunningRowsInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTime time.Time) error {
+	for {
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, sql, []any{cutoffTime}); err != nil {
+			return err
+		}
+		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
+		if affectedRows < uint64(historyGCDeleteBatchSize) {
+			return nil
+		}
+	}
+}
+
+func purgeMVHistoryByCutoffTSOInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTSO uint64) error {
 	for {
 		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, sql, []any{cutoffTSO}); err != nil {
 			return err
@@ -572,6 +1221,50 @@ func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql s
 			return nil
 		}
 	}
+}
+
+func purgeMVHistoryByCountLimitInBatches(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	countSQL string,
+	deleteSQL func(limit uint64) string,
+	maxRecords uint64,
+) error {
+	if maxRecords == 0 {
+		return nil
+	}
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, countSQL, nil)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return nil
+	}
+	totalCount := rows[0].GetInt64(0)
+	if totalCount <= 0 || rows[0].IsNull(1) {
+		return nil
+	}
+	totalCountUint := uint64(totalCount)
+	if totalCountUint <= maxRecords {
+		return nil
+	}
+	minJobID := rows[0].GetUint64(1)
+	remainingDelete := totalCountUint - maxRecords
+	for remainingDelete > 0 {
+		batchSize := remainingDelete
+		if batchSize > uint64(historyGCDeleteBatchSize) {
+			batchSize = uint64(historyGCDeleteBatchSize)
+		}
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, deleteSQL(batchSize), []any{minJobID}); err != nil {
+			return err
+		}
+		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
+		if affectedRows == 0 || affectedRows < batchSize {
+			return nil
+		}
+		remainingDelete -= affectedRows
+	}
+	return nil
 }
 
 // loadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
@@ -646,6 +1339,8 @@ func (*serviceHelper) loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 			m.mviewName = mviewName
 			m.alertWarningSec = alertWarningSec
 			m.alertOverdueSec = alertOverdueSec
+		} else {
+			m.metadataUnresolved = true
 		}
 		m.orderTs = m.nextRefresh.UnixMilli()
 		newPending[mvID] = m
@@ -672,9 +1367,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 
 // execRCRestrictedSQLWithSession executes SQL through the restricted SQL executor.
 func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
-	r, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		sql, params...,
-	)
+	r, err := execRestrictedSQLWithSession(ctx, sctx, sql, params)
 	if err != nil {
 		logutil.BgLogger().Warn(
 			"execute restricted SQL failed",
@@ -684,6 +1377,16 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 			zap.Error(err),
 		)
 	}
+	return r, err
+}
+
+func execRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
+	r, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		ctx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		sql,
+		params...,
+	)
 	return r, err
 }
 
