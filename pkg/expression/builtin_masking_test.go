@@ -148,6 +148,7 @@ func TestMaskPartial(t *testing.T) {
 func TestMaskDate(t *testing.T) {
 	ctx := createContext(t)
 	dateInput := types.NewTime(types.FromDate(2019, 12, 30, 0, 0, 0, 0), mysql.TypeDate, 0)
+	// Fixed-literal template (all components redacted): backward compatible.
 	f, err := newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dateInput, "2020-01-02"})...)
 	require.NoError(t, err)
 	d, err := f.Eval(ctx, chunk.Row{})
@@ -161,7 +162,41 @@ func TestMaskDate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2020-01-02 00:00:00", d.GetMysqlTime().String())
 
+	// Template placeholders preserve the corresponding input component.
+	f, err = newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dateInput, "Y-01-01"})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "2019-01-01", d.GetMysqlTime().String())
+
+	f, err = newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dateInput, "Y-M-D"})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "2019-12-30", d.GetMysqlTime().String())
+
+	// DATETIME keeps the date masking result but drops the time component.
+	f, err = newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dtInput, "Y-06-15"})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "2019-06-15 00:00:00", d.GetMysqlTime().String())
+
+	// Non-zero-padded fixed values are accepted by the template.
 	f, err = newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dtInput, "2020-1-2"})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "2020-01-02 00:00:00", d.GetMysqlTime().String())
+
+	// Out-of-range month is rejected after reassembly.
+	f, err = newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dtInput, "Y-13-01"})...)
+	require.NoError(t, err)
+	_, err = f.Eval(ctx, chunk.Row{})
+	require.Error(t, err)
+
+	// A non-placeholder, non-digit component is rejected.
+	f, err = newFunctionForTest(ctx, ast.MaskDate, primitiveValsToConstants(ctx, []any{dtInput, "Y-1x-01"})...)
 	require.NoError(t, err)
 	_, err = f.Eval(ctx, chunk.Row{})
 	require.Error(t, err)

@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -556,15 +558,15 @@ func (b *builtinMaskDateSig) Clone() builtinFunc {
 }
 
 func (b *builtinMaskDateSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	_, isNull, err := b.args[0].EvalTime(ctx, row)
+	inputTime, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-	dateStr, isNull, err := b.args[1].EvalString(ctx, row)
+	tmpl, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-	dateVal, err := parseMaskDateLiteral(ctx, dateStr)
+	dateVal, err := applyMaskDateTemplate(ctx, inputTime, tmpl)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -576,21 +578,55 @@ func (b *builtinMaskDateSig) evalTime(ctx EvalContext, row chunk.Row) (types.Tim
 	return types.NewTime(types.FromDate(dateVal.Year(), dateVal.Month(), dateVal.Day(), 0, 0, 0, 0), tp, fsp), false, nil
 }
 
-func parseMaskDateLiteral(ctx EvalContext, dateStr string) (types.Time, error) {
-	if len(dateStr) != 10 || dateStr[4] != '-' || dateStr[7] != '-' {
+// applyMaskDateTemplate applies a masking template to the input time.
+//
+// The template uses the placeholders Y/M/D to preserve the year/month/day from
+// the input date, and fixed numeric values to redact the corresponding
+// component. Format: "<year>-<month>-<day>", e.g. "Y-01-01" preserves the year
+// and redacts month/day to January 1st.
+func applyMaskDateTemplate(ctx EvalContext, input types.Time, tmpl string) (types.Time, error) {
+	parts := strings.Split(tmpl, "-")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return types.ZeroTime, errIncorrectArgs.GenWithStackByArgs("mask_date")
 	}
-	for i, ch := range dateStr {
-		if i == 4 || i == 7 {
-			continue
-		}
-		if ch < '0' || ch > '9' {
-			return types.ZeroTime, errIncorrectArgs.GenWithStackByArgs("mask_date")
-		}
+	year, err := resolveDateComponent(parts[0], input.Year(), "Y")
+	if err != nil {
+		return types.ZeroTime, err
 	}
-	date, err := types.ParseTime(typeCtx(ctx), dateStr, mysql.TypeDate, 0)
+	month, err := resolveDateComponent(parts[1], input.Month(), "M")
+	if err != nil {
+		return types.ZeroTime, err
+	}
+	day, err := resolveDateComponent(parts[2], input.Day(), "D")
+	if err != nil {
+		return types.ZeroTime, err
+	}
+	// Reassemble and reparse so that out-of-range (e.g. month 13) or
+	// calendar-invalid (e.g. 2020-02-30) templates are rejected like a normal
+	// date literal would be.
+	formatted := fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+	date, err := types.ParseTime(typeCtx(ctx), formatted, mysql.TypeDate, 0)
 	if err != nil {
 		return types.ZeroTime, handleInvalidTimeError(ctx, err)
 	}
 	return date, nil
+}
+
+// resolveDateComponent resolves one date component of a mask_date template. If
+// the part equals the placeholder, the corresponding input value is preserved;
+// otherwise the part must be a non-empty sequence of decimal digits.
+func resolveDateComponent(part string, preserve int, placeholder string) (int, error) {
+	if part == placeholder {
+		return preserve, nil
+	}
+	for _, ch := range part {
+		if ch < '0' || ch > '9' {
+			return 0, errIncorrectArgs.GenWithStackByArgs("mask_date")
+		}
+	}
+	n, err := strconv.Atoi(part)
+	if err != nil {
+		return 0, errIncorrectArgs.GenWithStackByArgs("mask_date")
+	}
+	return n, nil
 }
