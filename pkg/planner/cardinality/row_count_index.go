@@ -42,6 +42,8 @@ import (
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 // idxCols is used to recognize virtual columns inside expBackoffEstimation.
 // It can be omitted, in which case virtual-column fallback is skipped.
+// When exp-backoff cannot estimate a virtual column, prefer the composite-index estimate as a fallback.
+// This may improve estimation but remains subject to encoded index histogram interpolation accuracy.
 func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxColsOpt ...[]*expression.Column) (result float64, err error) {
 	var idxCols []*expression.Column
 	if len(idxColsOpt) > 0 {
