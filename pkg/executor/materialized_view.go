@@ -1673,21 +1673,35 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer func() { _ = baseQueryExec.Close() }()
+	baseQueryExecIsClosed := false
+	defer func() {
+		if !baseQueryExecIsClosed {
+			_ = baseQueryExec.Close()
+		}
+	}()
 
 	mvQuerySQL := buildCompareMaterializedViewSelectSQL(schemaName, tblInfo.Name, visibleCols)
 	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, compareSnapshotTS, tblInfo.MaterializedView, mvQuerySQL)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = mvQueryExec.Close() }()
+	mvQueryExecIsClosed := false
+	defer func() {
+		if !mvQueryExecIsClosed {
+			_ = mvQueryExec.Close()
+		}
+	}()
 
 	hashJoinExec := newCompareMaterializedViewHashJoinExec(e.Ctx(), baseQueryExec, mvQueryExec, layout.groupKeyOffsets, visibleCols)
 	if err := exec.Open(ctx, hashJoinExec); err != nil {
 		_ = hashJoinExec.Close()
 		return err
 	}
-	defer func() { _ = hashJoinExec.Close() }()
+	defer func() {
+		_ = hashJoinExec.Close()
+		baseQueryExecIsClosed = true
+		mvQueryExecIsClosed = true
+	}()
 
 	joinResult := exec.NewFirstChunk(hashJoinExec)
 	rowIdxes := make([]int, 0, joinResult.Capacity())
