@@ -40,6 +40,8 @@ type connCacheKey struct {
 
 var connCache sync.Map
 
+const grpcConnProbeTimeout = 2 * time.Second
+
 func newConnCacheKey(address string, security config.Security) connCacheKey {
 	return connCacheKey{
 		address:         address,
@@ -97,6 +99,15 @@ func closeGRPCConnsForTest() {
 		connCache.Delete(key)
 		return true
 	})
+}
+
+func probeGRPCConn(ctx context.Context, value any) error {
+	conn := value.(*grpc.ClientConn)
+	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	ctx, cancel := context.WithTimeout(ctx, grpcConnProbeTimeout)
+	defer cancel()
+	_, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: diagnosticspb.ServerInfoType_SystemInfo})
+	return err
 }
 
 // GetServerInfoByGRPC fetches server info from a diagnostics service.

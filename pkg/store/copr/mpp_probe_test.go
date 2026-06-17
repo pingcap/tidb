@@ -181,11 +181,19 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 func TestMPPFailedStoreProbeGoroutineTask(t *testing.T) {
 	// Confirm that multiple tasks are not allowed
 	GlobalMPPFailedStoreProber.lock.Lock()
-	GlobalMPPFailedStoreProber.Run(nil)
+	GlobalMPPFailedStoreProber.Run()
 	GlobalMPPFailedStoreProber.lock.Unlock()
 
-	GlobalMPPFailedStoreProber.Run(nil)
+	GlobalMPPFailedStoreProber.Run()
 	GlobalMPPFailedStoreProber.Stop()
+}
+
+func TestNextMPPInfoPruneInterval(t *testing.T) {
+	for range 100 {
+		interval := nextMPPInfoPruneInterval()
+		require.GreaterOrEqual(t, interval, MPPInfoPruneMinInterval)
+		require.LessOrEqual(t, interval, MPPInfoPruneMaxInterval)
+	}
 }
 
 func TestMPPFailedStoreAssertFailed(t *testing.T) {
@@ -281,12 +289,29 @@ func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
 		return statsHandler.connBegins.Load() == 1
 	}, time.Second, 10*time.Millisecond)
 
-	Prune(map[string]struct{}{})
+	Prune(context.Background())
+
+	require.Equal(t, int32(3), diagnosticsServer.calls.Load())
+	require.Eventually(t, func() bool {
+		return statsHandler.connBegins.Load() == 1
+	}, time.Second, 10*time.Millisecond)
 
 	items, err := GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, int32(3), diagnosticsServer.calls.Load())
+	require.Equal(t, int32(4), diagnosticsServer.calls.Load())
+	require.Eventually(t, func() bool {
+		return statsHandler.connBegins.Load() == 1
+	}, time.Second, 10*time.Millisecond)
+
+	diagnosticsServer.fail.Store(true)
+	Prune(context.Background())
+	require.Equal(t, int32(5), diagnosticsServer.calls.Load())
+
+	items, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int32(6), diagnosticsServer.calls.Load())
 	require.Eventually(t, func() bool {
 		return statsHandler.connBegins.Load() == 2
 	}, time.Second, 10*time.Millisecond)
@@ -294,12 +319,12 @@ func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
 	diagnosticsServer.fail.Store(true)
 	_, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
 	require.Error(t, err)
-	require.Equal(t, int32(4), diagnosticsServer.calls.Load())
+	require.Equal(t, int32(7), diagnosticsServer.calls.Load())
 
 	items, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, int32(5), diagnosticsServer.calls.Load())
+	require.Equal(t, int32(8), diagnosticsServer.calls.Load())
 	require.Eventually(t, func() bool {
 		return statsHandler.connBegins.Load() == 3
 	}, time.Second, 10*time.Millisecond)
@@ -328,7 +353,7 @@ func TestMppInfoManager(t *testing.T) {
 	info = manager.Get("123")
 	require.True(t, info == nil)
 
-	staleAddress, _, _ := startDiagnosticsGRPCServerForTest(t)
+	staleAddress, diagnosticsServer, _ := startDiagnosticsGRPCServerForTest(t)
 	_, err := GetServerInfoByGRPC(context.Background(), staleAddress, diagnosticspb.ServerInfoType_All)
 	require.NoError(t, err)
 	activeAddress := "789"
@@ -346,7 +371,8 @@ func TestMppInfoManager(t *testing.T) {
 		GlobalMPPInfoManager.Delete(staleAddress)
 		GlobalMPPInfoManager.Delete(activeAddress)
 	})
-	Prune(map[string]struct{}{activeAddress: {}})
+	diagnosticsServer.fail.Store(true)
+	Prune(context.Background())
 	require.Nil(t, GlobalMPPInfoManager.Get(staleAddress))
 	require.NotNil(t, GlobalMPPInfoManager.Get(activeAddress))
 }

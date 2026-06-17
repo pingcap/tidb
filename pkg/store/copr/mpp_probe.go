@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -43,8 +42,10 @@ const (
 	DetectPeriod = 3 * time.Second
 	// DetectTimeoutLimit detect timeout
 	DetectTimeoutLimit = 2 * time.Second
-	// MPPInfoPruneInterval is the interval to prune cached MPP info.
-	MPPInfoPruneInterval = 3 * time.Minute
+	// MPPInfoPruneMinInterval is the minimum interval to prune cached MPP info.
+	MPPInfoPruneMinInterval = 15 * time.Minute
+	// MPPInfoPruneMaxInterval is the maximum interval to prune cached MPP info.
+	MPPInfoPruneMaxInterval = time.Hour
 	// MaxRecoveryTimeLimit wait TiFlash recovery,more than MPPStoreFailTTL
 	MaxRecoveryTimeLimit = 15 * time.Minute
 	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
@@ -120,13 +121,13 @@ func (t *MppInfoManager) Get(address string) *MPPInfo {
 	return ret
 }
 
-// Prune deletes cached gRPC connections that are no longer in active stores.
-func Prune(activeStores map[string]struct{}) {
+// Prune deletes cached gRPC connections that no longer respond to diagnostics RPC.
+func Prune(ctx context.Context) {
 	deletedAddrs := make(map[string]struct{})
 	connCache.Range(func(key, value any) bool {
 		cacheKey := key.(connCacheKey)
 		address := cacheKey.address
-		if _, ok := activeStores[address]; ok {
+		if err := probeGRPCConn(ctx, value); err == nil {
 			return true
 		}
 		if _, ok := deletedAddrs[address]; !ok {
@@ -138,16 +139,8 @@ func Prune(activeStores map[string]struct{}) {
 	})
 }
 
-func fetchStoreAddresses(ctx context.Context, pdClient pd.Client) (map[string]struct{}, error) {
-	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
-	if err != nil {
-		return nil, err
-	}
-	activeStores := make(map[string]struct{}, len(stores))
-	for _, store := range stores {
-		activeStores[store.GetAddress()] = struct{}{}
-	}
-	return activeStores, nil
+func nextMPPInfoPruneInterval() time.Duration {
+	return MPPInfoPruneMinInterval + rand.N(MPPInfoPruneMaxInterval-MPPInfoPruneMinInterval+time.Nanosecond)
 }
 
 func (t *MPPStoreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
@@ -264,7 +257,7 @@ func (t *MPPFailedStoreProber) IsRecovery(ctx context.Context, address string, r
 
 // Run a loop of scan
 // there can be only one background task
-func (t *MPPFailedStoreProber) Run(pdClient pd.Client) {
+func (t *MPPFailedStoreProber) Run() {
 	if !t.lock.TryLock() {
 		return
 	}
@@ -275,8 +268,8 @@ func (t *MPPFailedStoreProber) Run(pdClient pd.Client) {
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		pruneTicker := time.NewTicker(MPPInfoPruneInterval)
-		defer pruneTicker.Stop()
+		pruneTimer := time.NewTimer(nextMPPInfoPruneInterval())
+		defer pruneTimer.Stop()
 
 		for {
 			select {
@@ -285,16 +278,9 @@ func (t *MPPFailedStoreProber) Run(pdClient pd.Client) {
 				return
 			case <-ticker.C:
 				t.scan(t.ctx)
-			case <-pruneTicker.C:
-				if pdClient == nil {
-					continue
-				}
-				activeStores, err := fetchStoreAddresses(t.ctx, pdClient)
-				if err != nil {
-					logutil.BgLogger().Warn("failed to fetch mpp stores for pruning mpp info", zap.Error(err))
-					continue
-				}
-				Prune(activeStores)
+			case <-pruneTimer.C:
+				Prune(t.ctx)
+				pruneTimer.Reset(nextMPPInfoPruneInterval())
 			}
 		}
 	}()
