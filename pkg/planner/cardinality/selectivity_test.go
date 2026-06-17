@@ -766,8 +766,13 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	// a and b are low-selectivity columns (5 distinct values each), d is highly selective.
 	tk.MustExec("insert into t(a, b, c) select mod(x.a, 5), mod(x.a, 5), x.a from (with recursive x as (select 1 as a union all select a + 1 from x where a < 500) select a from x) as x")
 	// Use few buckets so the multi-column histogram upper bound cannot mask the
-	// exponential backoff over-estimation.
+	// exponential backoff over-estimation. Pin analyze version 2 so the test
+	// always exercises the stats-v2 estimation path.
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("analyze table t with 8 buckets, 0 topn")
+	// Confirm index iabd statistics were actually built before relying on the
+	// row-count comparisons below.
+	require.NotEmpty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and column_name = 'iabd' and is_index = 1").Rows())
 	rows := tk.MustQuery("explain analyze format='brief' select * from t use index(iabd) where a = 1 and b = 1 and d > 447").Rows()
 	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)
 	require.NoError(t, err)
@@ -783,7 +788,11 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	// must be kept, not abandoned for the raw index-stats estimate (~2 rows).
 	tk.MustExec("create table t2(a int, b int, c int, d int, index iabd(a, b, d))")
 	tk.MustExec("insert into t2 select a, b, c, d from t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("analyze table t2 columns a, b with 8 buckets, 0 topn")
+	// Confirm index iabd statistics were actually built before relying on the
+	// row-count comparison below.
+	require.NotEmpty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't2' and column_name = 'iabd' and is_index = 1").Rows())
 	rows = tk.MustQuery("explain analyze format='brief' select * from t2 use index(iabd) where a = 1 and b = 1 and d > 447").Rows()
 	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
 	require.NoError(t, err)
