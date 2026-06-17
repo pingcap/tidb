@@ -720,6 +720,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	unknown                    "UNKNOWN"
 	unset                      "UNSET"
 	user                       "USER"
+	uuid                       "UUID"
 	validation                 "VALIDATION"
 	value                      "VALUE"
 	variables                  "VARIABLES"
@@ -4442,6 +4443,12 @@ BuiltinFunction:
 			Args:   $3.([]ast.ExprNode),
 		}
 	}
+|	"UUID" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: ast.NewCIStr($1),
+		}
+	}
 |	"REPLACE" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -7427,6 +7434,7 @@ UnReservedKeyword:
 |	"ANY"
 |	"SOME"
 |	"USER"
+|	"UUID"
 |	"IDENTIFIED"
 |	"COLLATION"
 |	"COMMENT"
@@ -8755,6 +8763,7 @@ FunctionNameConflict:
 |	"TIMESTAMP"
 |	"TRUNCATE"
 |	"USER"
+|	"UUID"
 |	"WEEK"
 |	"YEAR"
 
@@ -14032,6 +14041,16 @@ StringType:
 		tp.SetDecimal(0)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	"UUID"
+	{
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetFlen(36)
 		$$ = tp
 	}
 |	"LONG" Varchar OptCharsetWithOptBinary

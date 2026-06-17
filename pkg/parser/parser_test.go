@@ -8198,6 +8198,7 @@ func TestExplainExplore(t *testing.T) {
 // TestCompatMariaDB is to test for MariaDB specific table options
 func TestCompatMariaDB(t *testing.T) {
 	cases := []testCase{
+		{`CREATE TABLE uuid (uuid int)`, true, "CREATE TABLE `uuid` (`uuid` INT)"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
@@ -8206,6 +8207,17 @@ func TestCompatMariaDB(t *testing.T) {
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
 	}
 	RunTest(t, cases, false, false)
+
+	mariaDBCases := []testCase{
+		{`CREATE TABLE t (id UUID)`, true, "CREATE TABLE `t` (`id` CHAR(36))"},
+		{`CREATE TABLE uuid (uuid UUID NOT NULL DEFAULT UUID())`, true, "CREATE TABLE `uuid` (`uuid` CHAR(36) NOT NULL DEFAULT (UUID()))"},
+	}
+	RunTest(t, mariaDBCases, false, true)
+
+	nonMariaDBCases := []testCase{
+		{`CREATE TABLE t (id UUID)`, false, ""},
+	}
+	RunTest(t, nonMariaDBCases, false, false)
 }
 
 func TestSecondaryEngineAttribute(t *testing.T) {
