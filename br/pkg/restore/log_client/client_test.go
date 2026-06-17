@@ -1262,31 +1262,19 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 }
 
 type mockLogIter struct {
-	next    int
-	limit   int
-	tableID int64
-	length  uint64
+	next int
 }
 
 func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*logclient.LogDataFileInfo] {
-	limit := m.limit
-	if limit == 0 {
-		limit = 10000
-	}
-	if m.next >= limit {
+	if m.next > 10000 {
 		return iter.Done[*logclient.LogDataFileInfo]()
 	}
 	m.next += 1
-	length := m.length
-	if length == 0 {
-		length = 1024
-	}
 	return iter.Emit(&logclient.LogDataFileInfo{
 		DataFileInfo: &backuppb.DataFileInfo{
 			StartKey: fmt.Appendf(nil, "a%d", m.next),
 			EndKey:   []byte("b"),
-			Length:   length,
-			TableId:  m.tableID,
+			Length:   1024, // 1 KB
 		},
 	})
 }
@@ -1305,12 +1293,12 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	rewriteRulesMap := map[int64]*utils.RewriteRules{
 		oldTableID: rewriteRules,
 	}
-	mockIter := &mockLogIter{tableID: oldTableID}
+	mockIter := &mockLogIter{}
 	ctx := context.Background()
 	w := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
-	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {}, logclient.SplitFileThresholdDefault)
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
 	require.NoError(t, err)
 	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
@@ -1319,26 +1307,6 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 		next += 1
 		require.Equal(t, fmt.Appendf(nil, "a%d", next), r.Item.StartKey)
 	}
-	require.Equal(t, 0, s.AccumulateCount)
-
-	largeIter := &mockLogIter{tableID: oldTableID, length: logclient.SplitFileThresholdDefault + 1, limit: 1}
-	s, err = logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {}, logclient.SplitFileThresholdDefault)
-	require.NoError(t, err)
-	logIter = w.WithSplit(context.Background(), largeIter, s)
-	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
-		require.NoError(t, r.Err)
-	}
-	require.Equal(t, 1, s.AccumulateCount)
-
-	largeIter = &mockLogIter{tableID: oldTableID, length: logclient.SplitFileThresholdDefault + 1, limit: 1}
-	s, err = logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {}, logclient.SplitFileThresholdDefault)
-	require.NoError(t, err)
-	s.DisableSplit()
-	logIter = w.WithSplit(context.Background(), largeIter, s)
-	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
-		require.NoError(t, r.Err)
-	}
-	require.Equal(t, 0, s.AccumulateCount)
 }
 
 type fakeSession struct {
@@ -1750,7 +1718,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	}
 
 	// Create a log split strategy with the given rewrite rules.
-	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {}, logclient.SplitFileThresholdDefault)
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
 	require.NoError(t, err)
 
 	// Set up a mock strategy to control split behavior.
