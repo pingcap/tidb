@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -180,6 +181,12 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
 }
 
+func objStoreAccessField(accessRec *recording.AccessStats) zap.Field {
+	return zap.String("obj-store-access", fmt.Sprintf("{requests: {get: %d, put: %d}, traffic: {r: %d, w: %d}}",
+		accessRec.Requests.Get.Load(), accessRec.Requests.Put.Load(),
+		accessRec.Traffic.Read.Load(), accessRec.Traffic.Write.Load()))
+}
+
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
@@ -191,7 +198,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	defer func() {
 		task.End2(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
 			zap.Int64("index-kv-files", indexKVFiles.Load()),
-			zap.Stringer("obj-store-access", accessRec))
+			objStoreAccessField(accessRec))
 	}()
 
 	bs := subtask.Meta
@@ -430,7 +437,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, objStoreAccessField(accessRec))
 	}()
 
 	var mu sync.Mutex
@@ -575,7 +582,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, objStoreAccessField(accessRec))
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
