@@ -2158,7 +2158,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	// Duplicate detection keeps the first row scanned for each target digest
 	// pair, so scan newest bindings first.
-	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest, sql_digest
+	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest
 		FROM mysql.bind_info
 		WHERE source != 'builtin'
 		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
@@ -2182,41 +2182,37 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		}
 		for i := range req.NumRows() {
 			row := req.GetRow(i)
-			bindSQL := row.GetString(1)
-			update := bindingDigestUpdate{rowID: row.GetInt64(0)}
-			digestPairSQLDigestNotNull := false
-			stmt, parseErr := p.ParseOneStmt(bindSQL, row.GetString(3), row.GetString(4))
-			if parseErr != nil {
-				// Keep invalid binding rows unchanged.
-				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
-					zap.String("bind_sql", bindSQL), zap.Error(parseErr))
-				continue
-			}
-			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, row.GetString(2), false)
-			if originalSQL == "" || sqlDigest == "" {
-				// Preserve compatibility by using the current digest pair only
-				// for duplicate detection.
-				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
-					zap.String("bind_sql", bindSQL))
-				if !row.IsNull(6) {
-					update.sqlDigest = row.GetString(6)
-					digestPairSQLDigestNotNull = true
-				}
-			} else {
-				update.originalSQL = originalSQL
-				update.sqlDigest = sqlDigest
-				digestPairSQLDigestNotNull = true
-			}
-
+			rowID := row.GetInt64(0)
+			bindingSQL := row.GetString(1)
+			defaultDB := row.GetString(2)
+			charset := row.GetString(3)
+			collation := row.GetString(4)
 			planDigest := ""
 			planDigestNotNull := !row.IsNull(5)
 			if planDigestNotNull {
 				planDigest = row.GetString(5)
 			}
 
+			update := bindingDigestUpdate{rowID: rowID}
+			stmt, parseErr := p.ParseOneStmt(bindingSQL, charset, collation)
+			if parseErr != nil {
+				// Keep invalid binding rows unchanged.
+				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
+					zap.String("bind_sql", bindingSQL), zap.Error(parseErr))
+				continue
+			}
+			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, defaultDB, false)
+			if originalSQL == "" || sqlDigest == "" {
+				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
+					zap.String("bind_sql", bindingSQL))
+				continue
+			}
+			update.originalSQL = originalSQL
+			update.sqlDigest = sqlDigest
+
 			updateIdx := len(updates)
 			updates = append(updates, update)
-			if planDigestNotNull && digestPairSQLDigestNotNull {
+			if planDigestNotNull {
 				// Check the target digest pair before executing any UPDATE.
 				key := planDigest + "\x00" + update.sqlDigest
 				if _, ok := seenDigestPair[key]; ok {
