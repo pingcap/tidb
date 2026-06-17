@@ -2139,7 +2139,6 @@ type bindingDigestUpdate struct {
 	rowID       int64
 	originalSQL string
 	sqlDigest   string
-	refresh     bool
 	duplicate   bool
 }
 
@@ -2150,8 +2149,12 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 	// old algorithm. Refresh user-created rows from bind_sql during upgrade so
 	// future binding lookup uses the new digest.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	// Newer rows win when multiple old bindings collapse to the same digest pair
-	// after the normalization change.
+	// Duplicate detection below keeps the first row scanned for each target
+	// (plan_digest, sql_digest) pair. Scan newer bindings first so when multiple
+	// old bindings collapse to the same pair after the normalization change, the
+	// surviving row is deterministic and follows the normal binding freshness
+	// precedence. The later write loops separately clear duplicate losers before
+	// refreshing winners to avoid digest_index conflicts.
 	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest, sql_digest
 		FROM mysql.bind_info
 		WHERE source != 'builtin'
@@ -2208,7 +2211,6 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 				} else {
 					update.originalSQL = originalSQL
 					update.sqlDigest = sqlDigest
-					update.refresh = true
 					digestPairSQLDigestNotNull = true
 				}
 			}
@@ -2251,16 +2253,11 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		if !update.duplicate {
 			continue
 		}
-		if update.refresh {
-			mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
-				update.originalSQL, bindinfo.StatusDeleted, update.rowID)
-		} else {
-			mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
-				bindinfo.StatusDeleted, update.rowID)
-		}
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
+			bindinfo.StatusDeleted, update.rowID)
 	}
 	for _, update := range updates {
-		if update.duplicate || !update.refresh {
+		if update.duplicate || update.originalSQL == "" {
 			continue
 		}
 		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
