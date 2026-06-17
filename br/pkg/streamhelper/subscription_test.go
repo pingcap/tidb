@@ -45,6 +45,13 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
+func waitEvents(t *testing.T, sub *streamhelper.FlushSubscriber, expected int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return len(sub.Events()) >= expected
+	}, 3*time.Second, 100*time.Millisecond)
+}
+
 func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
 	t.Helper()
 	observed := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
@@ -202,6 +209,7 @@ func TestStoreRemoved(t *testing.T) {
 func TestSomeOfStoreUnsupported(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
+	const flushRounds = 10
 	c := createFakeCluster(t, 4, true)
 	c.splitAndScatter("0001", "0002", "0003", "0008", "0009", "0010", "0100", "0956", "1000")
 
@@ -209,15 +217,28 @@ func TestSomeOfStoreUnsupported(t *testing.T) {
 	installSubscribeSupportForRandomN(c, 3)
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
+	supportedStores := make(map[uint64]struct{})
+	for _, store := range c.storeList() {
+		if store.SupportsSub {
+			supportedStores[store.ID] = struct{}{}
+		}
+	}
+	expectedEventsPerFlush := 0
+	for _, region := range c.RegionList() {
+		if _, ok := supportedStores[region.Leader]; ok {
+			expectedEventsPerFlush++
+		}
+	}
+
 	var cp uint64
-	for range 10 {
+	for range flushRounds {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	m := new(sync.Mutex)
 
-	waitPendingEvents(t, sub)
+	waitEvents(t, sub, expectedEventsPerFlush*flushRounds)
 	sub.Drop()
 	for k := range sub.Events() {
 		s.Merge(k)
