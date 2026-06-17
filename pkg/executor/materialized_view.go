@@ -101,7 +101,7 @@ type compareMaterializedViewDiffLayout struct {
 	groupKeyOffsets       []int
 	leftMarkerColIdx      int
 	rightMarkerColIdx     int
-	payloadCompareColumns []mvCompleteDeltaCompareColumn
+	payloadCompareColumns []mviewCompleteDeltaCompareColumn
 }
 
 type compareMaterializedViewRecordSetExec struct {
@@ -1416,14 +1416,16 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 			clear(changedRows)
 		}
 		for _, compareCol := range layout.payloadCompareColumns {
-			if err := markMVCompleteDeltaTouchedRowsByColumn(
+			if err := executil.MarkTouchedRowsByColumn(
 				rowIdxes,
 				changedRows,
 				1,
-				true,
-				compareCol,
+				0,
 				joinResult.Column(compareCol.mInputColID),
 				joinResult.Column(compareCol.qInputColID),
+				compareCol.fieldType,
+				compareCol.notNull,
+				"COMPARE MATERIALIZED VIEW",
 			); err != nil {
 				return err
 			}
@@ -1811,17 +1813,16 @@ func buildCompareMaterializedViewDiffLayout(
 		leftMarkerColIdx:  diffMeta.MarkerMVOffset,
 		rightMarkerColIdx: len(visibleCols) + diffMeta.MarkerMVOffset,
 	}
-	layout.payloadCompareColumns = make([]mvCompleteDeltaCompareColumn, 0, len(visibleCols)-len(groupKeySet))
+	layout.payloadCompareColumns = make([]mviewCompleteDeltaCompareColumn, 0, len(visibleCols)-len(groupKeySet))
 	for offset, col := range visibleCols {
 		if _, ok := groupKeySet[offset]; ok {
 			continue
 		}
-		layout.payloadCompareColumns = append(layout.payloadCompareColumns, mvCompleteDeltaCompareColumn{
+		layout.payloadCompareColumns = append(layout.payloadCompareColumns, mviewCompleteDeltaCompareColumn{
 			mInputColID:    offset,
 			qInputColID:    len(visibleCols) + offset,
 			fieldType:      &col.FieldType,
 			notNull:        mysql.HasNotNullFlag(col.GetFlag()),
-			touchedBitMask: 1,
 		})
 	}
 	return layout, nil
