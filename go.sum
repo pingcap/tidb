@@ -824,6 +824,8 @@ filippo.io/edwards25519 v1.1.1/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
 git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260617054701-a8103c00c26a h1:br940DvL4H3t8YLy3HuuF0w4h3wx+n+hLKI8Gk/SWO8=
 git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260617054701-a8103c00c26a/go.mod h1:LH7jpSxI7G51fHwGF3n2zSVCQFZiG6XlfF93VfDpuh0=
+git.pingcap.net/pingkai/kvproto v0.0.0-20260617075037-fdf2f76691c1 h1:vaMpThS/8eaMfp9rg3NapNDmXm6+OGQEHvY7Jb5pg20=
+git.pingcap.net/pingkai/kvproto v0.0.0-20260617075037-fdf2f76691c1/go.mod h1:RlL/AApg0eiItGiSKuGfzK1mjpRgU8tRA7G/pJBMZWU=
 git.pingcap.net/pingkai/pd/client v0.0.0-20260615154509-9be26310f245 h1:k+TyXwcIYmLwG5WxIGPef5mtgThEpz/E3pRet57djys=
 git.pingcap.net/pingkai/pd/client v0.0.0-20260615154509-9be26310f245/go.mod h1:yOVMpmtWYJP/lxyWGCLKe5F0AgdnCb9+9JviEnHK0uY=
 git.pingcap.net/pingkai/rust2go v0.0.0-20260116050154-68094297cea8 h1:kdvLSAPT9FREv2jfvPhQ6Y6qe6nlF1WJinfOujb7hro=

@@ -96,6 +96,9 @@ func restart() error {
 
 func restartProcess(domain domainCloser) {
 	logutil.BgLogger().Info("will restart process")
+	if CloseServerBeforeRestart != nil {
+		CloseServerBeforeRestart()
+	}
 	// need to unblock CheckStandbyBlocking, so we can close ownerMgr properly
 	disableStandbyMode()
 
@@ -133,6 +136,10 @@ func closeDomainBeforeRestart(domain domainCloser) {
 
 // CloseDDLOwnerMgr is set by pkg/ddl/owner_mgr.go.
 var CloseDDLOwnerMgr func()
+
+// CloseServerBeforeRestart is set by cmd/tidb-server/main.go to stop accepting
+// new SQL connections before TiDB closes Domain and execs itself.
+var CloseServerBeforeRestart func()
 
 type restartKeySnapshot struct {
 	// key modification revision

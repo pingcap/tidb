@@ -152,6 +152,50 @@ func (d *testBlockingRestartDomain) release() {
 	d.releaseOnce.Do(func() { close(d.unblockCh) })
 }
 
+type testOrderedRestartDomain struct {
+	events chan<- string
+}
+
+func (d *testOrderedRestartDomain) Close() {
+	d.events <- "domain"
+}
+
+func (*testOrderedRestartDomain) InitDistTaskLoop() error { return nil }
+
+func TestRestartProcessClosesServerBeforeDomain(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("requires --tags=intest")
+	}
+
+	oldCloseServerBeforeRestart := CloseServerBeforeRestart
+	oldCloseDDLOwnerMgr := CloseDDLOwnerMgr
+	CloseDDLOwnerMgr = nil
+	defer func() {
+		CloseServerBeforeRestart = oldCloseServerBeforeRestart
+		CloseDDLOwnerMgr = oldCloseDDLOwnerMgr
+	}()
+
+	events := make(chan string, 2)
+	CloseServerBeforeRestart = func() {
+		events <- "server"
+	}
+
+	restartProcess(&testOrderedRestartDomain{events: events})
+
+	nextEvent := func() string {
+		t.Helper()
+		select {
+		case event := <-events:
+			return event
+		case <-time.After(time.Second):
+			t.Fatal("restartProcess did not record the next close event")
+			return ""
+		}
+	}
+	require.Equal(t, "server", nextEvent())
+	require.Equal(t, "domain", nextEvent())
+}
+
 func TestRestartProcessWaitsDomainCloseWithTimeout(t *testing.T) {
 	if !intest.InTest {
 		t.Skip("requires --tags=intest")

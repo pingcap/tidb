@@ -32,6 +32,8 @@ var (
 	ErrAccessDeniedNoPassword = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	// ErrConCount is returned when too many connections are established by the user.
 	ErrConCount = dbterror.ClassServer.NewStd(errno.ErrConCount)
+	// ErrServerShutdown is returned when the server is shutting down.
+	ErrServerShutdown = dbterror.ClassServer.NewStd(errno.ErrServerShutdown)
 	// ErrTooManyUserConnections is returned when too mang user connections are established.
 	ErrTooManyUserConnections = dbterror.ClassServer.NewStd(errno.ErrTooManyUserConnections)
 	// ErrSecureTransportRequired is returned when the user tries to connect without SSL.

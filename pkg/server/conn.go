@@ -824,12 +824,18 @@ func (cc *clientConn) openSession() error {
 }
 
 func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
+	if cc.server.inShutdownMode.Load() {
+		return servererr.ErrServerShutdown.FastGenByArgs()
+	}
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
 		if err != nil {
 			return err
 		}
+	}
+	if cc.server.inShutdownMode.Load() {
+		return servererr.ErrServerShutdown.FastGenByArgs()
 	}
 
 	hasPassword := "YES"
@@ -872,12 +878,18 @@ var mockOSUserForAuthSocketTest atomic.Pointer[string]
 
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Response41) ([]byte, error) {
+	if cc.server.inShutdownMode.Load() {
+		return nil, servererr.ErrServerShutdown.FastGenByArgs()
+	}
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cc.server.inShutdownMode.Load() {
+		return nil, servererr.ErrServerShutdown.FastGenByArgs()
 	}
 
 	authData := resp.Auth

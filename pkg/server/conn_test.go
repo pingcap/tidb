@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -60,6 +62,7 @@ import (
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
+	uatomic "go.uber.org/atomic"
 )
 
 type Issue33699CheckType struct {
@@ -1615,6 +1618,22 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 	require.Equal(t, []byte(mysql.AuthNativePassword), respAuthSwitch)
 	require.NoError(t, err)
+}
+
+func TestAuthRejectsDuringShutdown(t *testing.T) {
+	cc := &clientConn{
+		server: &Server{inShutdownMode: uatomic.NewBool(true)},
+		user:   "root",
+	}
+	ctx := context.Background()
+
+	_, err := cc.checkAuthPlugin(ctx, &handshake.Response41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+	})
+	require.Truef(t, terror.ErrorEqual(err, servererr.ErrServerShutdown), "checkAuthPlugin() error = %v", err)
+
+	err = cc.openSessionAndDoAuth(nil, mysql.AuthNativePassword, 0)
+	require.Truef(t, terror.ErrorEqual(err, servererr.ErrServerShutdown), "openSessionAndDoAuth() error = %v", err)
 }
 
 func TestAuthSessionTokenPlugin(t *testing.T) {
