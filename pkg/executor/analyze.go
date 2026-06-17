@@ -132,7 +132,29 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 	if err != nil {
 		return err
 	}
-	return broadcast(ctx, sctx, sql)
+	return tryBroadcast(ctx, sctx, sql)
+}
+
+// tryBroadcast runs FLUSH STATS_DELTA ... CLUSTER to flush every TiDB's pending
+// deltas before analyze. During a rolling upgrade a peer on an older release
+// cannot decode the BroadcastQuery executor and rejects it with "this exec type
+// <n> doesn't support yet"; the pre-flush is best-effort, so we warn and let
+// analyze proceed rather than fail it. Other errors propagate.
+func tryBroadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	err := broadcast(ctx, sctx, sql)
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "exec type") || !strings.Contains(msg, "doesn't support yet") {
+		return err
+	}
+	statslogutil.StatsLogger().Warn(
+		"FLUSH STATS_DELTA CLUSTER broadcast rejected by a peer TiDB during analyze; "+
+			"proceeding without the cluster-wide pre-analyze flush",
+		zap.Error(err),
+	)
+	return nil
 }
 
 // collectStatsDeltaFlushObjectsForAnalyze returns the database-qualified table
