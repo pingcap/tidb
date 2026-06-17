@@ -87,8 +87,10 @@ func requireRowsContainSubstring(t *testing.T, rows [][]any, substr string) {
 func nextCompareTimestamp(t *testing.T, tk *testkit.TestKit) string {
 	t.Helper()
 
+	mustSetMockGCSafePoint(t, tk, time.Date(2006, 1, 2, 15, 4, 5, 0, time.UTC))
+	ts := fmt.Sprint(tk.MustQuery("select now(6)").Rows()[0][0])
 	time.Sleep(10 * time.Millisecond)
-	return fmt.Sprint(tk.MustQuery("select now(6)").Rows()[0][0])
+	return ts
 }
 
 func requireRefreshTiFlashSessionVarsApplied(

@@ -1641,7 +1641,7 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 		return err
 	}
 
-	lastSuccessReadTSO, err := e.readCompareMaterializedViewLastSuccessReadTSO(ctx, schemaName, tblInfo.ID, compareSnapshotTS)
+	lastSuccessReadTSO, err := e.readCompareMaterializedViewLastSuccessReadTSO(ctx, tblInfo.ID, compareSnapshotTS)
 	if err != nil {
 		return err
 	}
@@ -1669,14 +1669,14 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 		}()
 	}
 
-	baseQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, lastSuccessReadTSO, tblInfo.MaterializedView, tblInfo.MaterializedView.SQLContent)
+	baseQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, lastSuccessReadTSO, tblInfo.MaterializedView, tblInfo.MaterializedView.SQLContent)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = baseQueryExec.Close() }()
 
 	mvQuerySQL := buildCompareMaterializedViewSelectSQL(schemaName, tblInfo.Name, visibleCols)
-	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, compareSnapshotTS, tblInfo.MaterializedView, mvQuerySQL)
+	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, compareSnapshotTS, tblInfo.MaterializedView, mvQuerySQL)
 	if err != nil {
 		return err
 	}
@@ -1817,11 +1817,10 @@ func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewSnapshotTS(c
 
 func (e *CompareMaterializedViewExec) readCompareMaterializedViewLastSuccessReadTSO(
 	ctx context.Context,
-	schemaName pmodel.CIStr,
 	mviewID int64,
 	compareSnapshotTS uint64,
 ) (uint64, error) {
-	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, schemaName, compareSnapshotTS)
+	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, compareSnapshotTS)
 	if err != nil {
 		return 0, err
 	}
@@ -1846,12 +1845,11 @@ func (e *CompareMaterializedViewExec) readCompareMaterializedViewLastSuccessRead
 
 func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
 	ctx context.Context,
-	defaultDB pmodel.CIStr,
 	snapshotTS uint64,
 	mviewInfo *model.MaterializedViewInfo,
 	sql string,
 ) (exec.Executor, error) {
-	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, defaultDB, snapshotTS)
+	sctx, cleanup, err := e.openCompareMaterializedViewSnapshotSession(ctx, snapshotTS)
 	if err != nil {
 		return nil, err
 	}
@@ -1890,14 +1888,13 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
 
 func (e *CompareMaterializedViewExec) openCompareMaterializedViewSnapshotSession(
 	ctx context.Context,
-	defaultDB pmodel.CIStr,
 	snapshotTS uint64,
 ) (sessionctx.Context, func() error, error) {
 	sctx, err := e.GetSysSession()
 	if err != nil {
 		return nil, nil, err
 	}
-	restore, err := prepareCompareMaterializedViewSnapshotSession(sctx, defaultDB, snapshotTS)
+	restore, err := prepareCompareMaterializedViewSnapshotSession(sctx, snapshotTS)
 	if err != nil {
 		e.ReleaseSysSession(ctx, sctx)
 		return nil, nil, err
@@ -2057,42 +2054,34 @@ func buildCompareMaterializedViewOutputCreateTableSQL(
 
 func prepareCompareMaterializedViewSnapshotSession(
 	sctx sessionctx.Context,
-	defaultDB pmodel.CIStr,
 	snapshotTS uint64,
 ) (func() error, error) {
 	sessVars := sctx.GetSessionVars()
-	origCurrentDB := sessVars.CurrentDB
 	origSnapshotTS := sessVars.SnapshotTS
-	origSnapshotInfoSchema := sessVars.SnapshotInfoschema
 
-	sessVars.CurrentDB = defaultDB.O
-	if err := sessVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshotTS, 10)); err != nil {
-		sessVars.CurrentDB = origCurrentDB
-		return nil, err
-	}
-	if err := loadSnapshotInfoSchemaIfNeeded(sctx, snapshotTS); err != nil {
-		_ = sessVars.SetSystemVar(variable.TiDBSnapshot, "")
-		sessVars.SnapshotInfoschema = origSnapshotInfoSchema
-		sessVars.SnapshotTS = origSnapshotTS
-		sessVars.CurrentDB = origCurrentDB
+	if err := setCompareMaterializedViewSnapshot(sctx, snapshotTS); err != nil {
 		return nil, err
 	}
 
 	return func() error {
-		sessVars.CurrentDB = origCurrentDB
-		if origSnapshotTS == 0 {
-			if err := sessVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				return err
-			}
-		} else {
-			if err := sessVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(origSnapshotTS, 10)); err != nil {
-				return err
-			}
-		}
-		sessVars.SnapshotTS = origSnapshotTS
-		sessVars.SnapshotInfoschema = origSnapshotInfoSchema
-		return nil
+		return setCompareMaterializedViewSnapshot(sctx, origSnapshotTS)
 	}, nil
+}
+
+func setCompareMaterializedViewSnapshot(sctx sessionctx.Context, snapshotTS uint64) error {
+	snapshot := ""
+	if snapshotTS != 0 {
+		snapshot = strconv.FormatUint(snapshotTS, 10)
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "SET @@tidb_snapshot = %?", snapshot)
+	if err != nil {
+		return err
+	}
+	if rs != nil {
+		return rs.Close()
+	}
+	return nil
 }
 
 func buildCompareMaterializedViewDiffLayout(
