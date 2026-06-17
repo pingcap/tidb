@@ -30,7 +30,7 @@ This section introduces the detailed design in two major parts: Soft-delete and 
 In TiDB, after a row is deleted by DELETESQL, it is no longer accessible unless by [historical read](https://docs.pingcap.com/tidb/stable/read-historical-data/). After the `tidb_gc_life_time` passed, it is no longer accessible or recoverable by any means because the MVCC versions are cleaned up by GC jobs . But some businesses would like to have a much longer retention duration, e.g. 2 weeks. It is the initial intention of intorducting soft-delete feature.
 A row is soft deleted means it is marked tombstoned but not marked deleted yet (i.e. no delete mark in MVCC list). The MVCC GC process will never clean it up until it is officially hard deleted (i.e. append a delete mark in MVCC list) after the soft delete retention expired.
 
-Another requirement for soft delete feature comes from the LWW strategy. During LWW, we need to compare the DELETE operations with INSERT and UPDATE operations by SQLs, as TiCDC replicates changes by pure SQLs. The issue is that after a row is hard deleted, normal SQL cannot retrieve the `commit_ts` of DELETE operation any more. And soft delete can help to resolve the issue: the row is not actually hard deleted, so we can make SQLs to retrieve the soft deleted row to do commit_ts comparsions. You can find more details in the CDC sections below. 
+Another requirement for soft delete feature comes from the LWW strategy. During LWW, we need to compare the DELETE operations with INSERT and UPDATE operations by SQLs, as TiCDC replicates changes by pure SQLs. The issue is that after a row is hard deleted, normal SQL cannot retrieve the `commit_ts` of DELETE operation any more. And soft delete can help to resolve the issue: the row is not actually hard deleted, so we can make SQLs to retrieve the soft deleted row to do commit_ts comparisons. You can find more details in the CDC sections below. 
 
 In the design, we use the SQL rewrite approach to implement the soft-delete. A hidden `_tidb_softdelete_time` column is added to soft-delete tables, and we rewrite the DML SQLs on the soft-delete table.
 
@@ -477,8 +477,8 @@ You could also amend the table manually to correct any error/inconsistency.
 ### Pros
 
 1. The project risk is under control.
-  1. Major impact components are SQL, planner, and executor layer, mainly in the TiDB repo. The technical impact to other compoenents are limited. 
-  2. No changes to the storage layer. Good compatibility gaurantee for BR, TiFlash, TiDB X (next-gen TiDB).
+  1. Major impact components are SQL, planner, and executor layer, mainly in the TiDB repo. The technical impact to other components are limited. 
+  2. No changes to the storage layer. Good compatibility guarantee for BR, TiFlash, TiDB X (next-gen TiDB).
 2. Tombstoned rows are indexed normally on the extra column `_tidb_softdelete_time`. So the query performance on tombstoned rows is guaranteed. 
 3. The mechanism can be reused by Instant TTL requirement. We don't need to make too much effort to implement Instant TTL later.
 
@@ -674,7 +674,7 @@ IFNULL(`_tidb_origin_ts`, `_tidb_commit_ts`)
 | 1  | world | NULL               | 461617262510997504 |
 +----+-------+--------------------+--------------------+
 
--- Set _tidb_origin_ts explictly is allowed
+-- Set _tidb_origin_ts explicitly is allowed
 -- DO NOT do it only if you know what you are doing, as it may cause the final result to be inconsistent between clusters!
 > UPDATE message SET _tidb_origin_ts = 461620485322702848 WHERE id = 1;
 > SELECT id, message, _tidb_origin_ts, _tidb_commit_ts FROM message;
@@ -924,7 +924,7 @@ To guarantee Cross-Table Transaction Atomicity, it is mandatory that all tables 
 - Performance Limits: Due to the single-node centralized scheduling bottleneck, the maximum throughput for a single changefeed enabling this feature is wide table 100MiB/s and narrow table 30MiB/s, supporting a maximum of 10K tables.
 - Conflict Constraint: It is not supported to configure multiple changefeeds with this feature enabled to synchronize the same table into the same downstream cluster.
 - Feature Gaps: This initial design does not support Syncpoint or Redo log functionalities.
-  - Since we already guarantee cross table transaction atomacity, Redo log is not neccessary.
+  - Since we already guarantee cross table transaction atomacity, Redo log is not necessary.
   - SyncPoint is not possible to create an identical consistent view between two clusters in active-active setup.
 
 
@@ -1496,7 +1496,7 @@ This section describes how to build an active-active group with multiple TiDB cl
 
 1. Setup several TiDB clusters, and configure the `tso-unique-index` and  `tso-max-index` for each of them.
 2. Create the same tables with `active-active` enabled in all clusters.
-3. [Optional] Load the existing data from original systems into all tables in separete TiDB clusters. SyncDiff tool could be used to check the data consistency between clusters.
+3. [Optional] Load the existing data from original systems into all tables in separate TiDB clusters. SyncDiff tool could be used to check the data consistency between clusters.
 4. Set up TiCDC changefeeds between clusters, with the `enable-active-active` option turned on.
 5. Start writing to tables in any clusters.
 
