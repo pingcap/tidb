@@ -1874,11 +1874,11 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
 		_ = cleanup()
 		return nil, errors.New("compare materialized view: query returned nil record set")
 	}
-	schema := buildCompareMaterializedViewRecordSetSchema(rs)
-	if schema.Len() == 0 {
+	schema, err := buildCompareMaterializedViewRecordSetSchema(rs)
+	if err != nil {
 		_ = rs.Close()
 		_ = cleanup()
-		return nil, errors.New("compare materialized view: query returned empty schema")
+		return nil, err
 	}
 	return &compareMaterializedViewRecordSetExec{
 		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), schema, 0),
@@ -2216,12 +2216,18 @@ func buildCompareMaterializedViewJoinSchema(leftTypes, rightTypes []*types.Field
 	return expression.NewSchema(cols...)
 }
 
-func buildCompareMaterializedViewRecordSetSchema(rs sqlexec.RecordSet) *expression.Schema {
+func buildCompareMaterializedViewRecordSetSchema(rs sqlexec.RecordSet) (*expression.Schema, error) {
 	fields := rs.Fields()
+	if len(fields) == 0 {
+		return nil, errors.New("compare materialized view: query returned empty schema")
+	}
 	cols := make([]*expression.Column, 0, len(fields))
 	for i, field := range fields {
-		if field == nil || field.Column == nil {
-			continue
+		if field == nil {
+			return nil, errors.Errorf("compare materialized view: query returned nil field at offset %d", i)
+		}
+		if field.Column == nil {
+			return nil, errors.Errorf("compare materialized view: query returned nil column at offset %d", i)
 		}
 		cols = append(cols, &expression.Column{
 			ID:      field.Column.ID,
@@ -2229,7 +2235,7 @@ func buildCompareMaterializedViewRecordSetSchema(rs sqlexec.RecordSet) *expressi
 			RetType: &field.Column.FieldType,
 		})
 	}
-	return expression.NewSchema(cols...)
+	return expression.NewSchema(cols...), nil
 }
 
 func buildCompareMaterializedViewSelectSQL(
