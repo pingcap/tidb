@@ -49,6 +49,10 @@ func (c *CheckpointAdvancer) Name() string {
 func (c *CheckpointAdvancer) OnStop() {
 	metrics.AdvancerOwner.Set(0.0)
 	metrics.LastCheckpoint.Reset()
+	metrics.ExternalStorageCheckpoint.Reset()
+	c.taskMu.Lock()
+	c.closeGlobalCheckpointStorage()
+	c.taskMu.Unlock()
 	c.stopSubscriber()
 }
 

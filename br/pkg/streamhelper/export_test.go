@@ -15,9 +15,12 @@
 package streamhelper
 
 import (
+	"context"
 	"math/rand"
 	"time"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
@@ -47,6 +50,16 @@ func (c *CheckpointAdvancer) UpdateCheckPointLagLimit(limit time.Duration) {
 		c.UpdateConfig(cfg)
 	} else {
 		variable.AdvancerCheckPointLagLimit.Store(limit)
+	}
+}
+
+func SetGlobalCheckpointStorageFactoryForTest(
+	factory func(context.Context, *backuppb.StorageBackend, *storage.ExternalStorageOptions) (storage.ExternalStorage, error),
+) func() {
+	original := createGlobalCheckpointStorage
+	createGlobalCheckpointStorage = factory
+	return func() {
+		createGlobalCheckpointStorage = original
 	}
 }
 
