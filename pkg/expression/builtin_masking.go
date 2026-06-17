@@ -416,11 +416,17 @@ func (c *maskPartialFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	// mask_partial is a string operation: partial redaction (preserve
+	// left/right characters) has no well-defined meaning for non-string types.
+	// Reject non-string args[0] explicitly, consistent with mask_full/mask_date.
+	argType := args[0].GetType(ctx.GetEvalCtx())
+	if argType.EvalType() != types.ETString {
+		return nil, errIncorrectArgs.GenWithStackByArgs("mask_partial")
+	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp = argType.Clone()
 	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[3].GetType(ctx.GetEvalCtx())) {
 		return &builtinMaskPartialSig{bf}, nil

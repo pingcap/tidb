@@ -143,6 +143,10 @@ func TestMaskPartial(t *testing.T) {
 		require.NoError(t, evalErr)
 		require.Equal(t, "abcdef", d.GetString())
 	})
+
+	// Non-string args[0] is rejected at build time.
+	_, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{12345, 1, 2, "*"})...)
+	require.Error(t, err)
 }
 
 func TestMaskDate(t *testing.T) {

@@ -1687,6 +1687,14 @@ select mask_partial('中文abcd',1,1,'*');
 select mask_partial('abc',1,2,'**');
 -- error 1210
 select mask_partial('abc',-1,2,'*');
-select mask_date(cast('2012-01-02' as date), '2020-12-31'), mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31');
 -- error 1210
+select mask_partial(12345,1,2,'*');
+-- error 1210
+select mask_partial(cast('2012-01-02' as date),1,2,'*');
+select mask_date(cast('2012-01-02' as date), '2020-12-31'), mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31');
+select mask_date(cast('2012-01-02' as date), 'Y-01-01'), mask_date(cast('2012-01-02' as date), 'Y-M-D');
 select mask_date(cast('2012-01-02' as date), '2020-1-2');
+-- error 1210
+select mask_date(cast('2012-01-02' as date), 'Y-13-01');
+-- error 1210
+select mask_date('2012-01-02', '2020-01-01');
