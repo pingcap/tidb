@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,10 +41,6 @@ const (
 	DetectPeriod = 3 * time.Second
 	// DetectTimeoutLimit detect timeout
 	DetectTimeoutLimit = 2 * time.Second
-	// MPPInfoPruneMinInterval is the minimum interval to prune cached MPP info.
-	MPPInfoPruneMinInterval = 15 * time.Minute
-	// MPPInfoPruneMaxInterval is the maximum interval to prune cached MPP info.
-	MPPInfoPruneMaxInterval = time.Hour
 	// MaxRecoveryTimeLimit wait TiFlash recovery,more than MPPStoreFailTTL
 	MaxRecoveryTimeLimit = 15 * time.Minute
 	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
@@ -119,28 +114,6 @@ func (t *MppInfoManager) Get(address string) *MPPInfo {
 		return nil
 	}
 	return ret
-}
-
-// Prune deletes cached gRPC connections that no longer respond to diagnostics RPC.
-func Prune(ctx context.Context) {
-	deletedAddrs := make(map[string]struct{})
-	connCache.Range(func(key, value any) bool {
-		cacheKey := key.(connCacheKey)
-		address := cacheKey.address
-		if err := probeGRPCConn(ctx, value); err == nil {
-			return true
-		}
-		if _, ok := deletedAddrs[address]; !ok {
-			deletedAddrs[address] = struct{}{}
-			GlobalMPPInfoManager.Delete(address)
-		}
-		deleteGRPCConnByKey(cacheKey, value)
-		return true
-	})
-}
-
-func nextMPPInfoPruneInterval() time.Duration {
-	return MPPInfoPruneMinInterval + rand.N(MPPInfoPruneMaxInterval-MPPInfoPruneMinInterval+time.Nanosecond)
 }
 
 func (t *MPPStoreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
@@ -268,8 +241,6 @@ func (t *MPPFailedStoreProber) Run() {
 		defer t.lock.Unlock()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		pruneTimer := time.NewTimer(nextMPPInfoPruneInterval())
-		defer pruneTimer.Stop()
 
 		for {
 			select {
@@ -278,9 +249,6 @@ func (t *MPPFailedStoreProber) Run() {
 				return
 			case <-ticker.C:
 				t.scan(t.ctx)
-			case <-pruneTimer.C:
-				Prune(t.ctx)
-				pruneTimer.Reset(nextMPPInfoPruneInterval())
 			}
 		}
 	}()

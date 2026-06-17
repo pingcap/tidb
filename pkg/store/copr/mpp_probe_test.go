@@ -16,22 +16,15 @@ package copr
 
 import (
 	"context"
-	"net"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util/async"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/stats"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -188,14 +181,6 @@ func TestMPPFailedStoreProbeGoroutineTask(t *testing.T) {
 	GlobalMPPFailedStoreProber.Stop()
 }
 
-func TestNextMPPInfoPruneInterval(t *testing.T) {
-	for range 100 {
-		interval := nextMPPInfoPruneInterval()
-		require.GreaterOrEqual(t, interval, MPPInfoPruneMinInterval)
-		require.LessOrEqual(t, interval, MPPInfoPruneMaxInterval)
-	}
-}
-
 func TestMPPFailedStoreAssertFailed(t *testing.T) {
 	ctx := context.Background()
 
@@ -206,140 +191,7 @@ func TestMPPFailedStoreAssertFailed(t *testing.T) {
 	GlobalMPPFailedStoreProber.IsRecovery(ctx, "errorinfo", 0)
 }
 
-type diagnosticsServerForTest struct {
-	diagnosticspb.UnimplementedDiagnosticsServer
-	calls atomic.Int32
-	fail  atomic.Bool
-}
-
-func (s *diagnosticsServerForTest) ServerInfo(context.Context, *diagnosticspb.ServerInfoRequest) (*diagnosticspb.ServerInfoResponse, error) {
-	s.calls.Add(1)
-	if s.fail.Swap(false) {
-		return nil, status.Error(codes.Unavailable, "mock server info error")
-	}
-	return &diagnosticspb.ServerInfoResponse{
-		Items: []*diagnosticspb.ServerInfoItem{
-			{
-				Tp:   "test",
-				Name: "test",
-				Pairs: []*diagnosticspb.ServerInfoPair{
-					{Key: "key", Value: "value"},
-				},
-			},
-		},
-	}, nil
-}
-
-type connCountingStatsHandler struct {
-	connBegins atomic.Int32
-}
-
-func (h *connCountingStatsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
-	return ctx
-}
-
-func (*connCountingStatsHandler) HandleRPC(context.Context, stats.RPCStats) {}
-
-func (h *connCountingStatsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
-	return ctx
-}
-
-func (h *connCountingStatsHandler) HandleConn(_ context.Context, stat stats.ConnStats) {
-	if _, ok := stat.(*stats.ConnBegin); ok {
-		h.connBegins.Add(1)
-	}
-}
-
-func startDiagnosticsGRPCServerForTest(t *testing.T) (string, *diagnosticsServerForTest, *connCountingStatsHandler) {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-
-	statsHandler := &connCountingStatsHandler{}
-	server := grpc.NewServer(grpc.StatsHandler(statsHandler))
-	diagnosticsServer := &diagnosticsServerForTest{}
-	diagnosticspb.RegisterDiagnosticsServer(server, diagnosticsServer)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.Serve(lis)
-	}()
-	t.Cleanup(func() {
-		server.Stop()
-		<-errCh
-	})
-
-	return lis.Addr().String(), diagnosticsServer, statsHandler
-}
-
-func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
-	closeGRPCConnsForTest()
-	t.Cleanup(closeGRPCConnsForTest)
-
-	address, diagnosticsServer, statsHandler := startDiagnosticsGRPCServerForTest(t)
-
-	for i := 0; i < 2; i++ {
-		items, err := GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
-		require.NoError(t, err)
-		require.Len(t, items, 1)
-	}
-
-	require.Equal(t, int32(2), diagnosticsServer.calls.Load())
-	require.Eventually(t, func() bool {
-		return statsHandler.connBegins.Load() == 1
-	}, time.Second, 10*time.Millisecond)
-
-	Prune(context.Background())
-
-	require.Equal(t, int32(3), diagnosticsServer.calls.Load())
-	require.Eventually(t, func() bool {
-		return statsHandler.connBegins.Load() == 1
-	}, time.Second, 10*time.Millisecond)
-
-	items, err := GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, int32(4), diagnosticsServer.calls.Load())
-	require.Eventually(t, func() bool {
-		return statsHandler.connBegins.Load() == 1
-	}, time.Second, 10*time.Millisecond)
-
-	diagnosticsServer.fail.Store(true)
-	Prune(context.Background())
-	require.Equal(t, int32(5), diagnosticsServer.calls.Load())
-
-	items, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, int32(6), diagnosticsServer.calls.Load())
-	require.Eventually(t, func() bool {
-		return statsHandler.connBegins.Load() == 2
-	}, time.Second, 10*time.Millisecond)
-
-	diagnosticsServer.fail.Store(true)
-	GlobalMPPInfoManager.Add(&MPPInfo{
-		Address:         address,
-		LogicalCPUCount: 16,
-		StartTimestamp:  123,
-	})
-	_, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
-	require.Error(t, err)
-	require.Equal(t, int32(7), diagnosticsServer.calls.Load())
-	require.Nil(t, GlobalMPPInfoManager.Get(address))
-
-	items, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, int32(8), diagnosticsServer.calls.Load())
-	require.Eventually(t, func() bool {
-		return statsHandler.connBegins.Load() == 3
-	}, time.Second, 10*time.Millisecond)
-}
-
 func TestMppInfoManager(t *testing.T) {
-	closeGRPCConnsForTest()
-	t.Cleanup(closeGRPCConnsForTest)
-
 	manager := &MppInfoManager{cachedStores: make(map[string]*MPPInfo)}
 	manager.Delete("123") // Should happen nothing
 	manager.Add(&MPPInfo{
@@ -358,27 +210,4 @@ func TestMppInfoManager(t *testing.T) {
 	require.Equal(t, len(manager.cachedStores), 0)
 	info = manager.Get("123")
 	require.True(t, info == nil)
-
-	staleAddress, diagnosticsServer, _ := startDiagnosticsGRPCServerForTest(t)
-	_, err := GetServerInfoByGRPC(context.Background(), staleAddress, diagnosticspb.ServerInfoType_All)
-	require.NoError(t, err)
-	activeAddress := "789"
-	GlobalMPPInfoManager.Add(&MPPInfo{
-		Address:         staleAddress,
-		LogicalCPUCount: 456,
-		StartTimestamp:  789,
-	})
-	GlobalMPPInfoManager.Add(&MPPInfo{
-		Address:         activeAddress,
-		LogicalCPUCount: 789,
-		StartTimestamp:  123,
-	})
-	t.Cleanup(func() {
-		GlobalMPPInfoManager.Delete(staleAddress)
-		GlobalMPPInfoManager.Delete(activeAddress)
-	})
-	diagnosticsServer.fail.Store(true)
-	Prune(context.Background())
-	require.Nil(t, GlobalMPPInfoManager.Get(staleAddress))
-	require.NotNil(t, GlobalMPPInfoManager.Get(activeAddress))
 }

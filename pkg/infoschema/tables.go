@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -64,6 +65,9 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -2787,7 +2791,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *vari
 		go func(index int, remote, address, serverTP string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				items, err := copr.GetServerInfoByGRPC(ctx, remote, infoTp)
+				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
 					ch <- ServerInfoResult{Idx: index, Err: err}
 					return
@@ -2831,6 +2835,40 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 		}
 	}
 	return rows
+}
+
+func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+	conn, err := grpc.Dial(address, opt)
+	if err != nil {
+		copr.GlobalMPPInfoManager.Delete(address)
+		return nil, err
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			log.Error("close grpc connection error", zap.Error(err))
+		}
+	}()
+
+	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+	defer cancel()
+	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
+	if err != nil {
+		copr.GlobalMPPInfoManager.Delete(address)
+		return nil, err
+	}
+	return r.Items, nil
 }
 
 // FilterClusterServerInfo filters serversInfo by nodeTypes and addresses
