@@ -6392,17 +6392,23 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 }
 
 // For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
-// disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
+// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
+// name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
+	expectedExternalID := config.GetGlobalKeyspaceName()
 	hasAccessKey := false
 	hasSecretAccessKey := false
 	hasRoleARN := false
-	for k := range values {
+	for k, vs := range values {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
 		case s3like.S3ExternalID:
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+			for _, v := range vs {
+				if v != expectedExternalID {
+					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+				}
+			}
 		case s3like.S3AccessKey:
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
 		case s3like.S3SecretAccessKey:

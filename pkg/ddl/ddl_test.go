@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -73,6 +75,15 @@ func NewJobSubmitterForTest() *JobSubmitter {
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
 	return s.ddlJobDoneChMap
+}
+
+// GenGIDAndInsertJobsWithRetry generates job related global ID and inserts DDL jobs to the DDL job
+// table with retry. job id allocation and job insertion are in the same transaction,
+// as we want to make sure DDL jobs are inserted in id order, then we can query from
+// a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
+// so this function has side effect, it will set table/db/job id of 'jobs'.
+func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	return jobsubmit.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWrappersToSpecs(jobWs), s.registerJobDoneChannels)
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {

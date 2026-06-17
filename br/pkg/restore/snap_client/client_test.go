@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -388,7 +389,7 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores = NewRecordStores()
 	start := time.Now()
-	err := snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 10)
+	err := snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 10)
 	cost := time.Since(start)
 	require.NoError(t, err)
 
@@ -411,7 +412,7 @@ func TestSetSpeedLimit(t *testing.T) {
 		split.NewFakePDClient(mockStores, false, nil), nil, nil, split.DefaultTestKeepaliveCfg)
 
 	// Concurrency needs to be less than the number of stores
-	err = snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 2)
+	err = snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
 	require.Error(t, err)
 	t.Log(err)
 
@@ -421,6 +422,51 @@ func TestSetSpeedLimit(t *testing.T) {
 	require.Less(t, recordStores.len(), len(mockStores))
 	for i := range recordStores.len() {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
+	}
+}
+
+func TestSetSpeedLimitCloseCallbackIdempotent(t *testing.T) {
+	mockStores := []*metapb.Store{
+		{Id: 1},
+		{Id: 2},
+		{Id: 3},
+		{Id: 4},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pdClient := split.NewFakePDClient(mockStores, false, nil)
+	workerPool := tidbutil.NewWorkerPool(4, "set-speed-limit-close")
+	createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, pdClient, workerPool, 42)
+
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil, nil, FakeImporterClient{}, nil, snapclient.RewriteModeLegacy, mockStores, 1, 0, nil, nil)
+	importer, err := snapclient.NewSnapFileImporter(ctx, 0, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+	require.NoError(t, createCallBack(importer))
+
+	cancel()
+
+	closeOnceDone := make(chan error, 1)
+	go func() {
+		closeOnceDone <- closeCallBack(importer)
+	}()
+	select {
+	case err := <-closeOnceDone:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first close callback blocks unexpectedly")
+	}
+
+	closeTwiceDone := make(chan error, 1)
+	go func() {
+		closeTwiceDone <- closeCallBack(importer)
+	}()
+	select {
+	case err := <-closeTwiceDone:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("second close callback blocks unexpectedly")
 	}
 }
 

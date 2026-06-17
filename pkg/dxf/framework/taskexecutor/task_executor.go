@@ -26,14 +26,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -74,20 +75,17 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	// TaskStore is the store for task.Keyspace. It equals the instance store in
-	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
-	// it from the task keyspace.
-	TaskStore kv.Storage
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-		TaskStore: store,
 	}
 }
 
@@ -259,13 +257,7 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 
 // Init implements the TaskExecutor interface.
 func (e *BaseTaskExecutor) Init(_ context.Context) error {
-	if e.TaskStore.GetKeyspace() != e.GetTaskBase().Keyspace {
-		// shouldn't happen normally, but since keyspace mismatch might cause
-		// correctness error, we check it at runtime too.
-		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
-			e.TaskStore.GetKeyspace(), e.GetTaskBase().Keyspace))
-	}
-	return nil
+	return dxfutil.CheckTaskRuntime(e.TaskRuntime, e.GetTaskBase().Keyspace)
 }
 
 // Ctx returns the context of the task executor.

@@ -17,10 +17,10 @@ package scheduler
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -182,17 +182,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
-	// TaskStore is the store for task.Keyspace. It equals the instance store in
-	// classic kernel mode or for SYSTEM-keyspace tasks; otherwise Manager resolves
-	// it from the task keyspace.
-	TaskStore kv.Storage
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+func NewParamForTest(taskMgr TaskManager, runtime sqlsvrapi.Runtime) Param {
 	return Param{
-		taskMgr:   taskMgr,
-		TaskStore: store,
+		taskMgr:     taskMgr,
+		TaskRuntime: runtime,
 	}
 }
 

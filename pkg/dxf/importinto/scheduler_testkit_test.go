@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -36,16 +37,41 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
+type importTestSessionPool struct {
+	*pools.ResourcePool
+}
+
+func (p importTestSessionPool) Destroy(resource pools.Resource) {
+	resource.Close()
+}
+
+func newImportTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool *pools.ResourcePool) *sqlsvrapimock.MockRuntime {
+	var destroyableSessPool tidbutil.DestroyableSessionPool
+	if sessPool != nil {
+		destroyableSessPool = importTestSessionPool{ResourcePool: sessPool}
+	}
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(destroyableSessPool).AnyTimes()
+	return runtime
+}
+
 func TestSchedulerExtLocalSort(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -99,7 +125,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(manager, store))
+	var taskMgr scheduler.TaskManager = manager
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -198,6 +225,9 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 }
 
 func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	if !kerneltype.IsNextGen() {
 		t.Skip("prepare mode only applies in nextgen kernel")
 	}
@@ -308,7 +338,8 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 	)
 	require.NoError(t, err)
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(mgr, store))
+	var taskMgr scheduler.TaskManager = mgr
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 
 	require.NoError(t, ext.OnPrepare(ctx, d, task))
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
@@ -334,6 +365,9 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 }
 
 func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	if !kerneltype.IsClassic() {
 		t.Skip("table mode is only set in classic kernel")
 	}
@@ -401,7 +435,8 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 		Error: errors.New("cancelled by user"),
 	}
 
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(mgr, store))
+	var taskMgr scheduler.TaskManager = mgr
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	require.NoError(t, ext.OnDone(ctx, nil, task))
 
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -410,6 +445,9 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 }
 
 func TestSchedulerExtGlobalSort(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	host := "127.0.0.1"
 	port := uint16(4448)
 	opt := fakestorage.Options{
@@ -495,7 +533,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store))
+	var taskMgr scheduler.TaskManager = manager
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

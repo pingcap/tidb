@@ -35,6 +35,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -45,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const bucketRegionHeader = "X-Amz-Bucket-Region"
@@ -1639,6 +1642,31 @@ func TestS3StorageBucketRegion(t *testing.T) {
 	}
 }
 
+func TestS3StorageCustomAWSEndpointWithFIPSMode(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "ab")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "cd")
+	t.Setenv("AWS_SESSION_TOKEN", "ef")
+	t.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
+
+	s := createGetBucketRegionServer("us-west-2", 200, true)
+	defer s.Close()
+
+	es, err := New(context.Background(),
+		&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{
+			Region:         "us-west-2",
+			Bucket:         "bucket",
+			Prefix:         "prefix",
+			Provider:       "aws",
+			Endpoint:       s.URL,
+			ForcePathStyle: true,
+		}}},
+		&storeapi.Options{})
+	require.NoError(t, err)
+	ss, ok := es.(*Storage)
+	require.True(t, ok)
+	require.Equal(t, "us-west-2", ss.GetOptions().Region)
+}
+
 func TestRetryError(t *testing.T) {
 	var count int32 = 0
 	var errString = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
@@ -1680,6 +1708,40 @@ func TestRetryError(t *testing.T) {
 	err = s.WriteFile(ctx, "reset", []byte(errString))
 	require.NoError(t, err)
 	require.Equal(t, count, int32(2))
+}
+
+func TestS3ReadFileSuppressesSkippedChecksumValidationLog(t *testing.T) {
+	core, observedLogs := observer.New(zap.WarnLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	t.Cleanup(restore)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "ENABLED", r.Header.Get("X-Amz-Checksum-Mode"))
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("payload"))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	storage, err := NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:        server.URL,
+		Bucket:          "test",
+		Prefix:          "prefix",
+		AccessKey:       "none",
+		SecretAccessKey: "none",
+		Provider:        "minio",
+		ForcePathStyle:  true,
+	}, &storeapi.Options{})
+	require.NoError(t, err)
+
+	data, err := storage.ReadFile(ctx, "object")
+	require.NoError(t, err)
+	require.Equal(t, []byte("payload"), data)
+
+	for _, entry := range observedLogs.All() {
+		require.NotContains(t, entry.Message, "Response has no supported checksum")
+	}
 }
 
 func TestS3ReadFileRetryable(t *testing.T) {

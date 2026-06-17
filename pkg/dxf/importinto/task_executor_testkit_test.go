@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
@@ -114,6 +115,9 @@ func TestPostProcessStepExecutor(t *testing.T) {
 }
 
 func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	if kerneltype.IsNextGen() {
 		t.Skip("next-gen doesn't support local sort, skip this test")
 	}
@@ -154,10 +158,12 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 		},
 		Meta: taskMetaBytes,
 	}
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newImportTestRuntime(ctrl, store, nil)
 	taskExecutor := importinto.NewImportExecutor(
 		context.Background(),
 		task,
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", store),
+		param,
 	)
 	t.Cleanup(taskExecutor.Close)
 

@@ -19,13 +19,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/dxf/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -35,6 +40,31 @@ var (
 		proto.SubtaskStatePending, proto.SubtaskStateRunning,
 	}
 )
+
+func newSessionPoolForStore(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+	t.Helper()
+
+	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		se := utilmock.NewContext()
+		se.Store = sessionStore
+		return se, nil
+	}, nil, nil, nil)
+	t.Cleanup(sePool.Close)
+	return sePool
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	if sePool != nil {
+		runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	}
+	return runtime
+}
 
 func reduceRetrySQLTimes(t *testing.T, target int) {
 	retryCntBak := scheduler.RetrySQLTimes
@@ -140,22 +170,35 @@ func (e *taskExecutorRunEnv) mockForCheckBalanceSubtask() {
 		}).AnyTimes()
 }
 
-func TestBaseTaskExecutorInitChecksTaskStoreKeyspace(t *testing.T) {
+func TestBaseTaskExecutorInitChecksTaskRuntime(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	task := &proto.Task{TaskBase: proto.TaskBase{
 		ID:       1,
 		Type:     proto.TaskTypeExample,
 		Keyspace: "task_ks",
 	}}
 
+	taskStore := &storeWithKS{ks: task.Keyspace}
 	taskExecutor := NewBaseTaskExecutor(context.Background(), task, Param{
-		TaskStore: &storeWithKS{ks: task.Keyspace},
+		TaskRuntime: newMockRuntime(ctrl, taskStore, newSessionPoolForStore(t, taskStore)),
 	})
 	require.NoError(t, taskExecutor.Init(context.Background()))
 
 	taskExecutor = NewBaseTaskExecutor(context.Background(), task, Param{
-		TaskStore: &storeWithKS{ks: "other_ks"},
+		TaskRuntime: newMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
 	})
 	require.ErrorContains(t, taskExecutor.Init(context.Background()), "store keyspace mismatch with task")
+
+	taskExecutor = NewBaseTaskExecutor(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(
+			ctrl,
+			taskStore,
+			newSessionPoolForStore(t, &storeWithKS{ks: "session_ks"}),
+		),
+	})
+	require.ErrorContains(t, taskExecutor.Init(context.Background()), "invalid task runtime with mismatched keyspace")
 }
 
 func TestTaskExecutorRun(t *testing.T) {

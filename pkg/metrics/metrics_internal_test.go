@@ -56,6 +56,45 @@ func countCollectedMetrics(collector prometheus.Collector) int {
 	return count
 }
 
+func TestRUV2ExecutorCounterReturnsCachedKnownLabels(t *testing.T) {
+	cases := []struct {
+		level    int
+		label    string
+		expected prometheus.Counter
+	}{
+		{1, "BatchPointGetExec", ruv2ExecutorL1BatchPointGetExec},
+		{1, "PointGetExecutor", ruv2ExecutorL1PointGetExecutor},
+		{1, "LimitExec", ruv2ExecutorL1LimitExec},
+		{2, "ExpandExec", ruv2ExecutorL2ExpandExec},
+		{2, "HashAggExec", ruv2ExecutorL2HashAggExec},
+		{2, "HashJoinExec", ruv2ExecutorL2HashJoinExec},
+		{2, "HashJoinV1Exec", ruv2ExecutorL2HashJoinV1Exec},
+		{2, "HashJoinV2Exec", ruv2ExecutorL2HashJoinV2Exec},
+		{2, "IndexLookUpJoin", ruv2ExecutorL2IndexLookUpJoin},
+		{2, "IndexLookUpMergeJoin", ruv2ExecutorL2IndexLookUpMergeJoin},
+		{2, "IndexNestedLoopHashJoin", ruv2ExecutorL2IndexNestedLoopHashJoin},
+		{2, "IndexLookUpExecutor", ruv2ExecutorL2IndexLookUpExec},
+		{2, "IndexReaderExecutor", ruv2ExecutorL2IndexReaderExec},
+		{2, "MemTableReaderExec", ruv2ExecutorL2MemTableReaderExec},
+		{2, "MergeJoinExec", ruv2ExecutorL2MergeJoinExec},
+		{2, "ProjectionExec", ruv2ExecutorL2ProjectionExec},
+		{2, "SelectionExec", ruv2ExecutorL2SelectionExec},
+		{2, "TableDualExec", ruv2ExecutorL2TableDualExec},
+		{2, "TableReaderExecutor", ruv2ExecutorL2TableReaderExec},
+		{2, "TopNExec", ruv2ExecutorL2TopNExec},
+		{2, "UnionScanExec", ruv2ExecutorL2UnionScanExec},
+		{2, "SelectLockExec", ruv2ExecutorL2SelectLockExec},
+		{2, "WindowExec", ruv2ExecutorL2WindowExec},
+		{3, "SortExec", ruv2ExecutorL3SortExec},
+		{3, "StreamAggExec", ruv2ExecutorL3StreamAggExec},
+	}
+
+	for _, tc := range cases {
+		require.NotNil(t, tc.expected, tc.label)
+		require.True(t, tc.expected == RUV2ExecutorCounter(tc.level, tc.label), tc.label)
+	}
+}
+
 func TestStmtSummaryMetricLabels(t *testing.T) {
 	InitStmtSummaryMetrics()
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))

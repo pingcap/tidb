@@ -45,7 +45,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 35,
+    shard_count = 37,
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
