@@ -94,7 +94,7 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
-func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
+func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -115,9 +115,9 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start from bootstrap version 250 so the next bootstrap runs through the
-	// later upgrade chain, including upgradeToVer261.
+	// later upgrade chain, including upgradeToVer262.
 	// The test still executes on current code, so rows created below need their
-	// persisted digest fields rewritten to the pre-v261 algorithm explicitly.
+	// persisted digest fields rewritten to the pre-v262 algorithm explicitly.
 	ver, err := GetBootstrapVersion(seV250)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver250), ver)
@@ -130,7 +130,7 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	issueBindSQL := "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where ((a = 1) and (b = 1))"
 	// These extra bindings only differ by redundant parentheses. Before the
 	// issue #67363 digest fix they have different sql_digest values, but after
-	// upgradeToVer261 refreshes the digest they collapse to the same binding key.
+	// upgradeToVer262 refreshes the digest they collapse to the same binding key.
 	// Their timestamps are older than the binding created through SQL above, so
 	// that row remains the deterministic winner and these rows become losers.
 	duplicateIssueBindings := []struct {
@@ -155,25 +155,25 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 	MustExec(t, seV250, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
 	MustExec(t, seV250, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
 
-	issueDigestV261 := getEnabledBindingSQLDigest(t, seV250, "idx_issue_b")
-	issuePlanDigest := "issue-plan-digest-v261"
-	require.NotEmpty(t, issueDigestV261)
-	simpleOriginalPreV261, simpleDigestPreV261 := normalizeBindingDigestBeforeVer261(t, simpleBindSQL, "test")
-	issueOriginalPreV261, issueDigestPreV261 := normalizeBindingDigestBeforeVer261(t, issueBindSQL, "test")
-	// Simulate bindings that were persisted before version 261. The simple
+	issueDigestV262 := getEnabledBindingSQLDigest(t, seV250, "idx_issue_b")
+	issuePlanDigest := "issue-plan-digest-v262"
+	require.NotEmpty(t, issueDigestV262)
+	simpleOriginalPreV262, simpleDigestPreV262 := normalizeBindingDigestBeforeVer262(t, simpleBindSQL, "test")
+	issueOriginalPreV262, issueDigestPreV262 := normalizeBindingDigestBeforeVer262(t, issueBindSQL, "test")
+	// Simulate bindings that were persisted before version 262. The simple
 	// binding should normalize to the same digest after upgrade, while the issue
-	// binding should move from the old parenthesized digest to issueDigestV261.
-	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalPreV261, simpleDigestPreV261, "%idx_simple_b%")
-	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalPreV261, issueDigestPreV261, issuePlanDigest, "%idx_issue_b%")
-	oldIssueDigests := map[string]struct{}{issueDigestPreV261: {}}
+	// binding should move from the old parenthesized digest to issueDigestV262.
+	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalPreV262, simpleDigestPreV262, "%idx_simple_b%")
+	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalPreV262, issueDigestPreV262, issuePlanDigest, "%idx_issue_b%")
+	oldIssueDigests := map[string]struct{}{issueDigestPreV262: {}}
 	for _, duplicate := range duplicateIssueBindings {
 		duplicateDigest := insertBindingWithOldDigest(t, seV250, duplicate.bindSQL, duplicate.createTime, duplicate.updateTime, issuePlanDigest)
 		require.NotContains(t, oldIssueDigests, duplicateDigest)
 		oldIssueDigests[duplicateDigest] = struct{}{}
 	}
-	// Keep one unparsable row on the post-v261 digest pair. Even though it cannot
+	// Keep one unparsable row on the post-v262 digest pair. Even though it cannot
 	// be refreshed, it must still participate in duplicate detection; otherwise
-	// updating a valid row to issueDigestV261 could hit digest_index.
+	// updating a valid row to issueDigestV262 could hit digest_index.
 	invalidBindSQL := "invalid binding"
 	MustExec(t, seV250, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
@@ -187,15 +187,15 @@ func TestUpgradeToVer261RefreshesBindingDigest(t *testing.T) {
 		"",
 		"",
 		"manual",
-		issueDigestV261,
+		issueDigestV262,
 		issuePlanDigest,
 	)
 
 	simpleDigestBefore := getBindingSQLDigest(t, seV250, "idx_simple_b")
-	issueDigestBefore := issueDigestPreV261
+	issueDigestBefore := issueDigestPreV262
 
 	// Reboot the store into the current bootstrap version. This is the point
-	// where upgradeToVer261 scans mysql.bind_info and refreshes binding digests.
+	// where upgradeToVer262 scans mysql.bind_info and refreshes binding digests.
 	store.SetOption(StoreBootstrappedKey, nil)
 	seV250.Close()
 	dom.Close()
@@ -310,7 +310,7 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 }
 
 func insertBindingWithOldDigest(t *testing.T, se sessionapi.Session, bindSQL, createTime, updateTime, planDigest string) string {
-	originalSQL, sqlDigest := normalizeBindingDigestBeforeVer261(t, bindSQL, "test")
+	originalSQL, sqlDigest := normalizeBindingDigestBeforeVer262(t, bindSQL, "test")
 	MustExec(t, se, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
 		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -329,7 +329,7 @@ func insertBindingWithOldDigest(t *testing.T, se sessionapi.Session, bindSQL, cr
 	return sqlDigest
 }
 
-func normalizeBindingDigestBeforeVer261(t *testing.T, sql, defaultDB string) (string, string) {
+func normalizeBindingDigestBeforeVer262(t *testing.T, sql, defaultDB string) (string, string) {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 

@@ -503,13 +503,15 @@ const (
 	// Add mysql.tidb_masking_policy table.
 	version260 = 260
 
-	// version261 refreshes mysql.bind_info SQL digests after binding
-	// normalization starts skipping redundant parentheses for
-	// https://github.com/pingcap/tidb/issues/67363. It also backfills
-	// tidb_default_string_match_selectivity for upgraded clusters where the row
-	// in mysql.global_variables was never materialized when the variable was
-	// introduced.
+	// version261 backfills tidb_default_string_match_selectivity for upgraded
+	// clusters where the row in mysql.global_variables was never materialized
+	// when the variable was introduced.
 	version261 = 261
+
+	// version262 refreshes mysql.bind_info SQL digests after binding
+	// normalization starts skipping redundant parentheses for
+	// https://github.com/pingcap/tidb/issues/67363.
+	version262 = 262
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -523,7 +525,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version261
+var currentBootstrapVersion int64 = version262
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -709,6 +711,7 @@ var (
 		{version: version259, fn: upgradeToVer259},
 		{version: version260, fn: upgradeToVer260},
 		{version: version261, fn: upgradeToVer261},
+		{version: version262, fn: upgradeToVer262},
 	}
 )
 
@@ -2138,6 +2141,11 @@ func upgradeToVer260(s sessionapi.Session, _ int64) {
 	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
 }
 
+func upgradeToVer261(s sessionapi.Session, _ int64) {
+	// The prior default behavior is "0.8"; keep it for compatibility with old clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
+}
+
 type bindingDigestUpdate struct {
 	rowID       int64
 	originalSQL string
@@ -2145,10 +2153,7 @@ type bindingDigestUpdate struct {
 	duplicate   bool
 }
 
-func upgradeToVer261(s sessionapi.Session, _ int64) {
-	// The prior default behavior is "0.8"; keep it for compatibility with old clusters.
-	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
-
+func upgradeToVer262(s sessionapi.Session, _ int64) {
 	// PR #68359 changes binding digest normalization for issue #67363: redundant
 	// expression parentheses are no longer restored into the binding SQL text.
 	// Existing mysql.bind_info rows can therefore carry digests computed by the
@@ -2166,7 +2171,7 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		WHERE source != 'builtin'
 		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
 		return
 	}
 
@@ -2177,7 +2182,7 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
 			return
 		}
 		if req.NumRows() == 0 {
@@ -2245,7 +2250,7 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		req.Reset()
 	}
 	if closeErr := rs.Close(); closeErr != nil {
-		logutil.BgLogger().Fatal("upgradeToVer261 error", zap.Error(closeErr))
+		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(closeErr))
 	}
 
 	// Do not wrap these writes in one transaction. Some clusters can have many
