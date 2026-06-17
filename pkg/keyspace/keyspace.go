@@ -15,11 +15,14 @@
 package keyspace
 
 import (
+	"crypto/tls"
 	"fmt"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -27,6 +30,13 @@ import (
 const (
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
+
+	// KeyspaceMetaConfigGCManagementType is the key for GC management type in keyspace meta config.
+	KeyspaceMetaConfigGCManagementType = "safe_point_version"
+	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC means this keyspace calculates GC safe point by itself.
+	KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC = "v2"
+	// KeyspaceMetaConfigGCManagementTypeGlobalGC means this keyspace uses global GC safe point.
+	KeyspaceMetaConfigGCManagementTypeGlobalGC = "global_gc"
 )
 
 // CodecV1 represents api v1 codec.
@@ -68,4 +78,30 @@ func WrapZapcoreWithKeyspace() zap.Option {
 		}
 		return core
 	})
+}
+
+// BuildAPIContext returns a V1 API context for the default keyspace and a
+// V2 API context scoped to keyspaceName otherwise.
+func BuildAPIContext(keyspaceName string) pd.APIContext {
+	if len(keyspaceName) == 0 {
+		return pd.NewAPIContextV1()
+	}
+	return pd.NewAPIContextV2(keyspaceName)
+}
+
+// IsKeyspaceUseKeyspaceLevelGC returns true if keyspace meta config enables keyspace-level GC.
+func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if keyspaceMeta == nil {
+		return false
+	}
+	return keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType] == KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC
+}
+
+// NewEtcdSafePointKVWithCodec is used to add prefix when set keyspace.
+func NewEtcdSafePointKVWithCodec(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
+	var etcdNameSpace string
+	if IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
+		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
+	}
+	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
 }

@@ -74,3 +74,8 @@ func TestLogKVConvertFailed(t *testing.T) {
 	require.LessOrEqual(t, 500, len(string(content)))
 	require.NotContains(t, content, "exceeds maximum file size")
 }
+
+func TestDatumToValueStringForCastError(t *testing.T) {
+	require.Equal(t, "\"hello\"", datumToValueStringForCastError(types.NewStringDatum("hello")))
+	require.Equal(t, "0x000102", datumToValueStringForCastError(types.NewBytesDatum([]byte{0x00, 0x01, 0x02})))
+}

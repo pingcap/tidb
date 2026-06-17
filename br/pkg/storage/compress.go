@@ -35,11 +35,33 @@ func (w *withCompression) Create(ctx context.Context, name string, o *WriterOpti
 		return nil, errors.Trace(err)
 	}
 	// some implementation already wrap the writer, so we need to unwrap it
-	if bw, ok := writer.(*bufferedWriter); ok {
+	if bw, ok := writer.(*BufferedWriter); ok {
 		writer = bw.writer
 	}
-	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType)
+	cw := &CountingWriter{w: writer}
+	compressedWriter := newBufferedWriter(cw, hardcodedS3ChunkSize, w.compressType)
 	return compressedWriter, nil
+}
+
+type CountingWriter struct {
+	w    ExternalFileWriter
+	size uint64
+}
+
+var _ ExternalFileWriter = (*CountingWriter)(nil)
+
+func (cw *CountingWriter) Write(ctx context.Context, p []byte) (int, error) {
+	n, err := cw.w.Write(ctx, p)
+	cw.size += uint64(n)
+	return n, err
+}
+
+func (cw *CountingWriter) Close(ctx context.Context) error {
+	return cw.w.Close(ctx)
+}
+
+func (cw *CountingWriter) Size() uint64 {
+	return cw.size
 }
 
 func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {

@@ -903,7 +903,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	})
 
 	// TODO: remove version checker from `NewMgr`
-	mgr, err := NewMgr(c, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(c, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1544,12 +1544,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	sp := utils.BRServiceSafePoint{
-		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+	sp := utils.ServiceSafePoint{
+		ServiceSafePointTS: restoreTS,
+		TTL:                utils.DefaultBRGCSafePointTTL,
+		ID:                 utils.MakeSafePointID(),
 	}
-	g.Record("BackupTS", backupMeta.EndVersion)
+	g.Record("ServiceSafePointTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
@@ -1558,7 +1558,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp, cfg.KeyspaceName); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
@@ -2662,7 +2662,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	})
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}

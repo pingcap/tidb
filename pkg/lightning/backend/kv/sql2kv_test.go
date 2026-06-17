@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"testing"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -99,7 +100,9 @@ func TestEncode(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 	pairs, err := strictMode.Encode(rows, 1, []int{0, 1}, 1234)
-	require.Regexp(t, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint", err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason:")
+	require.Contains(t, err.Error(), "overflows tinyint")
 	require.Nil(t, pairs)
 
 	rowsWithPk := []types.Datum{
@@ -107,7 +110,9 @@ func TestEncode(t *testing.T) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	_, err = strictMode.Encode(rowsWithPk, 2, []int{0, 1}, 1234)
-	require.Regexp(t, "failed to cast value as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*", err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column '_tidb_rowid'. Expected type: bigint(20), received value: \"invalid-pk\". Reason:")
+	require.Contains(t, err.Error(), "Truncated")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
@@ -157,6 +162,34 @@ func TestEncode(t *testing.T) {
 			RowID: common.EncodeIntRowID(1),
 		},
 	}))
+}
+
+func TestEncodeCastErrorRedacted(t *testing.T) {
+	originalMode := perrors.RedactLogEnabled.Load()
+	t.Cleanup(func() { perrors.RedactLogEnabled.Store(originalMode) })
+	perrors.RedactLogEnabled.Store(perrors.RedactLogEnable)
+
+	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	cols := []*model.ColumnInfo{c1}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+		Logger: log.Logger{Logger: zap.NewNop()},
+	}, nil)
+	require.NoError(t, err)
+
+	pairs, err := encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, 1, []int{0, 1}, 1234)
+	require.Error(t, err)
+	require.Nil(t, pairs)
+	require.Contains(t, err.Error(), "received value: ?")
+	require.Contains(t, err.Error(), "overflows tinyint")
 }
 
 func TestDecode(t *testing.T) {

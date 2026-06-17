@@ -35,6 +35,7 @@ type writerPipe struct {
 	labels  prometheus.Labels
 
 	finishedFileSize     uint64
+	compressedFileSize   uint64
 	currentFileSize      uint64
 	currentStatementSize uint64
 
@@ -60,6 +61,7 @@ func newWriterPipe(
 		labels:  labels,
 
 		currentFileSize:      0,
+		compressedFileSize:   0,
 		currentStatementSize: 0,
 		fileSizeLimit:        fileSizeLimit,
 		statementSizeLimit:   statementSizeLimit,

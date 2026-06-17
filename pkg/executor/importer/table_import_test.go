@@ -191,17 +191,17 @@ func (c *mockPDClient) Close() {
 }
 
 func TestGetRegionSplitSizeKeys(t *testing.T) {
-	bak := NewClientWithContext
+	bak := NewClientWithAPIContext
 	t.Cleanup(func() {
-		NewClientWithContext = bak
+		NewClientWithAPIContext = bak
 	})
-	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	NewClientWithAPIContext = func(_ context.Context, _ pd.APIContext, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 	_, _, err := GetRegionSplitSizeKeys(context.Background())
 	require.ErrorContains(t, err, "mock error")
 
-	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	NewClientWithAPIContext = func(_ context.Context, _ pd.APIContext, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
 		return &mockPDClient{}, nil
 	}
 	_, _, err = GetRegionSplitSizeKeys(context.Background())

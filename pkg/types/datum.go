@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 	"unsafe"
 
@@ -2581,8 +2582,30 @@ func (ds *datumsSorter) Swap(i, j int) {
 
 var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
 
+func isPrintable(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
+	return datumsToString(datums, handleSpecialValue, false)
+}
+
+// DatumsToStringSmart is like DatumsToString, but renders non-printable strings as
+// hex literals so conversion errors can show binary payloads safely.
+func DatumsToStringSmart(datums []Datum, handleSpecialValue bool) (string, error) {
+	return datumsToString(datums, handleSpecialValue, true)
+}
+
+func datumsToString(datums []Datum, handleSpecialValue bool, binaryAsHex bool) (string, error) {
 	n := len(datums)
 	builder := strBuilderPool.Get().(*strings.Builder)
 	defer func() {
@@ -2620,9 +2643,13 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 			str = str[:logDatumLen]
 		}
 		if datum.Kind() == KindString {
-			builder.WriteString(`"`)
-			builder.WriteString(str)
-			builder.WriteString(`"`)
+			if !binaryAsHex || isPrintable(str) {
+				builder.WriteString(`"`)
+				builder.WriteString(str)
+				builder.WriteString(`"`)
+			} else {
+				fmt.Fprintf(builder, "0x%X", str)
+			}
 		} else {
 			builder.WriteString(str)
 		}

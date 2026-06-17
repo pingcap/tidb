@@ -54,6 +54,7 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 type DumpStatus struct {
 	CompletedTables   float64
 	FinishedBytes     float64
+	CompressedBytes   float64
 	FinishedRows      float64
 	EstimateTotalRows float64
 	TotalTables       int64
@@ -67,6 +68,7 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.TotalTables = atomic.LoadInt64(&d.totalTables)
 	ret.CompletedTables = ReadCounter(d.metrics.finishedTablesCounter)
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
+	ret.CompressedBytes = ReadGauge(d.metrics.compressedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
 	ret.CurrentSpeedBPS = d.speedRecorder.GetSpeed(ret.FinishedBytes)

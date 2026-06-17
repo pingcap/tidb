@@ -38,6 +38,26 @@ func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req
 	})
 }
 
+func TestEnsureMonotonicKeyRanges(t *testing.T) {
+	ctx := context.Background()
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("b"), EndKey: []byte("d")},
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+	})
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
+	require.True(t, reordered)
+	require.Equal(t, "a", string(ranges.At(0).StartKey))
+	require.Equal(t, "b", string(ranges.At(0).EndKey))
+	require.Equal(t, "b", string(ranges.At(1).StartKey))
+
+	sortedRanges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("b"), EndKey: []byte("c")},
+	})
+	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
+	require.False(t, reordered)
+}
+
 func TestBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
@@ -360,6 +380,42 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	for i, task := range tasks {
 		taskEqual(t, task, regionIDs[1], regionIDs[1], expectedTaskRanges[i]...)
 	}
+}
+
+func TestBuildTasksByBucketsRefillMissingBuckets(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	// region:  nil------------------n-----------x-----------nil
+	// buckets: nil----c----g----k---n----t------x-----------nil
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("n"), []byte("x"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'c'}, {'g'}, {'k'}, {'n'}}, regionIDs[0])
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'t'}, {'x'}}, regionIDs[1])
+	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'x'}, {}}, regionIDs[2])
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	// Pre-fill region cache via ScanRegions path. In the mock PD, ScanRegions returns regions without buckets,
+	// which simulates environments where scanning paths can't carry buckets meta and may pollute the cache.
+	_, err = cache.BatchLoadRegionsFromKey(bo.TiKVBackoffer(), []byte("a"), 3)
+	require.NoError(t, err)
+
+	req := &kv.Request{}
+	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "d"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[0], regionIDs[0], "a", "c")
+	taskEqual(t, tasks[1], regionIDs[0], regionIDs[0], "c", "d")
 }
 
 func TestSplitKeyRangesByLocationsWithoutBuckets(t *testing.T) {

@@ -339,7 +339,7 @@ type streamMgr struct {
 }
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -433,14 +433,14 @@ func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv
 }
 
 // setGCSafePoint sets the server safe point to PD.
-func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
+func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.ServiceSafePoint) error {
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.ServiceSafePointTS)
 	if err != nil {
 		return errors.Annotatef(err,
-			"failed to check gc safePoint, ts %v", sp.BackupTS)
+			"failed to check gc safePoint, ts %v", sp.ServiceSafePointTS)
 	}
 
-	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
+	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp, s.cfg.KeyspaceName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -630,10 +630,10 @@ func RunStreamStart(
 		cfg.StartTS = logInfo.logMaxTS
 		if err = streamMgr.setGCSafePoint(
 			ctx,
-			utils.BRServiceSafePoint{
-				ID:       utils.MakeSafePointID(),
-				TTL:      cfg.SafePointTTL,
-				BackupTS: cfg.StartTS,
+			utils.ServiceSafePoint{
+				ID:                 utils.MakeSafePointID(),
+				TTL:                cfg.SafePointTTL,
+				ServiceSafePointTS: cfg.StartTS,
 			},
 		); err != nil {
 			return errors.Trace(err)
@@ -641,10 +641,10 @@ func RunStreamStart(
 	} else {
 		if err = streamMgr.setGCSafePoint(
 			ctx,
-			utils.BRServiceSafePoint{
-				ID:       utils.MakeSafePointID(),
-				TTL:      cfg.SafePointTTL,
-				BackupTS: cfg.StartTS,
+			utils.ServiceSafePoint{
+				ID:                 utils.MakeSafePointID(),
+				TTL:                cfg.SafePointTTL,
+				ServiceSafePointTS: cfg.StartTS,
 			},
 		); err != nil {
 			return errors.Trace(err)
@@ -792,10 +792,10 @@ func RunStreamStop(
 	}
 
 	if err := streamMgr.setGCSafePoint(ctx,
-		utils.BRServiceSafePoint{
-			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      0, // 0 means remove this service safe point.
-			BackupTS: math.MaxUint64,
+		utils.ServiceSafePoint{
+			ID:                 buildPauseSafePointName(ti.Info.Name),
+			TTL:                0, // 0 means remove this service safe point.
+			ServiceSafePointTS: math.MaxUint64,
 		},
 	); err != nil {
 		log.Warn("failed to remove safe point", zap.String("error", err.Error()))
@@ -854,10 +854,10 @@ func RunStreamPause(
 	}
 	if err = streamMgr.setGCSafePoint(
 		ctx,
-		utils.BRServiceSafePoint{
-			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      cfg.SafePointTTL,
-			BackupTS: globalCheckPointTS,
+		utils.ServiceSafePoint{
+			ID:                 buildPauseSafePointName(ti.Info.Name),
+			TTL:                cfg.SafePointTTL,
+			ServiceSafePointTS: globalCheckPointTS,
 		},
 	); err != nil {
 		return errors.Trace(err)
@@ -944,10 +944,10 @@ func RunStreamResume(
 	}
 
 	if err := streamMgr.setGCSafePoint(ctx,
-		utils.BRServiceSafePoint{
-			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      utils.DefaultStreamStartSafePointTTL,
-			BackupTS: globalCheckPointTS,
+		utils.ServiceSafePoint{
+			ID:                 buildPauseSafePointName(ti.Info.Name),
+			TTL:                utils.DefaultStreamStartSafePointTTL,
+			ServiceSafePointTS: globalCheckPointTS,
 		},
 	); err != nil {
 		log.Warn("failed to remove safe point",
@@ -963,7 +963,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer cancel()
 	log.Info("starting", zap.String("cmd", cmdName))
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err
@@ -1049,7 +1049,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	} else {
 		printer = stream.PrintTaskWithJSON(console)
 	}
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err

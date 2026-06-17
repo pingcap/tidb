@@ -54,7 +54,7 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 			return nil, err
 		}
 	}
-	mgr, err := pdutil.NewPdController(ctx, cfg.PD, tc, cfg.TLS.ToPDSecurityOption())
+	mgr, err := pdutil.NewPdController(ctx, cfg.PD, tc, cfg.TLS.ToPDSecurityOption(), cfg.KeyspaceName)
 	if err != nil {
 		return nil, err
 	}
@@ -219,18 +219,18 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectio
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
-	sp := utils.BRServiceSafePoint{
-		ID:       spID,
-		TTL:      int64(cx.cfg.TTL.Seconds()),
-		BackupTS: cx.cfg.SafePoint,
+	sp := utils.ServiceSafePoint{
+		ID:                 spID,
+		TTL:                int64(cx.cfg.TTL.Seconds()),
+		ServiceSafePointTS: cx.cfg.SafePoint,
 	}
-	if sp.BackupTS == 0 {
+	if sp.ServiceSafePointTS == 0 {
 		rts, err := cx.pdMgr.GetMinResolvedTS(cx)
 		if err != nil {
 			return err
 		}
 		logutil.CL(cx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
-		sp.BackupTS = rts
+		sp.ServiceSafePointTS = rts
 	}
 	err = utils.StartServiceSafePointKeeper(cx, cx.pdMgr.GetPDClient(), sp)
 	if err != nil {
@@ -238,11 +238,11 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 	}
 	cx.ReadyL("pause_gc", zap.Object("safepoint", sp))
 	defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
-		cancelSP := utils.BRServiceSafePoint{
+		cancelSP := utils.ServiceSafePoint{
 			ID:  sp.ID,
 			TTL: 0,
 		}
-		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP)
+		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP, cx.cfg.Config.KeyspaceName)
 	})
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,

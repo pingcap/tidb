@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
@@ -151,13 +152,18 @@ func NewPdController(
 	pdAddrs []string,
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
+	keyspaceNames ...string,
 ) (*PdController, error) {
+	keyspaceName := ""
+	if len(keyspaceNames) > 0 {
+		keyspaceName = keyspaceNames[0]
+	}
 	maxCallMsgSize := []grpc.DialOption{
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 	}
-	pdClient, err := pd.NewClientWithContext(
-		ctx, pdAddrs, securityOption,
+	pdClient, err := pd.NewClientWithAPIContext(
+		ctx, keyspace.BuildAPIContext(keyspaceName), pdAddrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.

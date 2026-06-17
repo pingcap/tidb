@@ -85,16 +85,21 @@ var (
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Lightning:KV:ErrKVRaftProposalDropped"))
 	ErrNoLeader              = errors.Normalize("write to tikv with no leader returned, region '%d', leader: %d", errors.RFCCodeText("Lightning:KV:ErrNoLeader"))
 
-	ErrUnknownBackend       = errors.Normalize("unknown backend %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownBackend"))
-	ErrCheckLocalFile       = errors.Normalize("cannot find local file for table: %s engineDir: %s", errors.RFCCodeText("Lightning:Restore:ErrCheckLocalFile"))
-	ErrOpenDuplicateDB      = errors.Normalize("open duplicate db error", errors.RFCCodeText("Lightning:Restore:ErrOpenDuplicateDB"))
-	ErrSchemaNotExists      = errors.Normalize("table `%s`.`%s` schema not found", errors.RFCCodeText("Lightning:Restore:ErrSchemaNotExists"))
-	ErrInvalidSchemaStmt    = errors.Normalize("invalid schema statement: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidSchemaStmt"))
-	ErrCreateSchema         = errors.Normalize("create schema failed, table: %s, stmt: %s", errors.RFCCodeText("Lightning:Restore:ErrCreateSchema"))
-	ErrUnknownColumns       = errors.Normalize("unknown columns in header (%s) for table %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownColumns"))
-	ErrChecksumMismatch     = errors.Normalize("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)", errors.RFCCodeText("Lighting:Restore:ErrChecksumMismatch"))
-	ErrRestoreTable         = errors.Normalize("restore table %s failed", errors.RFCCodeText("Lightning:Restore:ErrRestoreTable"))
-	ErrEncodeKV             = errors.Normalize("encode kv error in file %s at offset %d", errors.RFCCodeText("Lightning:Restore:ErrEncodeKV"))
+	ErrUnknownBackend    = errors.Normalize("unknown backend %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownBackend"))
+	ErrCheckLocalFile    = errors.Normalize("cannot find local file for table: %s engineDir: %s", errors.RFCCodeText("Lightning:Restore:ErrCheckLocalFile"))
+	ErrOpenDuplicateDB   = errors.Normalize("open duplicate db error", errors.RFCCodeText("Lightning:Restore:ErrOpenDuplicateDB"))
+	ErrSchemaNotExists   = errors.Normalize("table `%s`.`%s` schema not found", errors.RFCCodeText("Lightning:Restore:ErrSchemaNotExists"))
+	ErrInvalidSchemaStmt = errors.Normalize("invalid schema statement: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidSchemaStmt"))
+	ErrCreateSchema      = errors.Normalize("create schema failed, table: %s, stmt: %s", errors.RFCCodeText("Lightning:Restore:ErrCreateSchema"))
+	ErrUnknownColumns    = errors.Normalize("unknown columns in header (%s) for table %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownColumns"))
+	ErrChecksumMismatch  = errors.Normalize("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)", errors.RFCCodeText("Lighting:Restore:ErrChecksumMismatch"))
+	ErrRestoreTable      = errors.Normalize("restore table %s failed", errors.RFCCodeText("Lightning:Restore:ErrRestoreTable"))
+	ErrEncodeKV          = errors.Normalize("encode kv error in file %s at offset %d", errors.RFCCodeText("Lightning:Restore:ErrEncodeKV"))
+	ErrCastValue         = errors.Normalize(
+		"Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.",
+		errors.RFCCodeText("Import:ErrCastValue"),
+		errors.RedactArgs([]int{2}),
+	)
 	ErrAllocTableRowIDs     = errors.Normalize("allocate table row id error", errors.RFCCodeText("Lightning:Restore:ErrAllocTableRowIDs"))
 	ErrInvalidMetaStatus    = errors.Normalize("invalid meta status: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidMetaStatus"))
 	ErrTableIsChecksuming   = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
@@ -137,8 +142,9 @@ func (w *withStack) Format(s fmt.State, verb rune) {
 }
 
 // NormalizeError converts an arbitrary error to *errors.Error based above predefined errors.
-// If the underlying err is already an *error.Error which is prefixed by "Lightning:", leave
-// error ID unchanged. Otherwise, converts the error ID to Lightning's predefined error IDs.
+// If the underlying err is already an *error.Error which is prefixed by "Lightning:" or
+// "Import:", leave error ID unchanged. Otherwise, converts the error ID to Lightning's
+// predefined error IDs.
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
@@ -169,7 +175,22 @@ func NormalizeError(err error) error {
 		// A workaround for https://github.com/pingcap/tidb/issues/32133.
 		// Ensure that error code description is always placed at the beginning of the error string.
 		if errMsg != nErrMsg && strings.HasSuffix(errMsg, ": "+nErrMsg) {
-			errMsg = errMsg[:len(errMsg)-len(nErrMsg)-2]
+			contextMsg := errMsg[:len(errMsg)-len(nErrMsg)-2]
+			if strings.HasPrefix(string(normalizedErr.ID()), "Import:") {
+				// Import errors like ErrCastValue already carry the actionable detail in
+				// their normalized message body. Preserve that detail and append the outer
+				// file/row context instead of collapsing the output to context only.
+				errMsg = normalizedErr.GetMsg()
+				if len(contextMsg) > 0 {
+					if strings.HasSuffix(errMsg, ".") {
+						errMsg += " " + contextMsg
+					} else {
+						errMsg += ": " + contextMsg
+					}
+				}
+			} else {
+				errMsg = contextMsg
+			}
 			causeErr := normalizedErr.Unwrap()
 			normalizedErr = errors.Normalize(errMsg, errors.RFCCodeText(string(normalizedErr.RFCCode())))
 			if causeErr != nil {
@@ -180,7 +201,7 @@ func NormalizeError(err error) error {
 	}
 
 	if normalizedErr != nil {
-		if strings.HasPrefix(string(normalizedErr.ID()), "Lightning:") {
+		if strings.HasPrefix(string(normalizedErr.ID()), "Lightning:") || strings.HasPrefix(string(normalizedErr.ID()), "Import:") {
 			return err
 		}
 		// Convert BR error id to Lightning error id.

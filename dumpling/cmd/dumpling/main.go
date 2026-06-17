@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/pingcap/tidb/dumpling/cli"
 	"github.com/pingcap/tidb/dumpling/export"
@@ -25,6 +27,40 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
+
+func writeTerminationLog(dumper *export.Dumper) {
+	exportSizePath := "/dev/termination-log"
+
+	s := dumper.GetStatus()
+	value := fmt.Sprintf("[FinishedSize]: %f\n[CompressedSize]: %f\n", s.FinishedBytes, s.CompressedBytes)
+
+	file, err := os.OpenFile(exportSizePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		dumper.L().Error("failed to open termination log file", zap.Error(err), zap.String("path", exportSizePath))
+		return
+	}
+
+	_, writeErr := file.WriteString(value)
+	syncErr := file.Sync() // Force flush to disk
+	closeErr := file.Close()
+
+	if writeErr != nil {
+		dumper.L().Error("failed to write to termination log", zap.Error(writeErr))
+		return
+	}
+	if syncErr != nil {
+		dumper.L().Error("failed to sync termination log", zap.Error(syncErr))
+		return
+	}
+	if closeErr != nil {
+		dumper.L().Error("failed to close termination log", zap.Error(closeErr))
+		return
+	}
+
+	dumper.L().Info("successfully wrote export size to termination log",
+		zap.Float64("finishedBytes", s.FinishedBytes),
+		zap.Float64("compressedBytes", s.CompressedBytes))
+}
 
 func main() {
 	pflag.Usage = func() {
@@ -72,6 +108,17 @@ func main() {
 		fmt.Printf("\ncreate dumper failed: %s\n", err.Error())
 		os.Exit(1)
 	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-stop
+		dumper.L().Info(fmt.Sprintf("received signal %v, preparing to terminate", sig))
+		writeTerminationLog(dumper)
+		if err := dumper.Close(); err != nil {
+			dumper.L().Error("error closing dumper", zap.Error(err))
+		}
+	}()
 	err = dumper.Dump()
 	_ = dumper.Close()
 	if err != nil {
@@ -79,5 +126,8 @@ func main() {
 		fmt.Printf("\ndump failed: %s\n", err.Error())
 		os.Exit(1)
 	}
+
+	// Write final status to termination log on successful completion
+	writeTerminationLog(dumper)
 	dumper.L().Info("dump data successfully, dumpling will exit now")
 }

@@ -1706,7 +1706,7 @@ func (cfg *Config) AdjustTaskID() error {
 	}
 
 	ctx := context.Background()
-	pdCtl, err := pdutil.NewPdController(ctx, strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig(), tls.ToPDSecurityOption())
+	pdCtl, err := pdutil.NewPdController(ctx, strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig(), tls.ToPDSecurityOption(), cfg.TikvImporter.KeyspaceName)
 	if err != nil {
 		log.L().Error("fail to create PD controller", zap.Error(err))
 		return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)

@@ -179,12 +179,12 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 	}
 }
 
-type bufferedWriter struct {
+type BufferedWriter struct {
 	buf    interceptBuffer
 	writer ExternalFileWriter
 }
 
-func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
+func (u *BufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 	bytesWritten := 0
 	for u.buf.Len()+len(p) > u.buf.Cap() {
 		// We won't fit p in this chunk
@@ -216,7 +216,7 @@ func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 	return bytesWritten, errors.Trace(err)
 }
 
-func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
+func (u *BufferedWriter) uploadChunk(ctx context.Context) error {
 	if u.buf.Len() == 0 {
 		return nil
 	}
@@ -226,7 +226,7 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (u *bufferedWriter) Close(ctx context.Context) error {
+func (u *BufferedWriter) Close(ctx context.Context) error {
 	u.buf.Close()
 	err := u.uploadChunk(ctx)
 	if err != nil {
@@ -235,14 +235,21 @@ func (u *bufferedWriter) Close(ctx context.Context) error {
 	return u.writer.Close(ctx)
 }
 
+func (u *BufferedWriter) Size() uint64 {
+	if cw, ok := u.writer.(*CountingWriter); ok {
+		return cw.Size()
+	}
+	return 0
+}
+
 // NewUploaderWriter wraps the Writer interface over an uploader.
 func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) ExternalFileWriter {
 	return newBufferedWriter(writer, chunkSize, compressType)
 }
 
 // newBufferedWriter is used to build a buffered writer.
-func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) *bufferedWriter {
-	return &bufferedWriter{
+func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) *BufferedWriter {
+	return &BufferedWriter{
 		writer: writer,
 		buf:    newInterceptBuffer(chunkSize, compressType),
 	}

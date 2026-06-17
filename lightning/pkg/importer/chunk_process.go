@@ -329,6 +329,7 @@ func (cr *chunkProcessor) encodeLoop(
 			_ = dupIgnoreRowsIter.Close()
 		}()
 	}
+	rowNumber := 0
 
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
@@ -403,6 +404,7 @@ func (cr *chunkProcessor) encodeLoop(
 				err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(&cr.chunk.Key, newOffset)
 				return
 			}
+			rowNumber++
 			readDur += time.Since(readDurStart)
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
@@ -473,6 +475,7 @@ func (cr *chunkProcessor) encodeLoop(
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
 					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
+					err = errors.Annotatef(err, "when encoding %d-th data row in file %s", rowNumber, cr.chunk.Key.Path)
 				}
 				hasIgnoredEncodeErr = true
 			}

@@ -76,7 +76,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	summary.CollectUint("resolve-ts", resolveTS)
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -94,10 +94,10 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	// stop gc before restore tikv data
-	sp := utils.BRServiceSafePoint{
-		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+	sp := utils.ServiceSafePoint{
+		ServiceSafePointTS: restoreTS,
+		TTL:                utils.DefaultBRGCSafePointTTL,
+		ID:                 utils.MakeSafePointID(),
 	}
 
 	// TODO: since data restore does not have tidb up, it looks we can remove this keeper

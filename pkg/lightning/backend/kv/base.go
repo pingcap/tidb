@@ -311,6 +311,17 @@ func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum,
 	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols)
 }
 
+func datumToValueStringForCastError(d types.Datum) string {
+	if d.Kind() == types.KindBytes {
+		d = types.NewStringDatum(d.GetString())
+	}
+	s, err := types.DatumsToStringSmart([]types.Datum{d}, true)
+	if err != nil {
+		return "<unprintable>"
+	}
+	return s
+}
+
 // LogKVConvertFailed logs the error when converting a row to KV pair failed.
 func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
 	var original types.Datum
@@ -337,10 +348,14 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 			zap.Int("columnID", j+1))
 	}
-	return errors.Annotatef(
-		err,
-		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
-	)
+
+	if err == nil {
+		return nil
+	}
+
+	badValue := datumToValueStringForCastError(original)
+	reason := err.Error()
+	return common.ErrCastValue.GenWithStackByArgs(colInfo.Name.O, &colInfo.FieldType, badValue, reason)
 }
 
 // LogEvalGenExprFailed logs the error when evaluating the generated column expression failed.

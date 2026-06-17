@@ -822,8 +822,8 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 filippo.io/edwards25519 v1.1.1 h1:YpjwWWlNmGIDyXOn8zLzqiD+9TyIlPhGFG96P39uBpw=
 filippo.io/edwards25519 v1.1.1/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260615160850-9cb93524c21f h1:BPUXvaHICFuk2yJ/eardsho8prBCoCTIIkfWa5AwK6A=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260615160850-9cb93524c21f/go.mod h1:LH7jpSxI7G51fHwGF3n2zSVCQFZiG6XlfF93VfDpuh0=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260617054701-a8103c00c26a h1:br940DvL4H3t8YLy3HuuF0w4h3wx+n+hLKI8Gk/SWO8=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260617054701-a8103c00c26a/go.mod h1:LH7jpSxI7G51fHwGF3n2zSVCQFZiG6XlfF93VfDpuh0=
 git.pingcap.net/pingkai/kvproto v0.0.0-20260615070108-5e194658aed9 h1:mdEP3szjIhI8943nWc9sxy5mu7aEZ3ldy114dDDt8fo=
 git.pingcap.net/pingkai/kvproto v0.0.0-20260615070108-5e194658aed9/go.mod h1:RlL/AApg0eiItGiSKuGfzK1mjpRgU8tRA7G/pJBMZWU=
 git.pingcap.net/pingkai/pd/client v0.0.0-20260615154509-9be26310f245 h1:k+TyXwcIYmLwG5WxIGPef5mtgThEpz/E3pRet57djys=
@@ -1627,8 +1627,8 @@ github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500/go.mod h1:+n
 github.com/shirou/gopsutil/v3 v3.21.12/go.mod h1:BToYZVTlSVlfazpDDYFnsVZLaoRG+g8ufT6fPQLdJzA=
 github.com/shirou/gopsutil/v3 v3.24.5 h1:i0t8kL+kQTvpAYToeuiVk3TgDeKOFioZO3Ztz/iZ9pI=
 github.com/shirou/gopsutil/v3 v3.24.5/go.mod h1:bsoOS1aStSs9ErQ1WWfxllSeS1K5D+U30r2NfcubMVk=
-github.com/shoenig/go-m1cpu v0.1.7 h1:C76Yd0ObKR82W4vhfjZiCp0HxcSZ8Nqd84v+HZ0qyI0=
-github.com/shoenig/go-m1cpu v0.1.7/go.mod h1:KkDOw6m3ZJQAPHbrzkZki4hnx+pDRR1Lo+ldA56wD5w=
+github.com/shoenig/go-m1cpu v0.2.1 h1:yqRB4fvOge2+FyRXFkXqsyMoqPazv14Yyy+iyccT2E4=
+github.com/shoenig/go-m1cpu v0.2.1/go.mod h1:KkDOw6m3ZJQAPHbrzkZki4hnx+pDRR1Lo+ldA56wD5w=
 github.com/shoenig/test v1.7.0 h1:eWcHtTXa6QLnBvm0jgEabMRN/uJ4DMV3M8xUGgRkZmk=
 github.com/shoenig/test v1.7.0/go.mod h1:UxJ6u/x2v/TNs/LoLxBNJRV9DiwBBKYxXSyczsBHFoI=
 github.com/shopspring/decimal v1.2.0 h1:abSATXmQEYyShuxI4/vyW3tV1MrKAJzCZ/0zLUXYbsQ=

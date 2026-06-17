@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -267,6 +268,7 @@ type targetInfoGetter struct {
 	tls       *common.TLS
 	targetDB  *sql.DB
 	pdHTTPCli pdhttp.Client
+	kvstore   kv.Storage
 }
 
 // NewTargetInfoGetter creates an TargetInfoGetter with local backend
@@ -276,24 +278,25 @@ func NewTargetInfoGetter(
 	tls *common.TLS,
 	db *sql.DB,
 	pdHTTPCli pdhttp.Client,
-	_ kv.Storage,
+	kvstore kv.Storage,
 ) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:       tls,
 		targetDB:  db,
 		pdHTTPCli: pdHTTPCli,
+		kvstore:   kvstore,
 	}
 }
 
 // FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
 func (g *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
-	return tikv.FetchRemoteDBModelsFromTLS(ctx, g.tls)
+	return tikv.FetchRemoteDBModels(ctx, g.kvstore)
 }
 
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
 // It implements the `TargetInfoGetter` interface.
 func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+	return tikv.FetchRemoteTableModels(ctx, g.kvstore, schemaName)
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
@@ -589,8 +592,9 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
-	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
+	apiContext := keyspace.BuildAPIContext(config.KeyspaceName)
+	pdCli, err = pd.NewClientWithAPIContext(
+		ctx, apiContext, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
@@ -610,7 +614,7 @@ func NewBackend(
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	spkv, err = keyspace.NewEtcdSafePointKVWithCodec(strings.Split(config.PDAddr, ","), pdCliForTiKV.GetCodec(), tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}

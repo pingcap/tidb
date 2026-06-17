@@ -736,7 +736,7 @@ func (gs *tidbGlue) StartProgress(_ context.Context, cmdName string, total int64
 // Record implements glue.Glue
 func (gs *tidbGlue) Record(name string, value uint64) {
 	switch name {
-	case "BackupTS":
+	case "ServiceSafePointTS":
 		gs.info.backupTS = value
 	case "RestoreTS":
 		gs.info.restoreTS = value

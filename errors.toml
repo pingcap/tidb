@@ -331,6 +331,11 @@ error = '''
 stream task has no storage
 '''
 
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)

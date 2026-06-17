@@ -30,10 +30,15 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -553,6 +558,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	mockTarget := mock.NewTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TiDB.SQLMode = mysql.ModeStrictAllTables
 	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
@@ -607,6 +613,72 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 		require.Equal(t, subTest.ExpectIsOrdered, isRowOrderedFromSample)
 	}
 }
+
+func TestGetPreInfoSampleSourceTypeErrorIncludesRowContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dataFileName := "/db01/tbl01/tbl01.data.001.csv"
+	mockDataMap := map[string]*mock.DBSourceData{
+		"db01": {
+			Name: "db01",
+			Tables: map[string]*mock.TableSourceData{
+				"tbl01": {
+					DBName:    "db01",
+					TableName: "tbl01",
+					SchemaFile: &mock.SourceFile{
+						FileName: "/db01/tbl01/tbl01.schema.sql",
+						Data:     []byte("CREATE TABLE db01.tbl01 (id BIGINT UNSIGNED PRIMARY KEY, ival INTEGER, sval VARCHAR(64));"),
+					},
+					DataFiles: []*mock.SourceFile{{
+						FileName: dataFileName,
+						Data: []byte(`id,ival,sval
+?,111,"aaa"
+`),
+					}},
+				},
+			},
+		},
+	}
+	mockSrc, err := mock.NewImportSource(mockDataMap)
+	require.NoError(t, err)
+	mockTarget := mock.NewTargetInfo()
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TiDB.SQLMode = mysql.ModeStrictAllTables
+	ig, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
+	require.NoError(t, err)
+	ig.encBuilder = typeErrorEncodingBuilder{}
+	errMgr := errormanager.New(nil, cfg, log.L())
+
+	mdDBMeta := mockSrc.GetAllDBFileMetas()[0]
+	mdTblMeta := mdDBMeta.Tables[0]
+	dbInfos, err := ig.GetAllTableStructures(ctx)
+	require.NoError(t, err)
+
+	_, _, err = ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, errMgr, common.DefaultImportantVariables)
+	require.Error(t, err)
+	normalizedErr := common.NormalizeError(err)
+	require.ErrorContains(t, normalizedErr, "Value conversion failed for column 'id'")
+	require.ErrorContains(t, normalizedErr, "when encoding 1-th data row in file /db01/tbl01/tbl01.data.001.csv")
+}
+
+type typeErrorEncodingBuilder struct{}
+
+func (typeErrorEncodingBuilder) NewEncoder(context.Context, *encode.EncodingConfig) (encode.Encoder, error) {
+	return typeErrorEncoder{}, nil
+}
+
+func (typeErrorEncodingBuilder) MakeEmptyRows() encode.Rows {
+	return kv.MakeRowsFromKvPairs(nil)
+}
+
+type typeErrorEncoder struct{}
+
+func (typeErrorEncoder) Encode([]types.Datum, int64, []int, int64) (encode.Row, error) {
+	return nil, common.ErrCastValue.GenWithStackByArgs("id", "bigint(20) UNSIGNED", "?", "[types:1292]Truncated incorrect DOUBLE value: '?'")
+}
+
+func (typeErrorEncoder) Close() {}
 
 func TestGetPreInfoSampleSourceCompressed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

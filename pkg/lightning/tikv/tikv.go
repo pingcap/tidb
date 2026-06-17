@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	model2 "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -200,24 +202,34 @@ func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
 	}
 }
 
-// FetchRemoteDBModelsFromTLS obtains the remote DB models from the given TLS.
-func FetchRemoteDBModelsFromTLS(ctx context.Context, tls *common.TLS) ([]*model.DBInfo, error) {
-	var dbs []*model.DBInfo
-	err := tls.GetJSON(ctx, "/schema", &dbs)
+// FetchRemoteDBModels obtains the remote DB models from the given TLS.
+func FetchRemoteDBModels(ctx context.Context, kvstore kv.Storage) ([]*model.DBInfo, error) {
+	curVer, err := kvstore.CurrentVersion(kv.GlobalTxnScope)
+
 	if err != nil {
-		return nil, errors.Annotatef(err, "cannot read db schemas from remote")
+		return nil, errors.Trace(err)
 	}
-	return dbs, nil
+	snap := kvstore.GetSnapshot(curVer)
+	metaSnap := meta.NewReader(snap)
+	return metaSnap.ListDatabases()
 }
 
-// FetchRemoteTableModelsFromTLS obtains the remote table models from the given TLS.
-func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
-	var tables []*model.TableInfo
-	err := tls.GetJSON(ctx, "/schema/"+schema, &tables)
+// FetchRemoteTableModels obtains the tables from the database `schemaName`.
+func FetchRemoteTableModels(ctx context.Context, kvstore kv.Storage, schemaName string) ([]*model.TableInfo, error) {
+	curVer, err := kvstore.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
-		return nil, errors.Annotatef(err, "cannot read schema '%s' from remote", schema)
+		return nil, errors.Trace(err)
 	}
-	return tables, nil
+	snap := kvstore.GetSnapshot(curVer)
+	metaSnap := meta.NewReader(snap)
+	dbs, err := metaSnap.ListDatabases()
+	dbName := model2.NewCIStr(schemaName)
+	for _, db := range dbs {
+		if db.Name.L == dbName.L {
+			return metaSnap.ListTables(ctx, db.ID)
+		}
+	}
+	return nil, nil
 }
 
 // CheckPDVersion checks the version of PD.

@@ -487,9 +487,9 @@ func (rc *SnapClient) InitCheckpoint(
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
 			return checkpointSetWithTableID, nil, 0, errors.Errorf(
-				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+				"The current snapshot restore want to restore cluster to the ServiceSafePointTS[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+					"or just clean the checkpoint %v if the cluster has been cleaned up.",
 				rc.backupMeta.EndVersion, meta.RestoredTS, snapshotCheckpointMetaManager,
 			)
 		}

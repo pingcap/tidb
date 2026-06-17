@@ -758,7 +758,7 @@ outloop:
 			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
 			if encodeErr != nil {
-				return 0.0, false, errors.Annotatef(encodeErr, "in file at offset %d", offset)
+				return 0.0, false, errors.Annotatef(encodeErr, "when encoding %d-th data row in file %s", rowCount, sampleFile.Path)
 			}
 			if rowCount < maxSampleRowCount {
 				continue

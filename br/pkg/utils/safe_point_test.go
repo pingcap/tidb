@@ -37,14 +37,15 @@ func TestCheckGCSafepoint(t *testing.T) {
 
 func TestCheckUpdateServiceSafepoint(t *testing.T) {
 	ctx := context.Background()
+	keyspaceName := ""
 	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 	{
 		// nothing happened, because current safepoint is large than servicee safepoint.
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
+		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.ServiceSafePoint{
 			"BR_SERVICE",
 			1,
 			1,
-		})
+		}, keyspaceName)
 		require.NoError(t, err)
 		curSafePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
 		require.NoError(t, err)
@@ -52,11 +53,11 @@ func TestCheckUpdateServiceSafepoint(t *testing.T) {
 	}
 	{
 		// register br service safepoint
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
+		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.ServiceSafePoint{
 			"BR_SERVICE",
 			1,
 			2334,
-		})
+		}, keyspaceName)
 		require.NoError(t, err)
 		curSafePoint, find := pdClient.GetServiceSafePoint("BR_SERVICE")
 		// update with new safepoint - 1.
@@ -65,11 +66,11 @@ func TestCheckUpdateServiceSafepoint(t *testing.T) {
 	}
 	{
 		// remove br service safepoint
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
+		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.ServiceSafePoint{
 			"BR_SERVICE",
 			0,
 			math.MaxUint64,
-		})
+		}, keyspaceName)
 		require.NoError(t, err)
 		_, find := pdClient.GetServiceSafePoint("BR_SERVICE")
 		require.False(t, find)
@@ -124,50 +125,50 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 
 	cases := []struct {
-		sp utils.BRServiceSafePoint
+		sp utils.ServiceSafePoint
 		ok bool
 	}{
 		{
-			utils.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      10,
-				BackupTS: 2333 + 1,
+			utils.ServiceSafePoint{
+				ID:                 "br",
+				TTL:                10,
+				ServiceSafePointTS: 2333 + 1,
 			},
 			true,
 		},
 
 		// Invalid TTL.
 		{
-			utils.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      0,
-				BackupTS: 2333 + 1,
+			utils.ServiceSafePoint{
+				ID:                 "br",
+				TTL:                0,
+				ServiceSafePointTS: 2333 + 1,
 			}, false,
 		},
 
 		// Invalid ID.
 		{
-			utils.BRServiceSafePoint{
-				ID:       "",
-				TTL:      0,
-				BackupTS: 2333 + 1,
+			utils.ServiceSafePoint{
+				ID:                 "",
+				TTL:                0,
+				ServiceSafePointTS: 2333 + 1,
 			},
 			false,
 		},
 
-		// BackupTS is too small.
+		// ServiceSafePointTS is too small.
 		{
-			utils.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      10,
-				BackupTS: 2333,
+			utils.ServiceSafePoint{
+				ID:                 "br",
+				TTL:                10,
+				ServiceSafePointTS: 2333,
 			}, false,
 		},
 		{
-			utils.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      10,
-				BackupTS: 2333 - 1,
+			utils.ServiceSafePoint{
+				ID:                 "br",
+				TTL:                10,
+				ServiceSafePointTS: 2333 - 1,
 			},
 			false,
 		},

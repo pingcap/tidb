@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/version"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1969,10 +1970,10 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		return errors.Trace(err)
 	}
 	// set gc safepoint for checksum
-	sp := utils.BRServiceSafePoint{
-		BackupTS: startTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+	sp := utils.ServiceSafePoint{
+		ServiceSafePointTS: startTS,
+		TTL:                utils.DefaultBRGCSafePointTTL,
+		ID:                 utils.MakeSafePointID(),
 	}
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
@@ -1981,7 +1982,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp, tidbconfig.GetGlobalKeyspaceName()); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)

@@ -283,7 +283,7 @@ require (
 	github.com/scritchley/orc v0.0.0-20210513144143-06dddf1ad665
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
-	github.com/shoenig/go-m1cpu v0.1.7 // indirect
+	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
@@ -344,7 +344,7 @@ replace (
 
 replace (
 	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260615070108-5e194658aed9
-	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260615160850-9cb93524c21f
+	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260617054701-a8103c00c26a
 	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260615154509-9be26310f245
 )
 
