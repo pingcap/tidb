@@ -434,6 +434,8 @@ type Job struct {
 
 	// PauseReason records the durable reason when a job is paused by TiDB itself.
 	PauseReason *JobPauseReason `json:"pause_reason,omitempty"`
+	// ResumeReason records why a job is explicitly resumed after a durable pause.
+	ResumeReason *JobResumeReason `json:"resume_reason,omitempty"`
 
 	// TraceInfo indicates the information for SQL tracing
 	TraceInfo *tracing.TraceInfo `json:"trace_info"`
@@ -728,6 +730,23 @@ func (job *Job) ClearPauseReason() {
 	job.PauseReason = nil
 }
 
+// HasResumeReason returns whether the job has a specific resume reason.
+func (job *Job) HasResumeReason(reasonType string) bool {
+	return job.ResumeReason != nil && job.ResumeReason.Type == reasonType
+}
+
+// SetResumeReason records a durable resume reason.
+func (job *Job) SetResumeReason(reasonType string) {
+	job.ResumeReason = &JobResumeReason{
+		Type: reasonType,
+	}
+}
+
+// ClearResumeReason clears the durable resume reason.
+func (job *Job) ClearResumeReason() {
+	job.ResumeReason = nil
+}
+
 // IsPausedBySystemForKVDiskFull returns whether the job was paused by system due to TiKV disk full.
 func (job *Job) IsPausedBySystemForKVDiskFull() bool {
 	return job.IsPausedBySystem() && job.HasPauseReason(JobPauseReasonKVDiskFull)
@@ -1016,6 +1035,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Charset:         parentJob.Charset,
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
+		ResumeReason:    parentJob.ResumeReason,
 		TraceInfo:       parentJob.TraceInfo,
 		SQLMode:         parentJob.SQLMode,
 		SessionVars:     parentJob.SessionVars,
@@ -1250,12 +1270,19 @@ const (
 const (
 	// JobPauseReasonKVDiskFull indicates TiDB paused the DDL job because TiKV reported disk full.
 	JobPauseReasonKVDiskFull = "tikv_disk_full"
+	// JobResumeReasonKVDiskFull indicates the end user resumed a DDL job paused because TiKV reported disk full.
+	JobResumeReasonKVDiskFull = "tikv_disk_full"
 )
 
 // JobPauseReason records why a DDL job was paused.
 type JobPauseReason struct {
 	Type    string `json:"type"`
 	Message string `json:"message,omitempty"`
+}
+
+// JobResumeReason records why a DDL job was resumed.
+type JobResumeReason struct {
+	Type string `json:"type"`
 }
 
 // String implements fmt.Stringer interface.
