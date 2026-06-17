@@ -640,7 +640,7 @@ insert into t values(1, 255, 6.8, 6.08, 1);
 #   Darwin arm64          : 1.1808222222222222
 #   Rocky Linux x86_64    : 1.180822222222222
 #   CI Linux x86_64 seen  : 1.1808222222222229
---replace_regex /^1\.180822222222222[29]$/1.180822222222222/
+--replace_regex /\b1\.180822222222222[29]\b/1.180822222222222/
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 insert into t values(2, 322, 0.8, 2.22, 6);
 --sorted_result
