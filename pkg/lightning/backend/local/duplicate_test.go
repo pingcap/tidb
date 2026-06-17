@@ -18,11 +18,7 @@ import (
 	"context"
 	"testing"
 
-<<<<<<< HEAD:pkg/lightning/backend/local/duplicate_test.go
-=======
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
->>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/ingestor/ingestctrl/duplicate_test.go
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -216,7 +212,7 @@ func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
 
 	// ErrFoundDuplicateKeys carries raw KV bytes for downstream duplicate decoding.
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data1RowKey, data1RowValue)
-	rawKey, rawValue, err = ingestctrl.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
+	rawKey, rawValue, err = local.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	require.NoError(t, err)
 	require.Equal(t, data1RowKey, rawKey)
 	require.Equal(t, data1RowValue, rawValue)

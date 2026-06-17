@@ -22,15 +22,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:pkg/disttask/importinto/encode_and_sort_operator.go
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
-=======
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/dxf/operator"
->>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/dxf/importinto/encode_and_sort_operator.go
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -231,20 +225,12 @@ func (w *chunkWorker) Close() {
 		// Note: we cannot ignore close error as we're writing to S3 or GCS.
 		// ignore error might cause data loss. below too.
 		if _, err := w.dataWriter.Close(closeCtx); err != nil {
-<<<<<<< HEAD:pkg/disttask/importinto/encode_and_sort_operator.go
 			w.op.onError(errors.Trace(err))
-=======
-			return errors.Trace(err)
->>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/dxf/importinto/encode_and_sort_operator.go
 		}
 	}
 	if w.indexWriter != nil {
 		if _, err := w.indexWriter.Close(closeCtx); err != nil {
-<<<<<<< HEAD:pkg/disttask/importinto/encode_and_sort_operator.go
 			w.op.onError(errors.Trace(err))
-=======
-			return errors.Trace(err)
->>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/dxf/importinto/encode_and_sort_operator.go
 		}
 	}
 }
