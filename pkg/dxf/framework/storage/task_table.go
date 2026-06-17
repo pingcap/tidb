@@ -818,12 +818,12 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 	return subTaskErrors, nil
 }
 
-func unmarshalSubtaskError(errBytes []byte, isNull bool) (error, error) {
+func unmarshalSubtaskError(errBytes []byte, isNull bool) (subtaskErr error, err error) {
 	if isNull || len(errBytes) == 0 {
 		return nil, nil
 	}
 	stdErr := errors.Normalize("")
-	err := stdErr.UnmarshalJSON(errBytes)
+	err = stdErr.UnmarshalJSON(errBytes)
 	if err != nil {
 		return nil, err
 	}
