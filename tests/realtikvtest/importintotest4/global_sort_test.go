@@ -340,13 +340,16 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.EqualValues(12, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(sum.RowCnt.Load(), 10000)
+	s.GreaterOrEqual(sum.RowCnt.Load(), int64(10000))
+	var expectedProcessed int64
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Processed.Load(), 2622604)
+		expectedProcessed = 2622604
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Processed.Load(), 2782604)
+		expectedProcessed = 2782604
 	}
+	// Ingest retries can replay write work and count processed rows/bytes more than once.
+	s.GreaterOrEqual(sum.Processed.Load(), expectedProcessed)
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	// No conflicts in this case, no need to rewrite the external subtask meta.
 	s.EqualValues(0, sum.PutReqCnt.Load())
