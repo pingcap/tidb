@@ -77,15 +77,6 @@ func (r *KeyRanges) At(i int) kv.KeyRange {
 	return *r.RefAt(i)
 }
 
-// FirstAndLast returns the first range's start key and the last range's end key,
-// or nil keys when empty. Unlike At, it is safe to call on an empty KeyRanges.
-func (r *KeyRanges) FirstAndLast() (firstStartKey, lastEndKey []byte) {
-	if r == nil || r.Len() == 0 {
-		return nil, nil
-	}
-	return r.RefAt(0).StartKey, r.RefAt(r.Len() - 1).EndKey
-}
-
 // Slice returns the sub ranges [from, to).
 func (r *KeyRanges) Slice(from, to int) *KeyRanges {
 	var ran KeyRanges
