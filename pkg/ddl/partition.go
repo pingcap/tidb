@@ -2879,7 +2879,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		args.PartitionID = partDef.ID
 		job.FillArgs(args)
 		// might be used later, ignore the lint warning.
-		//nolint: ineffassign
+		// nolint: ineffassign
 		defID = partDef.ID
 		err = updateDDLJob2Table(jobCtx.stepCtx, w.sess, job, true)
 		if err != nil {
@@ -3756,6 +3756,10 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
+	if err != nil || reorgInfo == nil || reorgInfo.first {
+		return false, ver, errors.Trace(err)
+	}
+
 	err = w.runReorgJob(jobCtx, reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {

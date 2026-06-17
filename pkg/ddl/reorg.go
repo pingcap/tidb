@@ -1077,6 +1077,13 @@ func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobContext, rh *reorg
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
 	} else {
+		failpoint.Inject("CheckReorgInfoEmptyErr", func(val failpoint.Value) {
+			if val.(bool) {
+				job.SnapshotVer = 0
+				failpoint.Return(&info, errors.Trace(meta.ErrDDLReorgElementNotExist))
+			}
+		})
+
 		var err error
 		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
 		if err != nil {
