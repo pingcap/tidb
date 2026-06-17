@@ -172,8 +172,8 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 		oldIssueDigests[duplicateDigest] = struct{}{}
 	}
 	// Keep one unparsable row on the post-v262 digest pair. Even though it cannot
-	// be refreshed, it must still participate in duplicate detection; otherwise
-	// updating a valid row to issueDigestV262 could hit digest_index.
+	// be refreshed, upgradeToVer262 must clear its plan_digest; otherwise updating
+	// a valid row to issueDigestV262 could hit digest_index.
 	invalidBindSQL := "invalid binding"
 	MustExec(t, seV250, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
@@ -223,7 +223,7 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	for _, duplicate := range duplicateIssueBindings {
 		requireBindingDeletedAndDigestPairCleared(t, seCurVer, duplicate.bindSQL)
 	}
-	requireBindingDeletedAndDigestPairCleared(t, seCurVer, invalidBindSQL)
+	requireBindingPlanDigestCleared(t, seCurVer, invalidBindSQL, issueDigestV262)
 
 	// The deleted duplicates should not matter to query behavior. Every
 	// parenthesis variant now normalizes to the enabled winner and can still take
@@ -398,6 +398,17 @@ func requireBindingDeletedAndDigestPairCleared(t *testing.T, se sessionapi.Sessi
 	require.Equal(t, 1, req.NumRows())
 	require.Equal(t, "deleted", req.GetRow(0).GetString(0))
 	require.True(t, req.GetRow(0).IsNull(1))
+	require.True(t, req.GetRow(0).IsNull(2))
+	require.NoError(t, rs.Close())
+}
+
+func requireBindingPlanDigestCleared(t *testing.T, se sessionapi.Session, bindSQL, sqlDigest string) {
+	rs := MustExecToRecodeSet(t, se, "select status, sql_digest, plan_digest from mysql.bind_info where bind_sql = ?", bindSQL)
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, "enabled", req.GetRow(0).GetString(0))
+	require.Equal(t, sqlDigest, req.GetRow(0).GetString(1))
 	require.True(t, req.GetRow(0).IsNull(2))
 	require.NoError(t, rs.Close())
 }
