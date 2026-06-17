@@ -2623,7 +2623,7 @@ func TestBasicMigration(t *testing.T) {
 	requireMigrationsEqual(t, mg.NewBase, mig())
 }
 
-func TestMigrationLockOperationMetadata(t *testing.T) {
+func testMigrationLockOperationMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct {
@@ -2714,6 +2714,8 @@ func TestMigrationLockOperationMetadata(t *testing.T) {
 }
 
 func TestMergeAndMigrateTo(t *testing.T) {
+	t.Run("operation metadata", testMigrationLockOperationMetadata)
+
 	s := tmp(t)
 	dfi := func(o, l uint64) *backuppb.DataFileInfo { return dFile(sp(o, l)) }
 	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
