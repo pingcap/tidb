@@ -207,7 +207,11 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+<<<<<<< HEAD
 			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
+=======
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, idxCols)
+>>>>>>> 81530defef6 (planner: fall back to index stats when col has no stats (#69154))
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
