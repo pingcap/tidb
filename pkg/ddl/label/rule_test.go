@@ -139,7 +139,7 @@ func TestResetWithKeyspaceCodec(t *testing.T) {
 
 	nextGenRule := NewRule()
 	require.NoError(t, nextGenRule.ApplyAttributesSpec(spec))
-	nextGenRule.Reset(codecV2, "db1", "t1", "", 1)
+	nextGenRule.Reset(codecV2, "db1", "t1", "", 1, 2, 3)
 	require.Equal(t, "keyspace/42/schema/db1/t1", nextGenRule.ID)
 	require.Equal(t, "schema/db1/t1", RestoreRuleID(nextGenRule.ID))
 	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: keyspaceKey, Value: "42"})
