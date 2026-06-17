@@ -1286,43 +1286,15 @@ const (
 	version220 = 220
 
 	// version 221
-	// Create system tables for materialized views / materialized view logs.
+	// Create system tables and privileges for materialized views / materialized view logs.
 	version221 = 221
 
-	// version 222
-	// Add CANCEL_REQUESTED_AT and CANCEL_REQUESTED_BY to MV refresh/purge history tables.
-	version222 = 222
-
-	// version 223
-	// Add time-oriented indexes, object schema/name snapshots, and duration columns to MV refresh/purge history tables.
-	version223 = 223
-
-	// version 224
-	// Add MV refresh alert table and duration indexes to MV refresh/purge history tables.
-	version224 = 224
-
-	// version 225
-	// Add LAST_HEARTBEAT_AT to MV refresh/purge history tables.
-	version225 = 225
-
-	// version 226
-	// Add REFRESH_COMMIT_TSO and lookup index to MV refresh history table.
-	version226 = 226
-
-	// version 227
-	// Add REFRESH_FAILED and allow NULL ALERT_LEVEL in MV refresh alert table.
-	version227 = 227
-
-	// version 228
-	// Add OPERATE VIEW static privilege to grant tables and PURGE_CUTOFF_TSO to MV log purge history table.
-	version228 = 228
-
-	// next version should start with 229
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version228
+var currentBootstrapVersion int64 = version221
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1499,13 +1471,6 @@ var (
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
-		upgradeToVer222,
-		upgradeToVer223,
-		upgradeToVer224,
-		upgradeToVer225,
-		upgradeToVer226,
-		upgradeToVer227,
-		upgradeToVer228,
 	}
 )
 
@@ -3390,77 +3355,10 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateTiDBMLogPurgeInfoTable)
 	doReentrantDDL(s, CreateTiDBMViewRefreshHistTable)
 	doReentrantDDL(s, CreateTiDBMLogPurgeHistTable)
-}
-
-func upgradeToVer222(s sessiontypes.Session, ver int64) {
-	if ver >= version222 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `CANCEL_REQUESTED_AT` datetime(6) DEFAULT NULL", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `CANCEL_REQUESTED_BY` varchar(512) DEFAULT NULL", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `CANCEL_REQUESTED_AT` datetime(6) DEFAULT NULL", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `CANCEL_REQUESTED_BY` varchar(512) DEFAULT NULL", infoschema.ErrColumnExists)
-}
-
-func upgradeToVer223(s sessiontypes.Session, ver int64) {
-	if ver >= version223 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `MV_SCHEMA` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `MVIEW_ID`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `MV_NAME` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `MV_SCHEMA`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_DURATION_SEC` decimal(18,6) DEFAULT NULL AFTER `REFRESH_ENDTIME`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mview_time (MVIEW_ID, REFRESH_TIME)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mv_name_time (MV_SCHEMA, MV_NAME, REFRESH_TIME)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_refresh_time (REFRESH_TIME)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `BASE_TABLE_SCHEMA` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `MLOG_ID`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `BASE_TABLE_NAME` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `BASE_TABLE_SCHEMA`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_DURATION_SEC` decimal(18,6) DEFAULT NULL AFTER `PURGE_ENDTIME`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_mlog_time (MLOG_ID, PURGE_TIME)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_table_name_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_TIME)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_purge_time (PURGE_TIME)", dbterror.ErrDupKeyName)
-}
-
-func upgradeToVer224(s sessiontypes.Session, ver int64) {
-	if ver >= version224 {
-		return
-	}
 	doReentrantDDL(s, CreateTiDBMViewRefreshAlertTable)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_refresh_duration_sec (REFRESH_DURATION_SEC)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_purge_duration_sec (PURGE_DURATION_SEC)", dbterror.ErrDupKeyName)
-}
-
-func upgradeToVer225(s sessiontypes.Session, ver int64) {
-	if ver >= version225 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
-}
-
-func upgradeToVer226(s sessiontypes.Session, ver int64) {
-	if ver >= version226 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_COMMIT_TSO` bigint unsigned DEFAULT NULL AFTER `REFRESH_READ_TSO`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO)", dbterror.ErrDupKeyName)
-}
-
-func upgradeToVer227(s sessiontypes.Session, ver int64) {
-	if ver >= version227 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert MODIFY COLUMN `ALERT_LEVEL` varchar(16) DEFAULT NULL")
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert ADD COLUMN `REFRESH_FAILED` varchar(3) DEFAULT NULL AFTER `ALERT_LEVEL`", infoschema.ErrColumnExists)
-}
-
-func upgradeToVer228(s sessiontypes.Session, ver int64) {
-	if ver >= version228 {
-		return
-	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_CUTOFF_TSO` bigint unsigned DEFAULT NULL AFTER `PURGE_STATUS`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
 }
 
