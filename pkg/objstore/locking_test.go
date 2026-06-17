@@ -392,7 +392,7 @@ func TestWriteLockConflictSamplesReadLockBlockers(t *testing.T) {
 		LockType: "migration-read",
 		Hint:     "reader",
 	}
-	var readLocks []objstore.RemoteLock
+	readLocks := make([]objstore.RemoteLock, 0, 5)
 	for range 5 {
 		lock, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", readInput)
 		require.NoError(t, err)
@@ -436,8 +436,8 @@ func TestLockWithRetryCarriesLocalAndRemoteMetadata(t *testing.T) {
 		Hint:     "reader",
 	}
 	localInput := objstore.LockMetaInput{OwnerID: "local-op", LockType: "migration-write", Hint: "writer"}
-	strg, err := createReadWriteConflict(context.Background(), t, remoteInput, localInput)
-	_, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "test.lock", localInput)
+	strg, _ := createReadWriteConflict(context.Background(), t, remoteInput, localInput)
+	_, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "test.lock", localInput)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled))
 	require.Equal(t, context.Canceled, pingcaperrors.Cause(err))
