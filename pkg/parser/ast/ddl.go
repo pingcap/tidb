@@ -526,11 +526,7 @@ const (
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
 	ColumnOptionSecondaryEngineAttribute
-	// ColumnOptionMariaDBRowStart and ColumnOptionMariaDBRowEnd carry the
-	// MariaDB-only `GENERATED ALWAYS AS ROW {START|END}` clause used to mark
-	// the period columns of a system-versioned table. The clauses are parsed
-	// only when the parser has been put into MariaDB mode via
-	// (*Parser).SetMariaDB.
+	// MariaDB-only `GENERATED ALWAYS AS ROW {START|END}` markers.
 	ColumnOptionMariaDBRowStart
 	ColumnOptionMariaDBRowEnd
 )
