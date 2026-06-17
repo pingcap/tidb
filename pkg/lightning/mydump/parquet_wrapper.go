@@ -23,6 +23,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -112,6 +113,9 @@ func newParquetWrapper(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// LocalStorage's reader ignores ctx after Open returns, so tests use
+	// this hook to swap in a ctx-aware wrapper.
+	failpoint.InjectCall("interceptParquetReader", &reader, ctx)
 
 	var lastOff int64
 	if opts != nil && opts.StartOffset != nil {
