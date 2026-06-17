@@ -6963,7 +6963,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 				continue
 			}
 			if currentJob != nil && currentJob.IsPausedBySystemForKVDiskFull() {
-				logutil.DDLLogger().Info("DDL job is auto-paused because TiKV disk is full", zap.Int64("jobID", jobID))
+				logutil.DDLLogger().Info("DDL job is auto-paused because a storage node disk is full", zap.Int64("jobID", jobID))
 				if currentJob.Error != nil {
 					err = errors.Trace(currentJob.Error)
 					return err

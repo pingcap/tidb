@@ -1268,9 +1268,9 @@ const (
 )
 
 const (
-	// JobPauseReasonKVDiskFull indicates TiDB paused the DDL job because TiKV reported disk full.
+	// JobPauseReasonKVDiskFull indicates TiDB paused the DDL job because a storage node reported disk full.
 	JobPauseReasonKVDiskFull = "tikv_disk_full"
-	// JobResumeReasonKVDiskFull indicates the end user resumed a DDL job paused because TiKV reported disk full.
+	// JobResumeReasonKVDiskFull indicates the end user resumed a DDL job paused because a storage node reported disk full.
 	JobResumeReasonKVDiskFull = "tikv_disk_full"
 )
 
