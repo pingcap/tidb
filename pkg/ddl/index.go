@@ -3099,7 +3099,8 @@ func TaskKey(jobID int64, mergeTempIdx bool) string {
 }
 
 func autoPauseAddIndexJobOnKVDiskFull(job *model.Job, taskID int64, taskErr error) error {
-	message := fmt.Sprintf("DXF add-index task %d hit TiKV disk full", taskID)
+	storeType := kvDiskFullStoreType(taskErr)
+	message := fmt.Sprintf("DXF add-index task %d hit %s disk full", taskID, storeType)
 	if taskErr != nil {
 		message = fmt.Sprintf("%s: %s", message, taskErr.Error())
 	}
@@ -3109,6 +3110,21 @@ func autoPauseAddIndexJobOnKVDiskFull(job *model.Job, taskID int64, taskErr erro
 	job.ClearResumeReason()
 	job.Error = toTError(dbterror.ErrDDLAutoPausedByKVDiskFull.FastGenByArgs(job.ID, message))
 	return dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(job.ID, message)
+}
+
+func kvDiskFullStoreType(taskErr error) string {
+	if taskErr == nil {
+		return "storage node"
+	}
+	errMsg := strings.ToLower(taskErr.Error())
+	switch {
+	case strings.Contains(errMsg, "tiflash"):
+		return "TiFlash"
+	case strings.Contains(errMsg, "tikv"):
+		return "TiKV"
+	default:
+		return "storage node"
+	}
 }
 
 func shouldAutoPauseExistingKVDiskFullTask(job *model.Job, task *proto.Task) bool {
@@ -3148,7 +3164,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			return err
 		}
 		if found.State == proto.TaskStatePaused && errdef.IsKVDiskFullError(found.Error) {
-			logutil.DDLLogger().Warn("auto pause add-index DDL job because DXF task hit TiKV disk full",
+			logutil.DDLLogger().Warn("auto pause add-index DDL job because DXF task hit storage node disk full",
 				zap.Int64("job-id", reorgInfo.Job.ID),
 				zap.Int64("task-id", taskID),
 				zap.Error(found.Error))
@@ -3163,7 +3179,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	)
 	if task != nil {
 		if shouldAutoPauseExistingKVDiskFullTask(reorgInfo.Job, task) {
-			logutil.DDLLogger().Warn("auto pause add-index DDL job because existing DXF task hit TiKV disk full",
+			logutil.DDLLogger().Warn("auto pause add-index DDL job because existing DXF task hit storage node disk full",
 				zap.Int64("job-id", reorgInfo.Job.ID),
 				zap.Int64("task-id", task.ID),
 				zap.Error(task.Error))
