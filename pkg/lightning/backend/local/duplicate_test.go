@@ -262,7 +262,7 @@ func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
 
 	// ErrFoundDuplicateKeys carries raw KV bytes for downstream duplicate decoding.
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data1RowKey, data1RowValue)
-	rawKey, rawValue, err = ingestctrl.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
+	rawKey, rawValue, err = local.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	require.NoError(t, err)
 	require.Equal(t, data1RowKey, rawKey)
 	require.Equal(t, data1RowValue, rawValue)
