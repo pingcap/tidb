@@ -60,7 +60,7 @@ func SetGlobalCheckpointStorageFactoryForTest(
 	createGlobalCheckpointStorage = factory
 	return func() {
 		createGlobalCheckpointStorage = original
-  }
+	}
 }
 
 func SetMetadataWatchProgressForTest(interval, timeout time.Duration) func() {
