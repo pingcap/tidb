@@ -2692,25 +2692,25 @@ func TestMigrationLockOperationMetadata(t *testing.T) {
 			c.validate(t, writes, opCtx)
 		})
 	}
-}
 
-func TestMigrationExtDryRunKeepsOperationContext(t *testing.T) {
-	opCtx := testOperationContext(t)
-	est := MigrationExtension(tmp(t)).WithOperationContext(opCtx)
+	t.Run("dry run keeps operation context", func(t *testing.T) {
+		opCtx := testOperationContext(t)
+		est := MigrationExtension(tmp(t)).WithOperationContext(opCtx)
 
-	est.DryRun(func(me MigrationExt) {
-		require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
-		require.Equal(t, opCtx.RestoreID, me.operationContext.RestoreID)
-		require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
+		est.DryRun(func(me MigrationExt) {
+			require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
+			require.Equal(t, opCtx.RestoreID, me.operationContext.RestoreID)
+			require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
+		})
 	})
-}
 
-func TestMergeAndMigrateToMissingOperationContextReturnsError(t *testing.T) {
-	result, err := MigrationExtension(tmp(t)).MergeAndMigrateTo(context.Background(), 0)
+	t.Run("missing operation context returns error", func(t *testing.T) {
+		result, err := MigrationExtension(tmp(t)).MergeAndMigrateTo(context.Background(), 0)
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, "operation ID")
-	require.Empty(t, result.Warnings)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+		require.Empty(t, result.Warnings)
+	})
 }
 
 func TestMergeAndMigrateTo(t *testing.T) {
