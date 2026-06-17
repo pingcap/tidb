@@ -48,14 +48,7 @@ func TestFTSRequiresStarterMode(t *testing.T) {
 }
 
 func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("starter deploy mode is nextgen-only")
-	}
-	originDeployMode := deploymode.Get()
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	defer func() {
-		require.NoError(t, deploymode.Set(originDeployMode))
-	}()
+	setStarterDeployModeForFTSTest(t)
 
 	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		var input []struct {
@@ -71,19 +64,7 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 		ftsResolveIndexSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		require.Equal(t, len(input), len(output))
 
-		tiflash := infosync.NewMockTiFlash()
-		infosync.SetMockTiFlash(tiflash)
-		defer func() {
-			tiflash.Lock()
-			tiflash.StatusServer.Close()
-			tiflash.Unlock()
-		}()
-		tk.MustExec("use test")
-		tk.MustExec("set global tidb_redact_log=OFF")
-		defer tk.MustExec("set global tidb_redact_log=OFF")
-		tk.MustExec("create table fts_t(id int primary key, title text, body text, fulltext key ft_title(title))")
-		tk.MustExec("alter table fts_t set tiflash replica 1")
-		testkit.SetTiFlashReplica(t, dom, "test", "fts_t")
+		setupTiFlashFTSMatchWordTable(t, tk, dom)
 
 		for i, tt := range input {
 			redactLog := "OFF"
@@ -109,4 +90,71 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
 		tk.MustContainErrMsg("explain select * from fts_t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
 	})
+}
+
+func TestTiFlashFTSMatchWordPreparedPlanCache(t *testing.T) {
+	setStarterDeployModeForFTSTest(t)
+
+	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		setupTiFlashFTSMatchWordTable(t, tk, dom)
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+		tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=0")
+
+		tk.MustExec("prepare stmt from \"select * from fts_t where fts_match_word('hello', title)\"")
+		tk.MustExec("execute stmt")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+		tk.MustExec("execute stmt")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustExec("deallocate prepare stmt")
+
+		tk.MustContainErrMsg("prepare stmt_param from 'select * from fts_t where fts_match_word(?, title)'", "match against a non-constant string")
+	})
+}
+
+func TestTiFlashFTSMatchWordDirtyTxn(t *testing.T) {
+	setStarterDeployModeForFTSTest(t)
+
+	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		setupTiFlashFTSMatchWordTable(t, tk, dom)
+
+		tk.MustQuery("select * from fts_t where fts_match_word('hello', title)").Check(testkit.Rows())
+
+		tk.MustExec("begin")
+		tk.MustExec("insert into fts_t values (1, 'hello', 'dirty')")
+		tk.MustContainErrMsg("select * from fts_t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
+		tk.MustExec("rollback")
+	})
+}
+
+func setStarterDeployModeForFTSTest(t *testing.T) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+	originDeployMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+}
+
+func setupTiFlashFTSMatchWordTable(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+	t.Helper()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	t.Cleanup(func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_redact_log=OFF")
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_redact_log=OFF")
+	tk.MustExec("create table fts_t(id int primary key, title text, body text, fulltext key ft_title(title))")
+	tk.MustExec("alter table fts_t set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "fts_t")
 }
