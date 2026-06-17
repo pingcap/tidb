@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +35,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -281,6 +284,9 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
+	// ErrorMessageExtensions appends configured suffixes to selected user-facing errors.
+	// Patterns should be anchored and specific because they are matched against every SQL error sent to clients.
+	ErrorMessageExtensions []ErrorMessageExtension `toml:"error-msg-extension" json:"error-msg-extension"`
 
 	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
 	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
@@ -372,6 +378,14 @@ type Config struct {
 	CSE CSE `toml:"cse" json:"cse"`
 }
 
+// ErrorMessageExtension configures a suffix for SQL errors matching Pattern.
+type ErrorMessageExtension struct {
+	Pattern string `toml:"pattern" json:"pattern"`
+	Suffix  string `toml:"suffix" json:"suffix"`
+	// Regexp is populated internally when the global config is published. Do not set it manually.
+	Regexp *regexp.Regexp `toml:"-" json:"-"`
+}
+
 // RUV2Config is the configuration for RU v2 weight calculation.
 // The default values are experimentally fitted so they stay stable under the
 // same workload while remaining numerically aligned with RU v1.
@@ -385,21 +399,22 @@ type RUV2Config struct {
 	// ExecutorL1 is the weight for fast-path executors that scale by cells:
 	// BatchPointGet, PointGet, and Limit.
 	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
-	// ExecutorL2 is the weight for general executors, including HashAgg,
+	// ExecutorL2 is the weight for general executors, including Expand, HashAgg,
 	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-	// MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
-	// UnionScanExec, and SelectLockExec.
+	// MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
+	// TableDualExec, TableReaderExecutor, TopN, UnionScanExec, and Window.
 	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
 	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
 	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
-	// ExecutorL5InsertRows is the per-row weight for insert work. Level 4 is
-	// intentionally unused today because only L1/L2/L3 executor groups and this
-	// insert-specific tier are currently modeled.
+	// ExecutorL5InsertRows is the weight for insert rows multiplied by inserted
+	// column count. Level 4 is intentionally unused today because only L1/L2/L3
+	// executor groups and this insert-specific tier are currently modeled.
 	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
 	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
 	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
 	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
 	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
+	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
 	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
 	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
 }
@@ -418,6 +433,7 @@ func DefaultRUV2Config() RUV2Config {
 		PlanDeriveStatsPaths:    0.24968182,
 		ResourceManagerReadCnt:  0.02072003,
 		ResourceManagerWriteCnt: 0.07179779,
+		WriteKeys:               0.330760861554226,
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
 	}
@@ -1068,13 +1084,16 @@ type Standby struct {
 // StarterParams contains Starter-only extension parameters.
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
-	ExportID string `toml:"export-id" json:"export-id"`
+	ExportID string `toml:"export-id" json:"export-id,omitempty"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
-	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
+	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier,omitempty"`
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
 	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
-	ManagerAddr string `toml:"manager-addr" json:"manager-addr"`
+	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
+	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
+	// Zero means unlimited.
+	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1279,7 +1298,8 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf atomic.Pointer[Config]
+	globalConf                     atomic.Pointer[Config]
+	preparedErrorMessageExtensions atomic.Pointer[[]ErrorMessageExtension]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1295,8 +1315,22 @@ func GetGlobalConfig() *Config {
 	return globalConf.Load()
 }
 
+// GetErrorMessageExtensions returns a copy of the prepared error message extension matchers.
+func GetErrorMessageExtensions() []ErrorMessageExtension {
+	extensions := preparedErrorMessageExtensions.Load()
+	if extensions == nil {
+		return nil
+	}
+	return slices.Clone(*extensions)
+}
+
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
+	extensions, err := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
+	if err != nil {
+		logutil.BgLogger().Warn("skip invalid error message extension config", zap.Error(err))
+	}
+	preparedErrorMessageExtensions.Store(&extensions)
 	globalConf.Store(config)
 	TikvConfigLock.Lock()
 	defer TikvConfigLock.Unlock()
@@ -1537,6 +1571,9 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
+	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1584,6 +1621,49 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInvalid bool) ([]ErrorMessageExtension, error) {
+	preparedExtensions := make([]ErrorMessageExtension, 0, len(extensions))
+	var firstErr error
+	for _, extension := range extensions {
+		extension.Regexp = nil
+		if strings.TrimSpace(extension.Pattern) == "" {
+			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("empty error-msg-extension pattern")
+				}
+				continue
+			}
+			return nil, fmt.Errorf("empty error-msg-extension pattern")
+		}
+		// Go's regexp package uses the RE2 engine, so operator-configured
+		// patterns cannot trigger catastrophic backtracking in the error path.
+		compiledRegexp, err := regexp.Compile(extension.Pattern)
+		if err != nil {
+			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+				}
+				continue
+			}
+			return nil, fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+		}
+		extension.Regexp = compiledRegexp
+		preparedExtensions = append(preparedExtensions, extension)
+	}
+	sort.Slice(preparedExtensions, func(i, j int) bool {
+		left := preparedExtensions[i]
+		right := preparedExtensions[j]
+		if len(left.Pattern) != len(right.Pattern) {
+			return len(left.Pattern) > len(right.Pattern)
+		}
+		if left.Pattern != right.Pattern {
+			return left.Pattern < right.Pattern
+		}
+		return left.Suffix < right.Suffix
+	})
+	return preparedExtensions, firstErr
+}
+
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
@@ -1602,6 +1682,12 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
+	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
+	}
+	if _, err := prepareErrorMessageExtensions(c.ErrorMessageExtensions, false); err != nil {
+		return err
+	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
 	}
@@ -1619,6 +1705,9 @@ func (c *Config) Valid() error {
 	}
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	}
+	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")

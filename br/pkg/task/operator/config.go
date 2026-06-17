@@ -19,6 +19,7 @@ const (
 	flagTableConcurrency                 = "table-concurrency"
 	flagRestoredTS                       = "restored-ts"
 	flagUpstreamClusterID                = "upstream-cluster-id"
+	flagChecksumTS                       = "checksum-ts"
 	flagStorePatterns                    = "stores"
 	flagTaskName                         = "task-name"
 	flagUpstreamStorage                  = "upstream-storage"
@@ -281,7 +282,6 @@ func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
 	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
-	f.Uint64(flagUpstreamClusterID, 0, "")
 }
 
 func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
@@ -293,8 +293,9 @@ func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
 func DefineFlagsForChecksumPitrTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
-	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagRestoredTS, 0, "The restore point time")
 	f.Uint64(flagUpstreamClusterID, 0, "The upstream cluster id of used pitr id map")
+	f.Uint64(flagChecksumTS, 0, "The checksum time (use current pd tso if not specified)")
 }
 
 func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -307,6 +308,8 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 
 type ChecksumWithPitrIdMapConfig struct {
 	task.RestoreConfig
+
+	ChecksumTS uint64 `json:"checksum-ts" toml:"checksum-ts"`
 }
 
 func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -319,6 +322,10 @@ func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (er
 		return errors.Trace(err)
 	}
 	cfg.UpstreamClusterID, err = flags.GetUint64(flagUpstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.ChecksumTS, err = flags.GetUint64(flagChecksumTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

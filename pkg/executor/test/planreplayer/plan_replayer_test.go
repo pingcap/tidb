@@ -227,6 +227,41 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	}
 }
 
+func TestExplainExploreReplayer(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_explain_explore_replayer(a int, b int, key(a))")
+	tk.MustExec("insert into t_explain_explore_replayer values (1, 1), (2, 2), (3, 1)")
+	tk.MustExec("analyze table t_explain_explore_replayer")
+	tk.MustExec("create global binding using select * from test.t_explain_explore_replayer where b=1")
+	res := tk.MustQuery("plan replayer dump explain select * from test.t_explain_explore_replayer where b=1")
+	path := testdata.ConvertRowsToStrings(res.Rows())
+	require.Len(t, path, 1)
+
+	loadStore := testkit.CreateMockStore(t)
+	loadTK := testkit.NewTestKit(t, loadStore)
+	replayerPath := filepath.Join(tempDir, replayer.GetPlanReplayerDirName(), path[0])
+	replayerPath = strings.ReplaceAll(replayerPath, "'", "''")
+	for range 2 {
+		rows := loadTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows()
+		require.NotEmpty(t, rows)
+		for _, row := range rows {
+			require.NotEmpty(t, row[3])
+		}
+	}
+}
+
 func TestPlanReplayerDumpMultipleError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

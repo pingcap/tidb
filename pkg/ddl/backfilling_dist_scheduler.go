@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -141,7 +142,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	tbl, err := getUserTableFromTaskStore(ctx, sch.d, sch.TaskStore, job)
+	store := sch.TaskRuntime.Store()
+	tbl, err := getUserTableFromTaskStore(ctx, store, job)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -151,7 +153,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(&task.TaskBase, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, sch.TaskStore, tbl, job, sch.GlobalSort, nodeCnt, logger)
+		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
 		metaBytes, err2 := generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
 		if err2 != nil {
@@ -174,7 +176,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				sch.TaskStore.(kv.StorageWithPD),
+				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
@@ -182,7 +184,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		}
 		return nil, nil
 	case proto.BackfillStepMergeTempIndex:
-		return generateMergeTempIndexPlan(ctx, sch.TaskStore, tbl, nodeCnt, backfillMeta.EleIDs, logger)
+		return generateMergeTempIndexPlan(ctx, store, tbl, nodeCnt, backfillMeta.EleIDs, logger)
 	default:
 		return nil, nil
 	}
@@ -190,7 +192,6 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 
 func getUserTableFromTaskStore(
 	ctx context.Context,
-	d *ddl,
 	taskStore kv.Storage,
 	job *model.Job,
 ) (table.Table, error) {
@@ -198,7 +199,8 @@ func getUserTableFromTaskStore(
 	if err != nil {
 		return nil, err
 	}
-	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
+	// we don't touch table data during add-index, a fake Allocators is enough.
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
 	if err != nil {
 		return nil, err
 	}

@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
@@ -23,12 +24,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -351,17 +352,12 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		return
 	}
 
-	taskStore := sm.store
-	if task.Keyspace != sm.store.GetKeyspace() {
-		if err = sm.taskMgr.WithNewSession(func(se sessionctx.Context) error {
-			var err2 error
-			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
-			return err2
-		}); err != nil {
-			sm.logger.Warn("get task store failed", zap.Int64("task-id", basicTask.ID),
-				zap.String("task-key", basicTask.Key), zap.Error(err))
-			return
-		}
+	holderID := fmt.Sprintf("DXF/scheduler/%d", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, sm.store.GetKeyspace(), task.Keyspace, holderID)
+	if err != nil {
+		sm.logger.Warn("acquire task runtime failed", zap.Int64("task-id", basicTask.ID),
+			zap.String("task-key", basicTask.Key), zap.Error(err))
+		return
 	}
 
 	schedulerFactory := getSchedulerFactory(task.Type)
@@ -372,11 +368,12 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		serverID:       sm.serverID,
 		allocatedSlots: allocateSlots,
 		nodeRes:        sm.nodeRes,
-		TaskStore:      taskStore,
+		TaskRuntime:    taskRuntime,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
 		sm.failTask(task.ID, task.State, err)
+		releaseFn()
 		return
 	}
 	sm.addScheduler(task.ID, scheduler)
@@ -387,6 +384,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
+			releaseFn()
 			sm.delScheduler(task.ID)
 			if allocateSlots {
 				sm.slotMgr.unReserve(basicTask, reservedExecID)

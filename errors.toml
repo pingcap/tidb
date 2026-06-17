@@ -638,7 +638,7 @@ found data conflict records in table %s, primary key is '%s', row data is '%s'
 
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
-found duplicate key '%s', value '%s'
+found duplicate key '%x', value '%x'
 '''
 
 ["Lightning:Restore:ErrFoundIndexConflictRecords"]
@@ -2349,6 +2349,11 @@ masking policy already exists
 ["meta:8269"]
 error = '''
 masking policy doesn't exist
+'''
+
+["meta:8275"]
+error = '''
+masking policy expression can only reference the target column '%-.64s'
 '''
 
 ["planner:1044"]

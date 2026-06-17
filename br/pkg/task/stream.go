@@ -1314,7 +1314,7 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *clientv3.Client) error {
 	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, backupTS)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if !nameSet.Empty() {
 		return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
@@ -1441,6 +1441,12 @@ func RunStreamRestore(
 	cfg.RestoreStartTS = restoreStartTS
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
+
+	if cfg.CheckRequirements {
+		if err := checkIncompatibleChangefeed(ctx, cfg.RestoreTS, mgr.GetDomain().GetEtcdClient()); err != nil {
+			return err
+		}
+	}
 
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
@@ -1639,7 +1645,7 @@ func restoreStream(
 			log.Info("using fine-grained scheduler pausing for log restore",
 				zap.Int("key-ranges-count", len(keyRanges)))
 			restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
-				importModeSwitcher, keyRanges, cfg.Online, false)
+				importModeSwitcher, keyRanges, false)
 		} else {
 			log.Info("no key ranges to pause, skipping scheduler pausing")
 			restoreSchedulersFunc = func(context.Context) error { return nil }
@@ -1658,7 +1664,7 @@ func restoreStream(
 
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
 
 	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
@@ -1878,6 +1884,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)

@@ -118,12 +118,12 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 type fakeImporterClient struct {
 	importclient.ImporterClient
 
-	speedLimit map[uint64]uint64
+	speedLimitReq map[uint64]*import_sstpb.SetDownloadSpeedLimitRequest
 }
 
 func newFakeImporterClient() *fakeImporterClient {
 	return &fakeImporterClient{
-		speedLimit: make(map[uint64]uint64),
+		speedLimitReq: make(map[uint64]*import_sstpb.SetDownloadSpeedLimitRequest),
 	}
 }
 
@@ -132,7 +132,11 @@ func (client *fakeImporterClient) SetDownloadSpeedLimit(
 	storeID uint64,
 	req *import_sstpb.SetDownloadSpeedLimitRequest,
 ) (*import_sstpb.SetDownloadSpeedLimitResponse, error) {
-	client.speedLimit[storeID] = req.SpeedLimit
+	client.speedLimitReq[storeID] = &import_sstpb.SetDownloadSpeedLimitRequest{
+		TaskId:     req.GetTaskId(),
+		SpeedLimit: req.GetSpeedLimit(),
+		TtlSeconds: req.GetTtlSeconds(),
+	}
 	return &import_sstpb.SetDownloadSpeedLimitResponse{}, nil
 }
 
@@ -179,7 +183,20 @@ func TestSnapImporter(t *testing.T) {
 	require.NoError(t, err)
 	err = importer.SetDownloadSpeedLimit(ctx, 1, 5)
 	require.NoError(t, err)
-	require.Equal(t, uint64(5), importClient.speedLimit[1])
+	setReq := importClient.speedLimitReq[1]
+	require.NotNil(t, setReq)
+	require.Equal(t, uint64(5), setReq.GetSpeedLimit())
+	require.NotEmpty(t, setReq.GetTaskId())
+	require.Equal(t, uint64(snapclient.DownloadRateLimitTTLSeconds), setReq.GetTtlSeconds())
+
+	err = importer.SetDownloadSpeedLimit(ctx, 1, 0)
+	require.NoError(t, err)
+	resetReq := importClient.speedLimitReq[1]
+	require.NotNil(t, resetReq)
+	require.Equal(t, uint64(0), resetReq.GetSpeedLimit())
+	require.Equal(t, setReq.GetTaskId(), resetReq.GetTaskId())
+	require.Equal(t, uint64(snapclient.DownloadRateLimitTTLSeconds), resetReq.GetTtlSeconds())
+
 	err = importer.SetRawRange(nil, nil)
 	require.Error(t, err)
 	files, rules := generateFiles()

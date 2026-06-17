@@ -19,8 +19,10 @@ import (
 	"math/rand"
 	"time"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -94,4 +96,25 @@ func TESTResolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval ti
 
 func TESTResolveLockMaxVersion(targetUpperBound uint64, safeMaxVersion uint64) uint64 {
 	return resolveLockMaxVersion(targetUpperBound, safeMaxVersion)
+}
+
+func SetGlobalCheckpointStorageFactoryForTest(
+	factory func(context.Context, *backuppb.StorageBackend, bool) (storeapi.Storage, error),
+) func() {
+	original := createGlobalCheckpointStorage
+	createGlobalCheckpointStorage = factory
+	return func() {
+		createGlobalCheckpointStorage = original
+	}
+}
+
+func SetMetadataWatchProgressForTest(interval, timeout time.Duration) func() {
+	oldInterval := metadataWatchProgressInterval
+	oldTimeout := metadataWatchIdleTimeout
+	metadataWatchProgressInterval = interval
+	metadataWatchIdleTimeout = timeout
+	return func() {
+		metadataWatchProgressInterval = oldInterval
+		metadataWatchIdleTimeout = oldTimeout
+	}
 }
