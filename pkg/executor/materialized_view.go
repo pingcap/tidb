@@ -124,7 +124,7 @@ type compareMaterializedViewOutputWriter struct {
 	batchBytes    int
 	pendingRows   int
 	release       func(context.Context)
-	dropTable     func(context.Context) error
+	dropTable     func(context.Context)
 }
 
 // CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
@@ -1930,13 +1930,13 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		return nil, err
 	}
 	e.ReleaseSysSession(ctx, ddlSctx)
-	dropOutputTable := func(dropCtx context.Context) error {
-		return e.dropCompareMaterializedViewOutputTable(dropCtx, e.stmt.OutputTable)
+	dropOutputTable := func(dropCtx context.Context) {
+		e.cleanupCompareMaterializedViewOutputTable(dropCtx, e.stmt.OutputTable)
 	}
 
 	insertSctx, err := e.GetSysSession()
 	if err != nil {
-		_ = dropOutputTable(context.WithoutCancel(ctx))
+		dropOutputTable(context.WithoutCancel(ctx))
 		return nil, err
 	}
 	releaseInsertSession := func(releaseCtx context.Context) {
@@ -1947,7 +1947,7 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	targetTable, err := outputIS.TableByName(context.Background(), e.stmt.OutputTable.Schema, e.stmt.OutputTable.Name)
 	if err != nil {
 		releaseInsertSession(ctx)
-		_ = dropOutputTable(context.WithoutCancel(ctx))
+		dropOutputTable(context.WithoutCancel(ctx))
 		return nil, err
 	}
 	writableCols := targetTable.WritableCols()
@@ -1968,15 +1968,28 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	}, nil
 }
 
-func (e *CompareMaterializedViewExec) dropCompareMaterializedViewOutputTable(ctx context.Context, outputTable *ast.TableName) error {
+func (e *CompareMaterializedViewExec) cleanupCompareMaterializedViewOutputTable(ctx context.Context, outputTable *ast.TableName) {
 	ddlSctx, err := e.GetSysSession()
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn(
+			"failed to cleanup compare materialized view output table",
+			zap.String("schema", outputTable.Schema.O),
+			zap.String("table", outputTable.Name.O),
+			zap.Error(err),
+		)
+		return
 	}
 	defer e.ReleaseSysSession(ctx, ddlSctx)
 
 	dropSQL := sqlescape.MustEscapeSQL("DROP TABLE IF EXISTS %n.%n", outputTable.Schema.O, outputTable.Name.O)
-	return executeRefreshMaterializedViewInternalSQL(ctx, ddlSctx.GetSQLExecutor(), dropSQL)
+	if err := executeRefreshMaterializedViewInternalSQL(ctx, ddlSctx.GetSQLExecutor(), dropSQL); err != nil {
+		logutil.BgLogger().Warn(
+			"failed to cleanup compare materialized view output table",
+			zap.String("schema", outputTable.Schema.O),
+			zap.String("table", outputTable.Name.O),
+			zap.Error(err),
+		)
+	}
 }
 
 func buildCompareMaterializedViewOutputCreateTableSQL(
@@ -2449,9 +2462,9 @@ func (w *compareMaterializedViewOutputWriter) commit(ctx context.Context) error 
 	return nil
 }
 
-func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) error {
+func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) {
 	if w == nil || w.sctx == nil {
-		return nil
+		return
 	}
 	if w.txn != nil {
 		w.sctx.RollbackTxn(ctx)
@@ -2463,9 +2476,8 @@ func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) erro
 	w.txn = nil
 	w.pendingRows = 0
 	if w.dropTable != nil {
-		return w.dropTable(ctx)
+		w.dropTable(ctx)
 	}
-	return nil
 }
 
 // Next implements the Executor Next interface.

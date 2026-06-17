@@ -65,7 +65,7 @@ Output behavior:
    - execution requires `CREATE` and `INSERT` privileges on the target table schema.
    - the target table schema is built from snapshot `S` MV public columns plus the differ-type column;
    - the target table does not copy MV indexes, constraints, partitioning, or MV-specific metadata;
-   - if target-table creation succeeds but compare later fails, TiDB rolls back the current output-write transaction and drops the auto-created target table, including any already committed output batches.
+   - if target-table creation succeeds but compare later fails, TiDB rolls back the current output-write transaction and attempts to drop the auto-created target table, including any already committed output batches.
 
 Privilege semantics:
 
@@ -204,7 +204,7 @@ For grouped MV, this keeps compare semantics aligned with COMPLETE DELTA APPLY d
 3. `LAST_SUCCESS_READ_TSO` is `NULL` -> explicit compare precondition error.
 4. Snapshot `R` older than GC safe point -> stale-read validation error.
 5. Any internal reader execution failure -> return original error.
-6. If `OUTPUT INTO TABLE` was used and the target table was auto-created, any later compare failure triggers output-table cleanup before returning the error. If cleanup also fails, the returned error includes the cleanup failure.
+6. If `OUTPUT INTO TABLE` was used and the target table was auto-created, any later compare failure triggers best-effort output-table cleanup before returning the original error. If cleanup fails, TiDB writes a warning log.
 
 ## Performance notes
 
