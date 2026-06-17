@@ -1165,6 +1165,10 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	var purgeMethod string
 	var purgeStartWith string
 	var purgeNext string
+	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(s.AccumulationAlert)
+	if err != nil {
+		return err
+	}
 	if s.Purge != nil {
 		if s.Purge.Immediate {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
@@ -1186,12 +1190,13 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:       baseTableID,
-		Columns:           s.Cols,
-		PurgeMethod:       purgeMethod,
-		PurgeStartWith:    purgeStartWith,
-		PurgeNext:         purgeNext,
-		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		BaseTableID:              baseTableID,
+		Columns:                  s.Cols,
+		PurgeMethod:              purgeMethod,
+		PurgeStartWith:           purgeStartWith,
+		PurgeNext:                purgeNext,
+		LogAccumulationAlertRows: logAccumulationAlertRows,
+		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	involvingSchemas := []model.InvolvingSchemaInfo{

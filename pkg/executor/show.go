@@ -2123,14 +2123,17 @@ func fetchShowCreateTable4MaterializedViewLog(
 		buf.WriteString(" PURGE")
 		if strings.EqualFold(mlogInfo.PurgeMethod, "IMMEDIATE") {
 			buf.WriteString(" IMMEDIATE")
-			return
+		} else {
+			if mlogInfo.PurgeStartWith != "" {
+				fmt.Fprintf(buf, " START WITH %s", mlogInfo.PurgeStartWith)
+			}
+			if mlogInfo.PurgeNext != "" {
+				fmt.Fprintf(buf, " NEXT %s", mlogInfo.PurgeNext)
+			}
 		}
-		if mlogInfo.PurgeStartWith != "" {
-			fmt.Fprintf(buf, " START WITH %s", mlogInfo.PurgeStartWith)
-		}
-		if mlogInfo.PurgeNext != "" {
-			fmt.Fprintf(buf, " NEXT %s", mlogInfo.PurgeNext)
-		}
+	}
+	if mlogInfo.LogAccumulationAlertRows != nil {
+		fmt.Fprintf(buf, " ALERT ROWS %d", *mlogInfo.LogAccumulationAlertRows)
 	}
 }
 

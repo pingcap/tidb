@@ -165,6 +165,7 @@ var tokenMap = map[string]int{
 	"AFTER":                    after,
 	"AGAINST":                  against,
 	"AGO":                      ago,
+	"ALERT":                    alert,
 	"ALGORITHM":                algorithm,
 	"ALL":                      all,
 	"ALTER":                    alter,

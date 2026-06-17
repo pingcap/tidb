@@ -1812,14 +1812,27 @@ func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// MLogAccumulationAlertClause is the accumulation alert clause in CREATE MATERIALIZED VIEW LOG.
+type MLogAccumulationAlertClause struct {
+	Rows int64
+}
+
+// Restore implements Node interface.
+func (n *MLogAccumulationAlertClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALERT ROWS ")
+	ctx.WritePlainf("%d", n.Rows)
+	return nil
+}
+
 // CreateMaterializedViewLogStmt is a statement to create a materialized view log on a base table.
 type CreateMaterializedViewLogStmt struct {
 	ddlNode
 
-	Table   *TableName
-	Cols    []model.CIStr
-	Options []*TableOption
-	Purge   *MLogPurgeClause
+	Table             *TableName
+	Cols              []model.CIStr
+	Options           []*TableOption
+	Purge             *MLogPurgeClause
+	AccumulationAlert *MLogAccumulationAlertClause
 }
 
 // Restore implements Node interface.
@@ -1846,6 +1859,12 @@ func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.Purge.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Purge")
+		}
+	}
+	if n.AccumulationAlert != nil {
+		ctx.WritePlain(" ")
+		if err := n.AccumulationAlert.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.AccumulationAlert")
 		}
 	}
 	return nil

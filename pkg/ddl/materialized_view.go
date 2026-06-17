@@ -1364,6 +1364,19 @@ func buildMLogPurgeMeta(sctx sessionctx.Context, purge *ast.MLogPurgeClause) (me
 	return method, startWith, next, nil
 }
 
+// BuildMLogAccumulationAlertRows validates the ALERT ROWS clause and returns the persisted threshold.
+// nil means the CREATE statement did not specify ALERT ROWS.
+func BuildMLogAccumulationAlertRows(alert *ast.MLogAccumulationAlertClause) (*uint64, error) {
+	if alert == nil {
+		return nil, nil
+	}
+	if alert.Rows < 0 {
+		return nil, errors.Errorf("invalid ALERT ROWS value: %d (must be non-negative)", alert.Rows)
+	}
+	rows := uint64(alert.Rows)
+	return &rows, nil
+}
+
 func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
 	if refresh == nil {
 		return "FAST", "", "", nil
