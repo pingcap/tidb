@@ -4445,6 +4445,7 @@ BuiltinFunction:
 	}
 |	"UUID" '(' ')'
 	{
+		// UUID is a keyword token now; keep DEFAULT UUID() accepted.
 		$$ = &ast.FuncCallExpr{
 			FnName: ast.NewCIStr($1),
 		}

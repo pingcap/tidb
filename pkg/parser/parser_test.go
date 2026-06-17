@@ -8199,6 +8199,10 @@ func TestExplainExplore(t *testing.T) {
 func TestCompatMariaDB(t *testing.T) {
 	cases := []testCase{
 		{`CREATE TABLE uuid (uuid int)`, true, "CREATE TABLE `uuid` (`uuid` INT)"},
+		{`CREATE TABLE t1 (a TEXT DEFAULT UUID())`, true, "CREATE TABLE `t1` (`a` TEXT DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 (pk varchar(36) DEFAULT uuid())`, true, "CREATE TABLE `t1` (`pk` VARCHAR(36) DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 AS SELECT uuid(), length(uuid())`, true, "CREATE TABLE `t1` AS SELECT UUID(),LENGTH(UUID())"},
+		{`CREATE TABLE t4 (a INT(11) DEFAULT NULL, b BIGINT(20) DEFAULT uuid_short()) SELECT * FROM t3`, true, "CREATE TABLE `t4` (`a` INT(11) DEFAULT NULL,`b` BIGINT(20) DEFAULT (UUID_SHORT())) AS SELECT * FROM `t3`"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
@@ -8210,6 +8214,7 @@ func TestCompatMariaDB(t *testing.T) {
 
 	mariaDBCases := []testCase{
 		{`CREATE TABLE t (id UUID)`, true, "CREATE TABLE `t` (`id` CHAR(36))"},
+		{`CREATE TABLE t1 (a UUID, b VARCHAR(32) NOT NULL)`, true, "CREATE TABLE `t1` (`a` CHAR(36),`b` VARCHAR(32) NOT NULL)"},
 		{`CREATE TABLE uuid (uuid UUID NOT NULL DEFAULT UUID())`, true, "CREATE TABLE `uuid` (`uuid` CHAR(36) NOT NULL DEFAULT (UUID()))"},
 	}
 	RunTest(t, mariaDBCases, false, true)
