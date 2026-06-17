@@ -386,6 +386,28 @@ func TestDDLHistogram(t *testing.T) {
 	rs.Check(testkit.Rows("0"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_top_n where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)
 	rs.Check(testkit.Rows("2"))
+
+	// Isolate the virtual-column regression from earlier buffered DDL events.
+	for len(h.DDLEventCh()) > 0 {
+		<-h.DDLEventCh()
+	}
+	testKit.MustExec("alter table t add column c_vir int generated always as (c1 + c2) virtual")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	is = do.InfoSchema()
+	require.Nil(t, h.Update(context.Background(), is))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	virtualCol := tableInfo.FindPublicColumnByName("c_vir")
+	require.NotNil(t, virtualCol)
+	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(virtualCol.ID, false))
+	if colStats := statsTbl.GetCol(virtualCol.ID); colStats != nil {
+		require.False(t, colStats.IsStatsInitialized())
+	}
+	testKit.MustQuery("select distinct_count, null_count, stats_ver from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tableInfo.ID, virtualCol.ID).
+		Check(testkit.Rows("0 0 0"))
 }
 
 func TestDDLPartition(t *testing.T) {
