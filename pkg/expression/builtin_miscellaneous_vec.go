@@ -500,7 +500,10 @@ func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 			// MySQL 8.0 sleep: https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_sleep
 			// Regular kill or Killed because of max execution time
 			if err := sessVars.SQLKiller.HandleSignal(); err != nil {
-				if len(sessVars.StmtCtx.TableIDs) == 0 {
+				if len(sessVars.StmtCtx.TableIDs) == 0 &&
+					!sessVars.StmtCtx.InInsertStmt &&
+					!sessVars.StmtCtx.InUpdateStmt &&
+					!sessVars.StmtCtx.InDeleteStmt {
 					sessVars.SQLKiller.Reset()
 				}
 				timer.Stop()

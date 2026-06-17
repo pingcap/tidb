@@ -909,7 +909,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	indicesGenKV := importer.GetIndicesGenKV(taskMeta.Plan.TableInfo)
 	logger.Info("got indices that generate kv", zap.Any("indices", indicesGenKV))
 
-	store := e.TaskStore
+	store := e.TaskRuntime.Store()
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{

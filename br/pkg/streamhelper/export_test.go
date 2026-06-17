@@ -60,5 +60,16 @@ func SetGlobalCheckpointStorageFactoryForTest(
 	createGlobalCheckpointStorage = factory
 	return func() {
 		createGlobalCheckpointStorage = original
+  }
+}
+
+func SetMetadataWatchProgressForTest(interval, timeout time.Duration) func() {
+	oldInterval := metadataWatchProgressInterval
+	oldTimeout := metadataWatchIdleTimeout
+	metadataWatchProgressInterval = interval
+	metadataWatchIdleTimeout = timeout
+	return func() {
+		metadataWatchProgressInterval = oldInterval
+		metadataWatchIdleTimeout = oldTimeout
 	}
 }

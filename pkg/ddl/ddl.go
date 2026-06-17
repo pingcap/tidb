@@ -224,7 +224,6 @@ type JobWrapper struct {
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
 	ResultCh []chan jobSubmitResult
-	cacheErr error
 }
 
 // NewJobWrapper creates a new JobWrapper.
@@ -246,17 +245,6 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 		IDAllocated: idAllocated,
 		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
-	}
-}
-
-// FillArgsWithSubJobs fill args for job and its sub jobs
-func (jobW *JobWrapper) FillArgsWithSubJobs() {
-	if jobW.Type != model.ActionMultiSchemaChange {
-		jobW.FillArgs(jobW.JobArgs)
-	} else {
-		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			sub.FillArgs(jobW.Version)
-		}
 	}
 }
 
@@ -1482,25 +1470,6 @@ func cancelRunningJob(job *model.Job,
 	return nil
 }
 
-// pauseRunningJob check and pause the running Job
-func pauseRunningJob(job *model.Job,
-	byWho model.AdminCommandOperator) (err error) {
-	if job.IsPausing() || job.IsPaused() {
-		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-	}
-	if !job.IsPausable() {
-		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
-		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
-		if err != nil {
-			return err
-		}
-	}
-
-	job.State = model.JobStatePausing
-	job.AdminOperator = byWho
-	return nil
-}
-
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
@@ -1614,7 +1583,7 @@ func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs [
 
 // PauseJobs pause all the DDL jobs according to user command.
 func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
@@ -1631,7 +1600,7 @@ func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 // PauseJobsBySystem pauses Jobs because of internal reasons.
 func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
-	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandBySystem)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
@@ -1705,7 +1674,7 @@ func processAllJobs(
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
 func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), pauseRunningJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), util.PauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.

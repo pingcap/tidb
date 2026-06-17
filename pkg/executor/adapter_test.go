@@ -499,10 +499,16 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	}
 	ruDetails.AddRUV2(rawRUV2)
 	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
+	commitDetails := &util.CommitDetails{
+		WriteKeys: 3,
+		WriteSize: 66,
+	}
+	sessVars.StmtCtx.SyncExecDetails.MergeExecDetails(commitDetails)
 	// Build expected metrics by cloning the current state and manually adding
-	// the RUV2 counters (without draining ruDetails, since FinishExecuteStmt will drain).
+	// the pending counters (without draining ruDetails, since FinishExecuteStmt will drain).
 	expected := sessVars.RUV2Metrics.Clone()
 	execdetails.UpdateRUV2MetricsFromRUV2(expected, rawRUV2)
+	execdetails.UpdateRUV2MetricsFromCommitDetails(expected, commitDetails)
 
 	execStmt := &executor.ExecStmt{
 		Ctx:      ctx,
@@ -515,6 +521,8 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	require.Equal(t, int64(5), sessVars.RUV2Metrics.ResourceManagerReadCnt())
 	require.Equal(t, int64(7), sessVars.RUV2Metrics.ResourceManagerWriteCnt())
 	require.Equal(t, int64(11), sessVars.RUV2Metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(3), sessVars.RUV2Metrics.WriteKeys())
+	require.Equal(t, int64(66), sessVars.RUV2Metrics.WriteSize())
 	require.Equal(t, "rg1", reporter.group)
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
 	require.Equal(t, expected.CalculateRUValues(sessVars.RUV2Weights()), reporter.tidbRUV2)
@@ -879,4 +887,83 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("create table src(a int primary key, b int, c int)")
+	tk.MustExec("insert into src values (10, 11, 12), (20, 21, 22)")
+
+	runInsert := func(sql string) int64 {
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tk.MustExecWithContext(ctx, sql)
+		metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, metrics)
+		return metrics.ExecutorL5InsertRows()
+	}
+
+	require.Equal(t, int64(6), runInsert("insert into t values (1, 2, 3), (2, 3, 4)"))
+	require.Equal(t, int64(4), runInsert("insert into t(a, c) values (3, 5), (4, 6)"))
+	require.Equal(t, int64(4), runInsert("insert into t(a, b) select a, b from src"))
+
+	oldEnableBatchDML := vardef.EnableBatchDML.Load()
+	vardef.EnableBatchDML.Store(true)
+	defer vardef.EnableBatchDML.Store(oldEnableBatchDML)
+
+	tk.MustExec("set @@session.tidb_batch_insert=1")
+	tk.MustExec("set @@session.tidb_dml_batch_size=2")
+	tk.MustExec("create table batch_t(a int primary key, b int, c int)")
+	tk.MustExec("insert into batch_t values (100, 100, 100)")
+
+	ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	_, err := tk.ExecWithContext(ctx, "insert into batch_t values (1, 2, 3), (2, 3, 4), (100, 5, 6), (3, 4, 5)")
+	require.Error(t, err)
+	metrics := execdetails.RUV2MetricsFromContext(ctx)
+	require.NotNil(t, metrics)
+	require.Equal(t, int64(12), metrics.ExecutorL5InsertRows())
+	tk.MustQuery("select a, b, c from batch_t order by a").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+		"100 100 100",
+	))
+}
+
+func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+
+	runDML := func(sql string) int64 {
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tk.MustExecWithContext(ctx, sql)
+		metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, metrics)
+		return metrics.ExecutorL5InsertRows()
+	}
+
+	require.Equal(t, int64(6), runDML("replace into t values (1, 2, 3), (2, 3, 4)"))
+	require.Equal(t, int64(6), runDML("update t set b = b + 10 where a in (1, 2)"))
+	require.Equal(t, int64(3), runDML("delete from t where a = 1"))
+
+	tk.MustExec("create table multi_del_l(a int primary key)")
+	tk.MustExec("create table multi_del_r(a int primary key)")
+	tk.MustExec("insert into multi_del_l values (1), (2)")
+	tk.MustExec("insert into multi_del_r values (1), (2)")
+	require.Equal(t, int64(4), runDML("delete multi_del_l, multi_del_r from multi_del_l join multi_del_r on multi_del_l.a = multi_del_r.a"))
+
+	tk.MustExec("create table outer_l(a int primary key, b int)")
+	tk.MustExec("create table outer_r(a int primary key, b int)")
+	tk.MustExec("insert into outer_l values (1, 10), (2, 20)")
+	tk.MustExec("insert into outer_r values (1, 100)")
+	require.Equal(t, int64(2), runDML("update outer_l left join outer_r on outer_l.a = outer_r.a set outer_r.b = outer_r.b + 1"))
+
+	tk.MustExec("create table dup_t(a int primary key, b int)")
+	tk.MustExec("create table dup_s(a int, b int)")
+	tk.MustExec("insert into dup_t values (1, 10)")
+	tk.MustExec("insert into dup_s values (1, 100), (1, 200)")
+	require.Equal(t, int64(2), runDML("update dup_t join dup_s on dup_t.a = dup_s.a set dup_t.b = dup_t.b + 1"))
 }

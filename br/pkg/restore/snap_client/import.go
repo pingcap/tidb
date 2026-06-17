@@ -79,6 +79,8 @@ const (
 	RewriteModeKeyspace
 )
 
+const DownloadRateLimitTTLSeconds = 3600
+
 type storeTokenChannelMap struct {
 	sync.RWMutex
 	tokens map[uint64]chan struct{}
@@ -135,6 +137,8 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 }
 
 type SnapFileImporter struct {
+	taskId string
+
 	cipher     *backuppb.CipherInfo
 	apiVersion kvrpcpb.APIVersion
 
@@ -217,6 +221,8 @@ func NewSnapFileImporter(
 		pdReqTokens = utils.BuildWorkerTokenChannel(options.scanConcurrency)
 	}
 	fileImporter := &SnapFileImporter{
+		taskId: uuid.New().String(),
+
 		apiVersion: apiVersion,
 		kvMode:     kvMode,
 
@@ -314,7 +320,9 @@ func (importer *SnapFileImporter) paginateScanRegion(
 
 func (importer *SnapFileImporter) SetDownloadSpeedLimit(ctx context.Context, storeID, rateLimit uint64) error {
 	req := &import_sstpb.SetDownloadSpeedLimitRequest{
+		TaskId:     importer.taskId,
 		SpeedLimit: rateLimit,
+		TtlSeconds: DownloadRateLimitTTLSeconds,
 	}
 	_, err := importer.importClient.SetDownloadSpeedLimit(ctx, storeID, req)
 	return errors.Trace(err)
