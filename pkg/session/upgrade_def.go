@@ -505,7 +505,10 @@ const (
 
 	// version261 refreshes mysql.bind_info SQL digests after binding
 	// normalization starts skipping redundant parentheses for
-	// https://github.com/pingcap/tidb/issues/67363.
+	// https://github.com/pingcap/tidb/issues/67363. It also backfills
+	// tidb_default_string_match_selectivity for upgraded clusters where the row
+	// in mysql.global_variables was never materialized when the variable was
+	// introduced.
 	version261 = 261
 )
 
@@ -2143,6 +2146,9 @@ type bindingDigestUpdate struct {
 }
 
 func upgradeToVer261(s sessionapi.Session, _ int64) {
+	// The prior default behavior is "0.8"; keep it for compatibility with old clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
+
 	// PR #68359 changes binding digest normalization for issue #67363: redundant
 	// expression parentheses are no longer restored into the binding SQL text.
 	// Existing mysql.bind_info rows can therefore carry digests computed by the

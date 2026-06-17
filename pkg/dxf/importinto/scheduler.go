@@ -256,7 +256,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskRuntime.Store().(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -264,7 +264,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskStore, taskID: task.ID, logger: sch.GetLogger()})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskRuntime.Store(), taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -278,7 +278,7 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 
 func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
 	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, taskMeta.Plan.TableInfo)
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskRuntime.Store(), se, taskMeta.Plan.TableInfo)
 		if err2 != nil {
 			return err2
 		}
@@ -339,7 +339,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err = controller.CheckImportDataSize(); err != nil {
 		return err
 	}
-	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
+	if err = controller.CalResourceParams(ctx, sch.TaskRuntime.Store().GetCodec().GetKeyspace()); err != nil {
 		return err
 	}
 	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta.JobID, controller.Plan); err != nil {
@@ -515,7 +515,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      nodeCnt,
-		Store:                sch.TaskStore,
+		Store:                sch.TaskRuntime.Store(),
 		ThreadCnt:            task.GetRuntimeSlots(),
 	}
 	logicalPlan := &LogicalPlan{Logger: logger}
@@ -652,7 +652,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskRuntime.Store().(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
@@ -905,17 +905,8 @@ func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskMan
 		return sch.taskKSTaskMgr, nil
 	}
 
-	if kv.IsUserKS(sch.TaskStore) {
-		var taskKSSessPool util.SessionPool
-		taskKS := sch.GetTask().Keyspace
-		if err := sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
-			var err2 error
-			taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(taskKS)
-			return err2
-		}); err != nil {
-			return nil, errors.Annotatef(errGetCrossKSSessionPool, "keyspace %s", taskKS)
-		}
-		sch.taskKSTaskMgr = storage.NewTaskManager(taskKSSessPool)
+	if kv.IsUserKS(sch.TaskRuntime.Store()) {
+		sch.taskKSTaskMgr = storage.NewTaskManager(sch.TaskRuntime.SysSessionPool())
 	} else {
 		sch.taskKSTaskMgr = sch.GetTaskMgr()
 	}

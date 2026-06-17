@@ -101,7 +101,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260601035955-b2b3bb492278
+	github.com/pingcap/kvproto v0.0.0-20260602101655-f8184e7702eb
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -123,7 +123,7 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260602013621-8804d7c60a7e
+	github.com/tikv/client-go/v2 v2.0.8-0.20260609070524-8df1c02428d9
 	github.com/tikv/pd/client v0.0.0-20260601035915-3ef6a3b10c84
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
@@ -316,7 +316,7 @@ require (
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
-	github.com/shoenig/go-m1cpu v0.1.7 // indirect
+	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect

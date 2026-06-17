@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -115,19 +116,14 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 		rand:         rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
-	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
+	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type),
+		zap.Bool("allocated-slots", param.allocatedSlots))
 	return s
 }
 
 // Init implements the Scheduler interface.
 func (s *BaseScheduler) Init() error {
-	if s.TaskStore.GetKeyspace() != s.GetTask().Keyspace {
-		// shouldn't happen normally, but since keyspace mismatch might cause
-		// correctness error, we check it at runtime too.
-		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
-			s.TaskStore.GetKeyspace(), s.GetTask().Keyspace))
-	}
-	return nil
+	return dxfutil.CheckTaskRuntime(s.TaskRuntime, s.GetTask().Keyspace)
 }
 
 // ScheduleTask implements the Scheduler interface.

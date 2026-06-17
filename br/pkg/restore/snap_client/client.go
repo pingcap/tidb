@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -77,6 +76,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
+	resetSpeedLimitTimeout    = time.Minute
 	defaultDDLConcurrency     = 64
 	maxSplitKeysOnce          = 10240
 )
@@ -685,8 +685,77 @@ func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+func SetSpeedLimitCallbacks(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+	rateLimit uint64,
+) (func(*SnapFileImporter) error, func(*SnapFileImporter) error) {
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	setFn := SetSpeedLimitFn(ctx, pdClient, pool)
+	return func(importer *SnapFileImporter) error {
+			if err := setFn(importer, rateLimit); err != nil {
+				return errors.Annotate(err, "failed to set download speed limit")
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				updateTicker := time.NewTicker(time.Minute * 3)
+				defer updateTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-updateTicker.C:
+						if err := setFn(importer, rateLimit); err != nil {
+							log.Warn("failed to set download speed limit, retry it", zap.Error(err))
+						}
+					case <-stopCh:
+						return
+					}
+				}
+			}()
+			return nil
+		}, func(importer *SnapFileImporter) error {
+			stopOnce.Do(func() {
+				close(stopCh)
+			})
+			wg.Wait()
+
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := range resetSpeedLimitRetryTimes {
+				resetCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetSpeedLimitTimeout)
+				resetErr = SetSpeedLimitFn(resetCtx, pdClient, pool)(importer, 0)
+				cancel()
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		}
+}
+
+func SetSpeedLimitFn(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+) func(*SnapFileImporter, uint64) error {
 	return func(importer *SnapFileImporter, limit uint64) error {
+		stores, err := conn.GetAllTiKVStoresWithRetry(ctx, pdClient, util.SkipTiFlash)
+		if err != nil {
+			return errors.Annotate(err, "failed to get stores")
+		}
+
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
 			if err := ectx.Err(); err != nil {
@@ -729,28 +798,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
-		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-			return setFn(importer, rc.rateLimit)
-		})
-		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
-			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-			var resetErr error
-			for retry := range resetSpeedLimitRetryTimes {
-				resetErr = setFn(importer, 0)
-				if resetErr != nil {
-					log.Warn("failed to reset speed limit, retry it",
-						zap.Int("retry time", retry), logutil.ShortError(resetErr))
-					time.Sleep(time.Duration(retry+3) * time.Second)
-					continue
-				}
-				break
-			}
-			if resetErr != nil {
-				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-			}
-			return resetErr
-		})
+		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)

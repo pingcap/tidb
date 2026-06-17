@@ -357,6 +357,8 @@ func (m *Manager) release(targetKS string, holderID string) {
 // callers to use Acquire instead of GetOrCreate directly.
 func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 	interval := crossKSRuntimeSweepInterval
+	idleTimeout := crossKSRuntimeIdleTimeout
+	failpoint.InjectCall("mockRuntimeGCLoopConfig", &interval, &idleTimeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -365,7 +367,7 @@ func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+			m.sweepIdleRuntimes(idleTimeout)
 		}
 	}
 }
@@ -430,8 +432,8 @@ func (h *runtimeHandle) Store() kv.Storage {
 	return h.entry.sessMgr.Store()
 }
 
-func (h *runtimeHandle) SessPool() util.DestroyableSessionPool {
-	return h.entry.sessMgr.SessPool()
+func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
+	return h.entry.sessMgr.SysSessionPool()
 }
 
 func (h *runtimeHandle) Release() {
@@ -467,8 +469,8 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
 }
 
-// SessPool returns the session pool used by the session manager.
-func (m *SessionManager) SessPool() util.DestroyableSessionPool {
+// SysSessionPool returns the session pool used by the session manager.
+func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 	return m.sessPool
 }
 
