@@ -3622,6 +3622,7 @@ func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("create table t_compare_diff (a int not null, b int not null)")
 	tk.MustExec("insert into t_compare_diff values (1, 10), (2, 20)")
 	tk.MustExec("create materialized view log on t_compare_diff (a, b) purge next date_add(now(), interval 1 hour)")
@@ -3654,8 +3655,16 @@ func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 	summaryRows := tk.MustQuery(compareSQL).Rows()
 	require.Len(t, summaryRows, 1)
 	summary := fmt.Sprint(summaryRows[0][0])
-	require.Contains(t, summary, "3 rows")
-	require.Contains(t, summary, oracle.GetTimeFromTS(lastSuccessReadTSO).Format("2006-01-02 15:04:05.000000"))
+	expectedTimestamp := oracle.GetTimeFromTS(lastSuccessReadTSO).In(tk.Session().GetSessionVars().Location()).Format("2006-01-02 15:04:05.000000 -07:00")
+	require.Equal(
+		t,
+		fmt.Sprintf(
+			"There are differences result in 3 rows compared to source base tables at timestamp '%s' (TSO: %d)",
+			expectedTimestamp,
+			lastSuccessReadTSO,
+		),
+		summary,
+	)
 
 	tk.MustExec(compareSQL + " output into table test.mv_compare_diff_output")
 	tk.MustQuery("select a, s, cnt, _Differ_type_ from test.mv_compare_diff_output order by a").
@@ -3740,6 +3749,37 @@ func TestCompareMaterializedViewOutputWriterBatchesByTxnSize(t *testing.T) {
 	)
 	tk.MustExec(compareSQL)
 	tk.MustQuery("select count(*) from test.mv_compare_output_batch_diff").Check(testkit.Rows(fmt.Sprint(rowCount)))
+}
+
+func TestCompareMaterializedViewDropsOutputTableOnWriteFailure(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_output_cleanup (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_output_cleanup values (1, 10)")
+	tk.MustExec("create materialized view log on t_compare_output_cleanup (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_output_cleanup (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_output_cleanup group by a")
+
+	origInMVMaintenance := tk.Session().GetSessionVars().InMaterializedViewMaintenance
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = true
+	mustExecInternal(t, tk, "update mv_compare_output_cleanup set s = s + 1 where a = 1")
+	mustExecInternal(t, tk, "commit")
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = origInMVMaintenance
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockCompareMaterializedViewOutputFlushError"
+	require.NoError(t, failpoint.Enable(failpointName, `return("mock compare output flush error")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	compareSQL := fmt.Sprintf(
+		"compare materialized view test.mv_compare_output_cleanup as of timestamp '%s' output into table test.mv_compare_output_cleanup_diff",
+		nextCompareTimestamp(t, tk),
+	)
+	err := tk.ExecToErr(compareSQL)
+	require.ErrorContains(t, err, "mock compare output flush error")
+	tk.MustQuery("select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_output_cleanup_diff'").
+		Check(testkit.Rows("0"))
 }
 
 func TestCompareMaterializedViewUsesDefinitionTimeZone(t *testing.T) {

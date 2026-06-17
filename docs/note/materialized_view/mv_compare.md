@@ -11,7 +11,7 @@ Current implementation status:
 - Parser / AST / planner / executor support is implemented.
 - Compare execution uses explicit snapshot semantics from `AS OF TIMESTAMP`.
 - The target MV metadata is resolved from the snapshot InfoSchema at the compare snapshot `S`, not from the current InfoSchema. This keeps the MV table ID, column schema, and refresh-info lookup consistent with snapshot `S`, including out-of-place refresh cutover cases.
-- `OUTPUT INTO TABLE` is implemented. The output table is created from the snapshot MV public-column schema plus the differ-type column; it does not inherit MV indexes, constraints, partitioning, or MV-specific metadata.
+- `OUTPUT INTO TABLE` is implemented. The output table is created from the snapshot MV public-column schema plus the differ-type column; it does not inherit MV indexes, constraints, partitioning, or MV-specific metadata. If compare fails after creating the output table, the statement drops the auto-created output table during cleanup.
 
 ## Goals
 
@@ -65,7 +65,7 @@ Output behavior:
    - execution requires `CREATE` and `INSERT` privileges on the target table schema.
    - the target table schema is built from snapshot `S` MV public columns plus the differ-type column;
    - the target table does not copy MV indexes, constraints, partitioning, or MV-specific metadata;
-   - if target-table creation succeeds but compare later fails, the created table may remain; if output rows have already been flushed, committed batches may also remain.
+   - if target-table creation succeeds but compare later fails, TiDB rolls back the current output-write transaction and drops the auto-created target table, including any already committed output batches.
 
 Privilege semantics:
 
@@ -169,6 +169,7 @@ This keeps full outer join concurrency and row-matching behavior reused from the
 2. Output-table mode (`OUTPUT INTO TABLE` present):
    - auto-create the target table before writing compare results;
    - output table schema is the same as the MV public-column schema, plus one extra differ-type column.
+   - if compare fails after creating the output table, drop the auto-created output table before returning the error.
 
 Output table schema contract:
 
@@ -203,6 +204,7 @@ For grouped MV, this keeps compare semantics aligned with COMPLETE DELTA APPLY d
 3. `LAST_SUCCESS_READ_TSO` is `NULL` -> explicit compare precondition error.
 4. Snapshot `R` older than GC safe point -> stale-read validation error.
 5. Any internal reader execution failure -> return original error.
+6. If `OUTPUT INTO TABLE` was used and the target table was auto-created, any later compare failure triggers output-table cleanup before returning the error. If cleanup also fails, the returned error includes the cleanup failure.
 
 ## Performance notes
 

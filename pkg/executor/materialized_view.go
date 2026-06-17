@@ -124,6 +124,7 @@ type compareMaterializedViewOutputWriter struct {
 	batchBytes    int
 	pendingRows   int
 	release       func(context.Context)
+	dropTable     func(context.Context) error
 }
 
 // CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
@@ -1663,7 +1664,7 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 		}
 		defer func() {
 			if outputWriter != nil {
-				outputWriter.rollback(ctx)
+				outputWriter.rollback(context.WithoutCancel(ctx))
 			}
 		}()
 	}
@@ -1750,7 +1751,7 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 		return nil
 	}
 
-	req.AppendString(0, formatCompareMaterializedViewSummary(lastSuccessReadTSO, diffRows))
+	req.AppendString(0, formatCompareMaterializedViewSummary(lastSuccessReadTSO, diffRows, e.Ctx().GetSessionVars().Location()))
 	return nil
 }
 
@@ -1929,9 +1930,13 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		return nil, err
 	}
 	e.ReleaseSysSession(ctx, ddlSctx)
+	dropOutputTable := func(dropCtx context.Context) error {
+		return e.dropCompareMaterializedViewOutputTable(dropCtx, e.stmt.OutputTable)
+	}
 
 	insertSctx, err := e.GetSysSession()
 	if err != nil {
+		_ = dropOutputTable(context.WithoutCancel(ctx))
 		return nil, err
 	}
 	releaseInsertSession := func(releaseCtx context.Context) {
@@ -1942,6 +1947,7 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	targetTable, err := outputIS.TableByName(context.Background(), e.stmt.OutputTable.Schema, e.stmt.OutputTable.Name)
 	if err != nil {
 		releaseInsertSession(ctx)
+		_ = dropOutputTable(context.WithoutCancel(ctx))
 		return nil, err
 	}
 	writableCols := targetTable.WritableCols()
@@ -1958,7 +1964,19 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		batchSize:     compareMaterializedViewOutputWriterBatchSize,
 		batchBytes:    resolveCompareMaterializedViewOutputWriterBatchBytes(),
 		release:       releaseInsertSession,
+		dropTable:     dropOutputTable,
 	}, nil
+}
+
+func (e *CompareMaterializedViewExec) dropCompareMaterializedViewOutputTable(ctx context.Context, outputTable *ast.TableName) error {
+	ddlSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(ctx, ddlSctx)
+
+	dropSQL := sqlescape.MustEscapeSQL("DROP TABLE IF EXISTS %n.%n", outputTable.Schema.O, outputTable.Name.O)
+	return executeRefreshMaterializedViewInternalSQL(ctx, ddlSctx.GetSQLExecutor(), dropSQL)
 }
 
 func buildCompareMaterializedViewOutputCreateTableSQL(
@@ -2304,19 +2322,24 @@ func classifyCompareMaterializedViewRowDiff(leftMissing, rightMissing, payloadCh
 	}
 }
 
-func formatCompareMaterializedViewSummary(lastSuccessReadTSO uint64, diffRows int64) string {
-	resultTime := oracle.GetTimeFromTS(lastSuccessReadTSO).Format(types.TimeFSPFormat)
+func formatCompareMaterializedViewSummary(lastSuccessReadTSO uint64, diffRows int64, loc *time.Location) string {
+	if loc == nil {
+		loc = time.Local
+	}
+	resultTime := oracle.GetTimeFromTS(lastSuccessReadTSO).In(loc).Format(types.TimeFSPFormat + " -07:00")
 	if diffRows == 0 {
 		return fmt.Sprintf(
-			"There are no differences result in %d rows compared to source base tables at timestamp '%s'",
+			"There are no differences result in %d rows compared to source base tables at timestamp '%s' (TSO: %d)",
 			diffRows,
 			resultTime,
+			lastSuccessReadTSO,
 		)
 	}
 	return fmt.Sprintf(
-		"There are differences result in %d rows compared to source base tables at timestamp '%s'",
+		"There are differences result in %d rows compared to source base tables at timestamp '%s' (TSO: %d)",
 		diffRows,
 		resultTime,
+		lastSuccessReadTSO,
 	)
 }
 
@@ -2379,6 +2402,12 @@ func (w *compareMaterializedViewOutputWriter) flushBatch(ctx context.Context) er
 	w.sctx.GetSessionVars().SetInTxn(false)
 	w.txn = nil
 	w.pendingRows = 0
+	failpoint.Inject("mockCompareMaterializedViewOutputFlushError", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok {
+			failpoint.Return(errors.New(msg))
+		}
+		failpoint.Return(errors.New("mock compare materialized view output flush error"))
+	})
 	return nil
 }
 
@@ -2420,9 +2449,9 @@ func (w *compareMaterializedViewOutputWriter) commit(ctx context.Context) error 
 	return nil
 }
 
-func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) {
+func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) error {
 	if w == nil || w.sctx == nil {
-		return
+		return nil
 	}
 	if w.txn != nil {
 		w.sctx.RollbackTxn(ctx)
@@ -2433,6 +2462,10 @@ func (w *compareMaterializedViewOutputWriter) rollback(ctx context.Context) {
 	w.sctx = nil
 	w.txn = nil
 	w.pendingRows = 0
+	if w.dropTable != nil {
+		return w.dropTable(ctx)
+	}
+	return nil
 }
 
 // Next implements the Executor Next interface.
