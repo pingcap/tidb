@@ -18,8 +18,10 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -32,6 +34,30 @@ type syncedStorage struct {
 
 func (s syncedStorage) FileSynced(context.Context, string) (bool, error) {
 	return s.synced, nil
+}
+
+func TestNewEtcdClientConfig(t *testing.T) {
+	ctx := context.Background()
+	cfg := task.Config{
+		PD:                   []string{"pd-service:2379"},
+		GRPCKeepaliveTime:    10 * time.Second,
+		GRPCKeepaliveTimeout: 3 * time.Second,
+	}
+
+	backoffCfg := etcdGRPCBackoffConfig()
+	require.Equal(t, 3*time.Second, backoffCfg.MaxDelay)
+	keepaliveParams := etcdKeepaliveParams(cfg)
+	require.Equal(t, 10*time.Second, keepaliveParams.Time)
+	require.Equal(t, 3*time.Second, keepaliveParams.Timeout)
+	require.True(t, keepaliveParams.PermitWithoutStream)
+
+	etcdCfg, err := newEtcdClientConfig(ctx, cfg)
+	require.NoError(t, err)
+	require.Equal(t, cfg.PD, etcdCfg.Endpoints)
+	require.Equal(t, 30*time.Second, etcdCfg.AutoSyncInterval)
+	require.Equal(t, 5*time.Second, etcdCfg.DialTimeout)
+	require.Equal(t, ctx, etcdCfg.Context)
+	require.Len(t, etcdCfg.DialOptions, 4)
 }
 
 func TestNewCRRCheckpointServiceRejectsNonLogBackupUpstream(t *testing.T) {
