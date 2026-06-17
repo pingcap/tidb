@@ -2937,7 +2937,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 }
 
 func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
