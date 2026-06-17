@@ -503,9 +503,9 @@ const (
 	// Add mysql.tidb_masking_policy table.
 	version260 = 260
 
-	// version261 backfills tidb_default_string_match_selectivity for upgraded
-	// clusters where the row in mysql.global_variables was never materialized
-	// when the variable was introduced.
+	// version261
+	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
 	version261 = 261
 
 	// version262 refreshes mysql.bind_info SQL digests after binding
@@ -2142,7 +2142,7 @@ func upgradeToVer260(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer261(s sessionapi.Session, _ int64) {
-	// The prior default behavior is "0.8"; keep it for compatibility with old clusters.
+	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
 	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
 }
 
@@ -2213,7 +2213,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 			updateIdx := len(updates)
 			updates = append(updates, update)
 			if planDigestNotNull {
-				// Check the target digest pair before executing any UPDATE.
+				// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
 				key := planDigest + "\x00" + update.sqlDigest
 				if _, ok := seenDigestPair[key]; ok {
 					updates[updateIdx].duplicate = true
@@ -2228,12 +2228,12 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(closeErr))
 	}
 
-	// Update rows independently to avoid one large bootstrap transaction. Clear
-	// duplicate losers before rewriting winners to avoid digest_index conflicts.
+	// Update rows independently to avoid one large bootstrap transaction.
 	for _, update := range updates {
 		if !update.duplicate {
 			continue
 		}
+		// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
 		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
 			bindinfo.StatusDeleted, update.rowID)
 	}
