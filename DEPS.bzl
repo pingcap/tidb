@@ -6608,11 +6608,11 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "8f82128d68f3765fc4d71fa69b7f537cee62173968544b360786d480d6b17230",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260601035915-3ef6a3b10c84",
+        sha256 = "256082b69611ea7b52d95a2052a05309eadc96063bb59ac650dfca145ec90fd7",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260603094237-64def44776c0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260601035915-3ef6a3b10c84.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260601035915-3ef6a3b10c84.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260603094237-64def44776c0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260603094237-64def44776c0.zip",
         ],
     )
     go_repository(
