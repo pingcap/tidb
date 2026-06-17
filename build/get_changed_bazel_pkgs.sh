@@ -65,6 +65,17 @@ is_high_impact_change() {
   return 1
 }
 
+is_package_scoped_go_change() {
+  local path="$1"
+
+  case "$path" in
+    *.go)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 map_file_to_bazel_target() {
   local path="$1"
   local d
@@ -73,10 +84,6 @@ map_file_to_bazel_target() {
   d="$(dirname -- "$path")"
   while :; do
     if [ "$d" = "." ]; then
-      if [ -f BUILD ] || [ -f BUILD.bazel ]; then
-        printf '//:all\n'
-        return 0
-      fi
       return 1
     fi
 
@@ -124,6 +131,9 @@ get_changed_pkgs() {
       if [ -z "$first_high_impact" ]; then
         first_high_impact="$f"
       fi
+      continue
+    fi
+    if ! is_package_scoped_go_change "$f"; then
       continue
     fi
 
