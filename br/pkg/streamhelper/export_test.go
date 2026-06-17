@@ -15,8 +15,22 @@
 package streamhelper
 
 import (
+	"context"
 	"time"
+
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
+
+func SetGlobalCheckpointStorageFactoryForTest(
+	factory func(context.Context, *backuppb.StorageBackend, *storage.ExternalStorageOptions) (storage.ExternalStorage, error),
+) func() {
+	original := createGlobalCheckpointStorage
+	createGlobalCheckpointStorage = factory
+	return func() {
+		createGlobalCheckpointStorage = original
+	}
+}
 
 func SetMetadataWatchProgressForTest(interval, timeout time.Duration) func() {
 	oldInterval := metadataWatchProgressInterval

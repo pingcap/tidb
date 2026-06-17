@@ -19,6 +19,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
@@ -71,7 +72,7 @@ go_test(
     embed = [":streamhelper"],
     flaky = True,
     race = "on",
-    shard_count = 38,
+    shard_count = 42,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
@@ -80,6 +81,7 @@ go_test(
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utiltest/fakecluster",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/tablecodec",
         "//pkg/util/redact",
         "@com_github_pingcap_errors//:errors",
@@ -89,6 +91,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/logbackuppb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//kv",

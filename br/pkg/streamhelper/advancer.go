@@ -5,7 +5,9 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +18,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -31,6 +34,13 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
+
+const (
+	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
+	globalCheckpointFileName           = checkpointTypeGlobal + ".ts"
+)
+
+var createGlobalCheckpointStorage = storage.New
 
 // CheckpointAdvancer is the central node for advancing the checkpoint of log backup.
 // It's a part of "checkpoint v3".
@@ -59,9 +69,11 @@ type CheckpointAdvancer struct {
 
 	// The concurrency accessed task:
 	// both by the task listener and ticking.
-	task      *backuppb.StreamBackupTaskInfo
-	taskRange []kv.KeyRange
-	taskMu    sync.Mutex
+	task                          *backuppb.StreamBackupTaskInfo
+	taskRange                     []kv.KeyRange
+	checkpointStorage             storage.ExternalStorage
+	lastExternalStorageCheckpoint uint64
+	taskMu                        sync.Mutex
 
 	// the read-only config.
 	// once tick begin, this should not be changed for now.
@@ -423,6 +435,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	switch e.Type {
 	case EventAdd:
 		utils.LogBackupTaskCountInc()
+		c.closeGlobalCheckpointStorage()
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
@@ -444,6 +457,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
+		c.closeGlobalCheckpointStorage()
 		c.task = nil
 		c.isPaused.Store(false)
 		c.taskRange = nil
@@ -460,6 +474,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
+		metrics.ExternalStorageCheckpoint.DeleteLabelValues(e.Name)
 	case EventPause:
 		if c.task.GetName() == e.Name {
 			c.isPaused.Store(true)
@@ -594,6 +609,74 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 	return false, nil
 }
 
+func (c *CheckpointAdvancer) closeGlobalCheckpointStorage() {
+	if c.checkpointStorage != nil {
+		c.checkpointStorage.Close()
+		c.checkpointStorage = nil
+	}
+	c.lastExternalStorageCheckpoint = 0
+}
+
+func (c *CheckpointAdvancer) getGlobalCheckpointStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	if c.task == nil || c.task.GetStorage() == nil {
+		return nil, nil
+	}
+	if c.checkpointStorage != nil {
+		return c.checkpointStorage, nil
+	}
+
+	storage, err := createGlobalCheckpointStorage(ctx, c.task.GetStorage(), nil)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to create external storage for global checkpoint")
+	}
+	c.checkpointStorage = storage
+	return storage, nil
+}
+
+func (c *CheckpointAdvancer) writeGlobalCheckpointToStorage(ctx context.Context, checkpoint uint64) error {
+	storage, err := c.getGlobalCheckpointStorage(ctx)
+	if err != nil {
+		return err
+	}
+	if storage == nil {
+		return nil
+	}
+	data := make([]byte, 8)
+	binary.LittleEndian.PutUint64(data, checkpoint)
+	fileName := path.Join(streamBackupGlobalCheckpointPrefix, globalCheckpointFileName)
+	if err := storage.WriteFile(ctx, fileName, data); err != nil {
+		return errors.Annotate(err, "failed to write global checkpoint to external storage")
+	}
+	c.lastExternalStorageCheckpoint = checkpoint
+	metrics.ExternalStorageCheckpoint.WithLabelValues(c.task.Name).Set(float64(checkpoint))
+	log.Info("uploaded global checkpoint to external storage",
+		zap.String("category", "log backup advancer"),
+		zap.Uint64("checkpoint", checkpoint),
+		zap.String("file", fileName))
+	return nil
+}
+
+func (c *CheckpointAdvancer) tryWriteGlobalCheckpointToStorage(ctx context.Context) {
+	if c.task == nil || c.task.GetStorage() == nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
+	defer cancel()
+	globalCheckpoint, err := c.env.GetGlobalCheckpointForTask(writeCtx, c.task.Name)
+	if err != nil {
+		log.Warn("failed to get uploaded global checkpoint, skip uploading to external storage",
+			zap.String("category", "log backup advancer"), logutil.ShortError(err))
+		return
+	}
+	if globalCheckpoint <= c.lastExternalStorageCheckpoint {
+		return
+	}
+	if err := c.writeGlobalCheckpointToStorage(writeCtx, globalCheckpoint); err != nil {
+		log.Warn("failed to upload global checkpoint to external storage, skip it",
+			zap.String("category", "log backup advancer"), logutil.ShortError(err))
+	}
+}
+
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
 	c.setCheckpoint(c.checkpoints.Min())
@@ -601,6 +684,7 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
+	defer func() { c.tryWriteGlobalCheckpointToStorage(ctx) }()
 	isLagged, err := c.isCheckpointLagged(ctx)
 	if err != nil {
 		// ignore the error, just log it
