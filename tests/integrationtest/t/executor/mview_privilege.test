@@ -175,31 +175,31 @@ disconnect u_db_refresh;
 connect (u_compare_none, localhost, u_compare_none,,);
 connection u_compare_none;
 -- error 1142
-compare materialized view mview_privilege_test.mv as of timestamp '2026-05-21 10:00:00';
+compare materialized view mview_privilege_test.mv as of timestamp now();
 disconnect u_compare_none;
 
 connect (u_compare_operate, localhost, u_compare_operate,,mview_privilege_test);
 connection u_compare_operate;
 -- error 1142
-compare materialized view mv as of timestamp '2026-05-21 10:00:00';
+compare materialized view mv as of timestamp now();
 disconnect u_compare_operate;
 
 connect (u_compare_no_create, localhost, u_compare_no_create,,mview_privilege_test);
 connection u_compare_no_create;
 -- error 1142
-compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+compare materialized view mv as of timestamp now() output into table mv_compare_output;
 disconnect u_compare_no_create;
 
 connect (u_compare_no_insert, localhost, u_compare_no_insert,,mview_privilege_test);
 connection u_compare_no_insert;
 -- error 1142
-compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+compare materialized view mv as of timestamp now() output into table mv_compare_output;
 disconnect u_compare_no_insert;
 
 connect (u_compare_output_exists, localhost, u_compare_output_exists,,mview_privilege_test);
 connection u_compare_output_exists;
 -- error 1050
-compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output_exists;
+compare materialized view mv as of timestamp now() output into table mv_compare_output_exists;
 disconnect u_compare_output_exists;
 
 connection default;
