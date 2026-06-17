@@ -2154,18 +2154,10 @@ type bindingDigestUpdate struct {
 }
 
 func upgradeToVer262(s sessionapi.Session, _ int64) {
-	// PR #68359 changes binding digest normalization for issue #67363: redundant
-	// expression parentheses are no longer restored into the binding SQL text.
-	// Existing mysql.bind_info rows can therefore carry digests computed by the
-	// old algorithm. Refresh user-created rows from bind_sql during upgrade so
-	// future binding lookup uses the new digest.
+	// Refresh persisted binding digests after the #67363 normalization change.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	// Duplicate detection below keeps the first row scanned for each target
-	// (plan_digest, sql_digest) pair. Scan newer bindings first so when multiple
-	// old bindings collapse to the same pair after the normalization change, the
-	// surviving row is deterministic and follows the normal binding freshness
-	// precedence. The later write loops separately clear duplicate losers before
-	// refreshing winners to avoid digest_index conflicts.
+	// Duplicate detection keeps the first row scanned for each target digest
+	// pair, so scan newest bindings first.
 	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest, sql_digest
 		FROM mysql.bind_info
 		WHERE source != 'builtin'
@@ -2195,35 +2187,25 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 			digestPairSQLDigestNotNull := false
 			stmt, parseErr := p.ParseOneStmt(bindSQL, row.GetString(3), row.GetString(4))
 			if parseErr != nil {
-				// Some clusters may already contain invalid binding rows.
-				// They cannot be refreshed from bind_sql, but their current
-				// digest pair still occupies digest_index. Record that pair so
-				// later valid rows do not rewrite into a duplicate key.
+				// Keep invalid binding rows unchanged.
 				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
 					zap.String("bind_sql", bindSQL), zap.Error(parseErr))
+				continue
+			}
+			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, row.GetString(2), false)
+			if originalSQL == "" || sqlDigest == "" {
+				// Preserve compatibility by using the current digest pair only
+				// for duplicate detection.
+				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
+					zap.String("bind_sql", bindSQL))
 				if !row.IsNull(6) {
 					update.sqlDigest = row.GetString(6)
 					digestPairSQLDigestNotNull = true
 				}
 			} else {
-				originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, row.GetString(2), false)
-				if originalSQL == "" || sqlDigest == "" {
-					// Empty normalization is unexpected, but preserving
-					// bootstrap compatibility is more important than forcing a
-					// digest refresh. Treat this row like a skipped row and
-					// still include its existing digest pair in duplicate
-					// detection.
-					logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
-						zap.String("bind_sql", bindSQL))
-					if !row.IsNull(6) {
-						update.sqlDigest = row.GetString(6)
-						digestPairSQLDigestNotNull = true
-					}
-				} else {
-					update.originalSQL = originalSQL
-					update.sqlDigest = sqlDigest
-					digestPairSQLDigestNotNull = true
-				}
+				update.originalSQL = originalSQL
+				update.sqlDigest = sqlDigest
+				digestPairSQLDigestNotNull = true
 			}
 
 			planDigest := ""
@@ -2235,10 +2217,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 			updateIdx := len(updates)
 			updates = append(updates, update)
 			if planDigestNotNull && digestPairSQLDigestNotNull {
-				// Duplicate detection must use the target digest pair: valid
-				// rows use the recomputed sql_digest, while skipped rows use
-				// their existing sql_digest. This avoids digest_index conflicts
-				// before executing any UPDATE.
+				// Check the target digest pair before executing any UPDATE.
 				key := planDigest + "\x00" + update.sqlDigest
 				if _, ok := seenDigestPair[key]; ok {
 					updates[updateIdx].duplicate = true
@@ -2253,13 +2232,8 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(closeErr))
 	}
 
-	// Do not wrap these writes in one transaction. Some clusters can have many
-	// binding rows, and a single large transaction risks excessive memory usage
-	// during bootstrap upgrade. Update each binding row independently instead.
-	//
-	// Clear and retire duplicate losers first, then rewrite winners. Otherwise a
-	// winner whose new digest pair is still owned by an old loser can hit the
-	// unique digest_index(plan_digest, sql_digest) and abort bootstrap.
+	// Update rows independently to avoid one large bootstrap transaction. Clear
+	// duplicate losers before rewriting winners to avoid digest_index conflicts.
 	for _, update := range updates {
 		if !update.duplicate {
 			continue
