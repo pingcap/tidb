@@ -17,7 +17,6 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -181,24 +180,13 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
 }
 
-func objStoreAccessField(accessRec *recording.AccessStats) zap.Field {
-	return zap.String("obj-store-access", fmt.Sprintf("{requests: {get: %d, put: %d}, traffic: {r: %d, w: %d}}",
-		accessRec.Requests.Get.Load(), accessRec.Requests.Put.Load(),
-		accessRec.Traffic.Read.Load(), accessRec.Traffic.Write.Load()))
-}
-
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
-	var (
-		dataKVFiles, indexKVFiles atomic.Int64
-		accessRec                 = &recording.AccessStats{}
-		objStore                  storage.ExternalStorage
-	)
+	var dataKVFiles, indexKVFiles atomic.Int64
 	defer func() {
 		task.End2(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
-			zap.Int64("index-kv-files", indexKVFiles.Load()),
-			objStoreAccessField(accessRec))
+			zap.Int64("index-kv-files", indexKVFiles.Load()))
 	}()
 
 	bs := subtask.Meta
@@ -208,6 +196,10 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return errors.Trace(err)
 	}
 
+	var (
+		accessRec = &recording.AccessStats{}
+		objStore  storage.ExternalStorage
+	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
 		accessRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
@@ -437,7 +429,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End2(zapcore.ErrorLevel, err, objStoreAccessField(accessRec))
+		task.End2(zapcore.ErrorLevel, err)
 	}()
 
 	var mu sync.Mutex
@@ -582,7 +574,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End2(zapcore.ErrorLevel, err, objStoreAccessField(accessRec))
+		task.End2(zapcore.ErrorLevel, err)
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
