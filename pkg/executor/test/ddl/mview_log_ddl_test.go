@@ -867,14 +867,22 @@ func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	maxName := strings.Repeat("表", 58)
+	maxBaseNameLen := mysql.MaxTableNameLength - len([]rune(metamodel.MaterializedViewLogTableNamePrefix))
+	maxName := strings.Repeat("表", maxBaseNameLen)
+	maxMLogName := metamodel.MaterializedViewLogTableName(pmodel.NewCIStr(maxName)).O
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(maxMLogName)))
 	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", maxName))
 	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", maxName))
-	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", "$mlog$"+maxName)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", maxMLogName)).Check(testkit.Rows("1"))
 
-	tooLongName := strings.Repeat("表", 59)
+	tooLongName := strings.Repeat("表", maxBaseNameLen+1)
+	require.Equal(t, maxMLogName, metamodel.MaterializedViewLogTableName(pmodel.NewCIStr(tooLongName)).O)
 	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", tooLongName))
-	tk.MustGetErrCode(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName), errno.ErrTooLongIdent)
+	tk.MustGetErrCode(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName), errno.ErrTableExists)
+
+	tk.MustExec(fmt.Sprintf("drop materialized view log on `%s`", maxName))
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName))
+	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", maxMLogName)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {
