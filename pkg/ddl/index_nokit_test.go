@@ -25,10 +25,40 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func TestShouldAutoPauseExistingKVDiskFullTask(t *testing.T) {
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    123,
+			State: proto.TaskStatePaused,
+		},
+		Error: errdef.ErrKVDiskFull.GenWithStack("store 1 disk full"),
+	}
+	job := &model.Job{ID: 456}
+	require.True(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	task.State = proto.TaskStateRunning
+	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	task.State = proto.TaskStatePaused
+	task.Error = errors.New("not disk full")
+	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	err := autoPauseAddIndexJobOnKVDiskFull(job, task.ID, errdef.ErrKVDiskFull.GenWithStack("store 2 disk full"))
+	require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+	require.True(t, job.IsPausingOrPausedBySystemForKVDiskFull())
+	require.Nil(t, job.ResumeReason)
+}
 
 func TestModifyTaskParamLoop(t *testing.T) {
 	type env struct {

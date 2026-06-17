@@ -51,6 +51,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					return ver, err
 				}
 				sub.FromProxyJob(&proxyJob, ver)
+				job.ResumeReason = proxyJob.ResumeReason
 				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
@@ -71,6 +72,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			proxyJob := sub.ToProxyJob(job, i)
 			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
+			job.ResumeReason = proxyJob.ResumeReason
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
 				return ver, nil
 			}
@@ -111,6 +113,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				ver = proxyJobVer
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
+			job.ResumeReason = proxyJob.ResumeReason
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
 				return ver, nil
 			}
@@ -160,6 +163,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
+		job.ResumeReason = proxyJob.ResumeReason
 		if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
 			return ver, nil
 		}
@@ -180,6 +184,7 @@ func promoteProxyKVDiskFullPause(parentJob *model.Job, subJob *model.SubJob, pre
 	subJob.State = prevSubState
 	parentJob.State = proxyJob.State
 	parentJob.AdminOperator = proxyJob.AdminOperator
+	parentJob.ClearResumeReason()
 	if proxyJob.PauseReason != nil {
 		parentJob.SetPauseReason(proxyJob.PauseReason.Type, proxyJob.PauseReason.Message)
 	} else {
