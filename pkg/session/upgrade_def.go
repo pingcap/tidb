@@ -2260,10 +2260,9 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 		}
 	}
 	for _, update := range updates {
-		if update.duplicate || !update.refresh {
-			continue
+		if !update.duplicate && update.refresh {
+			mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
+				update.originalSQL, update.sqlDigest, update.rowID)
 		}
-		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
-			update.originalSQL, update.sqlDigest, update.rowID)
 	}
 }
