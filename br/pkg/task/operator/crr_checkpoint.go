@@ -34,10 +34,13 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
 )
 
 type cleanupFunc func()
+
+const etcdGRPCBackOffMaxDelay = 3 * time.Second
 
 // NewCRRCheckpointService creates the CRR checkpoint service and its dependent clients.
 func NewCRRCheckpointService(
@@ -244,7 +247,21 @@ func closeEtcdClient(etcdCli *clientv3.Client) {
 	}
 }
 
-func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, error) {
+func etcdGRPCBackoffConfig() backoff.Config {
+	backoffCfg := backoff.DefaultConfig
+	backoffCfg.MaxDelay = etcdGRPCBackOffMaxDelay
+	return backoffCfg
+}
+
+func etcdKeepaliveParams(cfg task.Config) keepalive.ClientParameters {
+	return keepalive.ClientParameters{
+		Time:                cfg.GRPCKeepaliveTime,
+		Timeout:             cfg.GRPCKeepaliveTimeout,
+		PermitWithoutStream: true,
+	}
+}
+
+func newEtcdClientConfig(ctx context.Context, cfg task.Config) (clientv3.Config, error) {
 	var (
 		tlsConfig *tls.Config
 		err       error
@@ -253,26 +270,34 @@ func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, er
 	if cfg.TLS.IsEnabled() {
 		tlsConfig, err = cfg.TLS.ToTLSConfig()
 		if err != nil {
-			return nil, errors.Trace(err)
+			var empty clientv3.Config
+			return empty, errors.Trace(err)
 		}
 	}
 
-	etcdCli, err := clientv3.New(clientv3.Config{
+	return clientv3.Config{
 		TLS:              tlsConfig,
 		Endpoints:        cfg.PD,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                cfg.GRPCKeepaliveTime,
-				Timeout:             cfg.GRPCKeepaliveTimeout,
-				PermitWithoutStream: false,
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: etcdGRPCBackoffConfig(),
 			}),
+			grpc.WithKeepaliveParams(etcdKeepaliveParams(cfg)),
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
 		Context: ctx,
-	})
+	}, nil
+}
+
+func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, error) {
+	etcdCfg, err := newEtcdClientConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	etcdCli, err := clientv3.New(etcdCfg)
 	if err != nil {
 		return nil, err
 	}

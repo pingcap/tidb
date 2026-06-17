@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -69,11 +70,42 @@ type AdvancerExt struct {
 	MetaDataClient
 }
 
+var (
+	// etcd's default periodic watch progress is too sparse for failover, so request it proactively.
+	metadataWatchProgressInterval = 30 * time.Second
+	metadataWatchIdleTimeout      = 90 * time.Second
+)
+
 func errorEvent(err error) TaskEvent {
 	return TaskEvent{
 		Type: EventErr,
 		Err:  err,
 	}
+}
+
+func resetWatchIdleTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(metadataWatchIdleTimeout)
+}
+
+func requestWatchProgress(ctx context.Context, watcher clientv3.Watcher) error {
+	failpoint.Inject("advancer_skip_watch_progress_request", func() {
+		failpoint.Return(nil)
+	})
+	progressCtx, cancelProgress := context.WithTimeout(ctx, metadataWatchProgressInterval)
+	err := watcher.RequestProgress(progressCtx)
+	cancelProgress()
+	return err
+}
+
+func watchIdleTimeoutError(target string) error {
+	return errors.Errorf("watching %s timed out after %s without etcd progress",
+		target, metadataWatchIdleTimeout)
 }
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
@@ -304,12 +336,19 @@ func (t MetaDataClient) waitCheckpointEvent(
 	current uint64,
 	rev int64,
 ) error {
-	watchCh := t.Watcher.Watch(ctx, key, clientv3.WithRev(rev))
+	watchCtx, cancelWatch := context.WithCancel(clientv3.WithRequireLeader(ctx))
+	defer cancelWatch()
+	watchCh := t.Watcher.Watch(watchCtx, key, clientv3.WithRev(rev), clientv3.WithProgressNotify())
+	progressTicker := time.NewTicker(metadataWatchProgressInterval)
+	defer progressTicker.Stop()
+	idleTimer := time.NewTimer(metadataWatchIdleTimeout)
+	defer idleTimer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case resp, ok := <-watchCh:
+			resetWatchIdleTimer(idleTimer)
 			if !ok {
 				return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
 			}
@@ -331,6 +370,12 @@ func (t MetaDataClient) waitCheckpointEvent(
 					return nil
 				}
 			}
+		case <-progressTicker.C:
+			if err := requestWatchProgress(watchCtx, t.Watcher); err != nil {
+				return err
+			}
+		case <-idleTimer.C:
+			return watchIdleTimeoutError("global checkpoint")
 		}
 	}
 }
