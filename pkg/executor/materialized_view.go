@@ -1819,10 +1819,10 @@ func buildCompareMaterializedViewDiffLayout(
 			continue
 		}
 		layout.payloadCompareColumns = append(layout.payloadCompareColumns, mviewCompleteDeltaCompareColumn{
-			mInputColID:    offset,
-			qInputColID:    len(visibleCols) + offset,
-			fieldType:      &col.FieldType,
-			notNull:        mysql.HasNotNullFlag(col.GetFlag()),
+			mInputColID: offset,
+			qInputColID: len(visibleCols) + offset,
+			fieldType:   &col.FieldType,
+			notNull:     mysql.HasNotNullFlag(col.GetFlag()),
 		})
 	}
 	return layout, nil
