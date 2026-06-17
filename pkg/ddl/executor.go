@@ -1918,7 +1918,7 @@ func isAlterTableOnlyIndexOperations(specs []*ast.AlterTableSpec) bool {
 	}
 	for _, spec := range specs {
 		switch spec.Tp {
-		case ast.AlterTableDropIndex, ast.AlterTableRenameIndex, ast.AlterTableIndexInvisible:
+		case ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey, ast.AlterTableRenameIndex, ast.AlterTableIndexInvisible:
 		case ast.AlterTableAddConstraint:
 			if spec.Constraint == nil {
 				return false

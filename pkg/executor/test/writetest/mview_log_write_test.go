@@ -134,7 +134,7 @@ func TestMLogInsert(t *testing.T) {
 	))
 
 	// Partial-column insert with DEFAULT value.
-	tk.MustExec("drop table if exists `$mlog$t`")
+	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int default 99)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
@@ -872,40 +872,36 @@ func TestMLogPrunedColumns(t *testing.T) {
 	tk.MustExec("use test")
 
 	t.Run("delete", func(t *testing.T) {
-		tk.MustExec("drop table if exists `$mlog$t`")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int)")
-		tk.MustExec("create materialized view log on t (a, b)")
-		tk.MustExec("insert into t values (1,10)")
-		execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+		tk.MustExec("create table t_mlog_pruned_delete (a int, b int)")
+		tk.MustExec("create materialized view log on t_mlog_pruned_delete (a, b)")
+		tk.MustExec("insert into t_mlog_pruned_delete values (1,10)")
+		execAsMViewMaintenance(tk, "delete from `$mlog$t_mlog_pruned_delete`")
 
 		// Delete normally can prune non-handle/index columns, but mlog RemoveRecord reads
 		// tracked columns by base offsets; pruning them would make mlog writing fail.
-		tk.MustExec("delete from t where b=10")
+		tk.MustExec("delete from t_mlog_pruned_delete where b=10")
 
-		tk.MustQuery("select a, b from t").Check(testkit.Rows())
+		tk.MustQuery("select a, b from t_mlog_pruned_delete").Check(testkit.Rows())
 		tk.MustQuery(
-			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_pruned_delete`",
 		).Check(testkit.Rows(
 			"1 10 D -1",
 		))
 	})
 
 	t.Run("update", func(t *testing.T) {
-		tk.MustExec("drop table if exists `$mlog$t`")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int)")
-		tk.MustExec("create materialized view log on t (a, b)")
-		tk.MustExec("insert into t values (1,10)")
-		execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+		tk.MustExec("create table t_mlog_pruned_update (a int, b int)")
+		tk.MustExec("create materialized view log on t_mlog_pruned_update (a, b)")
+		tk.MustExec("insert into t_mlog_pruned_update values (1,10)")
+		execAsMViewMaintenance(tk, "delete from `$mlog$t_mlog_pruned_update`")
 
 		// Even if only column b is updated, UpdateRecord still needs full writable row data.
 		// If update column pruning drops tracked columns, mlog writing would fail.
-		tk.MustExec("update t set b=11 where b=10")
+		tk.MustExec("update t_mlog_pruned_update set b=11 where b=10")
 
-		tk.MustQuery("select a, b from t").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select a, b from t_mlog_pruned_update").Check(testkit.Rows("1 11"))
 		tk.MustQuery(
-			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_pruned_update`",
 		).Sort().Check(testkit.Rows(
 			"1 10 U -1",
 			"1 11 U 1",

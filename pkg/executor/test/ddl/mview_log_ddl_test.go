@@ -994,18 +994,15 @@ func TestTruncateOrdinaryTableStillWorks(t *testing.T) {
 	tk.MustQuery("select count(*) from t_normal_truncate").Check(testkit.Rows("0"))
 }
 
-func TestDropMaterializedViewLogTableAfterBaseDropped(t *testing.T) {
+func TestDropMaterializedViewLogBeforeBaseTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists `$mlog$t_drop_seq`")
-	tk.MustExec("drop table if exists t_drop_seq")
-
 	tk.MustExec("create table t_drop_seq (a int)")
 	tk.MustExec("create materialized view log on t_drop_seq (a)")
+	tk.MustExec("drop materialized view log on t_drop_seq")
 	tk.MustExec("drop table if exists t_drop_seq")
-	tk.MustExec("drop table if exists `$mlog$t_drop_seq`")
 }
 
 func TestDropMaterializedViewLogRemovesPurgeState(t *testing.T) {
