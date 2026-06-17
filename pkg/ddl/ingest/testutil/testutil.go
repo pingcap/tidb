@@ -15,29 +15,52 @@
 package testutil
 
 import (
+	"fmt"
+	"math"
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
 
-// InjectMockBackendMgr mock LitBackCtxMgr.
-func InjectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
-	tk := testkit.NewTestKit(t, store)
-	oldLitBackendMgr := ingest.LitBackCtxMgr
-	oldInitialized := ingest.LitInitialized
+// InjectMockBackendCtx mock LitBackCtxMgr.
+func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
+	oldLitDiskRoot := ingest.LitDiskRoot
+	oldLitMemRoot := ingest.LitMemRoot
 
-	ingest.LitBackCtxMgr = ingest.NewMockBackendCtxMgr(func() sessionctx.Context {
-		tk.MustExec("rollback;")
-		tk.MustExec("begin;")
-		return tk.Session()
-	})
+	tk := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockNewBackendContext",
+		func(job *model.Job, cpMgr *ingest.CheckpointManager, mockBackendCtx *ingest.BackendCtx) {
+			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpMgr)
+		})
 	ingest.LitInitialized = true
+	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 
 	return func() {
-		ingest.LitBackCtxMgr = oldLitBackendMgr
-		ingest.LitInitialized = oldInitialized
+		ingest.LitInitialized = false
+		ingest.LitDiskRoot = oldLitDiskRoot
+		ingest.LitMemRoot = oldLitMemRoot
 	}
+}
+
+// CheckIngestLeakageForTest is only used in test.
+func CheckIngestLeakageForTest(exitCode int) {
+	if exitCode == 0 {
+		leakObj := ""
+		if ingest.TrackerCountForTest.Load() != 0 {
+			leakObj = "disk usage tracker"
+		} else if ingest.BackendCounterForTest.Load() != 0 {
+			leakObj = "backend context"
+		}
+		if len(leakObj) > 0 {
+			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
+			os.Exit(1)
+		}
+	}
+	os.Exit(exitCode)
 }

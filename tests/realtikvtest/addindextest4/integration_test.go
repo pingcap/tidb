@@ -15,12 +15,17 @@
 package addindextest_test
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -102,6 +107,7 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec("create table t (a int);")
 	tk1.MustExec("insert into t values (1);")
 	tk1.MustExec("set @@global.tidb_enable_dist_task=off;")
@@ -185,4 +191,242 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 	}
 	tk1.MustExec("set @@global.tidb_enable_dist_task = on;")
 	tk1.MustExec("drop table t;")
+}
+
+func TestAddIndexShowAnalyzeProgress(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
+	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	tk1.MustExec("set @@tidb_stats_update_during_ddl = 1;")
+	beginRs := tk1.MustQuery("select now();").Rows()
+	begin := beginRs[0][0].(string)
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionModifyColumn {
+			jobID = job.ID
+		}
+	})
+	analyzed := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorage", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		analyzeStatusRs := tk2.MustQuery(
+			fmt.Sprintf("show analyze status where start_time >= '%s';", begin)).Rows()
+		require.Equal(t, analyzeStatusRs[0][7].(string), "running")
+		showRs := tk2.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+		show := showRs[0][12].(string)
+		require.Contains(t, show, "analyzing")
+		analyzed = true
+	})
+	tk1.MustExec("alter table t modify column b char(16);")
+	require.True(t, analyzed)
+
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
+	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	beginRs = tk1.MustQuery("select now();").Rows()
+	begin = beginRs[0][0].(string)
+	jobID = int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionModifyColumn {
+			jobID = job.ID
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(err *error) {
+		*err = errors.New("mock err")
+	})
+	tk1.MustExec("alter table t modify column b char(16);")
+	require.True(t, analyzed)
+	showRs := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+	show := showRs[0][12].(string)
+	require.Contains(t, show, "analyze_failed")
+}
+
+func TestAnalyzeTimeout(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t_timeout;")
+	tk1.MustExec("create table t_timeout (a int, b varchar(16), key idx_b(b));")
+	tk1.MustExec("insert into t_timeout values (1, '1'), (2, '2'), (3, '3');")
+	tk1.MustExec("set @@tidb_stats_update_during_ddl = 1;")
+
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionModifyColumn {
+			jobID = job.ID
+		}
+	})
+
+	oldInterval := ddl.DefaultAnalyzeCheckInterval
+	ddl.DefaultAnalyzeCheckInterval = 10 * time.Millisecond
+	defer func() {
+		ddl.DefaultAnalyzeCheckInterval = oldInterval
+	}()
+
+	analyzedNotify := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(*error) {
+		// wait an extra second because analyze start_time is compared at second granularity
+		time.Sleep(1 * time.Second)
+		close(analyzedNotify)
+	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		time.Sleep(100 * time.Millisecond)
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAnalyzeTimeout", "return(1)")
+
+	tk1.MustExec("alter table t_timeout modify column b char(16);")
+
+	require.Eventually(t, func() bool {
+		if jobID == 0 {
+			return false
+		}
+		rows := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		show := rows[0][12].(string)
+		return strings.Contains(show, "analyze_timeout")
+	}, 30*time.Second, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tk1.MustQuery("show stats_meta where table_name = 't_timeout'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-analyzedNotify:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, 200*time.Millisecond)
+
+	jobID = 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	tk1.MustExec("alter table t_timeout add index new_idx_b(b);")
+	require.Eventually(t, func() bool {
+		require.Greater(t, jobID, int64(0))
+		rows := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		show := rows[0][12].(string)
+		return strings.Contains(show, "analyze_timeout")
+	}, 30*time.Second, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tk1.MustQuery("show stats_meta where table_name = 't_timeout'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+}
+
+func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_stats_update_during_ddl = true;")
+	dbCnt := 0
+
+	checkFn := func(sql, containRes string) {
+		dbCnt++
+		dbName := fmt.Sprintf("test_%d", dbCnt)
+		tk1.MustExec("drop database if exists " + dbName)
+		tk1.MustExec("create database " + dbName)
+		defer tk1.MustExec("drop database " + dbName)
+		tk1.MustExec("use " + dbName)
+		tk1.MustExec("create table t (a bigint, b bigint, c bigint, d bigint, key i_a(a), key i_b(b), key i_c(c));")
+		tk1.MustExec("insert into t values (1, 1, 11111, 1);")
+		beginRs := tk1.MustQuery("select now();").Rows()
+		begin := beginRs[0][0].(string)
+		tk1.MustExec(sql)
+		analyzeStatusRs := tk1.MustQuery(
+			fmt.Sprintf("show analyze status where start_time >= '%s' and table_schema = '%s';", begin, dbName)).Rows()
+		if len(containRes) == 0 {
+			require.Len(t, analyzeStatusRs, 0)
+			return
+		}
+		require.Len(t, analyzeStatusRs, 1)
+		analyzeStr := analyzeStatusRs[0][3].(string)
+		require.Contains(t, analyzeStr, containRes)
+	}
+
+	// Index reorg.
+	checkFn("alter table t modify column a int unsigned", "a")
+	checkFn("alter table t add index i_a_2(a), add index i_b_2(b), modify column c char(5), modify column d char(5)", "all columns")
+	checkFn("alter table t modify column c int, modify column a char(5), add index i_d_1(d)", "all columns")
+	checkFn("alter table t modify column c char(5), modify column a int, modify column b int", "all columns")
+	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b int unsigned", "all columns")
+	checkFn("alter table t modify column a char(5), modify column d char(5)", "all columns")
+	checkFn("alter table t modify column a int, modify column b int unsigned", "all columns")
+
+	// No index reorg.
+	checkFn("alter table t modify column a int", "")
+	checkFn("alter table t modify column a bigint", "")
+	checkFn("alter table t modify column a int, modify column d char(5)", "")
+	checkFn("alter table t modify column a int, modify column d int", "")
+}
+
+func TestCancelAfterReorgTimeout(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
+	defer tk.MustExec("drop view if exists all_global_tasks;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	// Mock subtask executor encounter the same error continuously.
+	afterMeetErr := false
+	meetErr := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeReadIndexStepExecRunSubtask", func(err *error) {
+		*err = errors.New("mock err")
+		if !afterMeetErr {
+			meetErr <- struct{}{}
+			afterMeetErr = true
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(10)") // Speed up the test.
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		jobID = job.ID
+	})
+	afterTimeout := false
+	timeout := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterDXFTaskSubmitted", func() {
+		<-meetErr
+		<-timeout
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test;")
+		tk1.MustExec(fmt.Sprintf("admin cancel ddl jobs %d;", jobID))
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", func() {
+		if !afterTimeout {
+			timeout <- struct{}{}
+			afterTimeout = true
+		}
+	})
+	tk.MustGetErrCode("alter table t add index idx(a);", errno.ErrCancelledDDLJob)
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery("select state from all_global_tasks;").Rows()
+		require.Greater(t, len(result), 0)
+		state := result[0][0].(string)
+		done := state == proto.TaskStateSucceed.String() ||
+			state == proto.TaskStateReverted.String() ||
+			state == proto.TaskStateFailed.String()
+		return done
+	}, 10*time.Second, 300*time.Millisecond)
 }

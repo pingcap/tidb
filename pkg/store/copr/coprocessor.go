@@ -734,8 +734,11 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	vars     *tikv.Variables
-	kvclient *txnsnapshot.ClientHelper
+	// requestRateLimit controls the aggregate number of in-flight cop requests.
+	// The token lifecycle is tied to one send attempt instead of response consumption.
+	requestRateLimit *util.RateLimit
+	vars             *tikv.Variables
+	kvclient         *txnsnapshot.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -916,6 +919,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		req:                     it.req,
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
+		requestRateLimit:        it.req.CoprRequestRateLimit,
 		vars:                    it.vars,
 		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
@@ -1021,6 +1025,11 @@ func (it *copIterator) GetBuildTaskElapsed() time.Duration {
 // GetSendRate returns the rate-limit object.
 func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
+}
+
+// GetRequestRateLimit returns the shared request rate-limit object.
+func (it *copIterator) GetRequestRateLimit() *util.RateLimit {
+	return it.req.CoprRequestRateLimit
 }
 
 // GetTasks returns the built tasks.
@@ -1377,8 +1386,26 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
-	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+
+	if worker.requestRateLimit != nil {
+		exit := worker.requestRateLimit.GetToken(worker.finishCh)
+		if exit {
+			return nil, nil
+		}
+	}
+	// Keep the request-rate token and send attempt in a small scope so the
+	// token is released immediately after the send attempt returns, while
+	// still remaining panic-safe.
+	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
+		defer func() {
+			if worker.requestRateLimit != nil {
+				worker.requestRateLimit.PutToken()
+			}
+		}()
+		failpoint.InjectCall("onBeforeSendReqCtx", req)
+		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
+			timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	}()
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
@@ -1777,9 +1804,18 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
 			zap.Stringer("lock", lockErr))
 	}
+	var locks []*txnlock.Lock
+	if sharedLocks := lockErr.GetSharedLockInfos(); len(sharedLocks) > 0 {
+		locks = make([]*txnlock.Lock, 0, len(sharedLocks))
+		for _, l := range sharedLocks {
+			locks = append(locks, txnlock.NewLock(l))
+		}
+	} else {
+		locks = []*txnlock.Lock{txnlock.NewLock(lockErr)}
+	}
 	resolveLocksOpts := txnlock.ResolveLocksOptions{
 		CallerStartTS: worker.req.StartTs,
-		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
+		Locks:         locks,
 		Detail:        resolveLockDetail,
 	}
 	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
@@ -1914,36 +1950,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	if resp == nil {
 		return nil
 	}
-	sd := &util.ScanDetail{}
-	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if pbDetails.TimeDetail != nil || pbDetails.TimeDetailV2 != nil {
-			td.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
+			copStats.ScanDetail.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(nil, timeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(nil, timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
+				copStats.ScanDetail.ProcessedKeys = scanDetail.Write.Processed
+				copStats.ScanDetail.TotalKeys = scanDetail.Write.Total
 			}
 		}
 	}
-	copStats.ScanDetail = sd
-	copStats.TimeDetail = td
 
 	if worker.req.RunawayChecker != nil {
 		var ruDetail *util.RUDetails
 		if ruDetailRaw := bo.GetCtx().Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			ruDetail = ruDetailRaw.(*util.RUDetails)
 		}
-		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, sd.ProcessedKeys, nil); err != nil {
+		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, copStats.ScanDetail.ProcessedKeys, nil); err != nil {
 			return err
 		}
 	}
@@ -1962,12 +1994,14 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}()
 	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
-	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
-		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	if len(backoffTimes) > 0 {
+		copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+		copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+		copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
+		for backoff := range backoffTimes {
+			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
+			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+		}
 	}
 }
 
@@ -1983,7 +2017,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
-	execdetails.ExecDetails
+	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
 	CoprCacheHit bool

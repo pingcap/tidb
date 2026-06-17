@@ -31,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -43,8 +45,20 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+type killQuerySessionManager struct {
+	*testkit.MockSessionManager
+}
+
+func (sm *killQuerySessionManager) Kill(connID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	if sess := sm.Conn[connID]; sess != nil {
+		sess.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	}
+}
 
 func TestAnalyzePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -137,6 +151,122 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
+	t.Run("cancel_on_ctx", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+		tk.MustExec("set @@tidb_analyze_version = 2")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		ctx, cancel := context.WithCancel(baseCtx)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+			done <- err
+		}()
+
+		tkWatcher := testkit.NewTestKit(t, store)
+		tkWatcher.MustExec("use test")
+		var earlyDone bool
+		var earlyErr error
+		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
+			rows := tkWatcher.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+		if earlyDone {
+			t.Fatalf("analyze finished before cancel, err=%v", earlyErr)
+		}
+		cancel()
+
+		select {
+		case <-done:
+			rows := tkWatcher.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), "context canceled")
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after context canceled")
+		}
+	})
+	t.Run("kill_query", func(t *testing.T) {
+		tk.MustExec("truncate table mysql.analyze_jobs")
+		dom := domain.GetDomain(tk.Session())
+		origSM := dom.InfoSyncer().GetSessionManager()
+		sm := &killQuerySessionManager{
+			MockSessionManager: &testkit.MockSessionManager{
+				SerID: 1,
+				Conn:  make(map[uint64]sessiontypes.Session),
+			},
+		}
+		dom.InfoSyncer().SetSessionManager(sm)
+		defer dom.InfoSyncer().SetSessionManager(origSM)
+
+		tkAnalyze := testkit.NewTestKit(t, store)
+		connID := globalconn.NewGlobalAllocator(sm.ServerID, false).NextID()
+		tkAnalyze.Session().SetConnectionID(connID)
+		tkAnalyze.Session().SetSessionManager(sm)
+		sm.Conn[connID] = tkAnalyze.Session()
+		tkAnalyze.MustExec("use test")
+		tkAnalyze.MustExec("drop table if exists t")
+		tkAnalyze.MustExec("create table t(a int)")
+		tkAnalyze.MustExec("insert into t values (1), (2)")
+		tkAnalyze.MustExec("set @@tidb_analyze_version = 2")
+
+		tkKiller := testkit.NewTestKit(t, store)
+		tkKiller.Session().GetSessionVars().User = &auth.UserIdentity{}
+		tkKiller.Session().SetSessionManager(sm)
+		sm.Conn[tkKiller.Session().GetSessionVars().ConnectionID] = tkKiller.Session()
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tkAnalyze.Session().ExecuteInternal(baseCtx, "analyze table t")
+			done <- err
+		}()
+
+		var earlyDone bool
+		var earlyErr error
+		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
+			rows := tkKiller.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+		if earlyDone {
+			t.Fatalf("analyze finished before kill query, err=%v", earlyErr)
+		}
+		tkKiller.MustExec(fmt.Sprintf("kill query %d", connID))
+
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
+			rows := tkKiller.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), exeerrors.ErrQueryInterrupted.Error())
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after kill query")
+		}
+	})
 }
 
 func TestAnalyzeParameters(t *testing.T) {
@@ -510,7 +640,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
@@ -520,7 +649,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"",
 	))
 }
@@ -630,6 +758,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_build_stats_concurrency = 4")
 	tk.MustExec("create table t(a int, index idx(a))")
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
 	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
@@ -1959,6 +2088,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2032,6 +2162,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
@@ -2323,7 +2454,6 @@ PARTITION BY RANGE ( a ) (
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
-
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
@@ -2335,7 +2465,10 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 0, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// Static partition analyze may flush pending partition deltas into the
+	// logical/global stats_meta row, but it must not build a global column
+	// histogram. In that meta-only global stats case, the global column is absent.
+	require.Nil(t, tbl.GetCol(tableInfo.Columns[0].ID))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2600,10 +2733,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	rows := tk.MustQuery("show warnings").Rows()
-	require.Len(t, rows, 0)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -2612,7 +2744,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))
@@ -2726,6 +2858,11 @@ PARTITION BY RANGE ( a ) (
 func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	bakRunAutoAnalyze := variable.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
 	tk.MustExec("use test")
 	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_enable_analyze_snapshot to 1 and reads data from snapshot.
@@ -2980,31 +3117,34 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 	// 3.2. emulate the background async loading
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	// 3.3. now, stats on all indexes should be loaded
+	// 3.3. The chosen MV-index histograms loaded by LoadNeededHistograms now show up
+	// in the partial-stats list; non-MV indexes like ia that aren't used by the chosen
+	// plan are no longer queued for async loading (full-range scans short-circuit
+	// before IndexStatsIsInvalid), so ia stays allEvicted.
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_signed) */ * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_unsigned) */* from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
 		"IndexMerge 18.00 root  type: union",
-		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_double) */ * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
 		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
-		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_binary) */ * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 14.83 root  type: union",
-		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_char) */ * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 13.50 root  type: union",
-		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 
 	// 3.4. clean up the stats and re-analyze the table
@@ -3290,4 +3430,28 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+}
+
+func TestIssue66918(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		j JSON,
+		g VARCHAR(255) GENERATED ALWAYS AS ((j->'$.v')) STORED,
+		UNIQUE INDEX g_idx (g)
+	)`)
+	tk.MustExec(`INSERT INTO t(j) VALUES ('{"v":1}'), ('{"v":2}')`)
+
+	tk.MustExec("ANALYZE TABLE t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tk.MustQuery("select is_index, stats_ver from mysql.stats_histograms where table_id = ? order by is_index, hist_id", tblInfo.ID).Check(testkit.Rows(
+		"0 2",
+		"1 2",
+	))
+
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, tblStats.GetIdx(tblInfo.Indices[0].ID).IsAnalyzed())
 }

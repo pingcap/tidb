@@ -14,6 +14,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	perrors "github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -157,7 +158,9 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 	defer pdHTTPCli.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done, err := pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, []byte{0, 0, 0, 0}, []byte{0xff, 0xff, 0xff, 0xff}, ttl)
+	startKey := kv.Key{0, 0, 0, 0}
+	endKey := kv.Key{0xff, 0xff, 0xff, 0xff}
+	done, _, err := pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][2]kv.Key{{startKey, endKey}}, ttl)
 	require.NoError(t, err)
 	time.Sleep(ttl * 3)
 	cancel()

@@ -45,6 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	indexJoinPruneMinProbeRows = 100000.0
+	indexJoinPruneMinBuildRows = 100.0
+)
+
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalUnionScan)
 	if prop.IsFlashProp() {
@@ -122,6 +127,28 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	}
 
 	return []*property.PhysicalProperty{lProp, rProp}, true
+}
+
+// calcChildExpectedCnt computes the expected row count for a child of an
+// ordered join given the parent's ExpectedCnt. It accounts for
+// OptOrderingIdxSelRatio to model extra rows that may need to be scanned
+// before enough matching rows are produced.
+func calcChildExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, childRowCount, estimatedRowCount float64) float64 {
+	hasOrder := !prop.IsSortItemEmpty()
+	var orderRatio float64
+	if hasOrder {
+		orderRatio = sctx.GetSessionVars().OptOrderingIdxSelRatio
+	}
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(hasOrder && orderRatio > 0 && childRowCount > estimatedRowCount && prop.ExpectedCnt < childRowCount && estimatedRowCount > 0) {
+		var rowsToMeetFirst float64
+		if hasOrder && orderRatio > 0 {
+			rowsToMeetFirst = max(0.0, (childRowCount-estimatedRowCount)*orderRatio)
+		}
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		return (childRowCount * expCntScale) + rowsToMeetFirst
+	}
+	return math.MaxFloat64
 }
 
 func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
@@ -207,9 +234,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < statsInfo.RowCount {
-				expCntScale := prop.ExpectedCnt / statsInfo.RowCount
-				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
-				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
+				reqProps[0].ExpectedCnt = calcChildExpectedCnt(p.SCtx(), prop, leftStatsInfo.RowCount, statsInfo.RowCount)
+				reqProps[1].ExpectedCnt = calcChildExpectedCnt(p.SCtx(), prop, rightStatsInfo.RowCount, statsInfo.RowCount)
 			}
 			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()
@@ -567,6 +593,8 @@ func constructIndexJoin(
 		CompareFilters:   compareFilters,
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
+		// Only count candidates that keep the original Apply outer/inner order.
+		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
@@ -712,7 +740,7 @@ func constructIndexHashJoin(
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
-func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
+func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int, enableRatioPrune bool) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
@@ -733,15 +761,81 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 		return nil
 	}
 
+	outerStats := outerChild.StatsInfo()
 	var avgInnerRowCnt float64
-	if outerChild.StatsInfo().RowCount > 0 {
-		avgInnerRowCnt = p.EqualCondOutCnt / outerChild.StatsInfo().RowCount
+	buildRows := 0.0
+	if outerStats != nil {
+		buildRows = outerStats.RowCount
 	}
+	if buildRows > 0 {
+		avgInnerRowCnt = p.EqualCondOutCnt / buildRows
+	}
+	if enableRatioPrune && shouldPruneIndexJoinByScanRatio(
+		p.SCtx().GetSessionVars().IndexJoinMaxScanRowsRatio,
+		buildRows,
+		avgInnerRowCnt,
+		p.Children()[outerIdx],
+		p.Children()[1-outerIdx],
+	) {
+		return nil
+	}
+
 	joins = buildIndexJoinInner2TableScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 	if joins != nil {
 		return
 	}
 	return buildIndexJoinInner2IndexScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
+}
+
+func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
+	stats := p.StatsInfo()
+	if stats != nil && stats.HistColl != nil && stats.HistColl.RealtimeCount > 0 {
+		return float64(stats.HistColl.RealtimeCount)
+	}
+	return 0
+}
+
+func hasPseudoStatsForIndexJoinPrune(p base.LogicalPlan) bool {
+	stats := p.StatsInfo()
+	return stats == nil || stats.HistColl == nil || stats.HistColl.Pseudo
+}
+
+// shouldPruneIndexJoinByScanRatio decides whether to drop index-join candidates by
+// comparing estimated scan rows:
+//
+// index-join scans ~= buildRows + buildRows*probeRowsOne
+// hash-join scans  ~= buildRows + innerFullScanRows
+//
+// We only apply this pruning when:
+// 1) session threshold > 0,
+// 2) build/probe stats are non-pseudo,
+// 3) build/probe rows pass minimal gates to avoid over-pruning on tiny inputs.
+// If indexJoinScanRows/hashJoinScanRows >= threshold, index join is considered too
+// expensive in scan volume and gets pruned.
+func shouldPruneIndexJoinByScanRatio(
+	threshold, buildRows, probeRowsOne float64,
+	build, probe base.LogicalPlan,
+) bool {
+	if threshold <= 0 || buildRows < indexJoinPruneMinBuildRows {
+		return false
+	}
+	if hasPseudoStatsForIndexJoinPrune(build) || hasPseudoStatsForIndexJoinPrune(probe) {
+		return false
+	}
+	innerFullScanRows := getProbeFullScanRowsForIndexJoinPrune(probe)
+	if innerFullScanRows <= 0 {
+		return false
+	}
+	indexJoinProbeRows := buildRows * probeRowsOne
+	if indexJoinProbeRows < indexJoinPruneMinProbeRows {
+		return false
+	}
+	indexJoinScanRows := buildRows + indexJoinProbeRows
+	hashJoinScanRows := buildRows + innerFullScanRows
+	if hashJoinScanRows <= 0 {
+		return false
+	}
+	return indexJoinScanRows/hashJoinScanRows >= threshold
 }
 
 // indexJoinInnerChildWrapper is a wrapper for the inner child of an index join.
@@ -915,7 +1009,7 @@ func buildIndexJoinInner2IndexScan(
 		// on mvi, it will return many index rows which breaks handle-unique attribute here.
 		//
 		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
-		if !isMVIndexPath(path) {
+		if !path.IsIndexJoinUnapplicable() {
 			return true // not a MVIndex path, it can successfully be index join probe side.
 		}
 		return false
@@ -1195,6 +1289,7 @@ func constructInnerIndexScanTask(
 		physicalTableID:  ds.PhysicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.GetPKIsHandleCol(),
+		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	cop := &CopTask{
 		indexPlan:   is,
@@ -1543,8 +1638,15 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 	return
 }
 
+func hasForceIndexJoinFamilyHint(p *logicalop.LogicalJoin) bool {
+	return p.PreferAny(
+		h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner,
+	)
+}
+
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
-func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
+func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, enableRatioPrune bool) (indexJoins []base.PhysicalPlan, canForced bool) {
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -1558,10 +1660,10 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	}
 	candidates := make([]base.PhysicalPlan, 0, 2)
 	if supportLeftOuter {
-		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 0)...)
+		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 0, enableRatioPrune)...)
 	}
 	if supportRightOuter {
-		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 1)...)
+		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 1, enableRatioPrune)...)
 	}
 
 	// Handle hints and variables about index join.
@@ -2016,7 +2118,7 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	p := lp.(*logicalop.LogicalJoin)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			indexJoins, _ := tryToGetIndexJoin(p, prop)
+			indexJoins, _ := tryToGetIndexJoin(p, prop, false)
 			failpoint.Return(indexJoins, true, nil)
 		}
 	})
@@ -2076,6 +2178,11 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		return joins, true, nil
 	}
 
+	hashJoins, forced := getHashJoins(p, prop)
+	if forced && len(hashJoins) > 0 {
+		return hashJoins, true, nil
+	}
+
 	if !p.IsNAAJ() {
 		// naaj refuse merge join and index join.
 		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
@@ -2084,17 +2191,14 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 		joins = append(joins, mergeJoins...)
 
-		indexJoins, forced := tryToGetIndexJoin(p, prop)
+		enableRatioPrune := len(hashJoins) > 0 && !hasForceIndexJoinFamilyHint(p)
+		indexJoins, forced := tryToGetIndexJoin(p, prop, enableRatioPrune)
 		if forced {
 			return indexJoins, true, nil
 		}
 		joins = append(joins, indexJoins...)
 	}
 
-	hashJoins, forced := getHashJoins(p, prop)
-	if forced && len(hashJoins) > 0 {
-		return hashJoins, true, nil
-	}
 	joins = append(joins, hashJoins...)
 
 	if p.PreferJoinType > 0 {
@@ -2199,16 +2303,24 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
+func pushLimitOrTopNForcibly(p base.LogicalPlan, isPhysicalLimit bool) bool {
 	var meetThreshold bool
 	var preferPushDown *bool
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
 		preferPushDown = &lp.PreferLimitToCop
-		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
+		if isPhysicalLimit {
+			// For query using orderby + limit, the physicalop can be PhysicalLimit
+			// when its corresponding logicalop is LogicalTopn.
+			// And for PhysicalLimit, it's always better to let it pushdown to tikv.
+			meetThreshold = true
+		} else {
+			meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
+		}
 	case *logicalop.LogicalLimit:
 		preferPushDown = &lp.PreferLimitToCop
-		meetThreshold = true // always push Limit down in this case since it has no side effect
+		// Always push Limit down in this case since it has no side effect
+		meetThreshold = true
 	default:
 		return false
 	}
@@ -2228,14 +2340,37 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
+	if !pushLimitOrTopNForcibly(lt, false) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
+
+	// The AdvisorySortItems optimization may not fully succeed (e.g. the global filter blocks the LIMIT pushdown),
+	// in this case, it may generate a plan with unnecessary `keep order: true`. So we add this plan as an extra
+	// candidate instead of replacing the original plan.
+	var advisorySortItems []property.SortItem
+	if _, ok := lt.Children()[0].(*logicalop.DataSource); ok && len(lt.ByItems) > 0 {
+		advisorySortItems = make([]property.SortItem, 0, len(lt.ByItems))
+		for _, byItem := range lt.ByItems {
+			col, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				advisorySortItems = nil
+				break
+			}
+			advisorySortItems = append(advisorySortItems, property.SortItem{
+				Col:  col,
+				Desc: byItem.Desc,
+			})
+		}
+	}
+
+	if canUsePartialOrder4TopN(lt) {
+		ret = append(ret, getPhysTopNWithPartialOrderProperty(lt, prop)...)
+	}
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
 		topN := PhysicalTopN{
@@ -2245,6 +2380,22 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
 		ret = append(ret, topN)
+
+		// The AdvisorySortItems optimization may not fully succeed, for
+		// example when the global filter blocks LIMIT pushdown. In that case,
+		// it may generate a plan with unnecessary keep order, so add this plan
+		// as an extra candidate instead of replacing the original plan.
+		if tp == property.CopMultiReadTaskType && len(advisorySortItems) > 0 {
+			resultProp = resultProp.CloneEssentialFields()
+			resultProp.AdvisorySortItems = advisorySortItems
+			topN := PhysicalTopN{
+				ByItems:     lt.ByItems,
+				PartitionBy: lt.PartitionBy,
+				Count:       lt.Count,
+				Offset:      lt.Offset,
+			}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+			ret = append(ret, topN)
+		}
 	}
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
@@ -2287,6 +2438,56 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	return ret
 }
 
+// canUsePartialOrder4TopN checks if the TopN's child tree satisfies the supported partial-order pattern.
+func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
+	if !lt.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() {
+		return false
+	}
+	if len(lt.ByItems) == 0 {
+		return false
+	}
+	return checkPartialOrderPattern(lt.Children()[0])
+}
+
+func checkPartialOrderPattern(plan base.LogicalPlan) bool {
+	switch p := plan.(type) {
+	case *logicalop.DataSource:
+		return true
+	case *logicalop.LogicalSelection:
+		return len(p.Children()) == 1 && checkPartialOrderPattern(p.Children()[0])
+	case *logicalop.LogicalProjection:
+		return len(p.Children()) == 1 && checkPartialOrderPattern(p.Children()[0])
+	default:
+		return false
+	}
+}
+
+func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	sortItems := make([]*property.SortItem, 0, len(lt.ByItems))
+	for _, byItem := range lt.ByItems {
+		col, ok := byItem.Expr.(*expression.Column)
+		if !ok {
+			return nil
+		}
+		sortItems = append(sortItems, &property.SortItem{Col: col, Desc: byItem.Desc})
+	}
+	partialOrderProp := &property.PhysicalProperty{
+		TaskTp:      property.CopMultiReadTaskType,
+		ExpectedCnt: math.MaxFloat64,
+		PartialOrderInfo: &property.PartialOrderInfo{
+			SortItems: sortItems,
+		},
+		CTEProducerStatus: prop.CTEProducerStatus,
+	}
+	topN := PhysicalTopN{
+		ByItems:     lt.ByItems,
+		PartitionBy: lt.PartitionBy,
+		Count:       lt.Count,
+		Offset:      lt.Offset,
+	}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), partialOrderProp)
+	return []base.PhysicalPlan{topN}
+}
+
 func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
@@ -2294,7 +2495,7 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(lt) {
+	if !pushLimitOrTopNForcibly(lt, true) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
@@ -2946,7 +3147,7 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
-	if !pushLimitOrTopNForcibly(p) {
+	if !pushLimitOrTopNForcibly(p, true) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	if p.CanPushToCop(kv.TiFlash) && p.SCtx().GetSessionVars().IsMPPAllowed() {

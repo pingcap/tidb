@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -129,6 +130,7 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 	}
+
 	return cc.flush(ctx)
 }
 
@@ -231,6 +233,8 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+
+	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
@@ -272,6 +276,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
+		PrepStmtId: uint32(stmt.ID()),
 	}
 
 	// first, try to clear the left cursor if there is one
@@ -303,9 +308,25 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		sql = planCacheStmt.StmtText
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
+	clearConnectionAlive := func() {}
+	checkingConnectionAlive := false
+	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
+		checkingConnectionAlive = shouldInstallConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
+		if checkingConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
+		}
+	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	var lazy bool
 	if rs != nil {
+		if !checkingConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
+		}
 		defer func() {
 			if !lazy {
 				rs.Close()
@@ -554,7 +575,11 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
-		return stmt.Close()
+		err = stmt.Close()
+
+		ctx := context.WithValue(context.Background(), plugin.PrepareStmtIDCtxKey, uint32(stmtID))
+		cc.audit(ctx, plugin.Completed)
+		return err
 	}
 
 	return

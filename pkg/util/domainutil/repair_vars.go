@@ -52,6 +52,30 @@ func (r *repairInfo) GetRepairTableList() []string {
 	return r.repairTableList
 }
 
+// GetMustLoadRepairTableListByDB gets must load repair table ID list.
+func (r *repairInfo) GetMustLoadRepairTableListByDB(dbName string, tableName2ID map[string]int64) []int64 {
+	r.RLock()
+	defer r.RUnlock()
+	dbNamePrefix := dbName + "."
+	repairTableSet := make(map[string]struct{}, len(r.repairTableList))
+	for _, fullTableName := range r.repairTableList {
+		lowerFullTableName := strings.ToLower(fullTableName)
+		if strings.HasPrefix(lowerFullTableName, dbNamePrefix) {
+			repairTableSet[lowerFullTableName] = struct{}{}
+		}
+	}
+
+	var tableIDList []int64
+	// tableName2ID is case sensitive and needs to be traversed to match the table id
+	for tableName, id := range tableName2ID {
+		fullName := dbName + "." + tableName
+		if _, ok := repairTableSet[strings.ToLower(fullName)]; ok {
+			tableIDList = append(tableIDList, id)
+		}
+	}
+	return tableIDList
+}
+
 // SetRepairTableList sets repairing table list.
 func (r *repairInfo) SetRepairTableList(list []string) {
 	for i, one := range list {

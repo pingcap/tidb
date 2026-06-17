@@ -22,7 +22,7 @@ drop table if exists t;
 create table t (a int primary key, b int, c int, d int, key(b));
 explain select * from t where a > 0 limit 1;
 id	estRows	task	access object	operator info
-Limit_12	1.00	root		offset:0, count:1
+Limit_13	1.00	root		offset:0, count:1
 └─TableReader_22	1.00	root		data:Limit_21
   └─Limit_21	1.00	cop[tikv]		offset:0, count:1
     └─TableRangeScan_20	1.00	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo

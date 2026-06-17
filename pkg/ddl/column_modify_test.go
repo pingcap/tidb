@@ -545,7 +545,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	})
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
-	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	tk.MustExec("alter table test.t change column c2 cC2 varchar(256) after `_col$_c2`")
 	require.NoError(t, checkErr)
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
@@ -623,7 +623,7 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
-	tk.MustExec("create table t (a int primary key, b bigint);")
+	tk.MustExec("create table t (a int primary key, b varchar(16));")
 	rowCnt := 10
 	for i := 0; i < rowCnt; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i*10000, i*10000))

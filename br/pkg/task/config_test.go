@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -56,7 +57,7 @@ func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
-func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (m mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
 }
 
@@ -68,15 +69,17 @@ func TestConfigureRestoreClient(t *testing.T) {
 		Online: true,
 	}
 	restoreCfg := &RestoreConfig{
-		Config:              cfg,
-		RestoreCommonConfig: restoreComCfg,
-		DdlBatchSize:        127,
+		Config:                cfg,
+		RestoreCommonConfig:   restoreComCfg,
+		DdlBatchSize:          128,
+		RegionScanConcurrency: 3,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
@@ -85,8 +88,7 @@ func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
 	restoreCfg.adjustRestoreConfigForStreamRestore()
 	require.Equal(t, restoreCfg.PitrBatchCount, uint32(defaultPiTRBatchCount))
 	require.Equal(t, restoreCfg.PitrBatchSize, uint32(defaultPiTRBatchSize))
-	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency))
-	require.Equal(t, restoreCfg.Concurrency, restoreCfg.PitrConcurrency)
+	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency)+1)
 }
 
 func TestCheckRestoreDBAndTable(t *testing.T) {
@@ -193,7 +195,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		for _, db := range ca.backupDBs {
 			backupDBs = append(backupDBs, db)
 		}
-		err := CheckRestoreDBAndTable(backupDBs, cfg)
+		err := VerifyDBAndTableInBackup(backupDBs, cfg)
 		require.NoError(t, err)
 	}
 }

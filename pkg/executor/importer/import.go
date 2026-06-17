@@ -26,12 +26,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -62,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -74,6 +78,8 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
+	// DataFormatAuto represents format is not set in IMPORT INTO, we will determine format automatically.
+	DataFormatAuto = "auto"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -106,7 +112,7 @@ const (
 	//
 	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = "cloud_storage_uri"
+	cloudStorageURIOption       = ast.CloudStorageURI
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
@@ -163,6 +169,11 @@ var (
 		".zstd", ".zst",
 		".snappy",
 	}
+
+	// default character set
+	defaultCharacterSet = "utf8mb4"
+	// default field null def
+	defaultFieldNullDef = []string{`\N`}
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -220,10 +231,14 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
+	// Location is used to convert time type for parquet, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
+
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
-	// for IMPORT INTO, it is always non-nil.
+	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
 	Charset          *string
 	ImportantSysVars map[string]string
 
@@ -239,6 +254,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -256,6 +272,8 @@ type Plan struct {
 	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
+	// only initialized for IMPORT INTO, used when format is detected automatically
+	specifiedOptions map[string]*plannercore.LoadDataOpt
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -293,7 +311,12 @@ type LoadDataController struct {
 	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
-	// see InsertValues.InsertColumns
+	// InsertColumns the columns stated in the SQL statement to insert.
+	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
+	// so it's computed from both clauses:
+	//  - append columns from column-vars to InsertColumns
+	//  - append columns from left hand fo set clause to InsertColumns
+	// similar to InsertValues.InsertColumns.
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
@@ -396,20 +419,10 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		// without FORMAT 'xxx' clause, default to CSV
-		format = DataFormatCSV
+		format = DataFormatAuto
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
-	// those are the default values for lightning CSV format too
-	lineFieldsInfo := plannercore.LineFieldsInfo{
-		FieldsTerminatedBy: `,`,
-		FieldsEnclosedBy:   `"`,
-		FieldsEscapedBy:    `\`,
-		LinesStartingBy:    ``,
-		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
-		// But user cannot set this to empty explicitly.
-		LinesTerminatedBy: ``,
-	}
+	lineFieldsInfo := newDefaultLineFieldsInfo()
 
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
@@ -420,9 +433,10 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		Path:           plan.Path,
 		Format:         format,
 		Restrictive:    restrictive,
-		FieldNullDef:   []string{`\N`},
+		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -438,6 +452,19 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		return nil, err
 	}
 	return p, nil
+}
+
+func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
+	// those are the default values for lightning CSV format too
+	return plannercore.LineFieldsInfo{
+		FieldsTerminatedBy: `,`,
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    `\`,
+		LinesStartingBy:    ``,
+		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
+		// But user cannot set this to empty explicitly.
+		LinesTerminatedBy: ``,
+	}
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -519,7 +546,7 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != DataFormatAuto {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
 	} else {
@@ -560,7 +587,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = variable.CloudStorageURI.Load()
 
-	v := "utf8mb4"
+	v := defaultCharacterSet
 	p.Charset = &v
 }
 
@@ -585,8 +612,11 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
+	p.specifiedOptions = specifiedOptions
 
-	if p.Format != DataFormatCSV {
+	// DataFormatAuto means format is unspecified from stmt,
+	// will validate below CSV options when init data files.
+	if p.Format != DataFormatCSV && p.Format != DataFormatAuto {
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
@@ -761,6 +791,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ForceMergeStep = true
 	}
 
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
+		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+		}
+	}
+
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
 	// logic, so we only need to skip on the first chunk for each data file.
@@ -850,6 +887,21 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	return nil
 }
 
+func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []string) {
+	tableCols := e.Table.VisibleCols()
+	mappings := make([]*FieldMapping, 0, len(tableCols))
+	names := make([]string, 0, len(tableCols))
+	for _, v := range tableCols {
+		// Data for generated column is generated from the other rows rather than from the parsed data.
+		fieldMapping := &FieldMapping{
+			Column: v,
+		}
+		mappings = append(mappings, fieldMapping)
+		names = append(names, v.Name.O)
+	}
+	return mappings, names
+}
+
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
 // the slice's order is the same as the order of the input fields.
 // Returns a slice of same ordered column names without user defined variable names.
@@ -858,15 +910,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 	tableCols := e.Table.VisibleCols()
 
 	if len(e.ColumnsAndUserVars) == 0 {
-		for _, v := range tableCols {
-			// Data for generated column is generated from the other rows rather than from the parsed data.
-			fieldMapping := &FieldMapping{
-				Column: v,
-			}
-			e.FieldMappings = append(e.FieldMappings, fieldMapping)
-			columns = append(columns, v.Name.O)
-		}
-
+		e.FieldMappings, columns = e.tableVisCols2FieldMappings()
 		return columns
 	}
 
@@ -996,38 +1040,71 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	} else {
 		u.Path = ""
 	}
-	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
 	}
 	e.dataStore = s
 
 	if e.IsGlobalSort() {
-		target := "cloud storage"
-		cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
-				err3.Error())
+			return err3
 		}
-		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
-		if err != nil {
-			return err
-		}
-		e.GlobalSortStore = s
+		e.GlobalSortStore = store
 	}
 	return nil
 }
-func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
+
+// GetSortStore gets the sort store.
+func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, error) {
+	u, err := storage.ParseRawURL(url)
+	target := "cloud storage"
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err.Error())
+	}
+	return initExternalStore(ctx, u, target)
+}
+
+func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
 	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
-		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
+		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
 	return s, nil
+}
+
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
 }
 
 // InitDataFiles initializes the data store and files.
@@ -1080,24 +1157,35 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	s := e.dataStore
-	var totalSize int64
+	var (
+		compressionRatio = 1.0
+		totalSize        int64
+		sourceType       mydump.SourceType
+	)
 	dataFiles := []*mydump.SourceFileMeta{}
+	isAutoDetectingFormat := e.Format == DataFormatAuto
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
-	sourceType := e.getSourceType()
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
 		}
+		sourceType = e.getSourceType()
+		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.detectAndUpdateFormat(fileNameKey)
+		sourceType = e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1106,6 +1194,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1129,17 +1218,30 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
+				// pick arbitrary one file to detect the format.
+				e.detectAndUpdateFormat(remotePath)
+				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
 				return nil
 			}); err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
+		var once sync.Once
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				var err2 error
+				once.Do(func() {
+					sourceType = e.getSourceType()
+					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1148,15 +1250,50 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
+		}
+	}
+	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
+		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
+			return err2
 		}
 	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+// update format of the validated file by its extension.
+func (e *LoadDataController) detectAndUpdateFormat(path string) {
+	if e.Format == DataFormatAuto {
+		e.Format = parseFileType(path)
+		e.logger.Info("detect and update import plan format based on file extension",
+			zap.String("file", path), zap.String("detected format", e.Format))
+		e.Parameters.Format = e.Format
+	}
+}
+
+func parseFileType(path string) string {
+	path = strings.ToLower(path)
+	ext := filepath.Ext(path)
+	// avoid duplicate compress extension
+	if ext == ".gz" || ext == ".gzip" || ext == ".zstd" || ext == ".zst" || ext == ".snappy" {
+		path = strings.TrimSuffix(path, ext)
+		ext = filepath.Ext(path)
+	}
+	switch ext {
+	case ".sql":
+		return DataFormatSQL
+	case ".parquet":
+		return DataFormatParquet
+	default:
+		// if file do not contain file extension, use ".csv" as default format
+		return DataFormatCSV
+	}
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {
@@ -1180,7 +1317,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
-					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the INFILE path is correct")
 				}
 				return fileReader, nil
 			},
@@ -1240,6 +1377,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
@@ -1301,6 +1439,17 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
+// non CSV format should not specify CSV only options, we check it again if the
+// format is detected automatically.
+func (p *Plan) checkNonCSVFormatOptions() error {
+	for k := range csvOnlyOptions {
+		if _, ok := p.specifiedOptions[k]; ok {
+			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+		}
+	}
+	return nil
+}
+
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
@@ -1360,7 +1509,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
@@ -1400,24 +1549,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected uint64
 	Warnings []contextutil.SQLWarn
-}
-
-// GetMsgFromBRError get msg from BR error.
-// TODO: add GetMsg() to errors package to replace this function.
-// see TestGetMsgFromBRError for more details.
-func GetMsgFromBRError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if berr, ok := err.(*errors.Error); ok {
-		return berr.GetMsg()
-	}
-	raw := err.Error()
-	berrMsg := errors.Cause(err).Error()
-	if len(raw) <= len(berrMsg)+len(": ") {
-		return raw
-	}
-	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

@@ -133,11 +133,11 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		return errors.Trace(err)
 	}
 
-	backupRanges := make([]rtree.Range, 0, 1)
+	backupRanges := make([]rtree.KeyRange, 0, 1)
 	// current just build full txn range to support full txn backup
 	minStartKey := []byte{}
 	maxEndKey := []byte{}
-	backupRanges = append(backupRanges, rtree.Range{
+	backupRanges = append(backupRanges, rtree.KeyRange{
 		StartKey: minStartKey,
 		EndKey:   maxEndKey,
 	})
@@ -204,7 +204,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, backupRanges, req, 1, nil, metaWriter, progressCallBack)
+	_, err = client.BackupRanges(ctx, backupRanges, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

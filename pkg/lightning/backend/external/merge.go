@@ -16,15 +16,20 @@ package external
 
 import (
 	"context"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -37,11 +42,25 @@ var (
 	MinUploadPartSize int64 = 5 * units.MiB
 )
 
-// MergeOverlappingFiles reads from given files whose key range may overlap
-// and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(
-	ctx context.Context,
-	paths []string,
+type mergeMinimalTask struct {
+	files        []string
+	fileGroupNum int
+	writerID     string
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "merge_sort", "mergeMinimalTask", nil
+}
+
+// MergeOperator is the operator that merges overlapping files.
+type MergeOperator struct {
+	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
+}
+
+// NewMergeOperator creates a new MergeOperator instance.
+func NewMergeOperator(
+	ctx *workerpool.Context,
 	store storage.ExternalStorage,
 	partSize int64,
 	newFilePrefix string,
@@ -50,38 +69,110 @@ func MergeOverlappingFiles(
 	concurrency int,
 	checkHotspot bool,
 	onDup common.OnDuplicateKey,
-) error {
-	dataFilesSlice := splitDataFiles(paths, concurrency)
+) *MergeOperator {
 	// during encode&sort step, the writer-limit is aligned to block size, so we
 	// need align this too. the max additional written size per file is max-block-size.
 	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
 	// to part-size is enough.
 	partSize = max(MinUploadPartSize, partSize+units.MiB)
+	logutil.Logger(ctx).Info("create merge operator",
+		zap.Int64("part-size", partSize))
+	pool := workerpool.NewWorkerPool(
+		"mergeOperator",
+		util.ImportInto,
+		concurrency,
+		func() workerpool.Worker[*mergeMinimalTask, workerpool.None] {
+			return &mergeWorker{
+				ctx:           ctx,
+				store:         store,
+				partSize:      partSize,
+				newFilePrefix: newFilePrefix,
+				blockSize:     blockSize,
+				onClose:       onClose,
+				checkHotspot:  checkHotspot,
+				onDup:         onDup,
+			}
+		},
+	)
 
+	return &MergeOperator{
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
+	}
+}
+
+// String implements the Operator interface.
+func (*MergeOperator) String() string {
+	return "mergeOperator"
+}
+
+type mergeWorker struct {
+	ctx context.Context
+
+	store         storage.ExternalStorage
+	partSize      int64
+	newFilePrefix string
+	blockSize     int
+	checkHotspot  bool
+	onClose       OnCloseFunc
+	onDup         common.OnDuplicateKey
+}
+
+func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) error {
+	return mergeOverlappingFilesInternal(
+		w.ctx,
+		task.files,
+		w.store,
+		w.partSize,
+		w.newFilePrefix,
+		task.writerID,
+		w.blockSize,
+		w.onClose,
+		w.checkHotspot,
+		w.onDup,
+		task.fileGroupNum,
+	)
+}
+
+func (*mergeWorker) Close() error {
+	return nil
+}
+
+// MergeOverlappingFiles reads from given files whose key range may overlap
+// and writes to new sorted, nonoverlapping files.
+func MergeOverlappingFiles(
+	ctx *workerpool.Context,
+	paths []string,
+	concurrency int,
+	op *MergeOperator,
+) error {
+	dataFilesSlice := splitDataFiles(paths, concurrency)
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
-		zap.Int("concurrency", concurrency),
-		zap.Int64("part-size", partSize))
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(concurrency)
+		zap.Int("concurrency", concurrency))
+
+	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
 	for _, files := range dataFilesSlice {
-		eg.Go(func() error {
-			return mergeOverlappingFilesInternal(
-				egCtx,
-				files,
-				store,
-				partSize,
-				newFilePrefix,
-				uuid.New().String(),
-				blockSize,
-				onClose,
-				checkHotspot,
-				onDup,
-			)
+		mergeTasks = append(mergeTasks, &mergeMinimalTask{
+			files:        files,
+			fileGroupNum: len(dataFilesSlice),
+			writerID:     uuid.New().String(),
 		})
 	}
-	return eg.Wait()
+
+	sourceOp := operator.NewSimpleDataSource(ctx, mergeTasks)
+	operator.Compose(sourceOp, op)
+
+	pipe := operator.NewAsyncPipeline(sourceOp, op)
+	if err := pipe.Execute(); err != nil {
+		return err
+	}
+
+	err := pipe.Close()
+	if opErr := ctx.OperatorErr(); opErr != nil {
+		return opErr
+	}
+	return err
 }
 
 // split input data files into multiple shares evenly, with the max number files
@@ -118,7 +209,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // memory usage of this function is:
 //
 //	defaultOneWriterMemSizeLimit
-//	+ MaxMergingFilesPerThread * (X + defaultReadBufferSize)
+//	+ MaxMergingFilesPerThread * (X + DefaultReadBufferSize)
 //	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
 //
@@ -143,7 +234,23 @@ func mergeOverlappingFilesInternal(
 	onClose OnCloseFunc,
 	checkHotspot bool,
 	onDup common.OnDuplicateKey,
+	fileGroupNum int,
 ) (err error) {
+	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			switch v {
+			case 1:
+				failpoint.Return(errors.Errorf("mock error in mergeOverlappingFilesInternal"))
+			case 2:
+				panic("mock panic in mergeOverlappingFilesInternal")
+			case 3:
+				time.Sleep(time.Second * 5)
+				failpoint.Return(ctx.Err())
+			default:
+				failpoint.Return(nil)
+			}
+		}
+	})
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
 		zap.Int("file-count", len(paths)),
@@ -153,7 +260,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, DefaultReadBufferSize, checkHotspot, fileGroupNum)
 	if err != nil {
 		return err
 	}

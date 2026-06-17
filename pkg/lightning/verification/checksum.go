@@ -96,6 +96,13 @@ func (c *KVChecksum) Add(other *KVChecksum) {
 	c.checksum ^= other.checksum
 }
 
+// Sub subtracts the checksum of another KVChecksum.
+func (c *KVChecksum) Sub(other *KVChecksum) {
+	c.bytes -= other.bytes
+	c.kvs -= other.kvs
+	c.checksum ^= other.checksum
+}
+
 // Sum returns the checksum.
 func (c *KVChecksum) Sum() uint64 {
 	return c.checksum
@@ -123,6 +130,12 @@ func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 func (c *KVChecksum) MarshalJSON() ([]byte, error) {
 	result := fmt.Sprintf(`{"checksum":%d,"size":%d,"kvs":%d}`, c.checksum, c.bytes, c.kvs)
 	return []byte(result), nil
+}
+
+// String implements the fmt.Stringer interface.
+func (c *KVChecksum) String() string {
+	json, _ := c.MarshalJSON()
+	return string(json)
 }
 
 // KVGroupChecksum is KVChecksum(s) each for a data KV group or index KV groups.

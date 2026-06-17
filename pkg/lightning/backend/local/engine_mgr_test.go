@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"go.uber.org/mock/gomock"
 )
 
@@ -40,7 +41,7 @@ func getBackendConfig(t *testing.T) BackendConfig {
 		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv"),
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{},
-		WorkerConcurrency:           8,
+		WorkerConcurrency:           *atomic.NewInt32(8),
 		LocalWriterMemCacheSize:     config.DefaultLocalWriterMemCacheSize,
 		CheckpointEnabled:           false,
 	}

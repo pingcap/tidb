@@ -96,6 +96,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	util3 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -182,6 +183,7 @@ type clientConn struct {
 	serverHost    string                // server host
 	peerHost      string                // peer host
 	peerPort      string                // peer port
+	countedUser   string                // counted user identity for max_user_connections tracking
 	status        int32                 // dispatching/reading/shutdown/waitshutdown
 	lastCode      uint16                // last error code
 	collation     uint8                 // collation used by client, may be different from the collation used by database.
@@ -203,6 +205,10 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+}
+
+type userResourceLimits struct {
+	connections int
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -375,6 +381,7 @@ func (cc *clientConn) Close() error {
 	//
 	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
 	// times.
+
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
@@ -418,6 +425,26 @@ func closeConn(cc *clientConn) error {
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
 	return closeConn(cc)
+}
+
+func (cc *clientConn) currentResourceGroupName() string {
+	if ctx := cc.getCtx(); ctx != nil {
+		if name := ctx.GetSessionVars().ResourceGroupName; name != "" {
+			return name
+		}
+	}
+	return resourcegroup.DefaultResourceGroupName
+}
+
+func (cc *clientConn) moveResourceGroupCounter(oldGroup string) {
+	if oldGroup == "" {
+		oldGroup = resourcegroup.DefaultResourceGroupName
+	}
+	newGroup := cc.currentResourceGroupName()
+	if oldGroup != newGroup {
+		metrics.ConnGauge.WithLabelValues(oldGroup).Dec()
+		metrics.ConnGauge.WithLabelValues(newGroup).Inc()
+	}
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -486,7 +513,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
 		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.ReadPacket()
+	data, err := cc.pkt.ReadPacket()
+	if err == nil && cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().InPacketBytes.Add(uint64(len(data)))
+	}
+	return data, err
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -495,6 +526,9 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
+	if cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
+	}
 	return cc.pkt.WritePacket(data)
 }
 
@@ -807,7 +841,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
-	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
+	if err := cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)
@@ -1048,10 +1082,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if cc.getStatus() != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
+		util3.WithRecovery(
+			func() {
+				if cc.getStatus() != connStatusShutdown {
+					err := cc.Close()
+					terror.Log(err)
+				}
+			}, nil)
 
 		close(cc.quit)
 	}()
@@ -1149,7 +1186,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
@@ -1275,6 +1312,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().InPacketBytes.Store(0)
+		cc.ctx.GetSessionVars().OutPacketBytes.Store(0)
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1391,7 +1430,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.writeStats(ctx)
 	// ComProcessInfo, ComConnect, ComProcessKill, ComDebug
 	case mysql.ComPing:
-		return cc.writeOK(ctx)
+		if cc.server.health.Load() {
+			return cc.writeOK(ctx)
+		}
+		return servererr.ErrServerShutdown
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
@@ -1684,12 +1726,12 @@ func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.Pl
 	return e.DumpSQLsFromFile(ctx, data)
 }
 
-func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			ctx := context.WithValue(ctx, plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
 		}
 		return nil
@@ -1964,7 +2006,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal.Value)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2006,6 +2048,61 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	}))
 }
 
+// setSQLKillerConnectionAlive installs a connection-liveness probe on the
+// session SQLKiller for execution checkpoints such as HandleSignal and the
+// slow pre-commit backstop. It intentionally does not start a background
+// monitor, so short statements do not pay goroutine, ticker, or channel costs.
+func (cc *clientConn) setSQLKillerConnectionAlive() func() {
+	sessVars := cc.ctx.GetSessionVars()
+	isAlive := cc.isConnectionAlive
+	sessVars.SQLKiller.SetConnectionAliveFunc(isAlive)
+
+	var clearOnce sync.Once
+	return func() {
+		clearOnce.Do(func() {
+			sessVars.SQLKiller.SetConnectionAliveFunc(nil)
+		})
+	}
+}
+
+func (cc *clientConn) isConnectionAlive() bool {
+	if cc.bufReadConn != nil {
+		// IsAlive returns 0 only when the connection is known dead. Treat
+		// unknown states as alive so we do not interrupt queries
+		// conservatively when the liveness check itself cannot run.
+		return cc.bufReadConn.IsAlive() != 0
+	}
+	return true
+}
+
+func (cc *clientConn) cancelDispatch() {
+	cc.mu.RLock()
+	cancelFunc := cc.mu.cancelFunc
+	cc.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+}
+
+func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
+		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
+		if err != nil || prepared.PreparedAst == nil {
+			return false
+		}
+		stmt = prepared.PreparedAst.Stmt
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
+}
+
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently, the first return value is used to fall back to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(
@@ -2016,7 +2113,7 @@ func (cc *clientConn) handleStmt(
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	cc.audit(plugin.Starting)
+	cc.audit(context.Background(), plugin.Starting)
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use
@@ -2030,7 +2127,16 @@ func (cc *clientConn) handleStmt(
 		}
 	}
 
+	clearConnectionAlive := func() {}
+	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
+	if checkingConnectionAlive {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
+	}
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
 	//   is done in the `rs.Close` in most cases.
@@ -2060,6 +2166,10 @@ func (cc *clientConn) handleStmt(
 	if rs != nil {
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
+		}
+		if !checkingConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
 		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
@@ -2480,6 +2590,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
+	oldResourceGroup := cc.currentResourceGroupName()
 	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
@@ -2512,6 +2623,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
 	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
 	err := cc.openSession()
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	if err != nil {
 		return err
 	}
@@ -2539,6 +2651,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	oldResourceGroup := cc.currentResourceGroupName()
 	user := cc.ctx.GetSessionVars().User
 	err := cc.ctx.Close()
 	if err != nil {
@@ -2554,6 +2667,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}

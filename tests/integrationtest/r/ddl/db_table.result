@@ -11,7 +11,7 @@ create table t4 (c int,d int,foreign key (d) references t1 (b));
 alter table t4 drop column d;
 Error 1828 (HY000): Cannot drop column 'd': needed in a foreign key constraint 'fk_1'
 alter table t4 change column d e bigint;
-Error 3780 (HY000): Referencing column 'd' and referenced column 'b' in foreign key constraint 'fk_1' are incompatible.
+Error 3780 (HY000): Referencing column 'e' and referenced column 'b' in foreign key constraint 'fk_1' are incompatible.
 alter table t4 modify column d bigint;
 Error 3780 (HY000): Referencing column 'd' and referenced column 'b' in foreign key constraint 'fk_1' are incompatible.
 select count(*) from information_schema.KEY_COLUMN_USAGE;

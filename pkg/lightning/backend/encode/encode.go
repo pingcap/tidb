@@ -30,6 +30,10 @@ type EncodingConfig struct {
 	Path   string // path of data file
 	Table  table.Table
 	Logger log.Logger
+	// UseIdentityAutoRowID controls whether to use the input auto row ID directly
+	// when encoding.
+	// default false, in this case we will do sharding automatically if needed.
+	UseIdentityAutoRowID bool
 }
 
 // EncodingBuilder consists of operations to handle encoding backend row data formats from source.

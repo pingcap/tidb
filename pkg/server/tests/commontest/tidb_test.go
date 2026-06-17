@@ -25,11 +25,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -41,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -52,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -2280,10 +2285,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.GetDSN(func(config *mysql.Config) {
@@ -2663,7 +2668,7 @@ func TestSandBoxMode(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "create user testuser;")
 	require.NoError(t, err)
-	qctx.Session.GetSessionVars().User = &auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}
+	qctx.Session.Auth(&auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}, nil, nil, nil)
 
 	alterPwdStmts := []string{
 		"set password = '1234';",
@@ -3395,4 +3400,603 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 		require.NoError(t, err)
 		ts.CheckRows(t, rows, "a b\nc d")
 	})
+}
+
+func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	for _, prepared := range []bool{false, true} {
+		name := "query"
+		if prepared {
+			name = "prepared"
+		}
+		for _, insertCase := range []struct {
+			name     string
+			buildSQL func(tableName string) string
+		}{
+			{
+				name: "single_row",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, sleep(300))", tableName)
+				},
+			},
+			{
+				name: "multi_rows",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, 1), (2, sleep(300)), (3, 3), (4, 4), (5, 5)", tableName)
+				},
+			},
+		} {
+			t.Run(name+"/"+insertCase.name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue57531_insert_" + name + "_" + insertCase.name
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (a int primary key, b int)")
+					runClientDisconnectAutocommitInsert(t, dbt, tableName, insertCase.buildSQL(tableName), prepared)
+				})
+			})
+		}
+	}
+}
+
+func runClientDisconnectAutocommitInsert(t *testing.T, dbt *testkit.DBTestKit, tableName, insertSQL string, prepared bool) {
+	conn, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var stmt *sql.Stmt
+	if prepared {
+		stmt, err = conn.PrepareContext(context.Background(), insertSQL)
+		require.NoError(t, err)
+		defer func() {
+			_ = stmt.Close()
+		}()
+	}
+	netConn := getRawNetConn(t, conn)
+
+	done := make(chan error, 1)
+	go func() {
+		var execErr error
+		if prepared {
+			_, execErr = stmt.ExecContext(context.Background())
+		} else {
+			_, execErr = conn.ExecContext(context.Background(), insertSQL)
+		}
+		done <- execErr
+	}()
+
+	pattern := fmt.Sprintf("insert into %s%%", tableName)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+	processID, ok := processlistIDByInfo(t, dbt, pattern)
+	require.True(t, ok)
+	cleanupProcessByID(t, dbt.GetDB(), processID)
+
+	require.NoError(t, netConn.Close())
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Error(t, execErr)
+
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+
+	var cnt int
+	err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from "+tableName).Scan(&cnt)
+	require.NoError(t, err)
+	require.Equal(t, 0, cnt)
+}
+
+func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {
+	var netConn net.Conn
+	err := conn.Raw(func(driverConn any) error {
+		v := reflect.ValueOf(driverConn)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		f := v.FieldByName("netConn")
+		if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+			netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotNil(t, netConn)
+	return netConn
+}
+
+func processlistCountByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) int {
+	var cnt int
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select count(*) from information_schema.processlist where info like ?",
+		pattern,
+	).Scan(&cnt)
+	require.NoError(t, err)
+	return cnt
+}
+
+func processlistIDByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) (uint64, bool) {
+	var id uint64
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select id from information_schema.processlist where info like ? limit 1",
+		pattern,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+	require.NoError(t, err)
+	return id, true
+}
+
+func cleanupProcessByID(t *testing.T, db *sql.DB, processID uint64) {
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		var cnt int
+		err = conn.QueryRowContext(
+			ctx,
+			"select count(*) from information_schema.processlist where id = ?",
+			processID,
+		).Scan(&cnt)
+		if err != nil || cnt == 0 {
+			return
+		}
+		_, _ = conn.ExecContext(ctx, fmt.Sprintf("kill query %d", processID))
+	})
+}
+
+func TestCloseConnForUndeterminedError(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Host = "127.0.0.1" // No network interface listening for mysql traffic
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	defer server.Close()
+
+	port := testutil.GetPortFromTCPAddr(server.ListenAddr())
+	db, err := sql.Open("mysql", fmt.Sprintf("root@tcp(127.0.0.1:%d)/test", port))
+	require.NoError(t, err)
+	defer terror.Call(db.Close)
+
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create table t(a int)")
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer terror.Call(conn.Close)
+
+	_, err = conn.ExecContext(context.Background(), "begin")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(context.Background(), "insert into t values(1)")
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitResultUndetermined", `return()`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitResultUndetermined"))
+	}()
+
+	_, err = conn.ExecContext(context.Background(), "commit")
+	// Because the commit result is undetermined, the connection should be disconnected without reporting mysql error.
+	require.EqualError(t, err, "invalid connection")
+}
+
+func TestAuditPluginInfoForStarting(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	type normalTest struct {
+		sql         string
+		rows        uint64
+		stmtType    string
+		dbs         string
+		tables      string
+		cmd         string
+		event       plugin.GeneralEvent
+		params      string
+		redactedSQL string
+		stmtID      uint32
+		currentDB   string
+	}
+
+	var dbNames, tableNames []string
+	var testResults []normalTest
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		dbNames = dbNames[:0]
+		tableNames = tableNames[:0]
+		for _, value := range sctx.StmtCtx.Tables {
+			dbNames = append(dbNames, value.DB)
+			tableNames = append(tableNames, value.Table)
+		}
+		redactedSQL, _ := sctx.StmtCtx.SQLDigest()
+		audit := normalTest{
+			sql:         sctx.StmtCtx.OriginalSQL,
+			rows:        sctx.StmtCtx.AffectedRows(),
+			stmtType:    sctx.StmtCtx.StmtType,
+			dbs:         strings.Join(dbNames, ","),
+			tables:      strings.Join(tableNames, ","),
+			cmd:         cmd,
+			event:       event,
+			params:      sctx.PlanCacheParams.String(),
+			redactedSQL: redactedSQL,
+			currentDB:   sctx.CurrentDB,
+		}
+		if stmtID := ctx.Value(plugin.PrepareStmtIDCtxKey); stmtID != nil {
+			audit.stmtID = stmtID.(uint32)
+		}
+		testResults = append(testResults, audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(context.Background(), "use test")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "drop table if exists t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "create table t(a int)")
+		require.NoError(t, err)
+
+		testResults = testResults[:0]
+		stmt, err := conn.PrepareContext(context.Background(), "insert into t values (?)")
+		require.NoError(t, err)
+
+		// Test execute audit log
+		testResults = testResults[:0]
+		for i := range 1000 {
+			_, err = stmt.ExecContext(context.Background(), i)
+			require.NoError(t, err)
+		}
+		require.Eventually(t, func() bool {
+			// EXECUTE statement doesn't have STARTING info
+			return len(testResults) == 1000
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[len(testResults)-1], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Execute",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		// Test close audit log
+		testResults = testResults[:0]
+		err = stmt.Close()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			return len(testResults) == 1
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[0], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Close stmt",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		testResults = testResults[:0]
+	})
+}
+
+func TestAuditPluginRetrying(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	type normalTest struct {
+		sql      string
+		retrying bool
+	}
+	testResults := make([]normalTest, 0)
+	var testResultsMu sync.Mutex
+	resetTestResults := func() {
+		testResultsMu.Lock()
+		testResults = testResults[:0]
+		testResultsMu.Unlock()
+	}
+	getTestResults := func() []normalTest {
+		testResultsMu.Lock()
+		res := slices.Clone(testResults)
+		testResultsMu.Unlock()
+		return res
+	}
+	getTestResultsLen := func() int {
+		testResultsMu.Lock()
+		l := len(testResults)
+		testResultsMu.Unlock()
+		return l
+	}
+	appendTestResult := func(res normalTest) {
+		testResultsMu.Lock()
+		testResults = append(testResults, res)
+		testResultsMu.Unlock()
+	}
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		// Only consider the Completed event
+		if event != plugin.Completed || cmd != "Query" {
+			return
+		}
+
+		audit := normalTest{}
+		if retrying := ctx.Value(plugin.IsRetryingCtxKey); retrying != nil {
+			audit.retrying = retrying.(bool)
+		}
+		audit.sql = sctx.StmtCtx.OriginalSQL
+		appendTestResult(audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	// We have these possible paths to retry:
+	// 1. Auto-commit retry
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		db := dbt.GetDB()
+
+		_, err := db.Exec("DROP TABLE IF EXISTS auto_retry_test")
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
+		require.NoError(t, err)
+
+		testResults = testResults[:0]
+		// a big enough concurrency to trigger retries
+		concurrency := 500
+		db.SetMaxOpenConns(concurrency)
+		db.SetMaxIdleConns(concurrency)
+		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
+		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
+		// enough, it might need more times to trigger the retry.
+		require.Eventually(t, func() bool {
+			resetTestResults()
+			var wg sync.WaitGroup
+			errCh := make(chan error, concurrency)
+			for range concurrency {
+				wg.Go(func() {
+					_, err := db.ExecContext(context.Background(), updateSQL)
+					if err != nil {
+						errCh <- err
+					}
+				})
+			}
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				require.NoError(t, err)
+			}
+
+			return getTestResultsLen() > concurrency
+		}, time.Second*10, time.Millisecond*100)
+
+		testResults := getTestResults()
+		nonRetryingCount := 0
+		for _, res := range testResults {
+			if !res.retrying {
+				nonRetryingCount++
+			}
+		}
+		require.Equal(t, concurrency, nonRetryingCount)
+	})
+
+	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
+		_, err := db.Exec("DROP TABLE IF EXISTS retry_test")
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO retry_test VALUES (1, 0)")
+		require.NoError(t, err)
+
+		step1T1Started := make(chan struct{})
+		step2T2Committed := make(chan struct{})
+
+		connect := func() *sql.Conn {
+			conn, err := db.Conn(context.Background())
+			require.NoError(t, err)
+			if isOptimistic {
+				_, err = conn.ExecContext(context.Background(), "SET tidb_txn_mode = 'optimistic'")
+				require.NoError(t, err)
+				// We cannot set `tidb_disable_txn_auto_retry` to `OFF` because it's already deprecated.
+				// For the test, we just use failpoint to workaround this limitation.
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+			}
+
+			return conn
+		}
+
+		resetTestResults()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		// Transaction 1
+		go func() {
+			defer wg.Done()
+			conn := connect()
+			defer conn.Close()
+
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
+			require.NoError(t, err)
+			close(step1T1Started)
+			<-step2T2Committed
+			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 10 WHERE id = 1")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(context.Background(), "COMMIT")
+			require.NoError(t, err)
+		}()
+		// Transaction 2
+		go func() {
+			defer wg.Done()
+			<-step1T1Started
+			conn := connect()
+			defer conn.Close()
+
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 20 WHERE id = 1")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(context.Background(), "COMMIT")
+			require.NoError(t, err)
+
+			close(step2T2Committed)
+		}()
+		wg.Wait()
+
+		testResults := getTestResults()
+		retryingCount := 0
+		nonRetryingCount := 0
+		for _, res := range testResults {
+			if res.retrying {
+				retryingCount++
+			} else {
+				nonRetryingCount++
+			}
+		}
+
+		require.Greater(t, retryingCount, 0)
+		// (BEGIN + UPDATE + COMMIT) * 2 transactions = 6
+		expectedSQLCount := 6
+		if isOptimistic {
+			expectedSQLCount += 2 // extra `SET` variable SQL
+		}
+		require.Equal(t, expectedSQLCount, nonRetryingCount)
+	}
+
+	// 2. Pessimistic DML retry
+	// Ref `handleAfterPessimisticLockError` for RC and RR
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		db := dbt.GetDB()
+
+		runExplicitTransactionRetry(db, false)
+	})
+
+	// 3. Optimistic transaction commit retry
+	// This branch is already deprecated. If we remove it in the future, this test can be removed too.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		db := dbt.GetDB()
+
+		resetTestResults()
+		runExplicitTransactionRetry(db, true)
+	})
+}
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	processlistCount := func(dbt *testkit.DBTestKit) int {
+		rsCnt := 0
+		rs := dbt.MustQuery("show processlist")
+		for rs.Next() {
+			rsCnt++
+		}
+		require.NoError(t, rs.Err())
+		require.NoError(t, rs.Close())
+		return rsCnt
+	}
+
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var netConn net.Conn
+			conn, err := dbt.GetDB().Conn(context.Background())
+			require.NoError(t, err)
+			defer func() {
+				_ = conn.Close()
+			}()
+
+			// get the TCP connection
+			err = conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			require.NotNil(t, netConn)
+
+			// execute `select sleep(300)`
+			queryDone := make(chan struct{})
+			go func() {
+				defer close(queryDone)
+				if i == 0 {
+					rows, err := conn.QueryContext(context.Background(), "select sleep(300)")
+					if err == nil {
+						_ = rows.Close()
+					}
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					if err == nil {
+						defer stmt.Close()
+						_, _ = stmt.Exec(300)
+					}
+				}
+			}()
+
+			// have two sessions
+			require.Eventually(t, func() bool {
+				return processlistCount(dbt) == 2
+			}, time.Second, time.Millisecond*10)
+
+			// close tcp connection
+			require.NoError(t, netConn.Close())
+
+			select {
+			case <-queryDone:
+			case <-time.After(time.Second * 3):
+				require.Fail(t, "query did not exit after closing the TCP connection")
+			}
+			_ = conn.Close()
+
+			// the `select sleep(300)` is killed
+			require.Eventually(t, func() bool {
+				return processlistCount(dbt) == 1
+			}, time.Second*3, time.Millisecond*10)
+		})
+	}
 }

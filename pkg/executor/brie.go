@@ -235,7 +235,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(b.ctx.GetSessionVars().Location())
+	sc := stmtctx.NewStmtCtxWithTimeZone(b.sctx.GetSessionVars().Location())
 	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
@@ -250,27 +250,27 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) exec.Executor {
 	if s.Kind == ast.BRIEKindShowBackupMeta {
 		return execOnce(&showMetaExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 			showConfig:   buildShowMetadataConfigFrom(s),
 		})
 	}
 
 	if s.Kind == ast.BRIEKindShowQuery {
 		return execOnce(&showQueryExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 			targetID:     uint64(s.JobID),
 		})
 	}
 
 	if s.Kind == ast.BRIEKindCancelJob {
 		return &cancelJobExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 			targetID:     uint64(s.JobID),
 		}
 	}
 
 	e := &BRIEExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},
@@ -372,11 +372,16 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Tables) != 0:
 		tables := make([]filter.Table, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
-			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
+			table := filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O}
+			tables = append(tables, table)
+			cfg.FilterStr = append(cfg.FilterStr, table.String())
 		}
 		cfg.TableFilter = filter.NewTablesFilter(tables...)
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
+		for _, schema := range s.Schemas {
+			cfg.FilterStr = append(cfg.FilterStr, fmt.Sprintf("`%s`.*", schema))
+		}
 	default:
 		cfg.TableFilter = filter.All()
 	}
@@ -786,20 +791,20 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 	return err
 }
 
-// CreateDatabase implements glue.Session
-func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session
+func (gs *tidbGlueSession) CreateDatabaseOnExistError(_ context.Context, schema *model.DBInfo) error {
 	return BRIECreateDatabase(gs.se, schema, "")
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTable(gs.se, dbName, table, "", cs...)
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, clonedTable *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTable(gs.se, dbName, clonedTable, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTables(gs.se, tables, "", cs...)
+	clonedTables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTables(gs.se, clonedTables, "", cs...)
 }
 
 // CreatePlacementPolicy implements glue.Session
@@ -817,7 +822,7 @@ func (gs *tidbGlueSession) Close() {
 	CloseSession(gs.se)
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
@@ -825,6 +830,38 @@ func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 // GetSessionCtx implements glue.Glue
 func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
+}
+
+// AlterTableMode implements glue.Session.
+func (gs *tidbGlueSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableMode) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
+}
+
+// RefreshMeta implements glue.Session.
+func (gs *tidbGlueSession) RefreshMeta(
+	_ context.Context,
+	args *model.RefreshMetaArgs) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d INVOLVED_DB=%s INVOLVED_TABLE=%s",
+			args.SchemaID, args.TableID, args.InvolvedDB, args.InvolvedTable))
+	return d.RefreshMeta(gs.se, args)
 }
 
 func restoreQuery(stmt *ast.BRIEStmt) string {

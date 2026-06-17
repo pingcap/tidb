@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -57,7 +56,7 @@ func TestGetDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err := addDDLJobs(sess, txn, jobs[i])
+		err := addDDLJobs(sess, jobs[i])
 		require.NoError(t, err)
 
 		currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
@@ -100,17 +99,14 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	_, err := sess.Execute(context.Background(), "begin")
 	require.NoError(t, err)
 
-	txn, err := sess.Txn(true)
-	require.NoError(t, err)
-
 	// insert 5 drop table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, sess, txn, model.ActionDropTable, 10, 15)
+	enQueueDDLJobs(t, sess, model.ActionDropTable, 10, 15)
 
 	// insert 5 create table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, sess, txn, model.ActionCreateTable, 0, 5)
+	enQueueDDLJobs(t, sess, model.ActionCreateTable, 0, 5)
 
 	// insert add index jobs to AddIndexJobListKey queue
-	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
+	enQueueDDLJobs(t, sess, model.ActionAddIndex, 5, 10)
 
 	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
@@ -145,14 +141,14 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
 			Type:     jobType,
 		}
-		err := addDDLJobs(sess, txn, job)
+		err := addDDLJobs(sess, job)
 		require.NoError(t, err)
 	}
 }

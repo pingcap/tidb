@@ -696,11 +696,22 @@ func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) 
 }
 
 func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
+	fallbackIdx := -1
 	for i, c := range schema.Columns {
-		if c.EqualByExprAndID(ctx, col) {
+		if c.EqualColumn(col) {
 			col.Index = i
 			return true
 		}
+		// Different expression indexes may create hidden generated columns with the same
+		// virtual expression. Prefer the exact column ID when it exists; only fall back
+		// to expression equality when the selected schema has no exact column match.
+		if fallbackIdx == -1 && c.EqualByExprAndID(ctx, col) {
+			fallbackIdx = i
+		}
+	}
+	if fallbackIdx != -1 {
+		col.Index = fallbackIdx
+		return true
 	}
 	return false
 }
@@ -745,86 +756,6 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 		}
 	}
 	return nil
-}
-
-// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
-	for i, info := range colInfos {
-		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
-				c := *cols[i]
-				c.IsPrefix = true
-				return &c
-			}
-			return cols[i]
-		}
-	}
-	return nil
-}
-
-// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column and its length.
-// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lengths := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			return retCols, lengths
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lengths = append(lengths, types.UnspecifiedLength)
-		} else {
-			lengths = append(lengths, c.Length)
-		}
-	}
-	return retCols, lengths
-}
-
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lens := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			retCols = append(retCols, col)
-			lens = append(lens, types.UnspecifiedLength)
-			continue
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lens = append(lens, types.UnspecifiedLength)
-		} else {
-			lens = append(lens, c.Length)
-		}
-	}
-	return retCols, lens
-}
-
-// FindPrefixOfIndex will find columns in index by checking the unique id.
-// So it will return at once no matching column is found.
-func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
-	retCols := make([]*Column, 0, len(idxColIDs))
-idLoop:
-	for _, id := range idxColIDs {
-		for _, col := range cols {
-			if col.UniqueID == id {
-				retCols = append(retCols, col)
-				continue idLoop
-			}
-		}
-		// If no matching column is found, just return.
-		return retCols
-	}
-	return retCols
 }
 
 // EvalVirtualColumn evals the virtual column

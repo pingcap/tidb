@@ -106,7 +106,7 @@ func BenchmarkDecode(b *testing.B) {
 	chk := chunk.NewChunkWithCapacity(tps, 1)
 	for range b.N {
 		chk.Reset()
-		err = decoder.DecodeToChunk(xRowData, kv.IntHandle(1), chk)
+		err = decoder.DecodeToChunk(xRowData, 0, kv.IntHandle(1), chk)
 		if err != nil {
 			b.Fatal(err)
 		}

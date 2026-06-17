@@ -33,8 +33,9 @@ import (
 type LogicalIndexScan struct {
 	LogicalSchemaProducer
 	// DataSource should be read-only here.
-	Source       *DataSource
-	IsDoubleRead bool
+	Source         *DataSource
+	IsDoubleRead   bool
+	NotAlwaysValid bool
 
 	EqCondCount int
 	AccessConds expression.CNFExprs
@@ -94,7 +95,7 @@ func (is *LogicalIndexScan) ExplainInfo() string {
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
-	for _, path := range is.Source.PossibleAccessPaths {
+	for _, path := range is.Source.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}

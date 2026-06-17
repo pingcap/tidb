@@ -139,12 +139,28 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
-		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+		// For LATERAL joins, use FullSchema when the outer plan is a USING/NATURAL
+		// join, so we capture correlated columns that reference the redundant
+		// (merged) join columns. Walk through wrapper operators (e.g.,
+		// LogicalSelection from ON clauses) to find the underlying LogicalJoin,
+		// matching the schema used for name resolution in LATERAL subqueries
+		// (see logical_plan_builder.go buildJoin).
+		outerSchema := outerPlan.Schema()
+		if apply.IsLateral {
+			if fullSchema, _ := findJoinFullSchema(outerPlan); fullSchema != nil {
+				outerSchema = fullSchema
+			}
+		}
+		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan, outerSchema)
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
 			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
+			if p.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+				p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanDecorrelatedApply()
+				join.FromDecorrelatedApply = true
+			}
 			p = join
 			appendApplySimplifiedTraceStep(apply, join, opt)
 		} else if apply.NoDecorrelate {
@@ -154,7 +170,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
 			for _, cond := range sel.Conditions {
-				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
+				newConds = append(newConds, cond.Decorrelate(outerSchema))
 			}
 			apply.AttachOnConds(newConds)
 			innerPlan = sel.Children()[0]
@@ -171,20 +187,10 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
-			allConst := len(proj.Exprs) > 0
-			for _, expr := range proj.Exprs {
-				if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
-					allConst = false
-					break
+			if apply.JoinType == logicalop.LeftOuterJoin {
+				if skipDecorrelateProjectionForLeftOuterApply(apply, proj) {
+					goto NoOptimize
 				}
-			}
-			if allConst && apply.JoinType == logicalop.LeftOuterJoin {
-				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
-				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
-				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
-				// We disable the decorrelation directly for now.
-				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
-				goto NoOptimize
 			}
 
 			// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
@@ -204,9 +210,9 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
 			for i, expr := range proj.Exprs {
-				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
+				proj.Exprs[i] = expr.Decorrelate(outerSchema)
 			}
-			apply.Decorrelate(outerPlan.Schema())
+			apply.Decorrelate(outerSchema)
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
@@ -540,4 +546,36 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalAp
 		return buffer.String()
 	}
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+}
+
+// Return true if we should skip decorrelation for LeftOuterApply + Projection.
+func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, proj *logicalop.LogicalProjection) bool {
+	allConst := len(proj.Exprs) > 0
+	for _, expr := range proj.Exprs {
+		if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
+			allConst = false
+			break
+		}
+	}
+	if allConst {
+		// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
+		//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
+		//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
+		// We disable the decorrelation directly for now.
+		// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
+		return true
+	}
+
+	// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
+	// which may break the semantics of LeftOuterJoin.
+	// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
+	// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
+	outerPlan := apply.Children()[0]
+	for _, expr := range proj.Exprs {
+		cols := expression.ExtractColumns(expr)
+		if outerPlan.Schema().ColumnsIndices(cols) != nil {
+			return true
+		}
+	}
+	return false
 }

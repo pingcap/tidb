@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -106,7 +106,7 @@ type KeyRange struct {
 
 // KeyRangeSliceMemUsage return the memory usage of []KeyRange
 func KeyRangeSliceMemUsage(k []KeyRange) int64 {
-	const sizeofKeyRange = int64(unsafe.Sizeof(*(*KeyRange)(nil)))
+	const sizeofKeyRange = int64(unsafe.Sizeof(KeyRange{}))
 
 	res := sizeofKeyRange * int64(cap(k))
 	for _, m := range k {
@@ -269,7 +269,7 @@ func (ih IntHandle) String() string {
 
 // MemUsage implements the Handle interface.
 func (IntHandle) MemUsage() uint64 {
-	return 8
+	return uint64(unsafe.Sizeof(IntHandle(0)))
 }
 
 // ExtraMemSize implements the Handle interface.
@@ -415,13 +415,13 @@ func (ch *CommonHandle) String() string {
 // MemUsage implements the Handle interface.
 func (ch *CommonHandle) MemUsage() uint64 {
 	// 48 is used by the 2 slice fields.
-	return 48 + ch.ExtraMemSize()
+	return uint64(unsafe.Sizeof(CommonHandle{})) + ch.ExtraMemSize()
 }
 
 // ExtraMemSize implements the Handle interface.
 func (ch *CommonHandle) ExtraMemSize() uint64 {
 	// colEndOffsets is a slice of uint16.
-	return uint64(cap(ch.encoded) + cap(ch.colEndOffsets)*2)
+	return uint64(cap(ch.encoded)) + uint64(cap(ch.colEndOffsets))*uint64(unsafe.Sizeof(uint16(0)))
 }
 
 // HandleMap is the map for Handle.
@@ -441,10 +441,10 @@ type strHandleVal struct {
 }
 
 // SizeofHandleMap presents the memory size of struct HandleMap
-const SizeofHandleMap = int64(unsafe.Sizeof(*(*HandleMap)(nil)))
+const SizeofHandleMap = int64(unsafe.Sizeof(HandleMap{}))
 
 // SizeofStrHandleVal presents the memory size of struct strHandleVal
-const SizeofStrHandleVal = int64(unsafe.Sizeof(*(*strHandleVal)(nil)))
+const SizeofStrHandleVal = int64(unsafe.Sizeof(strHandleVal{}))
 
 // NewHandleMap creates a new map for handle.
 func NewHandleMap() *HandleMap {
@@ -595,11 +595,11 @@ func (m *HandleMap) Range(fn func(h Handle, val any) bool) {
 // It only tracks the actual sizes. Objects that are pointed to by the key or value are not tracked.
 // Those should be tracked by the caller.
 type MemAwareHandleMap[V any] struct {
-	ints set.MemAwareMap[int64, V]
-	strs set.MemAwareMap[string, strHandleValue[V]]
+	ints memAwareMap[int64, V]
+	strs memAwareMap[string, strHandleValue[V]]
 
-	partitionInts map[int64]set.MemAwareMap[int64, V]
-	partitionStrs map[int64]set.MemAwareMap[string, strHandleValue[V]]
+	partitionInts map[int64]*memAwareMap[int64, V]
+	partitionStrs map[int64]*memAwareMap[string, strHandleValue[V]]
 }
 
 type strHandleValue[V any] struct {
@@ -608,58 +608,63 @@ type strHandleValue[V any] struct {
 }
 
 // NewMemAwareHandleMap creates a new map for handle.
-func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
-	return &MemAwareHandleMap[V]{
-		ints: set.NewMemAwareMap[int64, V](),
-		strs: set.NewMemAwareMap[string, strHandleValue[V]](),
-
-		partitionInts: map[int64]set.MemAwareMap[int64, V]{},
-		partitionStrs: map[int64]set.MemAwareMap[string, strHandleValue[V]]{},
+func NewMemAwareHandleMap[V any]() (res *MemAwareHandleMap[V]) {
+	res = &MemAwareHandleMap[V]{
+		partitionInts: map[int64]*memAwareMap[int64, V]{},
+		partitionStrs: map[int64]*memAwareMap[string, strHandleValue[V]]{},
 	}
+	res.ints.Init(make(map[int64]V))
+	res.strs.Init(make(map[string]strHandleValue[V]))
+	return
 }
 
 // Get gets a value by a Handle.
-func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
-	ints, strs := m.ints, m.strs
+func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, found bool) {
+	ints, strs := m.ints.M, m.strs.M
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if m.partitionInts[idx].M == nil {
-				return v, false
+			p := m.partitionInts[idx]
+			if p == nil {
+				return
 			}
-			ints = m.partitionInts[idx]
+			ints = p.M
 		} else {
-			if m.partitionStrs[idx].M == nil {
-				return v, false
+			p := m.partitionStrs[idx]
+			if p == nil {
+				return
 			}
-			strs = m.partitionStrs[idx]
+			strs = p.M
 		}
 	}
 	if h.IsInt() {
-		v, ok = ints.Get(h.IntValue())
+		v, found = ints[h.IntValue()]
 	} else {
-		var strVal strHandleValue[V]
-		strVal, ok = strs.Get(string(h.Encoded()))
-		v = strVal.val
+		strVal, ok := strs[string(h.Encoded())]
+		v, found = strVal.val, ok
 	}
 	return
 }
 
 // Set sets a value with a Handle.
 func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
-	ints, strs := m.ints, m.strs
+	ints, strs := &m.ints, &m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if m.partitionInts[idx].M == nil {
-				m.partitionInts[idx] = set.NewMemAwareMap[int64, V]()
+			p := m.partitionInts[idx]
+			if p == nil {
+				p = newMemAwareMap[int64, V]()
+				m.partitionInts[idx] = p
 			}
-			ints = m.partitionInts[idx]
+			ints = p
 		} else {
-			if m.partitionStrs[idx].M == nil {
-				m.partitionStrs[idx] = set.NewMemAwareMap[string, strHandleValue[V]]()
+			p := m.partitionStrs[idx]
+			if p == nil {
+				p = newMemAwareMap[string, strHandleValue[V]]()
+				m.partitionStrs[idx] = p
 			}
-			strs = m.partitionStrs[idx]
+			strs = p
 		}
 	}
 	if h.IsInt() {
@@ -748,10 +753,16 @@ func (ph PartitionHandle) Compare(h Handle) int {
 
 // MemUsage implements the Handle interface.
 func (ph PartitionHandle) MemUsage() uint64 {
-	return ph.Handle.MemUsage() + 8
+	return ph.Handle.MemUsage() + uint64(unsafe.Sizeof(PartitionHandle{}))
 }
 
 // ExtraMemSize implements the Handle interface.
 func (ph PartitionHandle) ExtraMemSize() uint64 {
 	return ph.Handle.ExtraMemSize()
+}
+
+type memAwareMap[K comparable, V any] = hack.MemAwareMap[K, V]
+
+func newMemAwareMap[K comparable, V any]() *memAwareMap[K, V] {
+	return hack.NewMemAwareMap[K, V](0)
 }

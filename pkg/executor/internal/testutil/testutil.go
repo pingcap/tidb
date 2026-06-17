@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
-// MockDataSourceParameters mpcks data source parameters
+// MockDataSourceParameters mocks data source parameters
 type MockDataSourceParameters struct {
 	Ctx         sessionctx.Context
 	DataSchema  *expression.Schema
@@ -80,6 +80,10 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 	}
 	results = make([]any, 0, rows)
 
+	// ndv > 0: generate n rows with random value with ndv distinct values.
+	// ndv == 0: generate n rows with random values.
+	// ndv == -1: generate n rows by sampling from values provided by user.
+	// ndv == -2: use rows provided by user as-is.
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -90,11 +94,17 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 				results = append(results, mds.P.GenDataFunc(i, typ))
 			}
 		}
+	} else if ndv == -2 {
+		if mds.P.Datums[col] == nil {
+			panic("need to provide data")
+		}
+
+		results = mds.P.Datums[col]
 	} else {
 		datums := make([]any, 0, max(ndv, 0))
 		if ndv == -1 {
 			if mds.P.Datums[col] == nil {
-				panic("need to provid data")
+				panic("need to provide data")
 			}
 
 			datums = mds.P.Datums[col]
@@ -221,6 +231,11 @@ func (*MockDataPhysicalPlan) ExplainID() fmt.Stringer {
 // ID returns 0
 func (*MockDataPhysicalPlan) ID() int {
 	return 0
+}
+
+// SetID implements Plan interface
+func (*MockDataPhysicalPlan) SetID(_ int) {
+	panic("not implement")
 }
 
 // Stats returns nil

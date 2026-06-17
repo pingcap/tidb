@@ -5,12 +5,16 @@ go_test(
     timeout = "short",
     srcs = [
         "expr_test.go",
+        "index_lookup_pushdown_test.go",
         "main_test.go",
     ],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//pkg/testkit",
+        "//pkg/util/logutil",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )

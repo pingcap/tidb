@@ -394,7 +394,7 @@ func initStatsVer2(t *testing.T) {
 	require.NoError(t, err)
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 	tk.MustExec("insert into t values(1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4), (4, 4, 4, 4), (4, 4, 4, 4)")
-	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	tk.MustExec("analyze table t predicate columns with 2 topn, 3 buckets")
 	tk.MustExec("alter table t add column e int default 1")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)

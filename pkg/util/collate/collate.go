@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -327,14 +328,22 @@ func ConvertAndGetBinCollator(collate string) Collator {
 	return GetCollator(ConvertAndGetBinCollation(collate))
 }
 
-// IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
-// The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
-// and both xx_bin and collationBin are satisfied.
+// IsBinCollation returns whether the sortkey of a char/varchar under this collation
+// equals the raw data itself. This is a STORAGE-LEVEL property used by:
+//   - tablecodec: deciding whether restore-data is needed
+//   - NeedRestoredData: padding optimization
+//   - ranger/selectivity: assuming sortkey == data for fast paths
+//
+// DO NOT use this for coercibility derivation (use expression.isBinCollation instead).
+// The two concepts diverge on GBK: gbk_bin's Key() does UTF-8→GBK encoding conversion
+// (sortkey ≠ data), but it IS still a _bin collation for coercibility purposes.
+//
+// Included: ascii_bin, latin1_bin, utf8_bin, utf8mb4_bin, binary, utf8mb4_0900_bin
+// NOT included: gbk_bin (its Key() transforms data via encoding)
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
-	// TODO: define a constant to reference collations
+		collate == charset.CollationBin || collate == charset.CollationUTF8MB40900Bin
 }
 
 // IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
@@ -355,6 +364,36 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+func compareCommon(a, b string, keyFunc func(rune) uint32) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	r1Len, r2Len := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, r1Len = utf8.DecodeRuneInString(a[ai:])
+		r2, r2Len = utf8.DecodeRuneInString(b[bi:])
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		invalid1 := r1 == utf8.RuneError && r1Len == 1
+		invalid2 := r2 == utf8.RuneError && r2Len == 1
+		if invalid1 || invalid2 {
+			return 0
+		}
+
+		ai += r1Len
+		bi += r2Len
+
+		cmp := cmp.Compare(keyFunc(r1), keyFunc(r2))
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return cmp.Compare(len(a)-ai, len(b)-bi)
 }
 
 // CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key

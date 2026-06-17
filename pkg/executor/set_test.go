@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -443,11 +444,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
-	// test for instance
-	tk.MustExec("set @@instance.ddl_slow_threshold=1234")
-	tk.MustQuery("select @@instance.ddl_slow_threshold").Check(testkit.Rows("1234"))
-	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrIncorrectGlobalLocalVar)
-
 	// test for tidb_redact_log
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
@@ -666,6 +662,10 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global pd_enable_follower_handle_region = 0")
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
+	tk.MustQuery("select @@tidb_enable_batch_query_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_batch_query_region = 1")
+	tk.MustQuery("select @@tidb_enable_batch_query_region").Check(testkit.Rows("1"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_batch_query_region = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -684,7 +684,7 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
@@ -1831,4 +1831,28 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
+}
+
+func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originConfig := config.GetGlobalConfig()
+	originServiceScope := variable.ServiceScope.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+		variable.ServiceScope.Store(originServiceScope)
+	})
+
+	tk.MustExec("set global tidb_service_scope='BaCkGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", variable.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+
+	tk.MustExec("set global tidb_service_scope='BackGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", variable.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }

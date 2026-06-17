@@ -297,13 +297,22 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
+	switch m.AnalyzeState {
+	case model.AnalyzeStateRunning:
+		labels = append(labels, "analyzing")
+	case model.AnalyzeStateFailed:
+		labels = append(labels, "analyze_failed")
+	case model.AnalyzeStateTimeout:
+		labels = append(labels, "analyze_timeout")
+	default:
+	}
 	if job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
-		case model.ReorgTypeLitMerge:
-			labels = append(labels, model.ReorgTypeLitMerge.String())
+		case model.ReorgTypeIngest:
+			labels = append(labels, model.ReorgTypeIngest.String())
 			if m.IsDistReorg {
 				labels = append(labels, "DXF")
 			}
@@ -329,6 +338,9 @@ func showCommentsFromJob(job *model.Job) string {
 		}
 		if m.TargetScope != "" {
 			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
+		}
+		if m.MaxNodeCount != 0 {
+			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
 	}
 	return strings.Join(labels, ", ")

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -338,6 +341,85 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	}
 }
 
+func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadQueueSize = 1
+	config.StoreGlobalConfig(newConfig)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originalPseudoTimeout := tk.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_stats_load_pseudo_timeout = %v", originalPseudoTimeout))
+	}()
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+
+	tk.MustExec("set global tidb_stats_load_pseudo_timeout = 1")
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("set @@session.tidb_plan_cache_invalidation_on_fresh_stats = 1")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("analyze table t all columns")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colBID := tblInfo.Columns[1].ID
+
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats := statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsAllEvicted())
+
+	tk.MustExec("prepare st from 'select * from t where b > ?'")
+	tk.MustExec("set @p = 2")
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// Wait for the async histogram load item corresponding to column b to be marked
+	// as sync-load failed, which confirms the sync-load path timed out and fell back
+	// to async loading for this full-load stats item.
+	require.Eventually(t, func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableID == tblInfo.ID && item.ID == colBID && !item.IsIndex && item.FullLoad && item.IsSyncLoadFailed {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond)
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
+
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats = statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsFullLoad())
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.Equal(t, 1, tk.Session().GetSessionPlanCache().Size())
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestPlanStatsStatusRecord(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -438,6 +520,89 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			output[i].OutputColNames = cols
 		})
 		require.Equal(t, output[i].OutputColNames, cols)
+	}
+}
+
+func TestStatsAnalyzedInDDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
+	// test normal table
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+
+	// insert data
+	for i := range 50 {
+		testKit.MustExec("insert into t values (?,?,?)", i, i, i)
+	}
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+	var (
+		lastIsSelect     bool
+		lastStatsVersion string
+		curStatsVersion  string
+	)
+	getHistID := func(name string, isIndex bool) (int64, int64) {
+		require.NoError(t, dom.Reload())
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		tableID := tbl.Meta().ID
+		histID := int64(0)
+		if isIndex {
+			histID = tbl.Meta().FindIndexByName(name).ID
+		} else {
+			histID = dbutil.FindColumnByName(tbl.Meta().Columns, name).ID
+		}
+		return tableID, histID
+	}
+	for i, sql := range input {
+		isSelect := strings.HasPrefix(sql, "select")
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+			if isSelect {
+				// explain the query
+				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='brief' " + sql).Rows())
+			} else {
+				output[i].Result = nil
+			}
+		})
+		if isSelect {
+			// explain the query
+			testKit.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Result...))
+			// assert the version
+			indexName := ""
+			if strings.Contains(sql, "idx_c") {
+				indexName = "idx_c"
+			} else {
+				indexName = "idx_bc"
+			}
+			tableID, histID := getHistID(indexName, true)
+			res := testKit.MustQuery("select version from mysql.stats_histograms where table_id = ? and hist_id = ? and is_index=?;", tableID, histID, true)
+			if len(res.Rows()) > 0 {
+				curStatsVersion = res.Rows()[0][0].(string)
+				// since the index is re-analyzed, so each usage of them use a new version.
+				if lastIsSelect {
+					require.Equal(t, lastStatsVersion, curStatsVersion)
+				} else {
+					// last is ddl
+					require.NotEqual(t, lastStatsVersion, curStatsVersion)
+				}
+				lastStatsVersion = curStatsVersion
+			}
+			lastIsSelect = true
+		} else {
+			// run the ddl anyway
+			testKit.MustExec(sql)
+			lastIsSelect = false
+		}
 	}
 }
 

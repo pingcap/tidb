@@ -158,20 +158,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
-// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of executor.go when
-// doing the operation of 'modify column'.
-func TestInitializeOffsetAndState(t *testing.T) {
-	s := createFailDBSuite(t)
-	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
-	defer tk.MustExec("drop table t")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/uninitializedOffsetAndState", `return(true)`))
-	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/uninitializedOffsetAndState"))
-}
-
 func TestUpdateHandleFailed(t *testing.T) {
 	s := createFailDBSuite(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/errorUpdateReorgHandle", `1*return`))
@@ -503,7 +489,7 @@ func TestModifyColumn(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
-	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1690]constant 222 overflows tinyint")
+	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1265]Data truncated for column 'a', value is '222'")
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -521,9 +507,9 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	tk.MustGetErrMsg("alter table t1 modify column a mediumint", "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
-	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
-	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
-	tk.MustGetErrMsg("alter table t2 modify column a mediumint generated always as(id+1) stored", "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
+	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: old column is generated")
+	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: old column is generated")
+	tk.MustGetErrMsg("alter table t2 modify column a mediumint generated always as(id+1) stored", "[ddl:8200]Unsupported modify column: new column is generated")
 	tk.MustGetErrMsg("alter table t2 modify column a mediumint", "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.

@@ -161,7 +161,8 @@ func TestSplitIndex(t *testing.T) {
 		{1000, 9},
 	}
 
-	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	index, err := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	require.NoError(t, err)
 	for _, ca := range cases {
 		// test for minInt64 handle
 		sc := ctx.GetSessionVars().StmtCtx

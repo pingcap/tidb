@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -218,6 +219,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 func TestEstimationForUnknownValues(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
@@ -292,6 +294,121 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 0.0, count)
 }
 
+// TestCanSkipIndexEstimation verifies that GetRowCountByIndexRanges uses the fast path
+// (canSkipIndexEstimation) when ranges include a full range with NULLs [NULL, +inf),
+// returning RealtimeCount directly without expensive histogram estimation.
+func TestCanSkipIndexEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Use mock stats so Idx2ColUniqueIDs is populated (required by getIndexRowCountForStatsV2).
+	// 50 distinct non-NULL values + 1 NULL row, so the not-null range can produce a
+	// strictly smaller estimate than RealtimeCount and catch a buggy fast-path that
+	// returns RealtimeCount for [MinNotNull,+inf).
+	const nonNullCount = 50
+	const nullCount = 1
+	realtimeCount := int64(nonNullCount + nullCount)
+	statsTbl := mockStatsTable(tblInfo, realtimeCount)
+	colValues, err := generateIntDatum(1, nonNullCount)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		colHist := mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong))
+		colHist.NullCount = nullCount
+		statsTbl.SetCol(int64(i), &statistics.Column{
+			Histogram:         *colHist,
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
+	idxValues := make([]types.Datum, nonNullCount)
+	for i := range idxValues {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	// Mark the index as NOT fully loaded so we can prove the fast path runs before
+	// IndexStatsIsInvalid: under a not-fully-loaded status, the slow path would queue
+	// this index into AsyncLoadHistogramNeededItems, and the assertion below would
+	// fail if canSkipIndexEstimation no longer short-circuited the call.
+	idxHist := mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob))
+	idxHist.NullCount = nullCount
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram:         *idxHist,
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+		StatsVer:          2,
+	})
+	generateMapsForMockStatsTbl(statsTbl)
+
+	idxID := tblInfo.Indices[0].ID
+	// Use the testkit's real session so recordUsedItemStatsStatus can resolve the
+	// table via domain.GetDomain(sctx).InfoSchema(); the bare mock.NewContext() has
+	// no domain registered and would panic now that the index is not FullLoad.
+	sctx := tk.Session().GetPlanCtx()
+	idxItem := model.TableItemID{TableID: tblInfo.ID, ID: idxID, IsIndex: true}
+	hasAsyncLoadEntry := func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableItemID == idxItem {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
+	// Result should equal RealtimeCount exactly (no histogram estimation), and the fast
+	// path must run before IndexStatsIsInvalid so the evicted index is NOT queued for
+	// async load — otherwise the optimization would still pay for the wasted I/O.
+	asyncload.AsyncLoadHistogramNeededItems.Delete(idxItem)
+	fullRanges := ranger.FullRange()
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges)
+	require.NoError(t, err)
+	require.Equal(t, float64(realtimeCount), countResult,
+		"full range [NULL,+inf) should use fast path and return RealtimeCount")
+	require.False(t, hasAsyncLoadEntry(),
+		"fast path must short-circuit before IndexStatsIsInvalid and not queue the evicted index for async load")
+
+	// Full range excluding NULLs [MinNotNull, +inf) must NOT use the fast path.
+	// With nullCount > 0, the histogram estimate must be strictly below RealtimeCount;
+	// equality would mean the fast path was wrongly taken.
+	fullNotNullRanges := ranger.FullNotNullRange()
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult2, float64(realtimeCount),
+		"full not-null range excludes %d NULL row(s), estimate must be < RealtimeCount", nullCount)
+
+	// Bounded range should NOT use fast path.
+	boundedRanges := getRange(1, 10)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult3, float64(realtimeCount),
+		"bounded range should use histogram estimation, not fast path")
+
+	// (NULL, +inf) with an exclusive lower bound drops the NULL endpoint, so the
+	// fast path must not apply — otherwise the NULL row would be silently counted.
+	var nullDatum types.Datum
+	nullDatum.SetNull()
+	exclusiveNullRanges := []*ranger.Range{{
+		LowVal:     []types.Datum{nullDatum},
+		HighVal:    []types.Datum{types.MaxValueDatum()},
+		LowExclude: true,
+		Collators:  collate.GetBinaryCollatorSlice(1),
+	}}
+	countResult4, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, exclusiveNullRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult4, float64(realtimeCount),
+		"exclusive lower bound on NULL must drop the NULL row, estimate must be < RealtimeCount")
+}
+
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -310,7 +427,6 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	}
 	testKit.MustExec("analyze table t")
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
@@ -335,11 +451,13 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
-	// Search for a not found value based upon statistics - count should be >= 10 and <=40
+	// Search for a not found value based upon post-analyze modifications. It
+	// should be higher than the no-modification fallback, but lower than a value
+	// already present in the analyzed histogram.
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 45, "expected: between 35 to 45, got: %v", count)
-	require.Truef(t, count > 35, "expected: between 35 to 45, got: %v", count)
+	require.Greater(t, count, 1.0)
+	require.Less(t, count, 10.0)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
@@ -1183,6 +1301,37 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	}
 }
 
+func TestIssue64137(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec(`set @@cte_max_recursion_depth=10000`)
+	tk.MustExec(`insert into t select * from (with recursive cte as (
+        select 1 as a, 1 as num union all
+        select 1 as a, num+1 as num from cte where num < 10000
+    ) select a from cte) tt;`) // insert 10000 rows with a=1
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustQuery(`select count(1) from t`).Check(testkit.Rows("10000"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_topn where is_index=1`).Check(testkit.Rows("test t  a 1 1 10000")) // 1 topN value with count 10000
+
+	tk.MustExec(`insert into t select * from t limit 2000`) // insert 2000 rows with a=1
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	h.Update(context.Background(), dom.InfoSchema())
+	statsMeta := tk.MustQuery(`show stats_meta`).Rows()[0]
+	require.Equal(t, statsMeta[4], "2000")  // modify_count = 2000
+	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000
+
+	tk.MustQuery(`explain select * from t where a=99999999`).Check(testkit.Rows(
+		`IndexReader_6 24.00 root  index:IndexRangeScan_5`, // out-of-range est for small NDV, result should close to zero
+		`└─IndexRangeScan_5 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
+	tk.MustQuery(`explain select * from t where a=1`).Check(testkit.Rows(
+		`IndexReader_6 12000.00 root  index:IndexRangeScan_5`, // in-range est for small NDV
+		`└─IndexRangeScan_5 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
+}
+
 func TestOrderingIdxSelectivityRatio(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1301,6 +1450,70 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	require.Less(t, planCost2, planCost3)
 	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
 	rs = testKit.MustQuery("explain format=verbose select t1.* from t t1 use index (ibc) join t t2 on t1.b=t2.b where t2.c=5 order by t1.b limit 2").Rows()
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	require.Less(t, planCost3, planCost4)
+}
+
+func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1, t2")
+	// Use larger tables so that the ExpectedCnt difference from the ordering
+	// penalty produces a measurable child-cost change.
+	testKit.MustExec("create table t1(a int, b int, c int, index ib(b))")
+	testKit.MustExec("create table t2(a int, b int, c int, index ib(b))")
+	testKit.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	testKit.MustExec("insert into t2 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	// Double the data several times to reach ~320 rows per table.
+	for i := 0; i < 5; i++ {
+		testKit.MustExec("insert into t1 select a,b,c from t1")
+		testKit.MustExec("insert into t2 select a,b,c from t2")
+	}
+	testKit.MustExec("analyze table t1")
+	testKit.MustExec("analyze table t2")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	// Force merge join via hint with use-index hints so the plan shape stays
+	// stable across ratio values. The ordering index ib(b) matches the
+	// ORDER BY, so the cross-estimation path inflates the IndexScan row
+	// count when the ratio is positive, increasing the merge-join cost.
+	query := "explain format=verbose select /*+ merge_join(t1, t2) */ t1.* from t1 use index(ib) join t2 use index(ib) on t1.b=t2.b where t1.c < t2.c order by t1.b limit 2"
+
+	hasMergeJoin := func(rows [][]any) bool {
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "MergeJoin") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Disable ordering ratio: -1 and 0 should have the same cost.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
+	rs := testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=-1")
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0")
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	require.Equal(t, planCost1, planCost2)
+
+	// Increasing the ratio should increase the cost of merge join.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0.5")
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	require.Less(t, planCost2, planCost3)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=1")
 	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err4)
 	require.Less(t, planCost3, planCost4)
@@ -1578,4 +1791,21 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}
+}
+
+func TestUninitializedStats(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 'OFF';")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set names utf8mb4;")
+	tk.MustExec("create table t1(id int, c1 int, c2 varchar(100), primary key(id), key idx_expr ((cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin)));")
+	tk.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
+	tk.MustExec("analyze table t1;")
+	// Trigger load stats of idx_expr.
+	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
+	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
+	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }

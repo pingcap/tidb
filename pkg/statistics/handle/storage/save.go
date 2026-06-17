@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -135,6 +137,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		return 0, err
 	}
 	version := txn.StartTS()
+	failpoint.InjectCall("saveAnalyzeResultToStorage")
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
@@ -157,7 +160,10 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// txn1: lockKeys on point get (index lock)
 	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
 	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
-	fakeID := int64(-1988)
+	// Pick a fake table ID to reduce lock contention on mysql.stats_meta.
+	// Under repeatable-read, even non-existent keys are locked.
+	// Using the negative table ID keeps it separate from real table IDs and from other fake IDs.
+	fakeID := -tableID
 	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
@@ -422,23 +428,33 @@ func SaveColOrIdxStatsToStorage(
 	return
 }
 
-// SaveMetaToStorage will save stats_meta to storage and update last stats histograms version.
+// SaveMetaToStorage will batch save stats_meta to storage.
 func SaveMetaToStorage(
 	sctx sessionctx.Context,
-	tableID, count, modifyCount int64,
 	refreshLastHistVer bool,
-) (statsVer uint64, err error) {
+	metaUpdates []statstypes.MetaUpdate,
+) (uint64, error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	var sql string
+	values := make([]string, 0, len(metaUpdates))
 	if refreshLastHistVer {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount, version))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count), last_stats_histograms_version = values(last_stats_histograms_version)", strings.Join(values, ","))
 	} else {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
 	}
-	statsVer = version
-	return
+	_, err = util.Exec(sctx, sql)
+	return version, errors.Trace(err)
 }
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1

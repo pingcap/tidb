@@ -97,7 +97,7 @@ echo "--> full cluster restore, will not clear cloud_admin@'%'"
 restart_services
 # create cloud_admin on target cluster manually, this user will **not** be cleared
 run_sql "create user cloud_admin identified by 'xxxxxxxx'"
-run_br restore full --log-file $br_log_file -s "local://$backup_dir"
+run_br restore full --log-file $br_log_file -s "local://$backup_dir" --fast-load-sys-tables=false
 # cloud_admin@'127.0.0.1' is restored
 run_sql "select count(*) from mysql.user where user='cloud_admin'"
 check_contains "count(*): 2"
@@ -116,7 +116,7 @@ echo "--> full cluster restore"
 restart_services
 # create cloud_admin on target cluster manually, this user will be cleared
 run_sql "create user cloud_admin@'1.1.1.1' identified by 'xxxxxxxx'"
-run_br restore full --log-file $br_log_file -s "local://$backup_dir"
+run_br restore full --log-file $br_log_file -s "local://$backup_dir" --fast-load-sys-tables=false
 run_sql_as user1 "123456" "select count(*) from db1.t1"
 check_contains "count(*): 2"
 run_sql_as user1 "123456" "select count(*) from db2.t1"
@@ -128,7 +128,8 @@ run_sql_as user2 "123456" "select count(*) from db2.t1" || true
 check_contains "SELECT command denied to user"
 # user3 can only query db1.t1 using ssl
 # ci env uses mariadb client, ssl flag is different with mysql client
-run_sql_as user3 "123456" "select count(*) from db1.t1" || true
+# enforce a non-SSL attempt first; some clients may auto-negotiate TLS by default.
+run_sql_as user3 "123456" "select count(*) from db1.t1" --skip-ssl || true
 check_contains "Access denied for user"
 run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
 check_contains "count(*): 2"

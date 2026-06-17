@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 type mockPDClient struct {
@@ -27,7 +28,7 @@ func (m *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
-func (m *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (m *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	if m.getAllStores != nil {
 		return m.getAllStores(), nil
 	}
@@ -48,13 +49,6 @@ func TestCheckClusterVersion(t *testing.T) {
 
 	mock := mockPDClient{
 		Client: nil,
-	}
-	{
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v5.4.2`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
 	}
 
 	{
@@ -155,26 +149,6 @@ func TestCheckClusterVersion(t *testing.T) {
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.Error(t, err)
 		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.1.0, please `, err.Error())
-	}
-
-	{
-		build.ReleaseVersion = "v8.4.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v6.2.0`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.Error(t, err)
-		require.Regexp(t, `^TiKV .* is too old because the PITR id map is written into`, err.Error())
-	}
-
-	{
-		build.ReleaseVersion = "v8.5.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v6.2.0`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.Error(t, err)
-		require.Regexp(t, `^TiKV .* is too old because the PITR id map is written into`, err.Error())
 	}
 
 	{
@@ -340,15 +314,6 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
-		build.ReleaseVersion = "v6.0.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: "v4.4.0"}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
-		require.Error(t, err)
-	}
-
-	{
 		build.ReleaseVersion = "v8.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v8.1.0"}}
@@ -361,6 +326,27 @@ func TestCheckClusterVersion(t *testing.T) {
 		build.ReleaseVersion = "v8.1.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v8.2.0"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+	}
+
+	{
+		// BR v26.x and TiKV v8.x: major version difference > 2, should fail
+		build.ReleaseVersion = "v26.3.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.Error(t, err)
+		require.Regexp(t, "major version mismatch", err.Error())
+	}
+
+	{
+		// nightly-dirty (test build) skips all version checks
+		build.ReleaseVersion = build.ReleaseVersionForTest
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.NoError(t, err)

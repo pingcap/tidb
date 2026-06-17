@@ -297,6 +297,32 @@ func TestFuzzyBindingInList(t *testing.T) {
 	}
 }
 
+func TestCrossDBBindingReadFromStorage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`CREATE TABLE ttt (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  code varchar(64) NOT NULL DEFAULT '',
+  useridx bigint NOT NULL DEFAULT '0',
+  name int unsigned NOT NULL DEFAULT '0',
+  ctime int unsigned NOT NULL DEFAULT '0',
+  action int unsigned NOT NULL DEFAULT '0',
+  PRIMARY KEY (id) /*T![clustered_index] NONCLUSTERED */,
+  KEY k1 (useridx,name,action,ctime,code),
+  KEY ik2 (ctime) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`create global binding using  SELECT /*+ read_from_storage(tikv[l])*/ l.id
+			FROM *.ttt AS l WHERE l.useridx = 915886411
+			AND l.ctime >= 1729998000 AND l.code = 'xxx' ORDER BY  l.ctime DESC,l.id DESC LIMIT 100`)
+	tk.MustExec(`SELECT l.id FROM ttt AS l WHERE l.useridx = 915886411
+			AND l.ctime >= 1729998000 AND l.code = 'xxx' ORDER BY  l.ctime DESC,l.id DESC LIMIT 100`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`SELECT l.id FROM ttt AS l WHERE l.useridx = 915886411
+			AND l.ctime >= 1729998000 AND l.code = 'xxx' ORDER BY  l.ctime DESC,l.id DESC LIMIT 100`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+}
+
 func TestFuzzyBindingPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

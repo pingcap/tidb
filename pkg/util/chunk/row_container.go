@@ -267,7 +267,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
-	return c.m.records.inMemory.allocChunk()
+	return c.m.records.inMemory.AllocChunk()
 }
 
 // GetChunk returns chkIdx th chunk of in memory records.

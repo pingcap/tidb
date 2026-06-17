@@ -28,8 +28,7 @@ Any questions? Let's discuss on [TiDB Internals forum](https://internals.tidb.io
 Building
 --------
 
-0. Under directory `tidb`
-1. Install Go 1.23.6 or above
+1. Under directory `tidb`
 2. Run `make build_dumpling` to compile. The output is in `bin/dumpling`.
 3. Run `make dumpling_unit_test` to run the unit tests.
 4. Run `make dumpling_integration_test` to run integration tests. For integration test:

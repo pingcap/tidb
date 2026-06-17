@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 785.004166655054
+        "Count": 786.504166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1243.196869573942
+        "Count": 1244.696869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1219.0288209899081
+        "Count": 1224.0288209899081
       },
       {
         "Start": 200,
@@ -1179,7 +1179,8 @@
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexMerge 1.00 root  type: union",
           "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[0,50], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ic(c) range:[0,50], keep order:false, stats:pseudo",
+          "  ├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan 510.00 cop[tikv] table:t, index:ic(c) range:[0,50], keep order:true, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
           "    └─TableRowIDScan 1017.40 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -1549,8 +1550,20 @@
           {
             "table_name": "t",
             "type": "Index Stats-Range",
+            "expr": "((a < 5))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
             "expr": "((a < 5)) or ((a > 10 and true))",
             "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
+            "expr": "((a > 10 and true))",
+            "row_count": 1
           },
           {
             "table_name": "t",

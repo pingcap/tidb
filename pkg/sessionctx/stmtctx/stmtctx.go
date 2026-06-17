@@ -65,6 +65,26 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+// LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
+// building a logical plan from AST.
+type LogicalPlanBuildState struct {
+	warnings             []SQLWarn
+	extraWarnings        []SQLWarn
+	tables               []TableEntry
+	tableStats           map[int64]any
+	lockTableIDs         map[int64]struct{}
+	tblInfo2UnionScan    map[*model.TableInfo]bool
+	useDynamicPruneMode  bool
+	viewDepth            int32
+	colRefFromUpdatePlan intset.FastIntSet
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
+}
+
 type jsonSQLWarn struct {
 	Level  string        `json:"level"`
 	SQLErr *terror.Error `json:"err,omitempty"`
@@ -309,6 +329,7 @@ type StatementContext struct {
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -324,6 +345,15 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
+
+	// ExecRetryCount records the number of retries for executing the statement.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecRetryCount uint64
+	// ExecSuccess indicates whether the statement execution succeeded.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecSuccess bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
@@ -437,6 +467,16 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
+	// optimization round decorrelated at least one Apply into Join.
+	AlternativeLogicalPlanDecorrelatedApply bool
+	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
+	// round already produced a same-order index join candidate for a decorrelated Apply.
+	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
+	// build round encountered a non-correlated IN subquery eligible for the
+	// correlate-to-Apply alternative.
+	AlternativeLogicalPlanPreferCorrelate bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -469,8 +509,8 @@ type StatementContext struct {
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
 	StaleTSOProvider *staleTSOProvider
 
-	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	// RelatedTableIDs stores the IDs of tables used in statement.
+	RelatedTableIDs map[int64]struct{}
 
 	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
@@ -504,6 +544,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
@@ -533,7 +574,7 @@ func (sc *StatementContext) Reset() bool {
 		CTEStorageMap:       sc.CTEStorageMap,
 		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
-		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		RelatedTableIDs:     sc.RelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
@@ -560,6 +601,71 @@ func (sc *StatementContext) Reset() bool {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
 	return true
+}
+
+// SaveLogicalPlanBuildState captures the statement-scoped planner state before building
+// another logical plan candidate from the same AST.
+func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
+	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
+	return LogicalPlanBuildState{
+		warnings:             slices.Clone(sc.GetWarnings()),
+		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
+		tables:               slices.Clone(sc.Tables),
+		tableStats:           maps.Clone(sc.TableStats),
+		lockTableIDs:         maps.Clone(sc.LockTableIDs),
+		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
+		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		viewDepth:            sc.ViewDepth,
+		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
+		planCacheUseCache:    planCacheUseCache,
+		planCacheType:        planCacheType,
+		planCacheUnqualified: planCacheUnqualified,
+		planCacheForce:       planCacheForce,
+		planCacheAlwaysWarn:  planCacheAlwaysWarn,
+	}
+}
+
+// RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
+// discarded logical plan build attempt.
+func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.SetWarnings(slices.Clone(state.warnings))
+	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
+	sc.Tables = slices.Clone(state.tables)
+	sc.TableStats = maps.Clone(state.tableStats)
+	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
+	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
+	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ViewDepth = state.viewDepth
+	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
+	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+}
+
+// ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
+// alternative logical plan feature.
+func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = false
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanPreferCorrelate = false
+}
+
+// MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
+// been decorrelated into a Join in the current round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = true
+}
+
+// MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
+// has already produced a same-order index join candidate for a decorrelated Apply.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
+// build round encountered a non-correlated IN subquery that is eligible for
+// the correlate-to-Apply alternative.
+func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
+	sc.AlternativeLogicalPlanPreferCorrelate = true
 }
 
 // CtxID returns the context id of the statement
@@ -1188,10 +1294,13 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	}
 }
 
-// SetStaleTSOProvider sets the stale TSO provider.
-func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+// SetStaleTSOProviderIfNotExist sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProviderIfNotExist(eval func() (uint64, error)) {
 	sc.StaleTSOProvider.Lock()
 	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.eval != nil {
+		return
+	}
 	sc.StaleTSOProvider.value = nil
 	sc.StaleTSOProvider.eval = eval
 }

@@ -139,16 +139,6 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	}, statsutil.FlagWrapTxn)
 }
 
-// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
-func (sa *statsAnalyze) OnBecomeOwner() {
-	sa.refresher.OnBecomeOwner()
-}
-
-// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
-func (sa *statsAnalyze) OnRetireOwner() {
-	sa.refresher.OnRetireOwner()
-}
-
 // SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago
 // and the instance is current instance.
@@ -321,6 +311,12 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.
 func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
 	return sa.refresher.GetPriorityQueueSnapshot()
+}
+
+// ClosePriorityQueue closes the stats priority queue if initialized.
+// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+func (sa *statsAnalyze) ClosePriorityQueue() {
+	sa.refresher.ClosePriorityQueue()
 }
 
 func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {

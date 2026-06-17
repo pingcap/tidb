@@ -57,7 +57,7 @@ func TestTimeoutRecv(t *testing.T) {
 	TimeoutOneResponse = time.Millisecond * 800
 	// Just Timeout Once
 	{
-		err := startBackup(ctx, 0, backuppb.BackupRequest{}, &MockBackupClient{
+		err := startBackup(ctx, 0, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
 				time.Sleep(time.Second)
 				require.Error(t, ctx.Err())
@@ -70,7 +70,7 @@ func TestTimeoutRecv(t *testing.T) {
 	// Timeout Not At First
 	{
 		count := 0
-		err := startBackup(ctx, 0, backuppb.BackupRequest{}, &MockBackupClient{
+		err := startBackup(ctx, 0, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
 				require.NoError(t, ctx.Err())
 				if count == 15 {

@@ -27,6 +27,7 @@ import (
 	stderrs "errors"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"math/rand"
 	"runtime/pprof"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -442,13 +444,7 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
 		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
-			user := s.sessionVars.User
-			u := user.Username
-			h := user.Hostname
-			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-				u = user.AuthUsername
-				h = user.AuthHostname
-			}
+			u, h := auth.GetUserAndHostName(s.sessionVars.User)
 			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
@@ -538,6 +534,10 @@ func (s *session) doCommit(ctx context.Context) error {
 				failpoint.Return(kv.ErrTxnRetryable)
 			}
 		}
+	})
+	failpoint.Inject("mockCommitResultUndetermined", func() {
+		s.RollbackTxn(ctx)
+		failpoint.Return(terror.ErrResultUndetermined)
 	})
 
 	sessVars := s.GetSessionVars()
@@ -916,9 +916,9 @@ func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infosc
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for _, item := range mapper {
-			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
+		for tableID, item := range mapper {
+			if tableID > 0 {
+				s.statsCollector.Update(tableID, item.Delta, item.Count)
 			}
 		}
 	}
@@ -1853,6 +1853,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1917,7 +1918,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2198,6 +2199,27 @@ func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
 
 func (s *session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 	return s
+}
+
+func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.StmtNode, error) {
+	if stmt == nil {
+		return nil, nil
+	}
+	execStmt, ok := stmt.(*ast.ExecuteStmt)
+	if !ok {
+		return stmt, nil
+	}
+	if vars == nil {
+		return nil, nil
+	}
+	prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+	if err != nil {
+		return nil, err
+	}
+	if prepareStmt == nil || prepareStmt.PreparedAst == nil {
+		return nil, nil
+	}
+	return prepareStmt.PreparedAst.Stmt, nil
 }
 
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
@@ -2488,6 +2510,37 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err != nil {
 		return
 	}
+
+	var dedupKey string
+	if s.sessionVars.EnableCachePrepareStmt {
+		// Session-level prepare dedup cache: if the same SQL text has been prepared
+		// before in this session (with the same charset/collation/currentDB), reuse
+		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB, s.sessionVars.SQLMode)
+		if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
+			cached := v.(*plannercore.PrepareStmtCacheEntry)
+			is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+			if cached.Stmt.SchemaVersion == is.SchemaMetaVersion() {
+				newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql, charset, collation)
+				if rebuildErr == nil {
+					stmtID = s.sessionVars.GetNextPreparedStmtID()
+					if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
+						s.rollbackOnError(ctx)
+						return
+					}
+					paramCount = cached.ParamCount
+					fields = cached.Fields
+					s.rollbackOnError(ctx)
+					return
+				}
+				// Re-parse or rebuild failed; fall through to the full prepare path.
+				logutil.Logger(ctx).Warn("prepare stmt dedup cache rebuild failed, fallback to full prepare", zap.Error(rebuildErr))
+			}
+			// Schema version changed; fall through and re-cache below.
+		}
+	}
+
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	// Rollback even if err is nil.
@@ -2496,7 +2549,105 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err != nil {
 		return
 	}
+
+	// Store the result in the dedup cache for future Prepares of the same SQL.
+	if s.sessionVars.EnableCachePrepareStmt {
+		if prepareExec.Stmt != nil {
+			s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
+				Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
+				Fields:     prepareExec.Fields,
+				ParamCount: prepareExec.ParamCount,
+			})
+		}
+	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
+}
+
+// rebuildFromPrepareCache constructs a new PlanCacheStmt from a cached entry,
+// re-parsing the SQL to obtain an independent AST (with fresh ParamMarkerExpr
+// nodes) while skipping only the expensive PlanBuilder.Build step.
+// Preprocess is still executed to build a fresh ResolveCtx whose tableNames map
+// is keyed by the new AST's TableName pointers; reusing the cached ResolveCtx
+// would cause nil-deref panics on plan-cache miss because the old pointer keys
+// would not match the newly-parsed AST nodes.
+func (s *session) rebuildFromPrepareCache(
+	ctx context.Context,
+	cached *plannercore.PrepareStmtCacheEntry,
+	sql, charset, collation string,
+) (*plannercore.PlanCacheStmt, error) {
+	stmts, _, err := s.ParseSQL(ctx, sql,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(stmts) != 1 {
+		return nil, errors.New("unexpected statement count after re-parse")
+	}
+	stmtNode := stmts[0]
+
+	// Extract fresh param markers from the new AST and initialise them to NULL.
+	markers := plannercore.ExtractAndSortParamMarkers(stmtNode)
+
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+
+	// Run Preprocess to build a fresh ResolveCtx aligned with the new AST.
+	// This is the only way to populate ResolveCtx.tableNames with the new
+	// AST's *ast.TableName pointer keys without re-running the full Build.
+	ret := &plannercore.PreprocessorReturn{InfoSchema: is}
+	nodeW := resolve.NewNodeW(stmtNode)
+	if err = plannercore.Preprocess(ctx, s, nodeW, plannercore.InPrepare,
+		plannercore.WithPreprocessorReturn(ret)); err != nil {
+		return nil, err
+	}
+	// Defensive: if schema changed between our earlier check and Preprocess,
+	// fall through to the full prepare path.
+	if ret.InfoSchema.SchemaMetaVersion() != cached.Stmt.SchemaVersion {
+		return nil, errors.New("schema version changed during rebuild")
+	}
+
+	newStmt := &plannercore.PlanCacheStmt{
+		// Fields derived from the new AST:
+		PreparedAst: &ast.Prepared{
+			Stmt:     stmtNode,
+			StmtType: cached.Stmt.PreparedAst.StmtType,
+		},
+		Params: markers,
+
+		// Fresh ResolveCtx whose tableNames keys match the new AST pointers.
+		ResolveCtx: nodeW.GetResolveContext(),
+
+		// Immutable fields – safe to share with the cached template:
+		StmtDB:              cached.Stmt.StmtDB,
+		StmtText:            cached.Stmt.StmtText,
+		VisitInfos:          cached.Stmt.VisitInfos,
+		NormalizedSQL:       cached.Stmt.NormalizedSQL,
+		SQLDigest:           cached.Stmt.SQLDigest,
+		ForUpdateRead:       cached.Stmt.ForUpdateRead,
+		SnapshotTSEvaluator: cached.Stmt.SnapshotTSEvaluator,
+		StmtCacheable:       cached.Stmt.StmtCacheable,
+		UncacheableReason:   cached.Stmt.UncacheableReason,
+		SchemaVersion:       cached.Stmt.SchemaVersion,
+
+		// Mutable containers – clone so each stmt has independent state:
+		RelateVersion: maps.Clone(cached.Stmt.RelateVersion),
+		// PointGet is zeroed (per-execution executor state must not leak).
+		// NormalizedPlan / PlanDigest are left as zero values; they will be
+		// populated on the first plan-cache miss during Execute.
+	}
+
+	// Walk the new AST to populate limits, hasSubquery, and tables.
+	// These fields hold pointers into the AST, so they must refer to the
+	// newly-parsed tree rather than the cached one.
+	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
+
+	// dbName and tbls are only read during Execute (not written to by
+	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
+	// Clone them so that planCachePreprocess can safely replace tbls[i].
+	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.Tbls())
+
+	return newStmt, nil
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -2514,6 +2665,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: params,
 		PrepStmt:   stmt,
+		PrepStmtId: stmtID,
 	}
 	return s.ExecuteStmt(ctx, execStmt)
 }
@@ -2595,6 +2747,15 @@ func (s *session) Close() {
 	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
+	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
 	}
 }
 
@@ -2786,7 +2947,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 		}
 		if lockStatusChanged {
 			// Notification auto unlock.
-			err = domain.GetDomain(s).NotifyUpdatePrivilege()
+			err = domain.GetDomain(s).NotifyUpdatePrivilege([]string{authUser.Username})
 			if err != nil {
 				return err
 			}
@@ -2960,7 +3121,7 @@ func authFailedTracking(s *session, user string, host string) (bool, *privileges
 
 func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, user, host string) error {
 	// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
-	err := domain.GetDomain(s).NotifyUpdatePrivilege()
+	err := domain.GetDomain(s).NotifyUpdatePrivilege([]string{user})
 	if err != nil {
 		return err
 	}
@@ -3507,8 +3668,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	)
 	taskexecutor.RegisterTaskType(
 		proto.ImportInto,
-		func(ctx context.Context, id string, task *proto.Task, table taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return importinto.NewImportExecutor(ctx, id, task, table, store)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, task, param, store)
 		},
 	)
 
@@ -3551,14 +3712,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -3568,6 +3721,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before some other internal SQLs.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
 	if err != nil {
 		return nil, err
 	}
@@ -3713,6 +3874,11 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
+// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
+func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateWithFilter(store, filter)
+}
+
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
 		return ddl.Bootstrap
@@ -3766,13 +3932,20 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	if startMode == ddl.Bootstrap {
+	switch startMode {
+	case ddl.Bootstrap:
 		bootstrap(s)
-	} else if startMode == ddl.Upgrade {
+	case ddl.Upgrade:
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)

@@ -29,6 +29,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -83,6 +84,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -273,6 +275,7 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
 	registerStores()
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -762,27 +765,6 @@ func setGlobalVars() {
 	}
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
-	}
-
-	// set instance variables
-	setInstanceVar := func(name string, value string) {
-		if value == "" || value == "0" {
-			return
-		}
-		old := variable.GetSysVar(name)
-		tmp := *old
-		tmp.Value = value
-		tmp.Scope |= variable.ScopeInstance
-		variable.RegisterSysVar(&tmp)
-	}
-	{
-		setInstanceVar(variable.TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(cfg.Instance.StmtSummaryMaxStmtCount, 10))
-		setInstanceVar(variable.TiDBServerMemoryLimit, cfg.Instance.ServerMemoryLimit)
-		setInstanceVar(variable.TiDBServerMemoryLimitGCTrigger, cfg.Instance.ServerMemoryLimitGCTrigger)
-		setInstanceVar(variable.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
-		setInstanceVar(variable.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
-		setInstanceVar(variable.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
-		setInstanceVar(variable.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
 	}
 
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])

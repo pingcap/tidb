@@ -15,7 +15,10 @@
 package ingest
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -51,11 +54,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	}
 
 	mgr := backend.MakeEngineManager(bc.backend)
-	ts := uint64(0)
-	if c := bc.checkpointMgr; c != nil {
-		ts = c.GetTS()
-	}
-	cfg := generateLocalEngineConfig(ts)
+	cfg := generateLocalEngineConfig(bc.GetImportTS())
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
@@ -90,7 +89,6 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		ret = append(ret, ei)
 		bc.engines[indexID] = ei
 	}
-	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
 	bc.tbl = tbl
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
@@ -120,7 +118,6 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	if len(bc.engines) == 0 {
 		return nil
 	}
-	numIdx := int64(len(bc.engines))
 	for _, ei := range bc.engines {
 		ei.Close(opt&OptCleanData != 0)
 	}
@@ -132,13 +129,14 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				failpoint.Inject("mockCollectRemoteDuplicateRowsFailed", func(_ failpoint.Value) {
+					failpoint.Return(context.DeadlineExceeded)
+				})
 			}
 		}
 	}
 
 	bc.engines = make(map[int64]*engineInfo, 10)
-
-	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 
 	return nil
 }

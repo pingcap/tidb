@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -81,8 +80,9 @@ type StatsUsage interface {
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
 
-	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-	DumpStatsDeltaToKV(dumpAll bool) error
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
+	// If tableIDs is empty, it dumps every table that held in the map.
+	DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
@@ -149,8 +149,6 @@ type IndicatorsJSON struct {
 // We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
 // Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
-	owner.Listener
-
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
@@ -192,6 +190,10 @@ type StatsAnalyze interface {
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
+
+	// ClosePriorityQueue closes the stats priority queue if initialized.
+	// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+	ClosePriorityQueue()
 
 	// Close closes the analyze worker.
 	Close()
@@ -324,6 +326,13 @@ type PartitionStatisticLoadTask struct {
 // PersistFunc is used to persist JSONTable in the partition level.
 type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
 
+// MetaUpdate records a meta update for a partition or table.
+type MetaUpdate struct {
+	PhysicalID  int64
+	Count       int64
+	ModifyCount int64
+}
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -352,7 +361,7 @@ type StatsReadWriter interface {
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 	// Set it to true if the column/index stats is updated.
-	SaveMetaToStorage(tableID, count, modifyCount int64, source string, needRefreshLastHistVer bool) (err error)
+	SaveMetaToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
@@ -547,10 +556,6 @@ type StatsHandle interface {
 	// physicalTableID can be a table ID or partition ID.
 	// Note: this function may return nil if the table is not found in the cache.
 	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
-
-	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
-	// TODO: remove this function and use GetPhysicalTableStats instead.
-	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
 
 	// StatsGC is used to do the GC job.
 	StatsGC

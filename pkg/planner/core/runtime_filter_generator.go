@@ -69,7 +69,7 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 		generator.childIdxForParentPhysicalPlan = 0
 		generator.GenerateRuntimeFilter(physicalPlan.tablePlan)
 		if physicalPlan.StoreType == kv.TiFlash {
-			physicalPlan.TablePlans = flattenPushDownPlan(physicalPlan.tablePlan)
+			physicalPlan.TablePlans = flattenListPushDownPlan(physicalPlan.tablePlan)
 		}
 	}
 

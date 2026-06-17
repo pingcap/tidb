@@ -377,13 +377,13 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 
 func initEvalBufferType(t *partitionedTable) {
 	hasExtraHandle := false
-	numCols := len(t.Cols())
+	numCols := len(t.WritableCols())
 	if !t.Meta().PKIsHandle {
 		hasExtraHandle = true
 		numCols++
 	}
 	t.evalBufferTypes = make([]*types.FieldType, numCols)
-	for i, col := range t.Cols() {
+	for i, col := range t.WritableCols() {
 		t.evalBufferTypes[i] = &col.FieldType
 	}
 
@@ -2041,7 +2041,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		return finishFunc(err, nil)
 	}
 
-	var found map[string][]byte
+	var found map[string]kv.ValueEntry
 	var newFromKey, newToKey kv.Key
 
 	keys := make([]kv.Key, 0, 2)
@@ -2082,12 +2082,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if len(newFromKey) > 0 {
 			if val, ok := found[string(newFromKey)]; ok {
-				newFromVal = val
+				newFromVal = val.Value
 			}
 		}
 		if len(newToKey) > 0 {
 			if val, ok := found[string(newToKey)]; ok {
-				newToVal = val
+				newToVal = val.Value
 			}
 		}
 	}

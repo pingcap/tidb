@@ -21,10 +21,23 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+)
+
+// IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
+type IndexLookUpPushDownByType int
+
+const (
+	// IndexLookUpPushDownNone indicates do not push down the index lookup.
+	IndexLookUpPushDownNone IndexLookUpPushDownByType = iota
+	// IndexLookUpPushDownByHint indicates the hint tells to push down the index lookup.
+	IndexLookUpPushDownByHint
+	// IndexLookUpPushDownBySysVar indicates the system variable tells to push down the index lookup.
+	IndexLookUpPushDownBySysVar
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -88,11 +101,40 @@ type AccessPath struct {
 	Forced           bool
 	ForceKeepOrder   bool
 	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using current path with partial order optimization.
+	ForcePartialOrder bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
+	IndexLookUpPushDownBy IndexLookUpPushDownByType
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
+
+	// PartIdxCondNotAlwaysValid indicates that this index path is not guaranteed to be valid
+	// for all parameter values when a partial index condition is involved.
+	// It's designed for partial indexes with a WHERE condition (for example, idx(b) WHERE a IS NOT NULL)
+	// and tracks whether that condition is always satisfied by the current filter.
+	// e.g. for partial index idx(b) WHERE a IS NOT NULL:
+	//   - if the filter is "b = ? AND a > 0", the partial index condition is always satisfied,
+	//     so PartIdxCondNotAlwaysValid is false (the index path is always valid);
+	//   - if the filter is "b = ?" or "b = ? AND a IS NULL", the partial index condition may not hold,
+	//     so PartIdxCondNotAlwaysValid is true (the index path is not always valid).
+	// We add this field to make the plan cache usable for partial indexes in these limited cases.
+	PartIdxCondNotAlwaysValid bool
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -124,9 +166,14 @@ func (path *AccessPath) Clone() *AccessPath {
 		Forced:                       path.Forced,
 		ForceKeepOrder:               path.ForceKeepOrder,
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -140,6 +187,9 @@ func (path *AccessPath) Clone() *AccessPath {
 			tmp = append(tmp, oneAlternative.Clone())
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, CloneRanges(ranges))
 	}
 	return ret
 }
@@ -159,15 +209,23 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 	return path.StoreType == kv.TiFlash && path.Index == nil
 }
 
+// IsFullScanRange checks whether this access path covers the full scan range without any
+// filtering that limits the scanned table or index ranges. For integer-handle table paths,
+// tableInfo is used to account for unsigned primary-key handle ranges.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	return ranger.HasFullRange(path.Ranges, unsignedIntHandle)
+}
+
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
-	// The plan cache do not support subquery now. So we skip this function when
-	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
-		return nil, path.TableFilters
-	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
@@ -189,6 +247,9 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			if !colEqConstant && !colEqCorCol {
 				continue
 			}
+			// The plan cache do not support subquery now. So we skip the plan cache when there are correlated subqueries.
+			// Future judgement should be aligned with the function `isPhysicalPlanCacheable`.
+			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
@@ -378,4 +439,29 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.HasCondition() {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
 }

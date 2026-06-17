@@ -44,6 +44,22 @@ func ConstructListBasedDistExec(pctx *planctx.BuildPBContext, plans []plannercor
 	return executors, nil
 }
 
+// ConstructListBasedDistExecForUnNatureOrderPlans constructs list based executors and
+// sets ParentIdx for those executors whose parent is not the next one in the list.
+func ConstructListBasedDistExecForUnNatureOrderPlans(
+	pctx *planctx.BuildPBContext, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int,
+) ([]*tipb.Executor, error) {
+	executors, err := ConstructListBasedDistExec(pctx, plans)
+	if err != nil {
+		return nil, err
+	}
+	for i, j := range unNatureOrders {
+		parentIdx := uint32(j)
+		executors[i].ParentIdx = &parentIdx
+	}
+	return executors, nil
+}
+
 // ConstructDAGReq constructs DAGRequest for physical plans
 func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, err error) {
 	dagReq = &tipb.DAGRequest{}
@@ -68,4 +84,22 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, err
+}
+
+// ConstructDAGReqForUnNatureOrderPlans constructs DAGRequest for physical plans.
+// The unNatureOrders map is used to set the ParentIdx of executors in DAGRequest.
+// `unNatureOrders` is a map with layout {childIndex => parentIndex} and
+// contains the children indexes whose parent is not the next one.
+func ConstructDAGReqForUnNatureOrderPlans(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int, storeType kv.StoreType) (*tipb.DAGRequest, error) {
+	dagReq, err := ConstructDAGReq(ctx, plans, storeType)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, j := range unNatureOrders {
+		parentIdx := uint32(j)
+		dagReq.Executors[i].ParentIdx = &parentIdx
+	}
+
+	return dagReq, nil
 }

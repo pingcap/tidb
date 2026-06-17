@@ -17,7 +17,7 @@ package addindextest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +27,7 @@ func TestConcurrentDDLCreateNonUniqueIndex(t *testing.T) {
 		{14, 17, 20, 23, 26},
 		{3, 6, 9, 21, 24},
 	}
-	ctx := addindextestutil.InitConcurrentDDLTest(t, colIDs, nil, addindextestutil.TestNonUnique)
+	ctx := testutils.InitConcurrentDDLTest(t, colIDs, nil, testutils.TestNonUnique)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
@@ -39,21 +39,21 @@ func TestConcurrentDDLCreateUniqueIndex(t *testing.T) {
 		{2, 11, 17},
 		{3, 19, 25},
 	}
-	ctx := addindextestutil.InitConcurrentDDLTest(t, colIDs, nil, addindextestutil.TestUnique)
+	ctx := testutils.InitConcurrentDDLTest(t, colIDs, nil, testutils.TestUnique)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
 }
 
 func TestConcurrentDDLCreatePrimaryKey(t *testing.T) {
-	ctx := addindextestutil.InitConcurrentDDLTest(t, nil, nil, addindextestutil.TestPK)
+	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestPK)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
 }
 
 func TestConcurrentDDLCreateGenColIndex(t *testing.T) {
-	ctx := addindextestutil.InitConcurrentDDLTest(t, nil, nil, addindextestutil.TestGenIndex)
+	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestGenIndex)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestConcurrentDDLCreateMultiColsIndex(t *testing.T) {
 		{23},
 		{19},
 	}
-	ctx := addindextestutil.InitConcurrentDDLTest(t, coliIDs, coljIDs, addindextestutil.TestMultiCols)
+	ctx := testutils.InitConcurrentDDLTest(t, coliIDs, coljIDs, testutils.TestMultiCols)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)

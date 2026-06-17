@@ -18,6 +18,7 @@ package systable
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -28,7 +29,7 @@ import (
 var (
 	// ErrNotFound is the error when we can't found the info we are querying related
 	// to some jobID. might happen when there are multiple owners and 1 of them run and delete it.
-	ErrNotFound = errors.New("not found")
+	ErrNotFound = goerrors.New("not found")
 )
 
 // Manager is the interface for DDL job/MDL storage layer, it provides the methods

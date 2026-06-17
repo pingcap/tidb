@@ -23,19 +23,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
@@ -337,22 +336,24 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 		return nil
 	}
 	bindings := strings.Split(buf.String(), "\n")
+	// The original SQL in our bind info is actually normalized SQL, which cannot be executed directly. This is
+	// especially true for function names that are not defined as keywords, such as count and ifnull. These will be
+	// treated as strings and used to calculate the digest. Therefore, the original SQL cannot be directly used to
+	// construct the create binding. As a result, we have to use `CREATE BINDING USING <bind sql>` to create the binding.
 	for _, binding := range bindings {
 		cols := strings.Split(binding, "\t")
 		if len(cols) < 3 {
 			continue
 		}
-		originSQL := cols[0]
 		bindingSQL := cols[1]
 		enabled := cols[3]
-		newNormalizedSQL := parser.NormalizeForBinding(originSQL, true)
 		if strings.Compare(enabled, "enabled") == 0 {
-			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
+			sql := fmt.Sprintf("CREATE %s BINDING USING %s", func() string {
 				if isSession {
 					return "SESSION"
 				}
 				return "GLOBAL"
-			}(), newNormalizedSQL, bindingSQL)
+			}(), bindingSQL)
 			c := context.Background()
 			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
@@ -364,40 +365,18 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 }
 
 func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
-	unLoadVars := make([]string, 0)
+	var unLoadVars []string
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, domain.PlanReplayerVariablesFile) == 0 {
-			varMap := make(map[string]string)
 			v, err := zipFile.Open()
 			if err != nil {
 				return errors.AddStack(err)
 			}
 			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			_, err = toml.NewDecoder(v).Decode(&varMap)
+			unLoadVars, err = config.LoadConfigForPlanReplayerLoad(ctx, v)
 			if err != nil {
 				return errors.AddStack(err)
-			}
-			vars := ctx.GetSessionVars()
-			for name, value := range varMap {
-				sysVar := variable.GetSysVar(name)
-				if sysVar == nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
-				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
-				if err != nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
-				err = vars.SetSystemVar(name, sVal)
-				if err != nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
 			}
 		}
 	}
@@ -462,7 +441,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	do := domain.GetDomain(ctx)
 	h := do.StatsHandle()
 	if h == nil {
-		return errors.New("plan replayer: hanlde is nil")
+		return errors.New("plan replayer: handle is nil")
 	}
 	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }

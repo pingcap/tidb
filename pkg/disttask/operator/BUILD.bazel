@@ -23,5 +23,9 @@ go_test(
     srcs = ["pipeline_test.go"],
     embed = [":operator"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/resourcemanager/pool/workerpool",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
 )

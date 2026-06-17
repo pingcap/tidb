@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -17,6 +17,12 @@ import (
 
 // Permission represents the permission we need to check in create storage.
 type Permission string
+
+// StrongConsistency is a marker interface that indicates the storage is strong consistent
+// over its `Read`, `Write` and `WalkDir` APIs.
+type StrongConsistency interface {
+	MarkStrongConsistency()
+}
 
 const (
 	// AccessBuckets represents bucket access permission
@@ -33,7 +39,8 @@ const (
 	// we cannot check DeleteObject permission alone, so we use PutAndDeleteObject instead.
 	PutAndDeleteObject Permission = "PutAndDeleteObject"
 
-	DefaultRequestConcurrency uint = 128
+	DefaultRequestConcurrency uint  = 128
+	TombstoneSize             int64 = -1
 )
 
 // WalkOption is the option of storage.WalkDir.
@@ -62,6 +69,14 @@ type WalkOption struct {
 	// to reduce the possibility of timeout on an extremely slow connection, or
 	// perform testing.
 	ListCount int64
+	// IncludeTombstone will allow `Walk` to emit removed files during walking.
+	//
+	// In most cases, `Walk` runs over a snapshot, if a file in the snapshot
+	// was deleted during walking, the file will be ignored. Set this to `true`
+	// will make them be sent to the callback.
+	//
+	// The size of a deleted file should be `TombstoneSize`.
+	IncludeTombstone bool
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
@@ -99,6 +114,16 @@ type ReaderOption struct {
 	EndOffset *int64
 	// PrefetchSize will switch to NewPrefetchReader if value is positive.
 	PrefetchSize int
+}
+
+type Copier interface {
+	// CopyFrom copies a object to the current external storage by the specification.
+	CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error
+}
+
+type CopySpec struct {
+	From string
+	To   string
 }
 
 // ExternalStorage represents a kind of file system storage.
@@ -175,7 +200,7 @@ type ExternalStorageOptions struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer request.Retryer
+	S3Retryer aws.Retryer
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.

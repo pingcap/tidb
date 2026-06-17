@@ -131,6 +131,10 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 		}
 		if bindings != nil {
 			for _, binding := range bindings {
+				if !binding.IsBindingEnabled() {
+					// because of cross-db bindings, there might be multiple bindings for the same SQL, skip disabled ones.
+					continue
+				}
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
@@ -200,7 +204,16 @@ func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (e
 	}
 
 	for i, binding := range bindings {
-		fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
+		exist := false
+		for _, d := range fbc.fuzzy2SQLDigests[fuzzyDigests[i]] {
+			if d == sqlDigest {
+				exist = true
+				break
+			}
+		}
+		if !exist { // avoid adding duplicated binding digests
+			fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
+		}
 		fbc.sql2FuzzyDigest[binding.SQLDigest] = fuzzyDigests[i]
 	}
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with fuzzy2SQLDigests and

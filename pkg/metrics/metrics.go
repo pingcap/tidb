@@ -99,6 +99,10 @@ func InitMetrics() {
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
+	// For now, those metrics are initialized but not registered.
+	// They will be printed to log during restoring...
+	InitBRMetrics()
+
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -198,6 +202,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
 	prometheus.MustRegister(StatementPessimisticRetryCount)
 	prometheus.MustRegister(StatementLockKeysCount)
+	prometheus.MustRegister(StatementSharedLockKeysCount)
 	prometheus.MustRegister(ValidateReadTSFromPDCount)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(WatchOwnerCounter)
@@ -255,6 +260,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 	prometheus.MustRegister(FairLockingUsageCount)
 	prometheus.MustRegister(MemoryLimit)
+	prometheus.MustRegister(LogBackupCurrentLastRegionID)
+	prometheus.MustRegister(LogBackupCurrentLastRegionLeaderStoreID)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
@@ -274,10 +281,17 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskGauge)
-	prometheus.MustRegister(DistTaskStartTimeGauge)
 	prometheus.MustRegister(DistTaskUsedSlotsGauge)
 	prometheus.MustRegister(RunawayCheckerCounter)
+	prometheus.MustRegister(RunawayFlusherCounter)
+	prometheus.MustRegister(RunawayFlusherAddCounter)
+	prometheus.MustRegister(RunawayFlusherBatchSizeHistogram)
+	prometheus.MustRegister(RunawayFlusherDurationHistogram)
+	prometheus.MustRegister(RunawayFlusherIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerDurationHistogram)
+	prometheus.MustRegister(RunawaySyncerIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerCheckpointGauge)
+	prometheus.MustRegister(RunawaySyncerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
 	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)
@@ -301,6 +315,12 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
 }
 
 var mode struct {

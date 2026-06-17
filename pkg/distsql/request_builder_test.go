@@ -755,6 +755,48 @@ func TestScanLimitConcurrency(t *testing.T) {
 	}
 }
 
+func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	for _, tt := range []struct {
+		name        string
+		limit       uint64
+		concurrency int
+	}{
+		{"1", 1, 1},
+		{"1000000", 1000000, dctx.DistSQLConcurrency},
+	} {
+		indexLookUpIndex := uint32(3)
+		t.Run(tt.name, func(t *testing.T) {
+			executors := []*tipb.Executor{
+				{
+					Tp:      tipb.ExecType_TypeIndexScan,
+					IdxScan: &tipb.IndexScan{},
+				},
+				{
+					Tp:        tipb.ExecType_TypeLimit,
+					Limit:     &tipb.Limit{Limit: tt.limit},
+					ParentIdx: &indexLookUpIndex,
+				},
+				{
+					Tp:      tipb.ExecType_TypeTableScan,
+					TblScan: &tipb.TableScan{},
+				},
+				{
+					Tp:          tipb.ExecType_TypeIndexLookUp,
+					IndexLookup: &tipb.IndexLookUp{},
+				},
+			}
+			dag := &tipb.DAGRequest{Executors: executors}
+			actual, err := (&RequestBuilder{}).
+				SetDAGRequest(dag).
+				SetFromSessionVars(dctx).
+				Build()
+			require.NoError(t, err)
+			require.Equal(t, tt.concurrency, actual.Concurrency)
+		})
+	}
+}
+
 func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(hrs))
 	for _, hr := range hrs {

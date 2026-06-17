@@ -33,7 +33,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -50,6 +49,10 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
 	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
+	// MaxPluginAuditLogBufferSize is the max buffer size for plugin audit log.
+	MaxPluginAuditLogBufferSize = 100 * 1024 * 1024
+	// MaxPluginAuditLogFlushInterval is the max time interval to flush plugin audit log.
+	MaxPluginAuditLogFlushInterval = 3600
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -93,6 +96,10 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefPluginAuditLogBufferSize is the default buffer size for plugin audit log.
+	DefPluginAuditLogBufferSize = 0
+	// DefPluginAuditLogFlushInterval is the default time interval to flush plugin audit log.
+	DefPluginAuditLogFlushInterval = 30
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
@@ -344,6 +351,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
 	}
 }
 
@@ -462,13 +470,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// LogBackup is the config for log backup service.
-// For now, it includes the embed advancer.
-type LogBackup struct {
-	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
-	Enabled  bool                 `toml:"enabled" json:"enabled"`
-}
-
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -536,20 +537,6 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
-	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
-	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
-	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
-	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
-	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
-	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
-	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
-	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
-	// StatsCacheMemQuota records stats cache quota.
-	StatsCacheMemQuota uint64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
-	// MemQuotaBindingCache indicates the memory quota for the bind cache.
-	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
-	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
-	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -564,6 +551,10 @@ type Instance struct {
 	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	// PluginAuditLogBufferSize is the buffer size (in bytes) of plugin audit log, default is 0(buffer disabled)
+	PluginAuditLogBufferSize int `toml:"plugin_audit_log_buffer_size" json:"plugin_audit_log_buffer_size"`
+	// PluginAuditLogFlushInterval is the flush interval (in seconds) of plugin audit log, it works only when PluginAuditLogBufferSize is greater than 0.
+	PluginAuditLogFlushInterval int `toml:"plugin_audit_log_flush_interval" json:"plugin_audit_log_flush_interval"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
 	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
@@ -771,6 +762,9 @@ type Performance struct {
 
 	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
+
+	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
+	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -977,6 +971,8 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		PluginAuditLogBufferSize:    0,
+		PluginAuditLogFlushInterval: 30,
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBEnableStatsOwner:        *NewAtomicBool(true),
@@ -1027,6 +1023,7 @@ var defaultConf = Config{
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		ConcurrentlyInitStats:             true,
+		EnableAsyncBatchGet:               false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1359,7 +1356,12 @@ func (c *Config) Valid() error {
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
-
+	if c.Instance.PluginAuditLogBufferSize < 0 || c.Instance.PluginAuditLogBufferSize > MaxPluginAuditLogBufferSize {
+		return fmt.Errorf("plugin-audit-log-buffer-size should be [%d, %d]", 0, MaxPluginAuditLogBufferSize)
+	}
+	if c.Instance.PluginAuditLogFlushInterval <= 0 || c.Instance.PluginAuditLogFlushInterval > MaxPluginAuditLogFlushInterval {
+		return fmt.Errorf("plugin-audit-log-flush-interval should be [%d, %d]", 1, MaxPluginAuditLogFlushInterval)
+	}
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
 		return err
