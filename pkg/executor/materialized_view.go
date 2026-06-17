@@ -1673,35 +1673,21 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	baseQueryExecIsClosed := false
-	defer func() {
-		if !baseQueryExecIsClosed {
-			_ = baseQueryExec.Close()
-		}
-	}()
+	defer func() { _ = baseQueryExec.Close() }()
 
 	mvQuerySQL := buildCompareMaterializedViewSelectSQL(schemaName, tblInfo.Name, visibleCols)
 	mvQueryExec, err := e.openCompareMaterializedViewQueryExec(ctx, schemaName, compareSnapshotTS, tblInfo.MaterializedView, mvQuerySQL)
 	if err != nil {
 		return err
 	}
-	mvQueryExecIsClosed := false
-	defer func() {
-		if !mvQueryExecIsClosed {
-			_ = mvQueryExec.Close()
-		}
-	}()
+	defer func() { _ = mvQueryExec.Close() }()
 
 	hashJoinExec := newCompareMaterializedViewHashJoinExec(e.Ctx(), baseQueryExec, mvQueryExec, layout.groupKeyOffsets, visibleCols)
 	if err := exec.Open(ctx, hashJoinExec); err != nil {
 		_ = hashJoinExec.Close()
 		return err
 	}
-	defer func() {
-		_ = hashJoinExec.Close()
-		baseQueryExecIsClosed = true
-		mvQueryExecIsClosed = true
-	}()
+	defer func() { _ = hashJoinExec.Close() }()
 
 	joinResult := exec.NewFirstChunk(hashJoinExec)
 	rowIdxes := make([]int, 0, joinResult.Capacity())
@@ -2375,20 +2361,25 @@ func (e *compareMaterializedViewRecordSetExec) Open(ctx context.Context) error {
 }
 
 func (e *compareMaterializedViewRecordSetExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
 	return e.recordSet.Next(ctx, req)
 }
 
 func (e *compareMaterializedViewRecordSetExec) Close() error {
 	e.closeOnce.Do(func() {
+		defer func() {
+			if baseErr := e.BaseExecutor.Close(); e.closeErr == nil {
+				e.closeErr = baseErr
+			}
+		}()
+		defer func() {
+			if e.release != nil {
+				if releaseErr := e.release(); e.closeErr == nil {
+					e.closeErr = releaseErr
+				}
+			}
+		}()
 		if e.recordSet != nil {
 			e.closeErr = e.recordSet.Close()
-		}
-		if releaseErr := e.release(); e.closeErr == nil {
-			e.closeErr = releaseErr
-		}
-		if baseErr := e.BaseExecutor.Close(); e.closeErr == nil {
-			e.closeErr = baseErr
 		}
 	})
 	return e.closeErr
