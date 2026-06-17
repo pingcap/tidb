@@ -185,8 +185,14 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	task := log.BeginTask(logger, "run subtask")
 	var dataKVFiles, indexKVFiles atomic.Int64
 	defer func() {
+<<<<<<< HEAD:pkg/disttask/importinto/task_executor.go
 		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
 			zap.Int64("index-kv-files", indexKVFiles.Load()))
+=======
+		task.End2(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
+			zap.Int64("index-kv-files", indexKVFiles.Load()),
+			zap.Stringer("obj-store-access", accessRec))
+>>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/dxf/importinto/task_executor.go
 	}()
 
 	bs := subtask.Meta
@@ -429,7 +435,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
+<<<<<<< HEAD:pkg/disttask/importinto/task_executor.go
 		task.End(zapcore.ErrorLevel, err)
+=======
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+>>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/dxf/importinto/task_executor.go
 	}()
 
 	var mu sync.Mutex
@@ -574,7 +584,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
+<<<<<<< HEAD:pkg/disttask/importinto/task_executor.go
 		task.End(zapcore.ErrorLevel, err)
+=======
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+>>>>>>> 6d5cc8b9467 (importinto/ingestor: improve error logging (#69242)):pkg/dxf/importinto/task_executor.go
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
@@ -742,7 +756,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger := logutil.BgLogger().With(
+	logger := logutil.ErrVerboseLogger().With(
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
