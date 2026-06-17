@@ -1437,7 +1437,7 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = errors.Errorf("MViewCompleteDeltaApply target table id %d not found in infoschema", v.MVTableID)
 		return nil
 	}
-	if v.MHandleCols == nil {
+	if v.CurrentHandleCols == nil {
 		b.err = errors.New("MViewCompleteDeltaApply target handle cols is nil")
 		return nil
 	}
@@ -1446,37 +1446,37 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = errors.Errorf("MViewCompleteDeltaApply target public column count %d != plan MV column count %d", len(publicCols), v.MVColumnCount)
 		return nil
 	}
-	for i := 0; i < v.MHandleCols.NumCols(); i++ {
-		handleInputIdx := v.MHandleCols.GetCol(i).Index
+	for i := 0; i < v.CurrentHandleCols.NumCols(); i++ {
+		handleInputIdx := v.CurrentHandleCols.GetCol(i).Index
 		if handleInputIdx < 0 || handleInputIdx >= len(sourceFieldTypes) {
 			b.err = errors.Errorf("MViewCompleteDeltaApply handle col index %d out of source range [0,%d)", handleInputIdx, len(sourceFieldTypes))
 			return nil
 		}
 	}
 
-	mWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mvTable, v.MRowInputColIDs)
+	currentWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mvTable, v.CurrentRowInputColIDs)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	qWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mvTable, v.QRowInputColIDs)
+	recomputedWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mvTable, v.RecomputedRowInputColIDs)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	if err := validateMViewCompleteDeltaWritableInputColTypes(mvTable, sourceFieldTypes, mWritableInputColIDs); err != nil {
+	if err := validateMViewCompleteDeltaWritableInputColTypes(mvTable, sourceFieldTypes, currentWritableInputColIDs); err != nil {
 		b.err = err
 		return nil
 	}
-	if err := validateMViewCompleteDeltaWritableInputColTypes(mvTable, sourceFieldTypes, qWritableInputColIDs); err != nil {
+	if err := validateMViewCompleteDeltaWritableInputColTypes(mvTable, sourceFieldTypes, recomputedWritableInputColIDs); err != nil {
 		b.err = err
 		return nil
 	}
-	compareWritableIdxes, mCompareInputColIDs, qCompareInputColIDs, err := buildMViewCompleteDeltaCompareMappings(
+	compareWritableIdxes, currentCompareInputColIDs, recomputedCompareInputColIDs, err := buildMViewCompleteDeltaCompareMappings(
 		mvTable,
 		v.GroupKeyMVOffsets,
-		mWritableInputColIDs,
-		qWritableInputColIDs,
+		currentWritableInputColIDs,
+		recomputedWritableInputColIDs,
 	)
 	if err != nil {
 		b.err = err
@@ -1484,15 +1484,15 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 	}
 
 	return &MViewCompleteDeltaApplyExec{
-		BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
-		TargetTable:          mvTable,
-		TargetHandleCols:     v.MHandleCols,
-		OpColID:              v.OpColID,
-		MWritableInputColIDs: append([]int(nil), mWritableInputColIDs...),
-		QWritableInputColIDs: append([]int(nil), qWritableInputColIDs...),
-		CompareWritableIdxes: append([]int(nil), compareWritableIdxes...),
-		MCompareInputColIDs:  append([]int(nil), mCompareInputColIDs...),
-		QCompareInputColIDs:  append([]int(nil), qCompareInputColIDs...),
+		BaseExecutor:                  exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
+		TargetTable:                   mvTable,
+		TargetHandleCols:              v.CurrentHandleCols,
+		OpColID:                       v.OpColID,
+		CurrentWritableInputColIDs:    append([]int(nil), currentWritableInputColIDs...),
+		RecomputedWritableInputColIDs: append([]int(nil), recomputedWritableInputColIDs...),
+		CompareWritableIdxes:          append([]int(nil), compareWritableIdxes...),
+		CurrentCompareInputColIDs:     append([]int(nil), currentCompareInputColIDs...),
+		RecomputedCompareInputColIDs:  append([]int(nil), recomputedCompareInputColIDs...),
 	}
 }
 
@@ -1581,17 +1581,17 @@ func validateMViewCompleteDeltaWritableInputColTypes(
 func buildMViewCompleteDeltaCompareMappings(
 	target table.Table,
 	groupKeyMVOffsets []int,
-	mWritableInputColIDs []int,
-	qWritableInputColIDs []int,
+	currentWritableInputColIDs []int,
+	recomputedWritableInputColIDs []int,
 ) ([]int, []int, []int, error) {
 	if target == nil {
 		return nil, nil, nil, errors.New("MViewCompleteDeltaApply target table is nil")
 	}
-	if len(mWritableInputColIDs) != len(qWritableInputColIDs) {
+	if len(currentWritableInputColIDs) != len(recomputedWritableInputColIDs) {
 		return nil, nil, nil, errors.Errorf(
-			"MViewCompleteDeltaApply writable input mapping length mismatch: M=%d Q=%d",
-			len(mWritableInputColIDs),
-			len(qWritableInputColIDs),
+			"MViewCompleteDeltaApply writable input mapping length mismatch: current=%d recomputed=%d",
+			len(currentWritableInputColIDs),
+			len(recomputedWritableInputColIDs),
 		)
 	}
 	publicCols := target.Cols()
@@ -1617,8 +1617,8 @@ func buildMViewCompleteDeltaCompareMappings(
 	}
 
 	compareWritableIdxes := make([]int, 0, len(writableCols))
-	mCompareInputColIDs := make([]int, 0, len(writableCols))
-	qCompareInputColIDs := make([]int, 0, len(writableCols))
+	currentCompareInputColIDs := make([]int, 0, len(writableCols))
+	recomputedCompareInputColIDs := make([]int, 0, len(writableCols))
 	for writableIdx, col := range writableCols {
 		if col == nil {
 			return nil, nil, nil, errors.Errorf("MViewCompleteDeltaApply target writable column at offset %d is nil", writableIdx)
@@ -1635,10 +1635,10 @@ func buildMViewCompleteDeltaCompareMappings(
 			continue
 		}
 		compareWritableIdxes = append(compareWritableIdxes, writableIdx)
-		mCompareInputColIDs = append(mCompareInputColIDs, mWritableInputColIDs[writableIdx])
-		qCompareInputColIDs = append(qCompareInputColIDs, qWritableInputColIDs[writableIdx])
+		currentCompareInputColIDs = append(currentCompareInputColIDs, currentWritableInputColIDs[writableIdx])
+		recomputedCompareInputColIDs = append(recomputedCompareInputColIDs, recomputedWritableInputColIDs[writableIdx])
 	}
-	return compareWritableIdxes, mCompareInputColIDs, qCompareInputColIDs, nil
+	return compareWritableIdxes, currentCompareInputColIDs, recomputedCompareInputColIDs, nil
 }
 
 // buildTrace builds a TraceExec for future executing. This method will be called

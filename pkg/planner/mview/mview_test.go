@@ -1215,12 +1215,12 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 	require.Equal(t, len(mv.Columns), res.MVColumnCount)
 	require.Equal(t, 0, res.OpColOffset)
 	require.Equal(t, 0, res.MarkerMVOffset)
-	require.Equal(t, 1, res.MHandleCols.NumCols())
-	require.Len(t, res.MRowOffsets, len(mv.Columns))
-	require.Len(t, res.QRowOffsets, len(mv.Columns))
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.Len(t, res.CurrentRowOffsets, len(mv.Columns))
+	require.Len(t, res.RecomputedRowOffsets, len(mv.Columns))
 	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
 	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
-	require.Equal(t, res.MRowOffsets[0], res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, res.CurrentRowOffsets[0], res.CurrentHandleCols.GetCol(0).Index)
 
 	join := res.DiffSourceSelect.From.TableRefs
 	require.NotNil(t, join)
@@ -1281,8 +1281,8 @@ func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 1, res.MarkerMVOffset)
-	require.Equal(t, 1, res.MHandleCols.NumCols())
-	require.Equal(t, 1, res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.Equal(t, 1, res.CurrentHandleCols.GetCol(0).Index)
 	require.Equal(t, 1+1+2*len(mv.Columns), res.SourceColumnCount)
 	require.NotNil(t, res.DiffSourceSelect.From)
 	require.NotNil(t, res.DiffSourceSelect.From.TableRefs)
@@ -1355,10 +1355,10 @@ func TestBuildCompleteDiffSourceCommonHandleReusesOldRowImage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
-	require.Equal(t, 2, res.MHandleCols.NumCols())
+	require.Equal(t, 2, res.CurrentHandleCols.NumCols())
 	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
-	require.Equal(t, res.MRowOffsets[1], res.MHandleCols.GetCol(0).Index)
-	require.Equal(t, res.MRowOffsets[0], res.MHandleCols.GetCol(1).Index)
+	require.Equal(t, res.CurrentRowOffsets[1], res.CurrentHandleCols.GetCol(0).Index)
+	require.Equal(t, res.CurrentRowOffsets[0], res.CurrentHandleCols.GetCol(1).Index)
 }
 
 func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
@@ -1401,11 +1401,11 @@ func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 2+2*len(mv.Columns), res.SourceColumnCount)
-	require.Equal(t, 1, res.MHandleCols.NumCols())
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
 	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
-	require.Equal(t, int64(model.ExtraHandleID), res.MHandleCols.GetCol(0).ID)
-	require.Equal(t, 1, res.MHandleCols.GetCol(0).Index)
-	require.NotContains(t, res.MRowOffsets, res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, int64(model.ExtraHandleID), res.CurrentHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, res.CurrentHandleCols.GetCol(0).Index)
+	require.NotContains(t, res.CurrentRowOffsets, res.CurrentHandleCols.GetCol(0).Index)
 }
 
 func findIndexJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalIndexJoin {

@@ -727,13 +727,13 @@ func TestBuildRefreshMViewCompleteDeltaApplyPlan(t *testing.T) {
 	require.Equal(t, 0, applyPlan.OpColID)
 	require.Equal(t, 0, applyPlan.MarkerMVOffset)
 	require.Equal(t, []int{0}, applyPlan.GroupKeyMVOffsets)
-	require.Equal(t, []int{1, 2}, applyPlan.MRowInputColIDs)
-	require.Equal(t, []int{3, 4}, applyPlan.QRowInputColIDs)
-	require.Equal(t, 1, applyPlan.MHandleCols.NumCols())
-	require.Equal(t, 1, applyPlan.MHandleCols.GetCol(0).Index)
+	require.Equal(t, []int{1, 2}, applyPlan.CurrentRowInputColIDs)
+	require.Equal(t, []int{3, 4}, applyPlan.RecomputedRowInputColIDs)
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.NumCols())
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.GetCol(0).Index)
 	require.Equal(
 		t,
-		"op_offset:0, m_marker_offset:1, q_marker_offset:3, m_group_keys_offset:[1], q_group_keys_offset:[3], m_handle_offset:[1], m_row_offset:[1,2], q_row_offset:[3,4]",
+		"op_offset:0, current_marker_offset:1, recomputed_marker_offset:3, current_group_keys_offset:[1], recomputed_group_keys_offset:[3], current_handle_offset:[1], current_row_offset:[1,2], recomputed_row_offset:[3,4]",
 		applyPlan.ExplainInfo(),
 	)
 }
@@ -863,14 +863,14 @@ func TestBuildRefreshMViewCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
 	require.Equal(t, 0, applyPlan.OpColID)
 	require.Equal(t, 1, applyPlan.MarkerMVOffset)
 	require.Equal(t, []int{0}, applyPlan.GroupKeyMVOffsets)
-	require.Equal(t, []int{2, 3}, applyPlan.MRowInputColIDs)
-	require.Equal(t, []int{4, 5}, applyPlan.QRowInputColIDs)
-	require.Equal(t, 1, applyPlan.MHandleCols.NumCols())
-	require.Equal(t, int64(model.ExtraHandleID), applyPlan.MHandleCols.GetCol(0).ID)
-	require.Equal(t, 1, applyPlan.MHandleCols.GetCol(0).Index)
+	require.Equal(t, []int{2, 3}, applyPlan.CurrentRowInputColIDs)
+	require.Equal(t, []int{4, 5}, applyPlan.RecomputedRowInputColIDs)
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.NumCols())
+	require.Equal(t, int64(model.ExtraHandleID), applyPlan.CurrentHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.GetCol(0).Index)
 	require.Equal(
 		t,
-		"op_offset:0, m_marker_offset:3, q_marker_offset:5, m_group_keys_offset:[2], q_group_keys_offset:[4], m_handle_offset:[1], m_row_offset:[2,3], q_row_offset:[4,5]",
+		"op_offset:0, current_marker_offset:3, recomputed_marker_offset:5, current_group_keys_offset:[2], recomputed_group_keys_offset:[4], current_handle_offset:[1], current_row_offset:[2,3], recomputed_row_offset:[4,5]",
 		applyPlan.ExplainInfo(),
 	)
 }

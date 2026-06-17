@@ -820,40 +820,40 @@ High-level algorithm:
 Example diff-shaping SQL (simplified):
 
 ```sql
-WITH q AS (
-    -- Full MV definition result; map selected marker column to q_marker
-    SELECT k1, k2, <mv_marker_col> AS q_marker, v1, v2
-    FROM (<mv_definition_sql>) q0
+WITH recomputed AS (
+    -- Full MV definition result; map selected marker column to recomputed_marker
+    SELECT k1, k2, <mv_marker_col> AS recomputed_marker, v1, v2
+    FROM (<mv_definition_sql>) recomputed0
 ),
-m AS (
-    -- Current MV data; map same marker column to m_marker
-    SELECT k1, k2, <mv_marker_col> AS m_marker, v1, v2
+current AS (
+    -- Current MV data; map same marker column to current_marker
+    SELECT k1, k2, <mv_marker_col> AS current_marker, v1, v2
     FROM <mv_table>
 )
 SELECT
     CASE
-        WHEN m.m_marker IS NULL THEN 'I'
-        WHEN q.q_marker IS NULL THEN 'D'
+        WHEN current.current_marker IS NULL THEN 'I'
+        WHEN recomputed.recomputed_marker IS NULL THEN 'D'
         ELSE 'U'
     END AS diff_op,
-    COALESCE(q.k1, m.k1) AS k1,
-    COALESCE(q.k2, m.k2) AS k2,
-    q.v1 AS new_v1, q.v2 AS new_v2,
-    m.v1 AS old_v1, m.v2 AS old_v2
-FROM q
-FULL OUTER JOIN m
-  ON q.k1 = m.k1
- AND q.k2 = m.k2
+    COALESCE(recomputed.k1, current.k1) AS k1,
+    COALESCE(recomputed.k2, current.k2) AS k2,
+    recomputed.v1 AS new_v1, recomputed.v2 AS new_v2,
+    current.v1 AS old_v1, current.v2 AS old_v2
+FROM recomputed
+FULL OUTER JOIN current
+  ON recomputed.k1 = current.k1
+ AND recomputed.k2 = current.k2
 WHERE
-      q.q_marker IS NULL
-   OR m.m_marker IS NULL
-   OR NOT (q.v1 <=> m.v1 AND q.v2 <=> m.v2);
+      recomputed.recomputed_marker IS NULL
+   OR current.current_marker IS NULL
+   OR NOT (recomputed.v1 <=> current.v1 AND recomputed.v2 <=> current.v2);
 ```
 
-In the SQL sketch above, `q_marker` / `m_marker` are logical aliases used to express
+In the SQL sketch above, `recomputed_marker` / `current_marker` are logical aliases used to express
 side-missing detection and `diff_op` derivation. They do not have to remain as standalone
 output columns in the final planner-executor layout; the chosen marker can be read from
-the `Q` / `M` row image via explicit metadata.
+the recomputed / current row image via explicit metadata.
 
 #### Join and diff rules
 
@@ -865,9 +865,9 @@ the `Q` / `M` row image via explicit metadata.
 2. Payload equality check should use null-safe comparison (`<=>`) per column.
 3. Side-missing detection should use one deterministic marker column from MV schema:
    - pick the first visible `NOT NULL` column from MV `TableInfo.Columns` (stable column order);
-   - map this column as logical aliases `q_marker` / `m_marker` in diff SQL;
-   - `q_marker IS NULL` => row missing on query side (`DELETE`);
-   - `m_marker IS NULL` => row missing on MV side (`INSERT`).
+   - map this column as logical aliases `recomputed_marker` / `current_marker` in diff SQL;
+   - `recomputed_marker IS NULL` => row missing on recomputed side (`DELETE`);
+   - `current_marker IS NULL` => row missing on current MV side (`INSERT`).
 
 This avoids relying on key-column `IS NULL` checks and does not bind design
 to any specific aggregate output column.
@@ -910,16 +910,16 @@ For operator input layout, keep it explicit and stable (planner-executor contrac
 Additional layout metadata stays explicit even when columns are reused:
 
 1. marker selection is tracked by MV-column offset, so side-missing diagnostics can read the chosen
-   marker from the `M` / `Q` row image instead of projecting `q_marker` / `m_marker` twice;
-2. `MHandleCols` may either point to old-row-image columns (for PK/common handle) or to the optional
+   marker from the current / recomputed row image instead of projecting `recomputed_marker` / `current_marker` twice;
+2. `CurrentHandleCols` may either point to old-row-image columns (for PK/common handle) or to the optional
    extra `_tidb_rowid` column.
 
 `diff_op` should be generated in diff-source projection (instead of re-evaluating marker logic in sink):
 
 ```sql
 CASE
-  WHEN m_marker IS NULL THEN 1  -- INSERT
-  WHEN q_marker IS NULL THEN 2  -- DELETE
+  WHEN current_marker IS NULL THEN 1  -- INSERT
+  WHEN recomputed_marker IS NULL THEN 2  -- DELETE
   ELSE 3                        -- UPDATE
 END AS diff_op
 ```
@@ -934,7 +934,7 @@ Use integer op code (for example `TINYINT`) instead of string op code to keep ex
 
 Note on diff filtering:
 
-1. Keep existing diff filter (`q_marker IS NULL OR m_marker IS NULL OR payload_changed`) in `WHERE`.
+1. Keep existing diff filter (`recomputed_marker IS NULL OR current_marker IS NULL OR payload_changed`) in `WHERE`.
 2. Do not rely on select-field alias visibility in the same query block `WHERE`.
 3. If filtering by `diff_op` is needed, wrap one extra projection/query layer.
 
@@ -946,19 +946,19 @@ Recommended root sink-plan contract (`MViewCompleteDeltaApply` style):
 2. `MarkerMVOffset`: which MV column is used as the side-missing marker.
 3. `GroupKeyMVOffsets`: GROUP BY key offsets in MV column order; sink uses them to skip
    redundant update comparisons on join-equal key columns.
-4. `MHandleCols`: physical locator columns built from `M` side (used by `DELETE` and `UPDATE`,
+4. `CurrentHandleCols`: physical locator columns built from current side (used by `DELETE` and `UPDATE`,
    and intentionally separate from the diff-join key).
-5. `MRowInputColIDs` / `QRowInputColIDs`: full old/new row-image mappings in MV column order.
+5. `CurrentRowInputColIDs` / `RecomputedRowInputColIDs`: full old/new row-image mappings in MV column order.
 
 Writable input mappings should be derived in executor from `TargetTable.WritableCols()` plus
-`MRowInputColIDs` / `QRowInputColIDs`, instead of being persisted in planner contract. This keeps
+`CurrentRowInputColIDs` / `RecomputedRowInputColIDs`, instead of being persisted in planner contract. This keeps
 complete delta apply aligned with fast-refresh writer ownership.
 
 Per-row operation behavior in sink executor:
 
-1. `diff_op = 1` (`INSERT`): write `Q` row image via `AddRecord`.
-2. `diff_op = 2` (`DELETE`): build handle from `MHandleCols`, remove `M` old row via `RemoveRecord`.
-3. `diff_op = 3` (`UPDATE`): build handle from `MHandleCols`, update from `M` old row to `Q` new row via `UpdateRecord`.
+1. `diff_op = 1` (`INSERT`): write recomputed row image via `AddRecord`.
+2. `diff_op = 2` (`DELETE`): build handle from `CurrentHandleCols`, remove current old row via `RemoveRecord`.
+3. `diff_op = 3` (`UPDATE`): build handle from `CurrentHandleCols`, update from current old row to recomputed new row via `UpdateRecord`.
 
 Current write strategy:
 

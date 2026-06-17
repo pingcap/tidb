@@ -130,17 +130,17 @@ type BuildResult struct {
 // result, compares it with current MV rows, and applies only the row-level INSERT/DELETE/UPDATE
 // delta instead of replacing the whole MV table.
 //
-// In the generated diff-source SELECT, Q means the recomputed query result side and M means the
-// current materialized-view table side.
+// In the generated diff-source SELECT, the recomputed side means the freshly recomputed MV definition
+// result and the current side means the current materialized-view table content.
 // Row layout of DiffSourceSelect output is fixed:
 //  1. diff_op
 //  2. optional _tidb_rowid handle column when MV uses extra row-id handle
-//  3. old row image (M/current MV side, MV column order)
-//  4. new row image (Q/recomputed query side, MV column order)
+//  3. old row image (current side, MV column order)
+//  4. new row image (recomputed side, MV column order)
 //
 // MarkerMVOffset identifies which MV column is used as the side-missing marker.
 // The marker value is read from the old/new row image instead of being projected separately.
-// MHandleCols may point either to old-row-image columns (PK/common handle) or the optional row-id column.
+// CurrentHandleCols may point either to old-row-image columns (PK/common handle) or the optional row-id column.
 type CompleteDiffBuildResult struct {
 	DiffSourceSelect *ast.SelectStmt
 	// SourceColumnCount is the expected number of output columns of DiffSourceSelect after optimization.
@@ -149,12 +149,12 @@ type CompleteDiffBuildResult struct {
 	MVTableID     int64
 	MVColumnCount int
 
-	OpColOffset       int
-	MarkerMVOffset    int
-	GroupKeyMVOffsets []int
-	MHandleCols       plannerutil.HandleCols
-	MRowOffsets       []int
-	QRowOffsets       []int
+	OpColOffset          int
+	MarkerMVOffset       int
+	GroupKeyMVOffsets    []int
+	CurrentHandleCols    plannerutil.HandleCols
+	CurrentRowOffsets    []int
+	RecomputedRowOffsets []int
 }
 
 // ValidateSourceLayout validates output layout metadata against a concrete schema length (if provided).
@@ -179,11 +179,11 @@ func (r *CompleteDiffBuildResult) ValidateSourceLayout(schemaLen int) error {
 		)
 	}
 	expected := 1 + r.MVColumnCount*2
-	if r.MHandleCols == nil {
-		return errors.New("complete diff build result: MHandleCols is nil")
+	if r.CurrentHandleCols == nil {
+		return errors.New("complete diff build result: CurrentHandleCols is nil")
 	}
-	for i := 0; i < r.MHandleCols.NumCols(); i++ {
-		col := r.MHandleCols.GetCol(i)
+	for i := 0; i < r.CurrentHandleCols.NumCols(); i++ {
+		col := r.CurrentHandleCols.GetCol(i)
 		if col != nil && col.ID == model.ExtraHandleID {
 			expected++
 			break
@@ -210,32 +210,32 @@ func (r *CompleteDiffBuildResult) ValidateSourceLayout(schemaLen int) error {
 			return errors.Errorf("complete diff build result: invalid GroupKeyMVOffsets[%d]=%d", i, off)
 		}
 	}
-	if len(r.MRowOffsets) != r.MVColumnCount {
+	if len(r.CurrentRowOffsets) != r.MVColumnCount {
 		return errors.Errorf(
-			"complete diff build result: MRowOffsets length %d != MVColumnCount %d",
-			len(r.MRowOffsets),
+			"complete diff build result: CurrentRowOffsets length %d != MVColumnCount %d",
+			len(r.CurrentRowOffsets),
 			r.MVColumnCount,
 		)
 	}
-	for i, off := range r.MRowOffsets {
+	for i, off := range r.CurrentRowOffsets {
 		if off < 0 || off >= r.SourceColumnCount {
-			return errors.Errorf("complete diff build result: invalid MRowOffsets[%d]=%d", i, off)
+			return errors.Errorf("complete diff build result: invalid CurrentRowOffsets[%d]=%d", i, off)
 		}
 	}
-	if len(r.QRowOffsets) != r.MVColumnCount {
+	if len(r.RecomputedRowOffsets) != r.MVColumnCount {
 		return errors.Errorf(
-			"complete diff build result: QRowOffsets length %d != MVColumnCount %d",
-			len(r.QRowOffsets),
+			"complete diff build result: RecomputedRowOffsets length %d != MVColumnCount %d",
+			len(r.RecomputedRowOffsets),
 			r.MVColumnCount,
 		)
 	}
-	for i, off := range r.QRowOffsets {
+	for i, off := range r.RecomputedRowOffsets {
 		if off < 0 || off >= r.SourceColumnCount {
-			return errors.Errorf("complete diff build result: invalid QRowOffsets[%d]=%d", i, off)
+			return errors.Errorf("complete diff build result: invalid RecomputedRowOffsets[%d]=%d", i, off)
 		}
 	}
-	for i := 0; i < r.MHandleCols.NumCols(); i++ {
-		col := r.MHandleCols.GetCol(i)
+	for i := 0; i < r.CurrentHandleCols.NumCols(); i++ {
+		col := r.CurrentHandleCols.GetCol(i)
 		if col == nil {
 			return errors.Errorf("complete diff build result: handle column %d is nil", i)
 		}
@@ -2224,27 +2224,27 @@ func BuildCompleteDiffSource(
 		})
 	}
 
-	mRowOffsets := make([]int, len(mv.Columns))
+	currentRowOffsets := make([]int, len(mv.Columns))
 	for i, col := range mv.Columns {
 		offset := len(fields)
 		fields = append(fields, &ast.SelectField{
 			Expr:   qualColExpr(diffMVTableAlias, col.Name.O),
 			AsName: pmodel.NewCIStr(diffOldRowPrefix + col.Name.O),
 		})
-		mRowOffsets[i] = offset
+		currentRowOffsets[i] = offset
 	}
 
-	qRowOffsets := make([]int, len(mv.Columns))
+	recomputedRowOffsets := make([]int, len(mv.Columns))
 	for i, col := range mv.Columns {
 		offset := len(fields)
 		fields = append(fields, &ast.SelectField{
 			Expr:   qualColExpr(diffQueryAlias, col.Name.O),
 			AsName: pmodel.NewCIStr(diffNewRowPrefix + col.Name.O),
 		})
-		qRowOffsets[i] = offset
+		recomputedRowOffsets[i] = offset
 	}
 
-	handleColsMeta, err := buildCompleteDiffHandleCols(mv, mRowOffsets, rowIDHandleOffset)
+	currentHandleCols, err := buildCompleteDiffHandleCols(mv, currentRowOffsets, rowIDHandleOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -2260,16 +2260,16 @@ func BuildCompleteDiffSource(
 	}
 
 	res := &CompleteDiffBuildResult{
-		DiffSourceSelect:  diffSel,
-		SourceColumnCount: len(fields),
-		MVTableID:         mv.ID,
-		MVColumnCount:     len(mv.Columns),
-		OpColOffset:       0,
-		MarkerMVOffset:    markerOffset,
-		GroupKeyMVOffsets: append([]int(nil), groupKeyOffsets...),
-		MHandleCols:       handleColsMeta,
-		MRowOffsets:       mRowOffsets,
-		QRowOffsets:       qRowOffsets,
+		DiffSourceSelect:     diffSel,
+		SourceColumnCount:    len(fields),
+		MVTableID:            mv.ID,
+		MVColumnCount:        len(mv.Columns),
+		OpColOffset:          0,
+		MarkerMVOffset:       markerOffset,
+		GroupKeyMVOffsets:    append([]int(nil), groupKeyOffsets...),
+		CurrentHandleCols:    currentHandleCols,
+		CurrentRowOffsets:    currentRowOffsets,
+		RecomputedRowOffsets: recomputedRowOffsets,
 	}
 	if err := res.ValidateSourceLayout(0); err != nil {
 		return nil, err
