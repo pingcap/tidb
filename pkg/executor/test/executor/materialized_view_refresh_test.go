@@ -3632,6 +3632,31 @@ func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
 	require.ErrorContains(t, err, "Table 'test.mv_compare_priv_diff' already exists")
 }
 
+func TestCompareMaterializedViewPrivilegeCheckBeforeSnapshotResolution(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	compareTS := nextCompareTimestamp(t, tk)
+
+	tk.MustExec("create database mv_compare_priv_snapshot")
+	tk.MustExec("use mv_compare_priv_snapshot")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create user 'mv_compare_snapshot_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_compare_snapshot_u'@'%'")
+	tk.MustExec("grant operate view on mv_compare_priv_snapshot.mv to 'mv_compare_snapshot_u'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_compare_snapshot_u", Hostname: "%"}, nil, nil, nil))
+	err := tkUser.QueryToErr(fmt.Sprintf(
+		"compare materialized view mv_compare_priv_snapshot.mv as of timestamp '%s'",
+		compareTS,
+	))
+	require.ErrorContains(t, err, "SELECT command denied")
+	require.NotContains(t, err.Error(), "Unknown database")
+}
+
 func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

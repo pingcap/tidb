@@ -1331,6 +1331,9 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 	if err != nil {
 		return err
 	}
+	if err := e.precheckCompareMaterializedViewCurrentState(); err != nil {
+		return err
+	}
 	snapshotIS, err := domain.GetDomain(e.Ctx()).GetSnapshotInfoSchema(compareSnapshotTS)
 	if err != nil {
 		return err
@@ -1461,6 +1464,18 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 
 	req.AppendString(0, formatCompareMaterializedViewSummary(lastSuccessReadTSO, diffRows, e.Ctx().GetSessionVars().Location()))
 	return nil
+}
+
+func (e *CompareMaterializedViewExec) precheckCompareMaterializedViewCurrentState() error {
+	currentIS := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	_, _, tblInfo, err := e.resolveCompareMaterializedViewTarget(currentIS)
+	if err != nil {
+		return err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), currentIS, tblInfo.MaterializedView); err != nil {
+		return err
+	}
+	return e.checkCompareMaterializedViewOutputTableNotExists()
 }
 
 func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNotExists() error {
