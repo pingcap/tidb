@@ -4548,8 +4548,17 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:aIX8PIhLflFQ9g9rvT6aJpMZlIc7NM5HTDxlGG4rVgM=",
         version = "v2.0.8-0.20260724083407-9d3413c420ce",
+=======
+        sha256 = "8e9cc87c4a965a122a838f90e25e15f18b529902ecd0d5ab1b336ac99710c3f7",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260609070524-8df1c02428d9",
+        urls = [
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260609070524-8df1c02428d9.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260609070524-8df1c02428d9.zip",
+        ],
+>>>>>>> fd349eedb6f (*: update go.mod to upgrade client-go (#69091))
     )
     go_repository(
         name = "com_github_tikv_pd_client",
