@@ -124,6 +124,7 @@ func GetServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
 	if err != nil {
 		deleteGRPCConnByKey(cacheKey, conn)
+		GlobalMPPInfoManager.Delete(cacheKey.address)
 		return nil, err
 	}
 	return r.Items, nil

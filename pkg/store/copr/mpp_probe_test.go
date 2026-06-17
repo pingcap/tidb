@@ -317,9 +317,15 @@ func TestGetServerInfoByGRPCReusesConnection(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	diagnosticsServer.fail.Store(true)
+	GlobalMPPInfoManager.Add(&MPPInfo{
+		Address:         address,
+		LogicalCPUCount: 16,
+		StartTimestamp:  123,
+	})
 	_, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
 	require.Error(t, err)
 	require.Equal(t, int32(7), diagnosticsServer.calls.Load())
+	require.Nil(t, GlobalMPPInfoManager.Get(address))
 
 	items, err = GetServerInfoByGRPC(context.Background(), address, diagnosticspb.ServerInfoType_All)
 	require.NoError(t, err)
