@@ -5528,11 +5528,11 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "a3d3fd4f25b1de97c28f87b7faf4ba9fd86cae30b15e6007d76e66b6820089d7",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260601035955-b2b3bb492278",
+        sha256 = "ba10afca9d8a6b109d95c27a55d348a453791763cb676aa8396a4769f3f95a99",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260602101655-f8184e7702eb",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260601035955-b2b3bb492278.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260601035955-b2b3bb492278.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260602101655-f8184e7702eb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260602101655-f8184e7702eb.zip",
         ],
     )
     go_repository(
@@ -6144,11 +6144,11 @@ def go_deps():
         name = "com_github_shoenig_go_m1cpu",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shoenig/go-m1cpu",
-        sha256 = "fc7a3ee160a892788fa143559d9157cbee663273484d9a23e4a6093bc35c5b9e",
-        strip_prefix = "github.com/shoenig/go-m1cpu@v0.1.7",
+        sha256 = "0509c3353504437f680dc2f972c80b3161affbd1c62fc774c7f50cffca8e98b6",
+        strip_prefix = "github.com/shoenig/go-m1cpu@v0.2.1",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.2.1.zip",
         ],
     )
     go_repository(
@@ -6596,11 +6596,11 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "472a85fb7dccdeb0f69c6a96666a62fb41dacb73c15415707f323b9e82ba8378",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260602013621-8804d7c60a7e",
+        sha256 = "88ea247dcebc279190ca0480f59f831eedd4ce0267d7b3e421300e438087449a",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260617030124-661db4f5f4e8",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260602013621-8804d7c60a7e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260602013621-8804d7c60a7e.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260617030124-661db4f5f4e8.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260617030124-661db4f5f4e8.zip",
         ],
     )
     go_repository(

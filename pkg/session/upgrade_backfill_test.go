@@ -89,3 +89,68 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
 	require.NoError(t, res.Close())
 }
+
+func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver260 := version260
+	seV260 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver260))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV260, ver260)
+
+	// Simulate a cluster upgraded through the old path where the variable existed in code
+	// but its row was never backfilled into mysql.global_variables.
+	MustExec(t, seV260, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBDefaultStrMatchSelectivity,
+	))
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	res := MustExecToRecodeSet(t, seV260, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBDefaultStrMatchSelectivity,
+	))
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 0, chk.NumRows())
+	require.NoError(t, res.Close())
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBDefaultStrMatchSelectivity,
+	))
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, "0.8", chk.GetRow(0).GetString(1))
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, "select cast(@@global.tidb_default_string_match_selectivity as char)")
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, "0.8", chk.GetRow(0).GetString(0))
+	require.NoError(t, res.Close())
+}

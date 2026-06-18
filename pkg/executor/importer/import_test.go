@@ -28,14 +28,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
+	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -521,14 +527,86 @@ func TestImportPlanParquetLocation(t *testing.T) {
 	})
 }
 
+func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("row oriented format uses identity ratio", func(t *testing.T) {
+		ratio, err := estimateFormatSizeExpansionRatio(ctx, "data.csv", 1024, mydump.SourceTypeCSV, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1.0, ratio)
+	})
+
+	t.Run("parquet ratio is clamped to physical file size", func(t *testing.T) {
+		dir := t.TempDir()
+		const fileName = "tiny.parquet"
+		columns := []testutils.ParquetColumn{
+			{
+				Name:      "id",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.None,
+				Gen: func(numRows int) (any, []int16) {
+					data := make([]int64, numRows)
+					defLevels := make([]int16, numRows)
+					for i := range numRows {
+						data[i] = int64(i)
+						defLevels[i] = 1
+					}
+					return data, defLevels
+				},
+			},
+		}
+		require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, 1))
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		stat, err := os.Stat(filepath.Join(dir, fileName))
+		require.NoError(t, err)
+		rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, fileName, store)
+		require.NoError(t, err)
+		require.Less(t, rowSize*float64(rows), float64(stat.Size()))
+
+		ratio, err := estimateFormatSizeExpansionRatio(ctx, fileName, stat.Size(), mydump.SourceTypeParquet, store)
+		require.NoError(t, err)
+		require.Equal(t, 1.0, ratio)
+	})
+}
+
 func TestInitCompressedFiles(t *testing.T) {
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
 		t.Skip("it cannot run as root")
 	}
-	tempDir := t.TempDir()
 	ctx := context.Background()
+
+	t.Run("real size is at least compressed file size", func(t *testing.T) {
+		tempDir := t.TempDir()
+		content := []byte("small file whose sampled compression ratio is below one")
+		fileName := filepath.Join(tempDir, "small.csv.gz")
+		require.NoError(t, os.WriteFile(fileName, content, 0o644))
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return(50)`)
+		c := LoadDataController{
+			Plan: &Plan{
+				Format:         DataFormatCSV,
+				InImportInto:   true,
+				Charset:        &defaultCharacterSet,
+				LineFieldsInfo: newDefaultLineFieldsInfo(),
+				FieldNullDef:   defaultFieldNullDef,
+				Parameters:     &ImportParameters{},
+			},
+			logger: zap.NewExample(),
+		}
+
+		c.Path = filepath.Join(tempDir, "*.gz")
+		require.NoError(t, c.InitDataFiles(ctx))
+		require.Len(t, c.dataFiles, 1)
+		require.Equal(t, int64(len(content)), c.dataFiles[0].FileSize)
+		require.Equal(t, c.dataFiles[0].FileSize, c.dataFiles[0].RealSize)
+		require.Equal(t, c.TotalFileSize, c.TotalRealSize)
+	})
+
+	tempDir := t.TempDir()
 
 	for i := range 2048 {
 		fileName := filepath.Join(tempDir, fmt.Sprintf("test_%d.csv.gz", i))
