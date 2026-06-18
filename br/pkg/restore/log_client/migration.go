@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
-	"sort"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -283,14 +282,12 @@ func retainLatestMVCCCompactionsCover(intervals []retainLatestMVCCCompactionInte
 		until := min(interval.until, restoredTS)
 		boundaries = append(boundaries, from, until)
 	}
-	sort.Slice(boundaries, func(i, j int) bool {
-		return boundaries[i] < boundaries[j]
-	})
+	slices.Sort(boundaries)
 	boundaries = slices.Compact(boundaries)
 	if len(boundaries) == 1 {
 		return hasCompleteShardCoverage(intervals, startTS, restoredTS)
 	}
-	for i := 0; i < len(boundaries)-1; i++ {
+	for i := range len(boundaries) - 1 {
 		if boundaries[i] == boundaries[i+1] {
 			continue
 		}
