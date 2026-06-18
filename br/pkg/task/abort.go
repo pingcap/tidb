@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"maps"
 	"slices"
@@ -15,10 +16,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tablepkg "github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
@@ -264,6 +267,28 @@ func setAbortRestoreTablesToNormal(
 	}
 	if tableCount == 0 {
 		log.Info("no restore-mode tables need to be set to normal after abort")
+	}
+	return nil
+}
+
+func dropTemporarySystemSchemasAfterAbort(ctx context.Context, g glue.Glue, mgr *conn.Mgr, cfg *RestoreConfig) error {
+	if !cfg.WithSysTable && !cfg.LoadStats {
+		return nil
+	}
+
+	session, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer session.Close()
+
+	for _, dbName := range []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema} {
+		tempDBName := utils.TemporaryDBName(dbName)
+		log.Info("dropping temporary system database after abort",
+			zap.Stringer("database", tempDBName))
+		if err := session.Execute(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", utils.EncloseName(tempDBName.L))); err != nil {
+			return errors.Annotatef(err, "failed to drop temporary system database %s", tempDBName.O)
+		}
 	}
 	return nil
 }

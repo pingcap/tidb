@@ -1104,6 +1104,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		} else {
+			if err := resetRestoreModeTablesAfterFailedRestore(c, g, cmdName, cfg, mgr); err != nil {
+				log.Error("failed to reset restore-mode tables after failed restore",
+					zap.Uint64("restoreId", cfg.RestoreID),
+					zap.Error(err),
+					zap.NamedError("restoreError", restoreErr))
+				restoreErr = errors.Annotatef(restoreErr,
+					"failed to reset restore-mode tables after failed restore: %v", err)
+			}
 			log.Info("unregistering restore task from registry",
 				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
 			if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
@@ -1141,6 +1149,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Clear the checkpoint data if needed
 	cleanUpCheckpoints(c, cfg)
 	return nil
+}
+
+func resetRestoreModeTablesAfterFailedRestore(
+	ctx context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *RestoreConfig,
+	mgr *conn.Mgr,
+) error {
+	if cfg.ProtectTables {
+		tablesToNormal, err := collectAbortRestoreModeTables(ctx, g, cmdName, cfg, mgr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := setAbortRestoreTablesToNormal(ctx, g, mgr, tablesToNormal); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return dropTemporarySystemSchemasAfterAbort(ctx, g, mgr, cfg)
 }
 
 func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
@@ -2939,6 +2966,9 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 		return errors.Trace(collectTablesErr)
 	}
 	if err := setAbortRestoreTablesToNormal(ctx, g, mgr, tablesToNormal); err != nil {
+		return errors.Trace(err)
+	}
+	if err := dropTemporarySystemSchemasAfterAbort(ctx, g, mgr, cfg); err != nil {
 		return errors.Trace(err)
 	}
 

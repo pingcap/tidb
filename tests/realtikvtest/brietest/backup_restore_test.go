@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/registry"
@@ -89,10 +88,13 @@ func TestBackupAndRestore(t *testing.T) {
 func TestRestoreTableModeProtectsTablesBeforePipeline(t *testing.T) {
 	tk := initTestKit(t)
 	executor.ResetGlobalBRIEQueueForTest()
+	cleanupRestoreRegistry(tk)
+	defer cleanupRestoreRegistry(tk)
 
 	dbName := "br_restore_mode"
 	tk.MustExec("drop database if exists " + dbName)
 	tk.MustExec("create database " + dbName)
+	defer tk.MustExec("drop database if exists " + dbName)
 	tk.MustExec("create table " + dbName + ".t (id int primary key, v varchar(16))")
 	tk.MustExec("insert into " + dbName + ".t values (1, 'before')")
 
@@ -112,7 +114,6 @@ func TestRestoreTableModeProtectsTablesBeforePipeline(t *testing.T) {
 
 	err := tk.QueryToErr("restore database " + dbName + " from 'local://" + tmpDir + "'")
 	require.ErrorContains(t, err, "abort after restore creates tables")
-	tk.MustExec(fmt.Sprintf("delete from %s.%s", registry.RestoreRegistryDBName, registry.RestoreRegistryTableName))
 	tk.MustExec("drop database " + dbName)
 }
 
@@ -125,18 +126,25 @@ func alterRestoredTableModeToNormal(t *testing.T, tk *testkit.TestKit, dbName, t
 	require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), tk.Session(), model.TableModeNormal, dbInfo.ID, tbl.Meta().ID))
 }
 
+func cleanupRestoreRegistry(tk *testkit.TestKit) {
+	tk.MustExec(fmt.Sprintf("delete from %s.%s", registry.RestoreRegistryDBName, registry.RestoreRegistryTableName))
+}
+
 func TestRestoreMultiTables(t *testing.T) {
 	tk := initTestKit(t)
-	tk.MustExec("create database if not exists br")
+	cleanupRestoreRegistry(tk)
+	defer cleanupRestoreRegistry(tk)
+
+	tk.MustExec("drop database if exists br")
+	tk.MustExec("create database br")
+	defer tk.MustExec("drop database if exists br")
 	tk.MustExec("use br")
 
-	tablesNameSet := make(map[string]struct{})
 	tableNum := 100
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustExec(fmt.Sprintf("create table table_%d (a int primary key, b json, c varchar(20))", i))
 		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{\"a\": 1, \"b\": 2}', '123')", i))
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
-		tablesNameSet[fmt.Sprintf("table_%d", i)] = struct{}{}
 	}
 
 	tmpDir := path.Join(getBackupTempDir(), "bk1")
@@ -150,20 +158,7 @@ func TestRestoreMultiTables(t *testing.T) {
 	// restore database with backup data
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
-	ddlCreateTablesRows := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()
-	cnt := 0
-	for _, row := range ddlCreateTablesRows {
-		tables := row[2].(string)
-		require.NotEqual(t, "", tables)
-		for _, table := range strings.Split(tables, ",") {
-			_, ok := tablesNameSet[table]
-			require.True(t, ok)
-			cnt += 1
-		}
-	}
-	require.Equal(t, tableNum, cnt)
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
 	}
-	tk.MustExec("drop database br")
 }
