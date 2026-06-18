@@ -583,9 +583,13 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
 	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
 	// to avoid session set overlap the txn set.
+	newSchemaChecker := domain.NewSchemaChecker
+	if sessVars.InRestrictedSQL && txn.Size() == 0 {
+		newSchemaChecker = domain.NewSchemaCheckerWithStandbyReadOnly
+	}
 	txn.SetOption(
 		kv.SchemaChecker,
-		domain.NewSchemaChecker(
+		newSchemaChecker(
 			domain.GetDomain(p.sctx),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,

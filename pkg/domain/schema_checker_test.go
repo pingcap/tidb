@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -67,4 +68,23 @@ func TestSchemaCheckerSimple(t *testing.T) {
 	nowTS := uint64(time.Now().UnixNano())
 	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs, true)
 	require.Equal(t, ResultUnknown, result)
+}
+
+func TestSchemaCheckerStandbyUnknownForReadOnlyInternalTxn(t *testing.T) {
+	lease := time.Millisecond
+	validator := NewSchemaValidator(lease, nil)
+	ts := uint64(time.Now().UnixNano())
+	validator.Update(ts, 0, 1, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	time.Sleep(lease + time.Millisecond)
+
+	pkdbrepl.SetStandbyModeForTest(true)
+	defer pkdbrepl.SetStandbyModeForTest(false)
+
+	checker := &SchemaChecker{SchemaValidator: validator, schemaVer: 1, needCheckSchema: true}
+	_, err := checker.Check(uint64(time.Now().UnixNano()))
+	require.EqualError(t, err, "cluster is in standby mode")
+
+	checker.allowStandbyUnknownSchema = true
+	_, err = checker.Check(uint64(time.Now().UnixNano()))
+	require.NoError(t, err)
 }

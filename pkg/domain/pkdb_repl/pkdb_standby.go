@@ -40,6 +40,16 @@ func IsStandbyMode() bool {
 	return standbyBlockingCh.Load() != nil
 }
 
+// SetStandbyModeForTest toggles the in-memory standby flag for tests in other
+// packages that need to exercise standby-specific branches without running etcd.
+func SetStandbyModeForTest(enabled bool) {
+	if enabled {
+		enableStandbyMode()
+		return
+	}
+	disableStandbyModeInternal()
+}
+
 var (
 	// StandbyInfoSchemaReloadTickCh will be sent after standby mode is enabled, to
 	// trigger eager tick for infoschema reload.

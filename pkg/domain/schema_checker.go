@@ -28,9 +28,10 @@ import (
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
 	SchemaValidator
-	schemaVer       int64
-	relatedTableIDs []int64
-	needCheckSchema bool
+	schemaVer                 int64
+	relatedTableIDs           []int64
+	needCheckSchema           bool
+	allowStandbyUnknownSchema bool
 }
 
 type intSchemaVer int64
@@ -56,6 +57,21 @@ func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64, need
 	}
 }
 
+// NewSchemaCheckerWithStandbyReadOnly creates a schema checker for transactions
+// that do not write data while the cluster is in standby mode. Standby write
+// transactions must keep using NewSchemaChecker so schema-unknown errors still
+// reject the commit.
+func NewSchemaCheckerWithStandbyReadOnly(
+	do *Domain,
+	schemaVer int64,
+	relatedTableIDs []int64,
+	needCheckSchema bool,
+) *SchemaChecker {
+	checker := NewSchemaChecker(do, schemaVer, relatedTableIDs, needCheckSchema)
+	checker.allowStandbyUnknownSchema = true
+	return checker
+}
+
 // Check checks the validity of the schema version.
 func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, error) {
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
@@ -77,6 +93,9 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 			// TODO(lance6716): not sure why DDL will meet this error. But since DDL will be
 			// rejected later, we just return that error for now.
 			if pkdbrepl.IsStandbyMode() {
+				if s.allowStandbyUnknownSchema {
+					return nil, nil
+				}
 				return nil, errors.New("cluster is in standby mode")
 			}
 			time.Sleep(schemaOutOfDateRetryInterval)
