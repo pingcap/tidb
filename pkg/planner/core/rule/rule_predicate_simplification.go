@@ -224,6 +224,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
+	simplifiedPredicate = detectInequalityBoundsContradiction(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
@@ -276,6 +277,27 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 	return newValues
 }
 
+func detectInequalityBoundsContradiction(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	if len(predicates) <= 1 {
+		return predicates
+	}
+	for i := range predicates {
+		for j := i + 1; j < len(predicates); j++ {
+			ithPredicate := predicates[i]
+			jthPredicate := predicates[j]
+			iCol, iType := FindPredicateType(sctx, ithPredicate)
+			jCol, jType := FindPredicateType(sctx, jthPredicate)
+			if iCol == nil || !iCol.Equals(jCol) {
+				continue
+			}
+			if inequalityBoundsContradiction(sctx, ithPredicate, iType, jthPredicate, jType) {
+				return []expression.Expression{&expression.Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)}}
+			}
+		}
+	}
+	return predicates
+}
+
 // Check for constant false condition.
 func unsatisfiableExpression(ctx base.PlanContext, p expression.Expression) bool {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -292,6 +314,9 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		return false
 	}
 	if isNullInListContradiction(ctx, p1, p1Type, p2, p2Type) {
+		return true
+	}
+	if inequalityBoundsContradiction(ctx, p1, p1Type, p2, p2Type) {
 		return true
 	}
 	if p1Type == equalPredicate {
@@ -365,6 +390,64 @@ func isNullInListContradiction(ctx base.PlanContext, p1 expression.Expression, p
 		}
 	}
 	return true
+}
+
+func inequalityBoundsContradiction(ctx base.PlanContext, p1 expression.Expression, p1Type predicateType, p2 expression.Expression, p2Type predicateType) bool {
+	lowerPred, lowerType, upperPred, upperType, ok := splitLowerUpperBound(p1, p1Type, p2, p2Type)
+	if !ok || expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), lowerPred, upperPred) {
+		return false
+	}
+
+	lowerConst, ok1 := lowerPred.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	upperConst, ok2 := upperPred.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	if !ok1 || !ok2 || !numericConstForInequality(ctx, lowerConst) || !numericConstForInequality(ctx, upperConst) {
+		return false
+	}
+
+	cmp, err := lowerConst.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &upperConst.Value, collate.GetBinaryCollator())
+	if err != nil {
+		return false
+	}
+	if lowerType == greaterThanOrEqualPredicate && upperType == lessThanOrEqualPredicate {
+		return cmp > 0
+	}
+	return cmp >= 0
+}
+
+func splitLowerUpperBound(p1 expression.Expression, p1Type predicateType, p2 expression.Expression, p2Type predicateType) (
+	lowerPred expression.Expression,
+	lowerType predicateType,
+	upperPred expression.Expression,
+	upperType predicateType,
+	ok bool,
+) {
+	if isLowerBoundPredicate(p1Type) && isUpperBoundPredicate(p2Type) {
+		return p1, p1Type, p2, p2Type, true
+	}
+	if isUpperBoundPredicate(p1Type) && isLowerBoundPredicate(p2Type) {
+		return p2, p2Type, p1, p1Type, true
+	}
+	return nil, otherPredicate, nil, otherPredicate, false
+}
+
+func isLowerBoundPredicate(predType predicateType) bool {
+	return predType == greaterThanPredicate || predType == greaterThanOrEqualPredicate
+}
+
+func isUpperBoundPredicate(predType predicateType) bool {
+	return predType == lessThanPredicate || predType == lessThanOrEqualPredicate
+}
+
+func numericConstForInequality(ctx base.PlanContext, con *expression.Constant) bool {
+	if con.Value.IsNull() {
+		return false
+	}
+	switch con.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() {
+	case types.ETInt, types.ETReal, types.ETDecimal:
+		return true
+	default:
+		return false
+	}
 }
 
 func comparisonPred(predType predicateType) predicateType {
