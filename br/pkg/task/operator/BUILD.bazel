@@ -80,5 +80,6 @@ go_test(
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "@com_github_stretchr_testify//require",
+        "@com_github_spf13_pflag//:pflag",
     ],
 )
