@@ -1209,8 +1209,6 @@ func TestReorgPartitionHandleNotExistNoPanic(t *testing.T) {
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(10)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/CheckReorgInfoEmptyErr", "1*return(true)")
 
 	tk.MustExec("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
