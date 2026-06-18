@@ -784,7 +784,7 @@ func (*KS3Storage) Close() {}
 
 // Features implements FeatureProvider.
 func (*KS3Storage) Features() storeapi.Features {
-	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
+	return storeapi.FeatureStrongConsistency
 }
 
 func maybeObjectAlreadyExists(err awserr.Error) bool {

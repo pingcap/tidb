@@ -101,9 +101,6 @@ func PrepareRepoSnapshotBackup(
 	rootStorage storeapi.Storage,
 	params SnapshotBackupStorageParams,
 ) (*PreparedRepoSnapshotBackup, error) {
-	if err := validateRepoBackend(rootBackend); err != nil {
-		return nil, errors.Trace(err)
-	}
 	if _, err := repo.EnsureRepo(ctx, rootStorage, params.CreatedBy); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -274,14 +271,6 @@ func (ref *SnapshotStorageRef) Validate(ctx context.Context) error {
 	if ref.BackupID.IsZero() {
 		return nil
 	}
-	// validateRepoBackend is the coarse "can repo address this backend at
-	// all?" gate. A resolved snapshot reference needs one more runtime-capability
-	// check: repo snapshot operations later rely on WalkDir StartAfter, and
-	// that support is determined by the opened storage implementation/URI rather
-	// than the protobuf backend kind alone.
-	if err := validateRepoBackend(ref.RootBackend); err != nil {
-		return errors.Trace(err)
-	}
 	if _, err := repo.LoadRepoMeta(ctx, ref.RootStorage); err != nil {
 		return errors.Annotate(err, "load repo metadata")
 	}
@@ -417,29 +406,6 @@ func joinObjectStorageKey(base, suffix string) string {
 		return base + suffix
 	default:
 		return base + "/" + suffix
-	}
-}
-
-// validateRepoBackend validates repo backend kinds before storage is
-// opened. It intentionally does not validate WalkDir StartAfter support,
-// because that depends on the resolved storeapi.Storage implementation and is
-// checked later by SnapshotStorageRef.Validate.
-func validateRepoBackend(backend *backuppb.StorageBackend) error {
-	switch {
-	case backend.GetLocal() != nil:
-		return nil
-	case backend.GetS3() != nil:
-		return nil
-	case backend.GetGcs() != nil:
-		return nil
-	case backend.GetAzureBlobStorage() != nil:
-		return nil
-	case backend.GetNoop() != nil:
-		return errors.Annotatef(berrors.ErrInvalidArgument, "repo doesn't support noop storage")
-	case backend.GetHdfs() != nil:
-		return errors.Annotatef(berrors.ErrInvalidArgument, "repo doesn't support hdfs storage")
-	default:
-		return errors.Annotatef(berrors.ErrInvalidArgument, "repo doesn't support backend %T", backend.Backend)
 	}
 }
 

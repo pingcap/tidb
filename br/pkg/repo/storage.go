@@ -94,6 +94,9 @@ func (s *prefixedStorage) WalkDir(
 		*walkOpt = *opt
 	}
 	walkOpt.SubDir = s.fullPath(walkOpt.SubDir)
+	if walkOpt.StartAfter != "" {
+		walkOpt.StartAfter = s.fullPath(walkOpt.StartAfter)
+	}
 	return s.base.WalkDir(
 		ctx,
 		walkOpt,

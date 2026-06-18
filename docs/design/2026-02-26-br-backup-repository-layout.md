@@ -244,8 +244,8 @@ Semantics:
 - BR: new `--storage-layout=repo`, `br repo` subcommands, and layout helper.
 - TiKV: repo does not require a new TiKV-side path hook. The baseline deployment path relies on BR rewriting the per-request `StorageBackend` prefix per store.
 - PD: backup ID allocation via TSO.
-- Current implementation rejects repo snapshot backup on HDFS and noop storage.
-- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `ks3://`, `gcs://`, and `file://` storages. Repo restore and the data-scanning repo admin paths (`snapshot delete`, including unfinished pending backup deletion) are therefore limited to those storages today.
+- Current implementation rejects repo snapshot backup on HDFS, noop storage, and storage implementations without WalkDir `StartAfter` support.
+- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `gcs://`, and `file://` storages. Repo snapshot backup, restore, and the data-scanning repo admin paths (`snapshot delete`, including unfinished pending backup deletion) are therefore limited to those storages today.
 - Upgrade: legacy layout remains supported; repo is opt-in.
 - Downgrade: avoid writing repo from older BR; repo marker signals layout.
 - External tools: restore/list/delete must use repo-aware logic. Full data-prefix orphan scanning, if an external maintenance tool chooses to do it, is optional repair/audit work rather than a required BR repo command.
@@ -257,15 +257,15 @@ Semantics:
 The backend-prefix-rewrite compatibility path is not equally suitable for all storage backends.
 
 Current implementation splits compatibility into two layers:
-- The backup write path can rewrite per-store prefixes for local, S3/KS3-compatible, GCS, and Azure Blob Storage backends.
-- The repo snapshot-reference and data-scanning paths additionally require WalkDir `StartAfter` support from the resolved storage implementation. Today that gate is recognized only for `s3://`, `ks3://`, `gcs://`, and `file://` storages.
+- The lower-level backup write path can rewrite per-store prefixes for local, S3/KS3-compatible, GCS, and Azure Blob Storage backends.
+- Repo snapshot backup, snapshot-reference, and data-scanning paths additionally require WalkDir `StartAfter` support from the resolved storage implementation. Today that gate is recognized only for `s3://`, `gcs://`, and `file://` storages.
 
 Not a good fit today:
 - HDFS, because BR's current HDFS storage support is limited and does not provide the full metadata/checkpoint/list/delete capabilities that repo relies on for snapshot backup management.
 - Noop storage, because it is not a real persistence target and already disables checkpoint-oriented behavior.
-- Azure Blob Storage for repo restore/admin flows, because the current WalkDir `StartAfter` capability gate does not admit Azure-backed snapshot references even though the write-path prefix rewrite is implemented.
+- KS3 and Azure Blob Storage for repo snapshot flows, because the current WalkDir `StartAfter` capability gate does not admit those resolved storage implementations even though the write-path prefix rewrite is implemented.
 
-Therefore, the current practical scope is narrower than the pure prefix-rewrite design: repo backup writing reaches more backends than repo restore and data-scanning admin commands do.
+Therefore, the current practical scope is narrower than the pure prefix-rewrite design: repo snapshot backup is gated to the same resolved-storage capabilities that repo restore and data-scanning admin commands need.
 
 #### Future: Snapshot + Log in One Repo
 
@@ -304,7 +304,7 @@ Repo behavior:
 - Verify `snapshot get --view basic|tables|files` returns the documented metadata views.
 - Verify `snapshot delete` deletes matching data, metadata, and pending markers, and still works by data-prefix scan when metadata is missing.
 - Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/backup/...`.
-- Verify repo reader and destructive admin paths enforce the current WalkDir `StartAfter` capability gate.
+- Verify repo writer, reader, and destructive admin paths enforce the current WalkDir `StartAfter` capability gate.
 
 ### Scenario Tests
 
@@ -322,11 +322,11 @@ Repo scenarios:
 ### Compatibility Tests
 
 Compatibility coverage:
-- BR repo backup write path with supported and rejected backends (S3/GCS/Azure/local supported; HDFS and noop rejected).
+- BR repo backup write path with supported and rejected backends (S3/GCS/local supported; KS3, Azure, HDFS, and noop rejected).
 - Upgrade from legacy backup usage without repo.
 - Restore and cleanup behavior when repo SST placement is achieved through per-request backend-prefix rewriting.
 - Backend-by-backend validation of the prefix-rewrite compatibility path on S3/KS3-compatible/GCS/Azure/local, with explicit exclusion or documented limitation for HDFS and noop.
-- Backend-by-backend validation of the current WalkDir `StartAfter` gate on repo restore/admin flows (`s3://`, `ks3://`, `gcs://`, `file://` supported; Azure currently excluded).
+- Backend-by-backend validation of the current WalkDir `StartAfter` gate on repo snapshot flows (`s3://`, `gcs://`, `file://` supported; KS3 and Azure currently excluded).
 - Compatibility with BR `--use-backupmeta-v2`.
 - Compatibility with external stats.
 
@@ -347,7 +347,7 @@ Risks:
 - Optional full data-prefix repair/audit scans still require storage enumeration and can be expensive on very large repos, so they should not be part of routine backup startup or cleanup.
 - Incorrect handling of pending markers could either block future backups unnecessarily or discard data from the wrong unfinished backup.
 - The baseline backend-prefix-rewrite path relies on backend-specific prefix semantics and correct per-store request construction; mistakes there could place SSTs under the wrong prefix.
-- The backend-prefix-rewrite compatibility path may not be supportable on every BR backend; claiming universal support would overstate what current HDFS/noop implementations can do.
+- The backend-prefix-rewrite compatibility path may not be supportable on every BR backend; claiming universal support would overstate what current KS3, Azure, HDFS, and noop implementations can do.
 - If controllers choose the wrong `--use-checkpoint` value for a retry, operators may see unexpected fresh attempts, unintended resumes, or ambiguity failures after abandoned attempts accumulate.
 
 ## Investigation & Alternatives
