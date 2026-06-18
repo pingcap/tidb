@@ -417,7 +417,8 @@ func (d *SchemaTracker) createIndex(
 		return err
 	}
 	for _, hiddenCol := range hiddenCols {
-		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		colInfo.State = model.StatePublic
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
