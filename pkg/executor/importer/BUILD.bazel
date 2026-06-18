@@ -117,13 +117,19 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 39,
+=======
+    shard_count = 41,
+>>>>>>> 0f57a4e3175 (importinto: normalize size expansion ratio (#69315))
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/dumpformat/parquetfile",
+        "//pkg/dumpformat/testutils",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
@@ -146,6 +152,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
         "//pkg/parser",
@@ -174,6 +181,8 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/promutil",
         "//pkg/util/syncutil",
+        "@com_github_apache_arrow_go_v18//parquet",
+        "@com_github_apache_arrow_go_v18//parquet/schema",
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_johannesboyne_gofakes3//:gofakes3",
