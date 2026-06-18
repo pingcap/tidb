@@ -442,6 +442,9 @@ func InsertColStats2KV(
 		if colInfo.IsVirtualGenerated() {
 			// Virtual generated columns do not have column stats. Keep the
 			// same zero placeholder shape as the create-table stats path.
+			// Analyze-skipped columns are real stored columns, so their
+			// default/null handling needs a separate decision.
+			// TODO: define add-column stats behavior for analyze-skipped columns.
 			if _, err = util.ExecWithCtx(
 				ctx, sctx,
 				`insert ignore into mysql.stats_histograms
