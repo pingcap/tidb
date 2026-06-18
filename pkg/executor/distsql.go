@@ -812,8 +812,21 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		e.byItems = nil
 	}
 	var tps []*types.FieldType
+	tblScanIdxForRewritePartitionID := -1
 	if e.indexLookUpPushDown {
 		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					tblScanIdxForRewritePartitionID = idx
+					break
+				}
+			}
+			if tblScanIdxForRewritePartitionID < 0 {
+				intest.Assert(false)
+				return errors.New("cannot find table scan executor in for partition index lookup push down")
+			}
+		}
 	} else {
 		tps = e.getRetTpsForIndexReader()
 	}
@@ -900,11 +913,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, e.dctx.DistSQLConcurrency)
 		mergeSortIndexScanConcurrency := getMergeSortIndexScanConcurrency(needMerge, len(kvRanges), e.dctx.DistSQLConcurrency)
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-<<<<<<< HEAD
-		for _, kvRange := range kvRanges {
-=======
 		for idx := range kvRanges {
->>>>>>> 06fb193fd71 (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676) (#68565))
 			// check if executor is closed
 			finished := false
 			select {
@@ -915,34 +924,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			if finished {
 				break
 			}
-<<<<<<< HEAD
-			var builder distsql.RequestBuilder
-			builder.SetDAGRequest(e.dagPB).
-				SetStartTS(e.startTS).
-				SetDesc(e.desc).
-				SetKeepOrder(e.keepOrder).
-				SetTxnScope(e.txnScope).
-				SetReadReplicaScope(e.readReplicaScope).
-				SetIsStaleness(e.isStaleness).
-				SetFromSessionVars(e.dctx).
-				SetFromInfoSchema(e.infoSchema).
-				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-				SetMemTracker(tracker).
-				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-
-			if e.indexLookUpPushDown {
-				// Paging and Cop-cache is not supported in index lookup push down.
-				builder.Request.Paging.Enable = false
-				builder.Request.Cacheable = false
-			}
-
-			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-=======
 			result, err := e.buildIndexSelectResultForRange(
 				ctx,
 				idx,
@@ -959,7 +940,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			if err != nil {
 				for _, r := range results {
 					_ = r.Close()
->>>>>>> 06fb193fd71 (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676) (#68565))
 				}
 				worker.syncErr(err)
 				return
@@ -1567,19 +1547,6 @@ func (w *indexWorker) prepareHandleFetch(indexTypes []*types.FieldType) (*chunk.
 			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.stmtRuntimeStatsColl.GetBasicRuntimeStats(idxID, true)
 		}
 	}
-<<<<<<< HEAD
-	taskID := 0
-	for i := 0; i < len(results); {
-		result := results[i]
-		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
-			break
-		}
-		startTime := time.Now()
-		var completedRows []chunk.Row
-		var handles []kv.Handle
-		var retChunk *chunk.Chunk
-		var curResultExhausted bool
-=======
 	return chk, handleOffsets, nil
 }
 
@@ -1608,51 +1575,21 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 
 	var completedTask *lookupTableTask
 	if rowCnt := len(data.completedRows); rowCnt > 0 {
-		metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
 		// Currently, completedRows is only produced by index lookup push down which does not support keep order.
 		// for non-keep-order request, the completed rows can be sent to resultCh directly.
-		completedTask = w.buildCompletedTask(data.completedRows)
-		*taskID++
+		completedTask = w.buildCompletedTask(*taskID, data.completedRows)
+		(*taskID)++
 	}
 
 	var tableLookUpTask *lookupTableTask
 	if rowCnt := len(data.handles); rowCnt > 0 {
->>>>>>> 06fb193fd71 (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676) (#68565))
-		if w.idxLookup.indexLookUpPushDown {
-			metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
-		} else {
-			metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
-		}
-		tableLookUpTask = w.buildTableTask(data.handles, data.retChunk)
+		tableLookUpTask = w.buildTableTask(*taskID, data.handles, data.retChunk)
 		if w.idxLookup.partitionTableMode {
 			tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 		}
-		*taskID++
+		(*taskID)++
 	}
 
-<<<<<<< HEAD
-		if curResultExhausted {
-			i++
-		}
-
-		if len(handles) == 0 && len(completedRows) == 0 {
-			continue
-		}
-
-		var completedTask *lookupTableTask
-		if len(completedRows) > 0 {
-			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
-			// for non-keep-order request, the completed rows can be sent to resultCh directly.
-			completedTask = w.buildCompletedTask(taskID, completedRows)
-			taskID++
-		}
-
-		var tableLookUpTask *lookupTableTask
-		if len(handles) > 0 {
-			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
-			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[i]
-=======
 	finishBuild := time.Now()
 	select {
 	case <-ctx.Done():
@@ -1667,37 +1604,9 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 			case <-w.finished:
 				return true
 			case w.resultCh <- completedTask:
->>>>>>> 06fb193fd71 (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676) (#68565))
 			}
-			taskID++
 		}
 
-<<<<<<< HEAD
-		finishBuild := time.Now()
-		if completedTask != nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-w.finished:
-				return nil
-			case w.resultCh <- completedTask:
-			}
-		}
-		if tableLookUpTask != nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-w.finished:
-				return nil
-			case w.workCh <- tableLookUpTask:
-				w.resultCh <- tableLookUpTask
-			}
-		}
-		if w.idxLookup.stats != nil {
-			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
-			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
-			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
-=======
 		if tableLookUpTask != nil {
 			select {
 			case <-ctx.Done():
@@ -1707,7 +1616,6 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 			case w.workCh <- tableLookUpTask:
 				w.resultCh <- tableLookUpTask
 			}
->>>>>>> 06fb193fd71 (executor: bound partition fan-out in IndexLookUp to prevent cop request burst (#67676) (#68565))
 		}
 	}
 	if w.idxLookup.stats != nil {
