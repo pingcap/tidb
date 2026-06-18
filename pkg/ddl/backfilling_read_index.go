@@ -85,6 +85,8 @@ type readIndexSummary struct {
 	mu         sync.Mutex
 }
 
+// localSortDiskUsageSnapshot is the immutable sampling result returned after a
+// localSortDiskUsageSampler has been stopped.
 type localSortDiskUsageSnapshot struct {
 	Duration  time.Duration
 	SampleCnt uint64
@@ -93,6 +95,12 @@ type localSortDiskUsageSnapshot struct {
 	LastBytes uint64
 }
 
+// localSortDiskUsageSampler samples local-sort disk usage for one pipeline run.
+// It is single-use: start must be called once before stopAndSnapshot, and
+// stopAndSnapshot must be called once to stop the background sampler. stopCh and
+// doneCh are owned by the sampler lifecycle. getUsage is called by start,
+// stopAndSnapshot, and the sampling goroutine; mu protects the timing and byte
+// counters that are captured in localSortDiskUsageSnapshot.
 type localSortDiskUsageSampler struct {
 	interval time.Duration
 	getUsage func() uint64
