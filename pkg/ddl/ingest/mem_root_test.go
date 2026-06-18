@@ -70,6 +70,11 @@ func TestRiskOfDiskFull(t *testing.T) {
 		}, 2)
 		require.NoError(t, err)
 
+		err = checkLocalSortFreeDisk("/tmp/local-sort", 3584*size.MB, 10*size.GB, []LocalSortJobDiskRequirement{
+			{RequiredSlots: 3, UsedBytes: 0},
+		}, 2)
+		require.NoError(t, err)
+
 		err = checkLocalSortFreeDisk("/tmp/local-sort", 1600*size.MB, 10*size.GB, []LocalSortJobDiskRequirement{
 			{RequiredSlots: 2, UsedBytes: 0},
 			{RequiredSlots: 2, UsedBytes: 2 * size.GB},
