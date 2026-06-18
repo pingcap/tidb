@@ -148,6 +148,10 @@ func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
 		callFailureHook(false)
 		return false, schemaNotExist
 	}
+	if valid, failReason, needRetry := checkTableReadyForAnalyze(tableInfo); !valid {
+		callFailureHook(needRetry)
+		return false, failReason
+	}
 	tableName := tableInfo.Name.O
 	indexNames := make([]string, 0, len(j.IndexIDs))
 	for _, index := range tableInfo.Indices {

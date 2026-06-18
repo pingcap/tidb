@@ -767,9 +767,13 @@ type SessionVars struct {
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize int
 	// MLogPurgeBatchSize indicates the max rows deleted by one purge batch transaction.
-	MLogPurgeBatchSize  int
-	RetryLimit          int64
-	DisableTxnAutoRetry bool
+	MLogPurgeBatchSize int
+	// MLogPurgeMinRate indicates the minimum target delete rate for adaptive MV log purge throttling.
+	MLogPurgeMinRate int
+	// MLogPurgeRateBudgetRatio indicates the fraction of the current scheduling window that purge may spend deleting.
+	MLogPurgeRateBudgetRatio float64
+	RetryLimit               int64
+	DisableTxnAutoRetry      bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -779,6 +783,10 @@ type SessionVars struct {
 	SysErrorCount uint16
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
+	// prepareStmtDedupCache caches PlanCacheStmt templates keyed by SQL text +
+	// charset + collation + currentDB to skip redundant Parse+Preprocess+Build
+	// on repeated COM_STMT_PREPARE for the same SQL within a session.
+	prepareStmtDedupCache *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
@@ -1352,6 +1360,9 @@ type SessionVars struct {
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
 
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -1532,6 +1543,8 @@ type SessionVars struct {
 	// InMaterializedViewMaintenance indicates the session is executing internal MV refresh / MV log purge statements.
 	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict.
 	InMaterializedViewMaintenance bool
+	// MVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
+	MVMaintainIsolationReadEngines string
 	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
 	MViewMaintainImportThreads int
 	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
@@ -1736,6 +1749,9 @@ type SessionVars struct {
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2148,131 +2164,134 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
-		UserVars:                      NewUserVars(),
-		systems:                       make(map[string]string),
-		PreparedStmts:                 make(map[uint32]any),
-		PreparedStmtNameToID:          make(map[string]uint32),
-		PlanCacheParams:               NewPlanCacheParamList(),
-		TxnCtx:                        &TransactionContext{},
-		RetryInfo:                     &RetryInfo{},
-		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
-		AutoIncrementIncrement:        DefAutoIncrementIncrement,
-		AutoIncrementOffset:           DefAutoIncrementOffset,
-		StmtCtx:                       stmtctx.NewStmtCtx(),
-		AllowAggPushDown:              false,
-		AllowCartesianBCJ:             DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
-		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
-		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
-		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
-		RetryLimit:                    DefTiDBRetryLimit,
-		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:              kv.PriorityLow,
-		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
-		preferRangeScan:               DefOptPreferRangeScan,
-		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
-		CorrelationThreshold:          DefOptCorrelationThreshold,
-		CorrelationExpFactor:          DefOptCorrelationExpFactor,
-		cpuFactor:                     DefOptCPUFactor,
-		copCPUFactor:                  DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
-		networkFactor:                 DefOptNetworkFactor,
-		scanFactor:                    DefOptScanFactor,
-		descScanFactor:                DefOptDescScanFactor,
-		seekFactor:                    DefOptSeekFactor,
-		memoryFactor:                  DefOptMemoryFactor,
-		diskFactor:                    DefOptDiskFactor,
-		concurrencyFactor:             DefOptConcurrencyFactor,
-		enableForceInlineCTE:          DefOptForceInlineCTE,
-		EnableVectorizedExpression:    DefEnableVectorizedExpression,
-		IndexScanCostFactor:           DefOptIndexScanCostFactor,
-		IndexReaderCostFactor:         DefOptIndexReaderCostFactor,
-		TableReaderCostFactor:         DefOptTableReaderCostFactor,
-		TableFullScanCostFactor:       DefOptTableFullScanCostFactor,
-		TableRangeScanCostFactor:      DefOptTableRangeScanCostFactor,
-		TableRowIDScanCostFactor:      DefOptTableRowIDScanCostFactor,
-		TableTiFlashScanCostFactor:    DefOptTableTiFlashScanCostFactor,
-		IndexLookupCostFactor:         DefOptIndexLookupCostFactor,
-		IndexMergeCostFactor:          DefOptIndexMergeCostFactor,
-		SortCostFactor:                DefOptSortCostFactor,
-		TopNCostFactor:                DefOptTopNCostFactor,
-		LimitCostFactor:               DefOptLimitCostFactor,
-		StreamAggCostFactor:           DefOptStreamAggCostFactor,
-		HashAggCostFactor:             DefOptHashAggCostFactor,
-		MergeJoinCostFactor:           DefOptMergeJoinCostFactor,
-		HashJoinCostFactor:            DefOptHashJoinCostFactor,
-		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
-		CommandValue:                  uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
-		enableIndexMerge:              DefTiDBEnableIndexMerge,
-		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
-		replicaRead:                   kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:              DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:           false,
-		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:              DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
-		SequenceState:                 NewSequenceState(),
-		WindowingUseHighPrecision:     true,
-		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
-		FoundInPlanCache:              DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:            DefTiDBFoundInBinding,
-		FoundInBinding:                DefTiDBFoundInBinding,
-		SelectLimit:                   math.MaxUint64,
-		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
-		EnableParallelApply:           DefTiDBEnableParallelApply,
-		ShardAllocateStep:             DefTiDBShardAllocateStep,
-		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                      kv.NewDefaultTxnScopeVar(),
-		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
-		Enable1PC:                     DefTiDBEnable1PC,
-		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:                DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
-		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
-		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
-		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
-		Rng:                           mathutil.NewWithTime(),
-		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
-		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
-		MaxAllowedPacket:              DefMaxAllowedPacket,
-		TiFlashFastScan:               DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: true,
-		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
-		HookContext:                   hctx,
-		EnableReuseChunk:              DefTiDBEnableReusechunk,
-		preUseChunkAlloc:              DefTiDBUseAlloc,
-		chunkPool:                     nil,
-		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
-		mppVersion:                    kv.MppVersionUnspecified,
-		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
-		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
-		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
-		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
-		GroupConcatMaxLen:             DefGroupConcatMaxLen,
-		EnableRedactLog:               DefTiDBRedactLog,
-		MViewMaintainImportThreads:    DefTiDBMViewMaintainImportThreads,
-		MViewMaintainImportDiskQuota:  DefTiDBMViewMaintainImportDiskQuota,
-		EnableWindowFunction:          DefEnableWindowFunction,
-		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
-		CostModelVersion:              DefTiDBCostModelVer,
-		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
-		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
-		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		UserVars:                       NewUserVars(),
+		systems:                        make(map[string]string),
+		PreparedStmts:                  make(map[uint32]any),
+		PreparedStmtNameToID:           make(map[string]uint32),
+		PlanCacheParams:                NewPlanCacheParamList(),
+		TxnCtx:                         &TransactionContext{},
+		RetryInfo:                      &RetryInfo{},
+		ActiveRoles:                    make([]*auth.RoleIdentity, 0, 10),
+		AutoIncrementIncrement:         DefAutoIncrementIncrement,
+		AutoIncrementOffset:            DefAutoIncrementOffset,
+		StmtCtx:                        stmtctx.NewStmtCtx(),
+		AllowAggPushDown:               false,
+		AllowCartesianBCJ:              DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:     DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:     DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:    DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:      DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:         DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:    DefOptEnableNoDecorrelateInSelect,
+		RetryLimit:                     DefTiDBRetryLimit,
+		DisableTxnAutoRetry:            DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:               kv.PriorityLow,
+		allowInSubqToJoinAndAgg:        DefOptInSubqToJoinAndAgg,
+		preferRangeScan:                DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:    DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:         DefOptLimitPushDownThreshold,
+		CorrelationThreshold:           DefOptCorrelationThreshold,
+		CorrelationExpFactor:           DefOptCorrelationExpFactor,
+		cpuFactor:                      DefOptCPUFactor,
+		copCPUFactor:                   DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:    DefOptTiFlashConcurrencyFactor,
+		networkFactor:                  DefOptNetworkFactor,
+		scanFactor:                     DefOptScanFactor,
+		descScanFactor:                 DefOptDescScanFactor,
+		seekFactor:                     DefOptSeekFactor,
+		memoryFactor:                   DefOptMemoryFactor,
+		diskFactor:                     DefOptDiskFactor,
+		concurrencyFactor:              DefOptConcurrencyFactor,
+		enableForceInlineCTE:           DefOptForceInlineCTE,
+		EnableVectorizedExpression:     DefEnableVectorizedExpression,
+		IndexScanCostFactor:            DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:          DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:          DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:        DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:       DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:       DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:     DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:          DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:           DefOptIndexMergeCostFactor,
+		SortCostFactor:                 DefOptSortCostFactor,
+		TopNCostFactor:                 DefOptTopNCostFactor,
+		LimitCostFactor:                DefOptLimitCostFactor,
+		StreamAggCostFactor:            DefOptStreamAggCostFactor,
+		HashAggCostFactor:              DefOptHashAggCostFactor,
+		MergeJoinCostFactor:            DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:             DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:            DefOptIndexJoinCostFactor,
+		CommandValue:                   uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:    DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                  config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:          DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:         DefWaitSplitRegionTimeout,
+		enableIndexMerge:               DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                  TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		replicaRead:                    kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:             DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:               DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:            DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:            false,
+		IsolationReadEngines:           make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:                DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:               DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:      DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                  NewSequenceState(),
+		WindowingUseHighPrecision:      true,
+		PrevFoundInPlanCache:           DefTiDBFoundInPlanCache,
+		FoundInPlanCache:               DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:             DefTiDBFoundInBinding,
+		FoundInBinding:                 DefTiDBFoundInBinding,
+		SelectLimit:                    math.MaxUint64,
+		AllowAutoRandExplicitInsert:    DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:           DefTiDBEnableClusteredIndex,
+		EnableParallelApply:            DefTiDBEnableParallelApply,
+		ShardAllocateStep:              DefTiDBShardAllocateStep,
+		PartitionPruneMode:             *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                       kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:         DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:              DefTiDBEnableAsyncCommit,
+		Enable1PC:                      DefTiDBEnable1PC,
+		GuaranteeLinearizability:       DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                 DefTiDBAnalyzeVersion,
+		EnableFullOuterJoin:            DefTiDBEnableFullOuterJoin,
+		EnableIndexMergeJoin:           DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:            make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:           DefCTEMaxRecursionDepth,
+		TMPTableSize:                   DefTiDBTmpTableMaxSize,
+		MPPStoreFailTTL:                DefTiDBMPPStoreFailTTL,
+		Rng:                            mathutil.NewWithTime(),
+		EnableLegacyInstanceScope:      DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:        DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:          DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:        DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:               DefMaxAllowedPacket,
+		TiFlashFastScan:                DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt:  true,
+		ForeignKeyChecks:               DefTiDBForeignKeyChecks,
+		HookContext:                    hctx,
+		EnableReuseChunk:               DefTiDBEnableReusechunk,
+		preUseChunkAlloc:               DefTiDBUseAlloc,
+		chunkPool:                      nil,
+		mppExchangeCompressionMode:     DefaultExchangeCompressionMode,
+		mppVersion:                     kv.MppVersionUnspecified,
+		EnableLateMaterialization:      DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:   tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:              resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:     mysql.DefaultCollationName,
+		GroupConcatMaxLen:              DefGroupConcatMaxLen,
+		EnableRedactLog:                DefTiDBRedactLog,
+		MVMaintainIsolationReadEngines: defaultIsolationReadEnginesValue(),
+		MViewMaintainImportThreads:     DefTiDBMViewMaintainImportThreads,
+		MViewMaintainImportDiskQuota:   DefTiDBMViewMaintainImportDiskQuota,
+		EnableWindowFunction:           DefEnableWindowFunction,
+		OptOrderingIdxSelRatio:         DefTiDBOptOrderingIdxSelRatio,
+		CostModelVersion:               DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:            DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:              DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:        DefOptEnableProjectionPushDown,
+		EnableCachePrepareStmt:         DefEnableCachePrepareStmt,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2309,6 +2328,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.MLogPurgeBatchSize = DefTiDBMLogPurgeBatchSize
+	vars.MLogPurgeMinRate = DefTiDBMLogPurgeMinRate
+	vars.MLogPurgeRateBudgetRatio = DefTiDBMLogPurgeRateBudgetRatio
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
@@ -2699,6 +2720,37 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	}
 	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
+}
+
+// PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
+// Including charset, collation, currentDB and sqlMode ensures that the cached
+// PlanCacheStmt is only reused when the session context that affects parsing,
+// name-resolution and cacheability decisions is identical. sqlMode is included
+// because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
+// IsASTCacheable (which computes StmtCacheable) runs on that AST.
+func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+	var modeBuf [8]byte
+	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+}
+
+// GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
+// or nil when the cache is empty or the key is not found.
+func (s *SessionVars) GetPrepareStmtDedupCache(key string) any {
+	if s.prepareStmtDedupCache == nil {
+		return nil
+	}
+	v, _ := s.prepareStmtDedupCache.Get(planCacheStmtKey(key))
+	return v
+}
+
+// SetPrepareStmtDedupCache stores a PrepareStmtCacheEntry under the given key.
+// The cache is lazily initialized and bounded by SessionPlanCacheSize (LRU eviction).
+func (s *SessionVars) SetPrepareStmtDedupCache(key string, val any) {
+	if s.prepareStmtDedupCache == nil {
+		s.prepareStmtDedupCache = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
+	}
+	s.prepareStmtDedupCache.Put(planCacheStmtKey(key), val)
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.

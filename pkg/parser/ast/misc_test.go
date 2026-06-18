@@ -85,6 +85,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		},
 		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
 		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
+		&ast.CompareMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}},
 		&ast.RefreshMaterializedViewImplementStmt{
 			RefreshStmt:                  &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
 			LastSuccessfulRefreshReadTSO: 1,
@@ -108,17 +109,44 @@ func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
 			Type: ast.RefreshMaterializedViewTypeFast,
 		},
 		LastSuccessfulRefreshReadTSO: 4242,
+		TargetRefreshReadTSO:         5252,
 	}
 
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242", sb.String())
+	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252", sb.String())
 }
 
 func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
 	_, ok := any(&ast.RefreshMaterializedViewStmt{}).(ast.StmtNode)
 	require.True(t, ok)
+}
+
+func TestCompareMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CompareMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCompareMaterializedViewStmtRestore(t *testing.T) {
+	stmt := &ast.CompareMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		AsOf: &ast.AsOfClause{
+			TsExpr: ast.NewValueExpr("2026-05-21 10:00:00", mysql.DefaultCharset, mysql.DefaultCollationName),
+		},
+		OutputTable: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv_diff"),
+		},
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-05-21 10:00:00' OUTPUT INTO TABLE `test`.`mv_diff`", sb.String())
 }
 
 func TestRefreshMaterializedViewStmtRestoreOutOfPlace(t *testing.T) {
@@ -127,14 +155,188 @@ func TestRefreshMaterializedViewStmtRestoreOutOfPlace(t *testing.T) {
 			Schema: model.NewCIStr("test"),
 			Name:   model.NewCIStr("mv"),
 		},
-		Type:       ast.RefreshMaterializedViewTypeComplete,
-		OutOfPlace: true,
+		WithAsyncMode: true,
+		Type:          ast.RefreshMaterializedViewTypeComplete,
+		CompleteType:  ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
 	}
 
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` COMPLETE OUT OF PLACE", sb.String())
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` WITH ASYNC MODE COMPLETE OUT OF PLACE", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtRestoreInPlace(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type:         ast.RefreshMaterializedViewTypeComplete,
+		CompleteType: ast.RefreshMaterializedViewCompleteTypeInPlace,
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` COMPLETE IN PLACE", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtRestoreDeltaApply(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type:         ast.RefreshMaterializedViewTypeComplete,
+		CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` COMPLETE DELTA APPLY", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtRestoreUnspecifiedCompleteType(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type: ast.RefreshMaterializedViewTypeComplete,
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := stmt.Restore(rctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
+}
+
+func TestRefreshMaterializedViewStmtRestoreFastIgnoresOutOfPlaceCompleteType(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type:         ast.RefreshMaterializedViewTypeFast,
+		CompleteType: ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` FAST", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtRestoreFastIgnoresDeltaApplyCompleteType(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type:         ast.RefreshMaterializedViewTypeFast,
+		CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` FAST", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtRestoreFastAsOfTimestamp(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		Type: ast.RefreshMaterializedViewTypeFast,
+		AsOf: &ast.AsOfClause{
+			TsExpr: ast.NewValueExpr("2021-04-15 00:00:00", mysql.DefaultCharset, mysql.DefaultCollationName),
+		},
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtMode(t *testing.T) {
+	cases := []struct {
+		name         string
+		stmt         *ast.RefreshMaterializedViewStmt
+		expectedMode ast.RefreshMaterializedViewMode
+		expectErr    string
+	}{
+		{
+			name: "fast",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type: ast.RefreshMaterializedViewTypeFast,
+			},
+			expectedMode: ast.RefreshMaterializedViewModeFast,
+		},
+		{
+			name: "complete in place",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type:         ast.RefreshMaterializedViewTypeComplete,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeInPlace,
+			},
+			expectedMode: ast.RefreshMaterializedViewModeCompleteInPlace,
+		},
+		{
+			name: "complete out of place",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type:         ast.RefreshMaterializedViewTypeComplete,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
+			},
+			expectedMode: ast.RefreshMaterializedViewModeCompleteOutOfPlace,
+		},
+		{
+			name: "complete delta apply",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type:         ast.RefreshMaterializedViewTypeComplete,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+			},
+			expectedMode: ast.RefreshMaterializedViewModeCompleteDeltaApply,
+		},
+		{
+			name: "complete unspecified",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type: ast.RefreshMaterializedViewTypeComplete,
+			},
+			expectErr: "COMPLETE refresh mode must be specified explicitly",
+		},
+		{
+			name: "unknown type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type: ast.RefreshMaterializedViewType(-1),
+			},
+			expectErr: "unknown REFRESH MATERIALIZED VIEW type",
+		},
+		{
+			name: "unknown complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				Type:         ast.RefreshMaterializedViewTypeComplete,
+				CompleteType: ast.RefreshMaterializedViewCompleteType(-1),
+			},
+			expectErr: "unknown COMPLETE mode",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mode, err := tc.stmt.Mode()
+			if tc.expectErr != "" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedMode, mode)
+		})
+	}
 }
 
 func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {

@@ -573,6 +573,21 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
+	// Current FULL OUTER JOIN limitations:
+	// 1) NATURAL/USING/full-join-without-ON are still out of scope.
+	// 2) FULL OUTER JOIN is enabled in volcano path only.
+	if joinNode.Tp == ast.FullJoin {
+		if !b.ctx.GetSessionVars().EnableFullOuterJoin {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		}
+		if b.ctx.GetSessionVars().GetEnableCascadesPlanner() {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN with cascades planner")
+		}
+		if joinNode.NaturalJoin || joinNode.Using != nil || joinNode.On == nil {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		}
+	}
+
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
 	if lc, ok := rightPlan.(*logicalop.LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
 		return nil, plannererrors.ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.Name)
@@ -601,6 +616,13 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
 		joinPlan.JoinType = logicalop.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
+	case ast.FullJoin:
+		// The rule EliminateOuterJoin does nothing with the full outer join, but a full outer join may be
+		// optimized to a one-sided outer join by null-reject checking. So we add the rule flag here for the
+		// potential optimization.
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		joinPlan.JoinType = logicalop.FullOuterJoin
+		util.ResetNotNullFlag(joinPlan.Schema(), 0, joinPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = logicalop.InnerJoin
 	}
@@ -635,6 +657,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// Clear NotNull flag for the inner side schema if it's an outer join.
 	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
 		util.ResetNotNullFlag(joinPlan.FullSchema, lFullSchema.Len(), joinPlan.FullSchema.Len())
+	} else if joinNode.Tp == ast.FullJoin {
+		util.ResetNotNullFlag(joinPlan.FullSchema, 0, joinPlan.FullSchema.Len())
 	}
 
 	// Merge sub-plan's FullNames into this join plan, similar to the FullSchema logic above.
@@ -748,6 +772,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	} else if joinTp == ast.RightJoin {
 		util.ResetNotNullFlag(lsc, 0, lsc.Len())
+	} else if joinTp == ast.FullJoin {
+		util.ResetNotNullFlag(lsc, 0, lsc.Len())
+		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
@@ -4431,9 +4458,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
-	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
-	if err != nil {
-		return nil, err
+	if !b.useInfoSchemaAsIs {
+		tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
+		if err != nil {
+			return nil, err
+		}
 	}
 	tableInfo := tbl.Meta()
 
@@ -4457,6 +4486,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tblName := *asName
 	if tblName.L == "" {
 		tblName = tn.Name
+	}
+	if err := CheckMViewReadable(sessionVars, tableInfo, tblName.O); err != nil {
+		return nil, err
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
@@ -4933,6 +4965,12 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = NewInfoSchemaIndexesExtractor()
 		case infoschema.TableViews:
 			p.Extractor = NewInfoSchemaViewsExtractor()
+		case infoschema.TableTiDBMViews:
+			p.Extractor = NewInfoSchemaTiDBMViewsExtractor()
+		case infoschema.TableTiDBMLogs:
+			p.Extractor = NewInfoSchemaTiDBMLogsExtractor()
+		case infoschema.TableTiDBTableMViewDependencies:
+			p.Extractor = NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		case infoschema.TableKeyColumn:
 			p.Extractor = NewInfoSchemaKeyColumnUsageExtractor()
 		case infoschema.TableConstraints:

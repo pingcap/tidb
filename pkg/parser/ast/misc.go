@@ -62,6 +62,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &PurgeMaterializedViewLogStmt{}
 	_ StmtNode = &RefreshMaterializedViewStmt{}
+	_ StmtNode = &CompareMaterializedViewStmt{}
 	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 
@@ -516,8 +517,12 @@ type RefreshMaterializedViewStmt struct {
 	ViewName      *TableName
 	WithAsyncMode bool
 	Type          RefreshMaterializedViewType
-	OutOfPlace    bool
-	ObserveType   RefreshMaterializedViewObserveType
+	// CompleteType configures COMPLETE refresh mode.
+	// It is only meaningful when Type == RefreshMaterializedViewTypeComplete.
+	// COMPLETE refresh must specify one explicit subtype.
+	CompleteType RefreshMaterializedViewCompleteType
+	ObserveType  RefreshMaterializedViewObserveType
+	AsOf         *AsOfClause
 }
 
 // RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
@@ -533,6 +538,7 @@ type RefreshMaterializedViewImplementStmt struct {
 
 	RefreshStmt                  *RefreshMaterializedViewStmt
 	LastSuccessfulRefreshReadTSO uint64
+	TargetRefreshReadTSO         uint64
 }
 
 // Restore implements Node interface.
@@ -546,6 +552,10 @@ func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) e
 	}
 	ctx.WriteKeyWord(" USING TIMESTAMP ")
 	ctx.WritePlain(strconv.FormatUint(n.LastSuccessfulRefreshReadTSO, 10))
+	if n.TargetRefreshReadTSO > 0 {
+		ctx.WriteKeyWord(" UP TO TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.TargetRefreshReadTSO, 10))
+	}
 	return nil
 }
 
@@ -584,6 +594,79 @@ func (t RefreshMaterializedViewType) String() string {
 	}
 }
 
+type RefreshMaterializedViewCompleteType int
+
+const (
+	_ RefreshMaterializedViewCompleteType = iota
+	RefreshMaterializedViewCompleteTypeInPlace
+	RefreshMaterializedViewCompleteTypeOutOfPlace
+	RefreshMaterializedViewCompleteTypeDeltaApply
+)
+
+func (t RefreshMaterializedViewCompleteType) String() string {
+	switch t {
+	case RefreshMaterializedViewCompleteTypeInPlace:
+		return "IN PLACE"
+	case RefreshMaterializedViewCompleteTypeOutOfPlace:
+		return "OUT OF PLACE"
+	case RefreshMaterializedViewCompleteTypeDeltaApply:
+		return "DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+type RefreshMaterializedViewMode int
+
+const (
+	RefreshMaterializedViewModeFast RefreshMaterializedViewMode = iota
+	RefreshMaterializedViewModeCompleteInPlace
+	RefreshMaterializedViewModeCompleteOutOfPlace
+	RefreshMaterializedViewModeCompleteDeltaApply
+)
+
+func (m RefreshMaterializedViewMode) String() string {
+	switch m {
+	case RefreshMaterializedViewModeFast:
+		return "FAST"
+	case RefreshMaterializedViewModeCompleteInPlace:
+		return "COMPLETE IN PLACE"
+	case RefreshMaterializedViewModeCompleteOutOfPlace:
+		return "COMPLETE OUT OF PLACE"
+	case RefreshMaterializedViewModeCompleteDeltaApply:
+		return "COMPLETE DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Mode derives the concrete refresh execution mode from Type + CompleteType.
+func (n *RefreshMaterializedViewStmt) Mode() (RefreshMaterializedViewMode, error) {
+	if n == nil {
+		return 0, errors.New("RefreshMaterializedViewStmt: nil statement")
+	}
+	switch n.Type {
+	case RefreshMaterializedViewTypeFast:
+		return RefreshMaterializedViewModeFast, nil
+	case RefreshMaterializedViewTypeComplete:
+		if n.CompleteType == 0 {
+			return 0, errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			return RefreshMaterializedViewModeCompleteInPlace, nil
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			return RefreshMaterializedViewModeCompleteOutOfPlace, nil
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			return RefreshMaterializedViewModeCompleteDeltaApply, nil
+		default:
+			return 0, errors.New("RefreshMaterializedViewStmt: unknown COMPLETE mode")
+		}
+	default:
+		return 0, errors.New("RefreshMaterializedViewStmt: unknown REFRESH MATERIALIZED VIEW type")
+	}
+}
+
 type RefreshMaterializedViewObserveType int
 
 const (
@@ -603,8 +686,26 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
-	if n.OutOfPlace {
-		ctx.WriteKeyWord(" OUT OF PLACE")
+	if n.Type == RefreshMaterializedViewTypeComplete {
+		if n.CompleteType == 0 {
+			return errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			ctx.WriteKeyWord(" IN PLACE")
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			ctx.WriteKeyWord(" OUT OF PLACE")
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			ctx.WriteKeyWord(" DELTA APPLY")
+		default:
+			return errors.New("RefreshMaterializedViewStmt: unknown COMPLETE mode")
+		}
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.AsOf")
+		}
 	}
 	switch n.ObserveType {
 	case RefreshMaterializedViewObserveDryRun:
@@ -628,6 +729,73 @@ func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+	return v.Leave(n)
+}
+
+// CompareMaterializedViewStmt is a statement to compare a materialized view with its source query snapshot.
+type CompareMaterializedViewStmt struct {
+	stmtNode
+	ViewName    *TableName
+	AsOf        *AsOfClause
+	OutputTable *TableName
+}
+
+// Restore implements Node interface.
+func (n *CompareMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("COMPARE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.ViewName")
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.AsOf")
+		}
+	}
+	if n.OutputTable != nil {
+		ctx.WriteKeyWord(" OUTPUT INTO TABLE ")
+		if err := n.OutputTable.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.OutputTable")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CompareMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CompareMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+	if n.OutputTable != nil {
+		node, ok := n.OutputTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OutputTable = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -3910,6 +4078,16 @@ const (
 	ImportIntoCancel ImportIntoActionTp = "cancel"
 )
 
+// CancelMaterializedViewJobType identifies which materialized-view job family a CANCEL statement targets.
+type CancelMaterializedViewJobType uint8
+
+const (
+	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
+	CancelMaterializedViewJobTypeRefresh CancelMaterializedViewJobType = iota + 1
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
+	CancelMaterializedViewJobTypeLogPurge
+)
+
 // ImportIntoActionStmt represent CANCEL IMPORT INTO JOB statement.
 // will support pause/resume/drop later.
 type ImportIntoActionStmt struct {
@@ -3929,6 +4107,31 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// CancelMaterializedViewJobStmt represent CANCEL MATERIALIZED VIEW ... JOB statement.
+type CancelMaterializedViewJobStmt struct {
+	stmtNode
+	Tp    CancelMaterializedViewJobType
+	JobID int64
+}
+
+func (n *CancelMaterializedViewJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case CancelMaterializedViewJobTypeRefresh:
+		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW REFRESH JOB ")
+	case CancelMaterializedViewJobTypeLogPurge:
+		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", n.Tp)
+	}
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }

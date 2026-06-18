@@ -2149,39 +2149,39 @@ insert into table_20220419(lastLoginDate) select lastLoginDate from table_202204
 set sql_mode=default;
 
 # TestIssue49015
-drop table if exists test.t;
-create table test.t (a varchar(10), b tinyint(1));
-insert into test.t values ("abc", 1);
-select * from test.t where (a, b) in (('a', 1), (null, 0));
-update test.t set b = 0 where (a, b) in (('a', 1), (null, 0));
+drop table if exists test.t_issue49015;
+create table test.t_issue49015 (a varchar(10), b tinyint(1));
+insert into test.t_issue49015 values ("abc", 1);
+select * from test.t_issue49015 where (a, b) in (('a', 1), (null, 0));
+update test.t_issue49015 set b = 0 where (a, b) in (('a', 1), (null, 0));
 SHOW WARNINGS;
 
 # TestIssue49986
-drop table if exists test.t;
+drop table if exists test.t_issue49015;
 create table if not exists test.ast (i varchar(20));
 create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
 explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
 
 # TestIssue56460
-drop table if exists test.t;
-create table test.t (a int);
-insert into test.t values(0),(20015),(20100);
-select date_add(a, interval 12345 DAY_HOUR) from test.t;
+drop table if exists test.t_issue56460;
+create table test.t_issue56460 (a int);
+insert into test.t_issue56460 values(0),(20015),(20100);
+select date_add(a, interval 12345 DAY_HOUR) from test.t_issue56460;
 
 # TestIssue56481
-drop table if exists test.t;
-create table test.t(f1 char(1));
-insert into test.t values ('a'),('b'),('1');
-select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
+drop table if exists test.t_issue56460;
+create table test.t_issue56481(f1 char(1));
+insert into test.t_issue56481 values ('a'),('b'),('1');
+select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t_issue56481;
 SHOW WARNINGS;
-select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t;
+select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t_issue56481;
 SHOW WARNINGS;
 
 # TestIssue56462
-DROP TABLE IF EXISTS test.t;
-CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
-INSERT INTO test.t VALUES (1234567890123456);
-SELECT IFNULL(id, 'abcdef') FROM test.t;
+DROP TABLE IF EXISTS test.t_issue56481;
+CREATE TABLE test.t_issue56462 (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t_issue56462 VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t_issue56462;
 
 # TestIssue56772
 drop table if exists lrr_test;
@@ -2195,11 +2195,11 @@ execute stmt using @a,@b;
 # TestIssue61246
 # Test for duplicate constant values in IN expressions
 use test;
-drop table if exists t;
-create table t(a int);
-insert into t values (1), (2), (3), (4), (5);
+drop table if exists t_issue61246;
+create table t_issue61246(a int);
+insert into t_issue61246 values (1), (2), (3), (4), (5);
 
-explain format=brief select * from t where a in (1, 1, 1, 1, 1, 2);
+explain format=brief select * from t_issue61246 where a in (1, 1, 1, 1, 1, 2);
 
 create table t_str(s varchar(10));
 insert into t_str values ('test');
@@ -2209,15 +2209,15 @@ create table t_dec(d decimal(10,2));
 insert into t_dec values (1.5), (2.5);
 explain format=brief select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
 
-explain format=brief select * from t where a in (1, NULL, NULL, NULL, 2);
+explain format=brief select * from t_issue61246 where a in (1, NULL, NULL, NULL, 2);
 
 create table t_date(dt date);
 insert into t_date values ('2023-01-01'), ('2023-01-02');
 explain format=brief select * from t_date where dt in 
   ('2023-01-01', '2023-01-01', '2023-01-02');
 
-select * from t where a in (1, 1, 1, 1, 2);
+select * from t_issue61246 where a in (1, 1, 1, 1, 2);
 select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
 select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
-select * from t where a in (1, NULL, NULL, NULL, 2);
+select * from t_issue61246 where a in (1, NULL, NULL, NULL, 2);
 select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');

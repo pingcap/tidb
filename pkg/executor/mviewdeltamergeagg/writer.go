@@ -176,9 +176,6 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 
 	for _, op := range result.RowOps {
 		switch op.Tp {
-		case RowOpNoOp:
-			stats.noopRows++
-			continue
 		case RowOpInsert:
 			stats.insertRows++
 			w.buildInsertRow(result, op.RowIdx)
@@ -204,12 +201,15 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 				return err
 			}
 		case RowOpUpdate:
+			updateOrdinal := int(op.updateOrdinal)
+			changed := w.buildTouchedFromBitmap(result.UpdateTouchedBitmap, result.UpdateTouchedStride, updateOrdinal)
+			if !changed {
+				stats.noopRows++
+				continue
+			}
+
 			stats.updateRows++
 			w.buildUpdateRows(result, op.RowIdx)
-
-			updateOrdinal := int(op.updateOrdinal)
-			w.buildTouchedFromBitmap(result.UpdateTouchedBitmap, result.UpdateTouchedStride, updateOrdinal)
-
 			handle, err := w.exec.TargetHandleCols.BuildHandle(stmtCtx, result.Input.GetRow(op.RowIdx))
 			if err != nil {
 				return err
@@ -256,7 +256,7 @@ func (w *tableResultWriter) validateChunkResult(result *ChunkResult) error {
 	}
 	updateCandidateCnt := 0
 	for _, op := range result.RowOps {
-		if op.Tp == RowOpUpdate || (op.Tp == RowOpNoOp && op.updateOrdinal >= 0) {
+		if op.Tp == RowOpUpdate {
 			if int(op.updateOrdinal) != updateCandidateCnt {
 				return errors.Errorf(
 					"update touched ordinal mismatch, expected=%d got=%d",
@@ -319,18 +319,24 @@ func (w *tableResultWriter) buildUpdateRows(result *ChunkResult, rowIdx int) {
 	}
 }
 
-func (w *tableResultWriter) buildTouchedFromBitmap(updateTouchedBitmap []uint8, updateTouchedStride, updateOrdinal int) {
+func (w *tableResultWriter) buildTouchedFromBitmap(updateTouchedBitmap []uint8, updateTouchedStride, updateOrdinal int) bool {
 	clear(w.touched)
+	if updateTouchedStride == 0 {
+		return false
+	}
 
 	offset := updateOrdinal * updateTouchedStride
 	rowBits := updateTouchedBitmap[offset : offset+updateTouchedStride]
+	changed := false
 	for byteIdx, b := range rowBits {
 		for b != 0 {
 			bitInByte := bits.TrailingZeros8(b)
 			bitPos := (byteIdx << 3) + bitInByte
 			idx := w.aggWritableIDs[bitPos]
 			w.touched[idx] = true
+			changed = true
 			b &= b - 1
 		}
 	}
+	return changed
 }

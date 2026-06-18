@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -133,7 +134,7 @@ func TestMLogInsert(t *testing.T) {
 	))
 
 	// Partial-column insert with DEFAULT value.
-	tk.MustExec("drop table if exists `$mlog$t`")
+	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int default 99)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
@@ -739,6 +740,12 @@ func TestMLogSkipUntrackedColumns(t *testing.T) {
 	// mlog tracks (a, b); c is untracked.
 	tk.MustExec("create materialized view log on t (a, b)")
 
+	// Modifying an untracked column should not affect the mlog physical table.
+	showBefore := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	tk.MustExec("alter table t modify column c bigint")
+	showAfter := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Equal(t, showBefore, showAfter)
+
 	// Updating an untracked column should not produce any mlog entry.
 	tk.MustExec("update t set c=2000 where a=1")
 	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
@@ -814,6 +821,49 @@ func TestMLogTrackedReferenceTypes(t *testing.T) {
 		"alpha payload1 12.34 62696E31 U -1",
 		"beta payload2 56.78 62696E32 U 1",
 	))
+
+	// No-reorg modify on a tracked column should also update the mlog physical column type.
+	showBefore := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showBefore, "`s` varchar(20)")
+	tk.MustExec("alter table t modify column s varchar(40)")
+	showAfter := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showAfter, "`s` varchar(40)")
+
+	// Existing mlog rows are still readable after the type change.
+	tk.MustQuery(
+		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"alpha v1 12.34 7061796C6F616431 U -1",
+		"beta v2 56.78 7061796C6F616432 U 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec(`update t set s='gamma' where id=1`)
+	tk.MustQuery(
+		"select s, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"beta U -1",
+		"gamma U 1",
+	))
+
+	// Reorg-required modify should be rejected for tracked columns on mlog-only base tables.
+	err := tk.ExecToErr("alter table t modify column s varchar(5)")
+	require.ErrorContains(t, err, "only supports no-reorg compatible type changes for tracked columns")
+}
+
+func TestMLogTrackedNullToNotNullChangeRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, g int not null, c int)")
+	tk.MustExec("create materialized view log on t (g, c)")
+
+	tk.MustExec("insert into t values (1, 1, null)")
+	tk.MustExec("update t set c = 10 where id = 1")
+
+	err := tk.ExecToErr("alter table t modify column c bigint not null")
+	require.ErrorContains(t, err, "does not support changing tracked columns from NULL to NOT NULL")
 }
 
 func TestMLogPrunedColumns(t *testing.T) {
@@ -822,40 +872,36 @@ func TestMLogPrunedColumns(t *testing.T) {
 	tk.MustExec("use test")
 
 	t.Run("delete", func(t *testing.T) {
-		tk.MustExec("drop table if exists `$mlog$t`")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int)")
-		tk.MustExec("create materialized view log on t (a, b)")
-		tk.MustExec("insert into t values (1,10)")
-		execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+		tk.MustExec("create table t_mlog_pruned_delete (a int, b int)")
+		tk.MustExec("create materialized view log on t_mlog_pruned_delete (a, b)")
+		tk.MustExec("insert into t_mlog_pruned_delete values (1,10)")
+		execAsMViewMaintenance(tk, "delete from `$mlog$t_mlog_pruned_delete`")
 
 		// Delete normally can prune non-handle/index columns, but mlog RemoveRecord reads
 		// tracked columns by base offsets; pruning them would make mlog writing fail.
-		tk.MustExec("delete from t where b=10")
+		tk.MustExec("delete from t_mlog_pruned_delete where b=10")
 
-		tk.MustQuery("select a, b from t").Check(testkit.Rows())
+		tk.MustQuery("select a, b from t_mlog_pruned_delete").Check(testkit.Rows())
 		tk.MustQuery(
-			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_pruned_delete`",
 		).Check(testkit.Rows(
 			"1 10 D -1",
 		))
 	})
 
 	t.Run("update", func(t *testing.T) {
-		tk.MustExec("drop table if exists `$mlog$t`")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int)")
-		tk.MustExec("create materialized view log on t (a, b)")
-		tk.MustExec("insert into t values (1,10)")
-		execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+		tk.MustExec("create table t_mlog_pruned_update (a int, b int)")
+		tk.MustExec("create materialized view log on t_mlog_pruned_update (a, b)")
+		tk.MustExec("insert into t_mlog_pruned_update values (1,10)")
+		execAsMViewMaintenance(tk, "delete from `$mlog$t_mlog_pruned_update`")
 
 		// Even if only column b is updated, UpdateRecord still needs full writable row data.
 		// If update column pruning drops tracked columns, mlog writing would fail.
-		tk.MustExec("update t set b=11 where b=10")
+		tk.MustExec("update t_mlog_pruned_update set b=11 where b=10")
 
-		tk.MustQuery("select a, b from t").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select a, b from t_mlog_pruned_update").Check(testkit.Rows("1 11"))
 		tk.MustQuery(
-			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_pruned_update`",
 		).Sort().Check(testkit.Rows(
 			"1 10 U -1",
 			"1 11 U 1",
@@ -904,6 +950,137 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 		"1 0 10 101",
 		"2 0 20 200",
 	))
+}
+
+// TestMLogAddColumnRejectsNonPublicBaseColumn verifies that ALTER MATERIALIZED
+// VIEW LOG only accepts public base-table columns. A column being added by
+// concurrent online DDL is visible in metadata before it becomes public, and mlog
+// tracking must reject it until the base DDL finishes.
+func TestMLogAddColumnRejectsNonPublicBaseColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int)")
+	tk.MustExec("create materialized view log on t (id)")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter table t add column added int default 0",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "base-table add-column write-reorg")
+
+	// The base column is non-public while ADD COLUMN is paused, so the mlog
+	// should treat it as unavailable instead of adding a transient column.
+	tk.MustGetErrCode("alter materialized view log on t add column (added)", errno.ErrBadField)
+
+	ctrl.releaseAndWaitFinish(t)
+
+	// Once the base ADD COLUMN completes, the same column is public and can be
+	// tracked by the mlog normally.
+	tk.MustExec("alter materialized view log on t add column (added)")
+	rows := tk.MustQuery("show create materialized view log on t").Rows()
+	require.Len(t, rows, 1)
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t` (`id`, `added`)")
+}
+
+// TestMLogOnlineDDLAddTrackedColumn verifies mlog writes while ADD COLUMN is in
+// progress: before the new mlog column is public, writes still use the old
+// tracked-column set; after it is public, the new tracked column participates in
+// update logging.
+func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, added int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100, 1000)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t add column (added)",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "mlog add-column write-reorg")
+
+	// The new mlog column is not public yet, so mlog writing should continue with the
+	// previous tracked column set instead of treating the transient metadata as corrupt.
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set untracked = 1001 where id = 1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	tk.MustExec("update t set added = 101 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, added, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 11 100 U -1",
+		"1 11 101 U 1",
+	))
+
+	tk.MustExec("create table t_drop_race (id int primary key, tracked int, added int)")
+	tk.MustExec("create materialized view log on t_drop_race (id)")
+	tkDDL2 := testkit.NewTestKit(t, store)
+	tkDDL2.MustExec("use test")
+	ctrl2 := startDDLPausedAtFailpoint(
+		t,
+		tkDDL2,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t_drop_race add column (added)",
+	)
+	defer ctrl2.releaseAndWaitFinish(t)
+	ctrl2.waitUntilPaused(t, "mlog add-column write-reorg before base drop")
+
+	tkDrop := testkit.NewTestKit(t, store)
+	tkDrop.MustExec("use test")
+	dropDone := make(chan error, 1)
+	go func() {
+		dropDone <- tkDrop.ExecToErr("alter table t_drop_race drop column added")
+	}()
+	select {
+	case err := <-dropDone:
+		require.FailNow(t, "base drop column finished before mlog add completed", "err=%v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	ctrl2.releaseAndWaitFinish(t)
+	select {
+	case err := <-dropDone:
+		require.ErrorContains(t, err, "referenced by materialized view log")
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting base drop column to finish")
+	}
+	rows := tk.MustQuery("show create materialized view log on t_drop_race").Rows()
+	require.Len(t, rows, 1)
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_drop_race` (`id`, `added`)")
 }
 
 func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
