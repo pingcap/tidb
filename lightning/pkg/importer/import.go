@@ -384,6 +384,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
+		// Disable router QueryRegion streams so newer Lightning can import into older PD clusters.
 		pdClientOptions := append(ingestctrl.PDClientOptions(), opt.WithEnableRouterClient(false))
 		pdCli, err = pd.NewClientWithAPIContext(ctx, apiContext, componentName, addrs, tls.ToPDSecurityOption(), pdClientOptions...)
 		if err != nil {
@@ -1212,7 +1213,10 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithAPIContext(ctx, rc.apiContext, componentName, addrs, tlsOpt)
+	// Disable router QueryRegion streams for older PD clusters during duplicate resolution.
+	pdCli, err := pd.NewClientWithAPIContext(
+		ctx, rc.apiContext, componentName, addrs, tlsOpt, opt.WithEnableRouterClient(false),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

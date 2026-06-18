@@ -487,7 +487,7 @@ type BackendConfig struct {
 	ResourceGroupName         string
 	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
-	// DisablePDClientRouterClient keeps region lookups on legacy PD RPCs.
+	// DisablePDClientRouterClient uses legacy PD region RPCs for callers that must work with older PD clusters.
 	DisablePDClientRouterClient bool
 	// whether disable automatic compactions of pebble db of engine.
 	// deduplicate pebble db is not affected by this option.
