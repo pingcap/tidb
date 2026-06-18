@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,8 +62,19 @@ func TestNewEtcdClientConfig(t *testing.T) {
 
 func TestNewCRRCheckpointServiceRejectsNonLogBackupUpstream(t *testing.T) {
 	ctx := context.Background()
+	flags := pflag.NewFlagSet("crr-checkpoint", pflag.ContinueOnError)
+	task.DefineCommonFlags(flags)
+	DefineFlagsForCRRCheckpointConfig(flags)
+	require.NoError(t, flags.Set(flagTaskName, "test-task"))
+	require.NoError(t, flags.Set(flagUpstreamStorage, "local://"+filepath.ToSlash(t.TempDir())))
+
+	parseCfg := CRRCheckpointConfig{}
+	err := parseCfg.ParseFromFlags(flags)
+	require.ErrorContains(t, err, "missing required flag --downstream-storage")
+
 	cfg := CRRCheckpointConfig{
-		UpstreamStorage: "local://" + filepath.ToSlash(t.TempDir()),
+		UpstreamStorage:   "local://" + filepath.ToSlash(t.TempDir()),
+		DownstreamStorage: "local://" + filepath.ToSlash(t.TempDir()),
 	}
 	cfg.CRRConfig.TaskName = "test-task"
 
@@ -79,12 +91,26 @@ func TestCheckCRRUpstreamStorage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(upstream.Close)
 
-	err = checkCRRUpstreamStorage(ctx, upstream)
+	stateStore := buildResumeStateStore(upstream)
+	storageStore, ok := stateStore.(*storageResumeStateStore)
+	require.True(t, ok)
+	require.Equal(t, "crr-checkpoint/resume-state.json", storageStore.path)
+
+	err = checkCRRExternalStorage(ctx, upstream, "upstream")
 	require.ErrorContains(t, err, "is not a log backup directory")
+	require.ErrorContains(t, err, "upstream storage")
 	require.ErrorContains(t, err, metautil.LockFile)
 
 	require.NoError(t, upstream.WriteFile(ctx, metautil.LockFile, nil))
-	require.NoError(t, checkCRRUpstreamStorage(ctx, upstream))
+	require.NoError(t, checkCRRExternalStorage(ctx, upstream, "upstream"))
+
+	downstream, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(downstream.Close)
+
+	err = checkCRRExternalStorage(ctx, downstream, "downstream")
+	require.ErrorContains(t, err, "is not a log backup directory")
+	require.ErrorContains(t, err, "downstream storage")
 }
 
 func TestBuildObjectSyncChecker(t *testing.T) {

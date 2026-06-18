@@ -15,10 +15,7 @@
 package service
 
 import (
-	"fmt"
 	"maps"
-	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,26 +31,12 @@ const (
 	stateStopped  = "stopped"
 
 	phaseIdle = "idle"
+
+	statusFileName = "crr-checkpoint/resume-state.json"
 )
 
-func normalizeStorageSubDir(subDir string) (string, error) {
-	trimmed := strings.Trim(subDir, "/")
-	if trimmed == "" {
-		return "", fmt.Errorf("state storage subdir must not be empty")
-	}
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("state storage subdir must stay within selected storage, got %q", subDir)
-	}
-	return cleaned, nil
-}
-
-func GetStatusFileName(subDir string) (string, error) {
-	normalizedSubDir, err := normalizeStorageSubDir(subDir)
-	if err != nil {
-		return "", err
-	}
-	return path.Join(normalizedSubDir, "resume-state.json"), nil
+func GetStatusFileName() string {
+	return statusFileName
 }
 
 // StatusStatistic summarizes the current round's file-related work.

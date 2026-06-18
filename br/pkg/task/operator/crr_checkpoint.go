@@ -52,9 +52,17 @@ func NewCRRCheckpointService(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkCRRUpstreamStorage(ctx, upstreamStorage); err != nil {
+	if err := checkCRRExternalStorage(ctx, upstreamStorage, "upstream"); err != nil {
 		upstreamStorage.Close()
 		return nil, nil, err
+	}
+	_, downstreamStorage, err := task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
+	if err != nil {
+		upstreamStorage.Close()
+		return nil, nil, err
+	}
+	if err := checkCRRExternalStorage(ctx, downstreamStorage, "downstream"); err != nil {
+		log.Warn("failed to check the downstream storage", zap.Error(err))
 	}
 
 	mgr, err := task.NewMgr(
@@ -69,25 +77,16 @@ func NewCRRCheckpointService(
 	)
 	if err != nil {
 		upstreamStorage.Close()
+		downstreamStorage.Close()
 		return nil, nil, err
 	}
 
 	etcdCli, err := dialEtcdWithCfg(ctx, cfg.Config)
 	if err != nil {
 		upstreamStorage.Close()
+		downstreamStorage.Close()
 		mgr.Close()
 		return nil, nil, err
-	}
-
-	var downstreamStorage storage.ExternalStorage
-	if cfg.DownstreamStorage != "" {
-		_, downstreamStorage, err = task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
-		if err != nil {
-			upstreamStorage.Close()
-			closeEtcdClient(etcdCli)
-			mgr.Close()
-			return nil, nil, err
-		}
 	}
 
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCli)
@@ -97,28 +96,13 @@ func NewCRRCheckpointService(
 		cfg.CheckSyncedFromDownstreamStorage,
 	)
 	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
+		downstreamStorage.Close()
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
 		return nil, nil, err
 	}
-	resumeStateStorage := upstreamStorage
-	if downstreamStorage != nil {
-		resumeStateStorage = downstreamStorage
-	}
-	stateStore, err := buildResumeStateStore(resumeStateStorage, cfg.CRRConfig.StateStorageSubDir)
-	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
-		upstreamStorage.Close()
-		closeEtcdClient(etcdCli)
-		mgr.Close()
-		return nil, nil, err
-	}
+	stateStore := buildResumeStateStore(downstreamStorage)
 	svc, err := service.New(
 		service.Deps{
 			PD:       env,
@@ -137,9 +121,7 @@ func NewCRRCheckpointService(
 		},
 	)
 	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
+		downstreamStorage.Close()
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
@@ -147,9 +129,7 @@ func NewCRRCheckpointService(
 	}
 
 	cleanup := func() {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
+		downstreamStorage.Close()
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
@@ -157,15 +137,15 @@ func NewCRRCheckpointService(
 	return svc, cleanup, nil
 }
 
-func checkCRRUpstreamStorage(ctx context.Context, storage storage.ExternalStorage) error {
+func checkCRRExternalStorage(ctx context.Context, storage storage.ExternalStorage, source string) error {
 	exists, err := storage.FileExists(ctx, metautil.LockFile)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file in upstream storage", metautil.LockFile)
+		return errors.Annotatef(err, "error occurred when checking %s file in %s storage", metautil.LockFile, source)
 	}
 	if !exists {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"upstream storage %s is not a log backup directory because %s does not exist",
-			storage.URI(), metautil.LockFile,
+			"%s storage %s is not a log backup directory because %s does not exist",
+			source, storage.URI(), metautil.LockFile,
 		)
 	}
 	return nil
@@ -183,7 +163,7 @@ func buildObjectSyncChecker(
 		return upstreamChecker, nil
 	}
 	return nil, fmt.Errorf(
-		"upstream storage cannot check object sync; to confirm replication from downstream storage, provide --downstream-storage and enable --check-synced-from-downstream-storage",
+		"upstream storage cannot check object sync; to confirm replication by downstream storage existence, enable --check-synced-from-downstream-storage",
 	)
 }
 
@@ -194,19 +174,11 @@ type storageResumeStateStore struct {
 
 func buildResumeStateStore(
 	storage storage.ExternalStorage,
-	subDir string,
-) (service.ResumeStateStore, error) {
-	if subDir == "" {
-		return nil, nil
-	}
-	path, err := service.GetStatusFileName(subDir)
-	if err != nil {
-		return nil, err
-	}
+) service.ResumeStateStore {
 	return &storageResumeStateStore{
 		storage: storage,
-		path:    path,
-	}, nil
+		path:    service.GetStatusFileName(),
+	}
 }
 
 func (s *storageResumeStateStore) LoadState(ctx context.Context) (*service.PersistentState, error) {
