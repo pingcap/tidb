@@ -21,8 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMultiValuedIndexOnlineDDL(t *testing.T) {
@@ -71,4 +74,33 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	tk.MustExec("insert into t values (1, '[1,2,3]');")
 	tk.MustExec("insert into t values (2, '[2,3]');")
 	tk.MustGetErrCode("alter table t add unique index idx((cast(a as signed array)));", errno.ErrDupEntry)
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	mlogName := model.MaterializedViewLogTableName(pmodel.NewCIStr(baseName)).O
+	expectedMLogName := model.MaterializedViewLogTableNamePrefix +
+		strings.Repeat("t", mysql.MaxTableNameLength-len([]rune(model.MaterializedViewLogTableNamePrefix)))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName)))
+	require.Equal(t, expectedMLogName, mlogName)
+
+	tk.MustExec(fmt.Sprintf("drop table if exists `%s`", baseName))
+	tk.MustExec(fmt.Sprintf("drop table if exists `%s`", mlogName))
+	tk.MustExec(fmt.Sprintf("create table `%s` (id int primary key)", baseName))
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (id)", baseName))
+
+	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema = database() and table_name = '%s'", mlogName)).
+		Check(testkit.Rows(mlogName))
+
+	tk.MustExec(fmt.Sprintf("insert into `%s` values (1)", baseName))
+	tk.MustQuery(fmt.Sprintf("select id, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `%s`", mlogName)).
+		Check(testkit.Rows("1 I 1"))
+
+	tk.MustExec(fmt.Sprintf("drop materialized view log on `%s`", baseName))
+	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema = database() and table_name = '%s'", mlogName)).
+		Check(testkit.Rows())
 }

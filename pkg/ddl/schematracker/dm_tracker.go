@@ -21,7 +21,6 @@ package schematracker
 import (
 	"context"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -253,11 +252,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogName := "$mlog$" + baseTable.Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
-	if utf8.RuneCountInString(mlogNameCIStr.L) > mysql.MaxTableNameLength {
-		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mlogNameCIStr)
-	}
+	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Name)
 	if _, err := d.TableByName(context.Background(), schemaName, mlogNameCIStr); err == nil {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
 	} else if !infoschema.ErrTableNotExists.Equal(err) {
@@ -269,8 +264,13 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		colMap[col.Name.L] = col
 	}
 
+	seenCols := make(map[string]struct{}, len(s.Cols))
 	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
 	for _, c := range s.Cols {
+		if _, exists := seenCols[c.L]; exists {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		seenCols[c.L] = struct{}{}
 		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
 			c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
@@ -326,6 +326,10 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	var purgeMethod string
 	var purgeStartWith string
 	var purgeNext string
+	logAccumulationAlertRows, err := ddl.BuildMLogAccumulationAlertRows(s.AccumulationAlert)
+	if err != nil {
+		return err
+	}
 	if s.Purge != nil {
 		if s.Purge.Immediate {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
@@ -347,12 +351,13 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:       baseTable.ID,
-		Columns:           s.Cols,
-		PurgeMethod:       purgeMethod,
-		PurgeStartWith:    purgeStartWith,
-		PurgeNext:         purgeNext,
-		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		BaseTableID:              baseTable.ID,
+		Columns:                  s.Cols,
+		PurgeMethod:              purgeMethod,
+		PurgeStartWith:           purgeStartWith,
+		PurgeNext:                purgeNext,
+		LogAccumulationAlertRows: logAccumulationAlertRows,
+		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
 		return err
@@ -393,6 +398,34 @@ func (*SchemaTracker) AlterMaterializedView(sessionctx.Context, *ast.AlterMateri
 // AlterMaterializedViewLog implements the DDL interface.
 func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG is not supported in schema tracker")
+}
+
+// CreateMaterializedViewShadowTable implements the DDL interface.
+func (*SchemaTracker) CreateMaterializedViewShadowTable(
+	sessionctx.Context,
+	int64,
+	pmodel.CIStr,
+	*model.TableInfo,
+) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW SHADOW TABLE is not supported in schema tracker")
+}
+
+// RefreshMaterializedViewCompleteOutOfPlaceCutover implements the DDL interface.
+func (*SchemaTracker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
+	sessionctx.Context,
+	int64,
+	pmodel.CIStr,
+	pmodel.CIStr,
+	int64,
+	int64,
+	uint64,
+	*uint64,
+	uint64,
+	bool,
+	*string,
+	bool,
+) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW COMPLETE OUT OF PLACE cutover is not supported in schema tracker")
 }
 
 // CreateTableWithInfo implements the DDL interface.

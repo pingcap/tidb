@@ -116,6 +116,8 @@ const (
 	ActionAlterMaterializedViewRefresh    ActionType = 76
 	ActionAlterMaterializedViewLogPurge   ActionType = 77
 	ActionAlterMaterializedViewAttributes ActionType = 78
+	ActionMViewRefreshOutOfPlaceCutover   ActionType = 79
+	ActionCreateMaterializedViewShadow    ActionType = 80
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -128,6 +130,8 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaterializedViewRefresh:    "alter materialized view refresh",
 	ActionAlterMaterializedViewLogPurge:   "alter materialized view log purge",
 	ActionAlterMaterializedViewAttributes: "alter materialized view attributes",
+	ActionMViewRefreshOutOfPlaceCutover:   "refresh materialized view complete out-of-place cutover",
+	ActionCreateMaterializedViewShadow:    "create materialized view shadow table",
 	ActionCreateTables:                    "create tables",
 	ActionDropTable:                       "drop table",
 	ActionAddColumn:                       "add column",
@@ -875,7 +879,7 @@ func (job *Job) IsRollbackable() bool {
 		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
-		ActionModifyTableCharsetAndCollate,
+		ActionModifyTableCharsetAndCollate, ActionMViewRefreshOutOfPlaceCutover,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIDCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
@@ -919,23 +923,24 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type         ActionType `json:"type"`
-	JobArgs      JobArgs    `json:"-"`
-	args         []any
-	RawArgs      json.RawMessage `json:"raw_args"`
-	SchemaState  SchemaState     `json:"schema_state"`
-	SnapshotVer  uint64          `json:"snapshot_ver"`
-	RealStartTS  uint64          `json:"real_start_ts"`
-	Revertible   bool            `json:"revertible"`
-	State        JobState        `json:"state"`
-	RowCount     int64           `json:"row_count"`
-	Warning      *terror.Error   `json:"warning"`
-	CtxVars      []any           `json:"-"`
-	SchemaVer    int64           `json:"schema_version"`
-	ReorgTp      ReorgType       `json:"reorg_tp"`
-	ReorgStage   ReorgStage      `json:"reorg_stage"`
-	NeedAnalyze  bool            `json:"need_analyze"`
-	AnalyzeState int8            `json:"analyze_state"`
+	Type                ActionType `json:"type"`
+	JobArgs             JobArgs    `json:"-"`
+	args                []any
+	RawArgs             json.RawMessage       `json:"raw_args"`
+	SchemaState         SchemaState           `json:"schema_state"`
+	SnapshotVer         uint64                `json:"snapshot_ver"`
+	RealStartTS         uint64                `json:"real_start_ts"`
+	Revertible          bool                  `json:"revertible"`
+	State               JobState              `json:"state"`
+	RowCount            int64                 `json:"row_count"`
+	Warning             *terror.Error         `json:"warning"`
+	CtxVars             []any                 `json:"-"`
+	SchemaVer           int64                 `json:"schema_version"`
+	ReorgTp             ReorgType             `json:"reorg_tp"`
+	ReorgStage          ReorgStage            `json:"reorg_stage"`
+	NeedAnalyze         bool                  `json:"need_analyze"`
+	AnalyzeState        int8                  `json:"analyze_state"`
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -980,38 +985,39 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
 	return Job{
-		Version:         parentJob.Version,
-		ID:              parentJob.ID,
-		Type:            sub.Type,
-		SchemaID:        parentJob.SchemaID,
-		TableID:         parentJob.TableID,
-		SchemaName:      parentJob.SchemaName,
-		State:           sub.State,
-		Warning:         sub.Warning,
-		Error:           nil,
-		ErrorCount:      0,
-		RowCount:        sub.RowCount,
-		Mu:              sync.Mutex{},
-		CtxVars:         sub.CtxVars,
-		args:            sub.args,
-		RawArgs:         sub.RawArgs,
-		SchemaState:     sub.SchemaState,
-		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     sub.RealStartTS,
-		StartTS:         parentJob.StartTS,
-		DependencyID:    parentJob.DependencyID,
-		Query:           parentJob.Query,
-		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       reorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
-		Priority:        parentJob.Priority,
-		SeqNum:          parentJob.SeqNum,
-		Charset:         parentJob.Charset,
-		Collate:         parentJob.Collate,
-		AdminOperator:   parentJob.AdminOperator,
-		TraceInfo:       parentJob.TraceInfo,
-		SQLMode:         parentJob.SQLMode,
-		SessionVars:     parentJob.SessionVars,
+		Version:             parentJob.Version,
+		ID:                  parentJob.ID,
+		Type:                sub.Type,
+		SchemaID:            parentJob.SchemaID,
+		TableID:             parentJob.TableID,
+		SchemaName:          parentJob.SchemaName,
+		State:               sub.State,
+		Warning:             sub.Warning,
+		Error:               nil,
+		ErrorCount:          0,
+		RowCount:            sub.RowCount,
+		Mu:                  sync.Mutex{},
+		CtxVars:             sub.CtxVars,
+		args:                sub.args,
+		RawArgs:             sub.RawArgs,
+		SchemaState:         sub.SchemaState,
+		SnapshotVer:         sub.SnapshotVer,
+		RealStartTS:         sub.RealStartTS,
+		StartTS:             parentJob.StartTS,
+		DependencyID:        parentJob.DependencyID,
+		Query:               parentJob.Query,
+		BinlogInfo:          parentJob.BinlogInfo,
+		ReorgMeta:           reorgMeta,
+		MultiSchemaInfo:     &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
+		Priority:            parentJob.Priority,
+		SeqNum:              parentJob.SeqNum,
+		Charset:             parentJob.Charset,
+		Collate:             parentJob.Collate,
+		AdminOperator:       parentJob.AdminOperator,
+		TraceInfo:           parentJob.TraceInfo,
+		SQLMode:             parentJob.SQLMode,
+		SessionVars:         parentJob.SessionVars,
+		InvolvingSchemaInfo: sub.InvolvingSchemaInfo,
 	}
 }
 
@@ -1026,6 +1032,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+	sub.InvolvingSchemaInfo = proxyJob.InvolvingSchemaInfo
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
@@ -1073,6 +1080,8 @@ type MultiSchemaInfo struct {
 
 	RelativeColumns []model.CIStr `json:"-"`
 	PositionColumns []model.CIStr `json:"-"`
+
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.

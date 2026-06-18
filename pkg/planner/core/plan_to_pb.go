@@ -606,6 +606,8 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case logicalop.RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case logicalop.FullOuterJoin:
+		pbJoinType = tipb.JoinType_TypeFullOuterJoin
 	case logicalop.SemiJoin:
 		pbJoinType = tipb.JoinType_TypeSemiJoin
 	case logicalop.AntiSemiJoin:
@@ -657,6 +659,7 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		Children:                []*tipb.Executor{lChildren, rChildren},
 		IsNullAwareSemiJoin:     &isNullAwareSemiJoin,
 		RuntimeFilterList:       rfListPB,
+		IsNullEq:                p.IsNullEQ,
 	}
 
 	executorID := p.ExplainID().String()

@@ -93,6 +93,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, defaultIsolationReadEnginesValue(), vars.MVMaintainIsolationReadEngines)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -530,6 +531,14 @@ func TestValidate(t *testing.T) {
 		{TiDBAllowFallbackToTiKV, "tikv", true},
 		{TiDBAllowFallbackToTiKV, "tidb", true},
 		{TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
+		{TiDBMVMaintainIsolationReadEngines, "", true},
+		{TiDBMVMaintainIsolationReadEngines, "tikv", false},
+		{TiDBMVMaintainIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBMLogPurgeMinRate, "0", true},
+		{TiDBMLogPurgeMinRate, "1", false},
+		{TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{TiDBMLogPurgeRateBudgetRatio, "1.1", true},
 	}
 
 	for _, tc := range testCases {
@@ -553,6 +562,14 @@ func TestValidate(t *testing.T) {
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBMVMaintainIsolationReadEngines, "", true},
+		{TiDBMVMaintainIsolationReadEngines, "tikv", false},
+		{TiDBMVMaintainIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBMLogPurgeMinRate, "0", true},
+		{TiDBMLogPurgeMinRate, "1", false},
+		{TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{TiDBMLogPurgeRateBudgetRatio, "1.1", true},
 	}
 
 	for _, tc := range testCases {

@@ -1812,14 +1812,27 @@ func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// MLogAccumulationAlertClause is the accumulation alert clause in CREATE MATERIALIZED VIEW LOG.
+type MLogAccumulationAlertClause struct {
+	Rows int64
+}
+
+// Restore implements Node interface.
+func (n *MLogAccumulationAlertClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALERT ROWS ")
+	ctx.WritePlainf("%d", n.Rows)
+	return nil
+}
+
 // CreateMaterializedViewLogStmt is a statement to create a materialized view log on a base table.
 type CreateMaterializedViewLogStmt struct {
 	ddlNode
 
-	Table   *TableName
-	Cols    []model.CIStr
-	Options []*TableOption
-	Purge   *MLogPurgeClause
+	Table             *TableName
+	Cols              []model.CIStr
+	Options           []*TableOption
+	Purge             *MLogPurgeClause
+	AccumulationAlert *MLogAccumulationAlertClause
 }
 
 // Restore implements Node interface.
@@ -1846,6 +1859,12 @@ func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.Purge.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Purge")
+		}
+	}
+	if n.AccumulationAlert != nil {
+		ctx.WritePlain(" ")
+		if err := n.AccumulationAlert.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.AccumulationAlert")
 		}
 	}
 	return nil
@@ -2032,12 +2051,15 @@ type AlterMaterializedViewLogAction struct {
 	node
 	Tp    AlterMaterializedViewLogActionType
 	Purge *MLogPurgeClause
+	// Cols contains the base-table column names involved in an ADD COLUMN action.
+	Cols []model.CIStr
 }
 
 type AlterMaterializedViewLogActionType int
 
 const (
 	AlterMaterializedViewLogActionPurge AlterMaterializedViewLogActionType = iota
+	AlterMaterializedViewLogActionAddColumn
 )
 
 // Restore implements Node interface.
@@ -2048,6 +2070,17 @@ func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
 			return nil
 		}
 		return n.Purge.Restore(ctx)
+	case AlterMaterializedViewLogActionAddColumn:
+		ctx.WriteKeyWord("ADD COLUMN ")
+		ctx.WritePlain("(")
+		for i, col := range n.Cols {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(col.O)
+		}
+		ctx.WritePlain(")")
+		return nil
 	default:
 		return nil
 	}

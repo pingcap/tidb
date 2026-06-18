@@ -680,8 +680,8 @@ github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGa
 github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
-github.com/pingcap/tipb v0.0.0-20260212132701-59b3af7d5324 h1:N58tRYg3Kb79V6bECKykgjTk2SG+Qf75pP6RAT9Sxe0=
-github.com/pingcap/tipb v0.0.0-20260212132701-59b3af7d5324/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
+github.com/pingcap/tipb v0.0.0-20260324015222-fe7badb76b66 h1:iN6xoHupQDHD4US1/vrrif7IZj+d4X8ecnjD7pwybsc=
+github.com/pingcap/tipb v0.0.0-20260324015222-fe7badb76b66/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
@@ -826,8 +826,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260113054240-c88e82cf2927 h1:lCRKPcF7jYgovVZ2f+DYqOlS4gtVmj6O7bG4J/KXjC4=
-github.com/tikv/client-go/v2 v2.0.8-0.20260113054240-c88e82cf2927/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
+github.com/tikv/client-go/v2 v2.0.8-0.20260427083733-3c3fc836b1c3 h1:K5efKdn6pJmV29QZBDsJgBqj4M2WcqQVLFMpwY4BJ7Y=
+github.com/tikv/client-go/v2 v2.0.8-0.20260427083733-3c3fc836b1c3/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
 github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286 h1:TBrJ7eyjLfI6xc7rr348sTKPUa96ZUWmfSonqLP0vVM=
 github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286/go.mod h1:kuIEDRLck7LGHiqKYrQR3fNiK06trLmmK02s4r99iWU=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=

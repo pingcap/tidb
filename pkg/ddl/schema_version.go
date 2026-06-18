@@ -251,7 +251,16 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 		diff.TableID = 0
 		return nil
 	}
-	if job.Type != model.ActionCreateTable {
+	if job.Type == model.ActionCreateMaterializedView {
+		if job.SchemaState == model.StateWriteReorganization {
+			// CREATE MATERIALIZED VIEW phase-2 only updates MV metadata
+			// (for example InitBuildState: Building -> Ready), so infoschema
+			// should reload the existing table rather than treat it as a second create.
+			diff.OldTableID = job.TableID
+		}
+		return nil
+	}
+	if job.Type != model.ActionCreateTable && job.Type != model.ActionCreateMaterializedViewShadow {
 		return nil
 	}
 	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
@@ -265,6 +274,13 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 		diff.OldTableID = job.TableID
 	}
 	return nil
+}
+
+// SetSchemaDiffForMViewRefreshOutOfPlaceCutover sets SchemaDiff for ActionMViewRefreshOutOfPlaceCutover.
+func SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff *model.SchemaDiff, jobCtx *jobContext) {
+	args := jobCtx.jobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+	diff.TableID = args.ShadowTableID
+	diff.OldTableID = args.OldMViewID
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
@@ -355,8 +371,10 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		SetSchemaDiffForPartitionModify(diff, job, jobCtx)
-	case model.ActionCreateTable, model.ActionCreateMaterializedView:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewShadow:
 		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:

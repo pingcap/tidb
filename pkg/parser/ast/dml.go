@@ -69,6 +69,8 @@ const (
 	LeftJoin
 	// RightJoin is right Join type.
 	RightJoin
+	// FullJoin is full join type.
+	FullJoin
 )
 
 // Join represents table join.
@@ -191,6 +193,8 @@ func (n *Join) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" LEFT")
 	case RightJoin:
 		ctx.WriteKeyWord(" RIGHT")
+	case FullJoin:
+		ctx.WriteKeyWord(" FULL OUTER")
 	}
 	if n.StraightJoin {
 		ctx.WriteKeyWord(" STRAIGHT_JOIN ")
@@ -2996,6 +3000,8 @@ const (
 	ShowTables
 	ShowMaterializedViews
 	ShowMaterializedViewLogs
+	ShowMaterializedViewRemainLogs
+	ShowMaterializedViewLogWaitPurge
 	ShowTableStatus
 	ShowColumns
 	ShowWarnings
@@ -3176,6 +3182,18 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW LOG")
 		}
+	case ShowMaterializedViewRemainLogs:
+		ctx.WriteKeyWord("MATERIALIZED VIEW ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW")
+		}
+		ctx.WriteKeyWord(" REMAIN_LOGS")
+	case ShowMaterializedViewLogWaitPurge:
+		ctx.WriteKeyWord("MATERIALIZED VIEW LOG ON ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW LOG")
+		}
+		ctx.WriteKeyWord(" WAIT_PURGE")
 	case ShowCreateDatabase:
 		ctx.WriteKeyWord("CREATE DATABASE ")
 		if n.IfNotExists {

@@ -94,6 +94,7 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -157,6 +158,7 @@ const (
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -171,7 +173,7 @@ const (
 		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
@@ -780,29 +782,63 @@ const (
 	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
 		REFRESH_JOB_ID bigint unsigned NOT NULL,
 		MVIEW_ID bigint NOT NULL,
+		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
 		REFRESH_METHOD varchar(32) NOT NULL,
 		REFRESH_TIME datetime(6) DEFAULT NULL,
 		REFRESH_ENDTIME datetime(6) DEFAULT NULL,
+		REFRESH_DURATION_SEC decimal(18,6) DEFAULT NULL,
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
 		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_COMMIT_TSO bigint unsigned DEFAULT NULL,
 		REFRESH_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
 		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_time (MVIEW_ID, REFRESH_TIME),
+		KEY idx_mv_name_time (MV_SCHEMA, MV_NAME, REFRESH_TIME),
+		KEY idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO),
 		KEY idx_mview_status (MVIEW_ID, REFRESH_STATUS, REFRESH_TIME),
+		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
+		KEY idx_refresh_time (REFRESH_TIME),
 		KEY idx_refresh_status (REFRESH_STATUS, REFRESH_TIME))`
+
+	// CreateTiDBMViewRefreshAlertTable is a table to store the current refresh alert level for each materialized view.
+	CreateTiDBMViewRefreshAlertTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_alert (
+		MVIEW_ID bigint NOT NULL,
+		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		ALERT_LEVEL varchar(16) DEFAULT NULL,
+		REFRESH_FAILED varchar(3) DEFAULT NULL,
+		LAST_SUCCESS_TIME datetime(6) DEFAULT NULL,
+		UPDATED_AT datetime(6) DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
 
 	// CreateTiDBMLogPurgeHistTable is a table to store mlog purge history.
 	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
 		PURGE_JOB_ID bigint unsigned NOT NULL,
 		MLOG_ID bigint NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		BASE_TABLE_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
 		PURGE_METHOD varchar(32) NOT NULL,
 		PURGE_TIME datetime(6) DEFAULT NULL,
 		PURGE_ENDTIME datetime(6) DEFAULT NULL,
+		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
 		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
 		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
 		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_time (MLOG_ID, PURGE_TIME),
+		KEY idx_table_name_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_TIME),
 		KEY idx_mlog_status (MLOG_ID, PURGE_STATUS, PURGE_TIME),
+		KEY idx_purge_duration_sec (PURGE_DURATION_SEC),
+		KEY idx_purge_time (PURGE_TIME),
 		KEY idx_purge_status (PURGE_STATUS, PURGE_TIME))`
 )
 
@@ -1253,12 +1289,40 @@ const (
 	// Create system tables for materialized views / materialized view logs.
 	version221 = 221
 
-	// next version should start with 239
+	// version 222
+	// Add CANCEL_REQUESTED_AT and CANCEL_REQUESTED_BY to MV refresh/purge history tables.
+	version222 = 222
+
+	// version 223
+	// Add time-oriented indexes, object schema/name snapshots, and duration columns to MV refresh/purge history tables.
+	version223 = 223
+
+	// version 224
+	// Add MV refresh alert table and duration indexes to MV refresh/purge history tables.
+	version224 = 224
+
+	// version 225
+	// Add LAST_HEARTBEAT_AT to MV refresh/purge history tables.
+	version225 = 225
+
+	// version 226
+	// Add REFRESH_COMMIT_TSO and lookup index to MV refresh history table.
+	version226 = 226
+
+	// version 227
+	// Add REFRESH_FAILED and allow NULL ALERT_LEVEL in MV refresh alert table.
+	version227 = 227
+
+	// version 228
+	// Add OPERATE VIEW static privilege to grant tables and PURGE_CUTOFF_TSO to MV log purge history table.
+	version228 = 228
+
+	// next version should start with 229
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version221
+var currentBootstrapVersion int64 = version228
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1435,6 +1499,13 @@ var (
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
+		upgradeToVer222,
+		upgradeToVer223,
+		upgradeToVer224,
+		upgradeToVer225,
+		upgradeToVer226,
+		upgradeToVer227,
+		upgradeToVer228,
 	}
 )
 
@@ -3321,6 +3392,78 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateTiDBMLogPurgeHistTable)
 }
 
+func upgradeToVer222(s sessiontypes.Session, ver int64) {
+	if ver >= version222 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `CANCEL_REQUESTED_AT` datetime(6) DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `CANCEL_REQUESTED_BY` varchar(512) DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `CANCEL_REQUESTED_AT` datetime(6) DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `CANCEL_REQUESTED_BY` varchar(512) DEFAULT NULL", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer223(s sessiontypes.Session, ver int64) {
+	if ver >= version223 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `MV_SCHEMA` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `MVIEW_ID`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `MV_NAME` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `MV_SCHEMA`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_DURATION_SEC` decimal(18,6) DEFAULT NULL AFTER `REFRESH_ENDTIME`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mview_time (MVIEW_ID, REFRESH_TIME)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mv_name_time (MV_SCHEMA, MV_NAME, REFRESH_TIME)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_refresh_time (REFRESH_TIME)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `BASE_TABLE_SCHEMA` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `MLOG_ID`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `BASE_TABLE_NAME` varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL AFTER `BASE_TABLE_SCHEMA`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_DURATION_SEC` decimal(18,6) DEFAULT NULL AFTER `PURGE_ENDTIME`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_mlog_time (MLOG_ID, PURGE_TIME)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_table_name_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_TIME)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_purge_time (PURGE_TIME)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBMViewRefreshAlertTable)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_refresh_duration_sec (REFRESH_DURATION_SEC)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_purge_duration_sec (PURGE_DURATION_SEC)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer226(s sessiontypes.Session, ver int64) {
+	if ver >= version226 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_COMMIT_TSO` bigint unsigned DEFAULT NULL AFTER `REFRESH_READ_TSO`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer227(s sessiontypes.Session, ver int64) {
+	if ver >= version227 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert MODIFY COLUMN `ALERT_LEVEL` varchar(16) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert ADD COLUMN `REFRESH_FAILED` varchar(3) DEFAULT NULL AFTER `ALERT_LEVEL`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer228(s sessiontypes.Session, ver int64) {
+	if ver >= version228 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_CUTOFF_TSO` bigint unsigned DEFAULT NULL AFTER `PURGE_STATUS`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3471,11 +3614,12 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
-	// create mysql.tidb_mview_refresh_info/mysql.tidb_mlog_purge_info/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist
+	// create mysql.tidb_mview_refresh_info/mysql.tidb_mlog_purge_info/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist/mysql.tidb_mview_refresh_alert
 	mustExecute(s, CreateTiDBMViewRefreshInfoTable)
 	mustExecute(s, CreateTiDBMLogPurgeInfoTable)
 	mustExecute(s, CreateTiDBMViewRefreshHistTable)
 	mustExecute(s, CreateTiDBMLogPurgeHistTable)
+	mustExecute(s, CreateTiDBMViewRefreshAlertTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3530,14 +3674,14 @@ func doDMLWorks(s sessiontypes.Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
-			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
 		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
-			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
 		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value

@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -306,6 +307,11 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// useInfoSchemaAsIs keeps table metadata on the infoschema chosen by the
+	// caller, instead of upgrading tables to the latest domain schema during
+	// plan building.
+	useInfoSchemaAsIs bool
 }
 
 type handleColHelper struct {
@@ -432,6 +438,16 @@ type PlanBuilderOptAllowCastArray struct{}
 // Apply implements the interface PlanBuilderOpt.
 func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 	builder.allowBuildCastArray = true
+}
+
+// planBuilderOptUseProvidedInfoSchemaAsIs means the plan builder should keep using the
+// provided infoschema as-is, without upgrading resolved tables to the latest
+// domain schema through MDL.
+type planBuilderOptUseProvidedInfoSchemaAsIs struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (planBuilderOptUseProvidedInfoSchemaAsIs) Apply(builder *PlanBuilder) {
+	builder.useInfoSchemaAsIs = true
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
@@ -567,10 +583,13 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt, *ast.CancelDistributionJobStmt,
+		*ast.CancelMaterializedViewJobStmt,
 		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case *ast.RefreshMaterializedViewStmt:
 		return b.buildRefreshMaterializedView(ctx, x)
+	case *ast.CompareMaterializedViewStmt:
+		return b.buildCompareMaterializedView(ctx, x)
 	case *ast.PurgeMaterializedViewLogStmt:
 		return b.buildPurgeMaterializedViewLog(ctx, x)
 	case *ast.RefreshMaterializedViewImplementStmt:
@@ -1519,7 +1538,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	case ast.AdminChecksumTable:
 		tnWs := make([]*resolve.TableNameW, 0, len(as.Tables))
 		for _, tn := range as.Tables {
-			tnWs = append(tnWs, b.resolveCtx.GetTableName(tn))
+			tnW := b.resolveCtx.GetTableName(tn)
+			tnWs = append(tnWs, tnW)
 		}
 		p := &ChecksumTable{Tables: tnWs}
 		p.setSchemaAndNames(buildChecksumTableSchema())
@@ -2846,6 +2866,9 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if tnW.TableInfo.IsSequence() {
 			return nil, errors.Errorf("analyze sequence %s is not supported now", tbl.Name.O)
 		}
+		if err := CheckMViewReadable(b.ctx.GetSessionVars(), tnW.TableInfo, tbl.Name.O); err != nil {
+			return nil, err
+		}
 
 		idxInfo, colInfo := b.getColsInfo(tbl)
 		physicalIDs, partitionNames, err := GetPhysicalIDsAndPartitionNames(tnW.TableInfo, as.PartitionNames)
@@ -2920,6 +2943,9 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
+	if err := CheckMViewReadable(b.ctx.GetSessionVars(), tblInfo, as.TableNames[0].Name.O); err != nil {
+		return nil, err
+	}
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
@@ -2976,6 +3002,9 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
+	if err := CheckMViewReadable(b.ctx.GetSessionVars(), tblInfo, as.TableNames[0].Name.O); err != nil {
+		return nil, err
+	}
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
@@ -3570,7 +3599,21 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			isSequence = table.Meta().IsSequence()
 		}
 		user := b.ctx.GetSessionVars().User
-		if isView {
+		if show.Tp == ast.ShowCreateMaterializedViewLog {
+			dbName := show.Table.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, show.Table.Name)
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, mlogName.L, "", err)
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, mlogName.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, mlogName.L, "", err)
+		} else if isView {
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
@@ -3606,6 +3649,23 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewRemainLogs:
+		var err error
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewLogWaitPurge:
+		var err error
+		dbName := show.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, show.Table.Name)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, mlogName.L, "", err)
 	case ast.ShowBackups:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"BACKUP_ADMIN"}, false, err)
@@ -3849,9 +3909,17 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
-	// Currently this internal statement is only used by FAST refresh.
-	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
-		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
+	mode, err := stmt.RefreshStmt.Mode()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	switch mode {
+	case ast.RefreshMaterializedViewModeFast, ast.RefreshMaterializedViewModeCompleteDeltaApply:
+	default:
+		return nil, errors.Errorf(
+			"RefreshMaterializedViewImplementStmt: only FAST or COMPLETE DELTA APPLY is supported, got %s",
+			mode.String(),
+		)
 	}
 
 	viewName := stmt.RefreshStmt.ViewName
@@ -3881,14 +3949,26 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	}
 
 	fromTS := stmt.LastSuccessfulRefreshReadTSO
-
-	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
-		nodeW := resolve.NewNodeW(sel)
-		sctx, ok := b.ctx.(sessionctx.Context)
-		if !ok {
-			return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+	toTS := stmt.TargetRefreshReadTSO
+	sctx, ok := b.ctx.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+	}
+	ensureSessionExtendedInfoSchema := func(planIS infoschema.InfoSchema) infoschema.InfoSchema {
+		if _, ok := planIS.(*infoschema.SessionExtendedInfoSchema); ok {
+			return planIS
 		}
-		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
+		return &infoschema.SessionExtendedInfoSchema{InfoSchema: planIS}
+	}
+
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt, planIS infoschema.InfoSchema, useInfoSchemaAsIs bool) (base.PhysicalPlan, error) {
+		planIS = ensureSessionExtendedInfoSchema(planIS)
+		nodeW := resolve.NewNodeW(sel)
+		preprocessOpts := []PreprocessOpt{WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: planIS})}
+		if useInfoSchemaAsIs {
+			preprocessOpts = append(preprocessOpts, useProvidedInfoSchemaAsIs)
+		}
+		if err := Preprocess(optCtx, sctx, nodeW, preprocessOpts...); err != nil {
 			return nil, err
 		}
 
@@ -3896,7 +3976,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		savedBlockNames := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 		defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(savedBlockNames)
 
-		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+		var builderOpts []PlanBuilderOpt
+		if useInfoSchemaAsIs {
+			builderOpts = append(builderOpts, planBuilderOptUseProvidedInfoSchemaAsIs{})
+		}
+		innerBuilder, _ := NewPlanBuilder(builderOpts...).Init(b.ctx, planIS, hint.NewQBHintHandler(nil))
 		p, err := innerBuilder.Build(optCtx, nodeW)
 		if err != nil {
 			return nil, err
@@ -3912,94 +3996,167 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return pp, nil
 	}
 
-	res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS}, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if res.MergeSourceSelect == nil {
-		return nil, errors.New("mview: merge source select is nil")
-	}
-	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
-	if err != nil {
-		return nil, err
-	}
-	if sourcePlan.Schema().Len() != res.SourceColumnCount {
-		return nil, errors.Errorf(
-			"unexpected merge-source schema length: got %d, expected %d",
-			sourcePlan.Schema().Len(),
-			res.SourceColumnCount,
-		)
-	}
-	var (
-		fullUpdateInnerSource       base.PhysicalPlan
-		fullUpdateInnerColumnCount  int
-		fullUpdateIndexRanges       ranger.MutableRanges
-		fullUpdateKeyOff2IdxOff     []int
-		fullUpdateKeyResultColIdxes []int
-		fullUpdateOutputMVOffsets   []int
-	)
-	if res.FullUpdateLookupTemplateSelect != nil {
-		if res.FullUpdateLookupColumnCount <= 0 {
-			return nil, errors.New("mview full-update lookup template: invalid output column count")
+	switch mode {
+	case ast.RefreshMaterializedViewModeFast:
+		res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
+		if err != nil {
+			return nil, err
 		}
-		if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+
+		if res.MergeSourceSelect == nil {
+			return nil, errors.New("mview: merge source select is nil")
+		}
+		sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect, b.is, false)
+		if err != nil {
+			return nil, err
+		}
+		if sourcePlan.Schema().Len() != res.SourceColumnCount {
 			return nil, errors.Errorf(
-				"mview full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
-				len(res.FullUpdateLookupMVOffsets),
-				res.FullUpdateLookupColumnCount,
+				"unexpected merge-source schema length: got %d, expected %d",
+				sourcePlan.Schema().Len(),
+				res.SourceColumnCount,
 			)
 		}
-		// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
-		// so force-enable the switch during this one-shot optimization and restore it afterward.
-		savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
-		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
-		fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect)
-		b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
-		if err != nil {
-			return nil, err
-		}
-		if fullUpdateLookupPlan.Schema().Len() != res.FullUpdateLookupColumnCount {
-			return nil, errors.Errorf("mview full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
-		}
-		var template *mvFullUpdateLookupTemplate
-		template, err = extractMVFullUpdateLookupTemplate(
-			fullUpdateLookupPlan,
-			res.FullUpdateLookupColumnCount,
-			len(res.GroupKeyMVOffsets),
-			res.FullUpdateLookupMVOffsets,
-			res.GroupKeyMVOffsets,
+		var (
+			fullUpdateInnerSource       base.PhysicalPlan
+			fullUpdateInnerColumnCount  int
+			fullUpdateIndexRanges       ranger.MutableRanges
+			fullUpdateKeyOff2IdxOff     []int
+			fullUpdateKeyResultColIdxes []int
+			fullUpdateOutputMVOffsets   []int
+			fullUpdateSnapshot          *DataReaderSnapshot
 		)
+		if res.FullUpdateLookupTemplateSelect != nil {
+			if res.FullUpdateLookupColumnCount <= 0 {
+				return nil, errors.New("mview full-update lookup template: invalid output column count")
+			}
+			if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+				return nil, errors.Errorf(
+					"mview full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
+					len(res.FullUpdateLookupMVOffsets),
+					res.FullUpdateLookupColumnCount,
+				)
+			}
+			fullUpdateLookupIS := b.is
+			if toTS > 0 {
+				gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
+				if err != nil {
+					return nil, err
+				}
+				if err := gcutil.ValidateSnapshotWithGCSafePoint(toTS, gcSafePoint); err != nil {
+					return nil, err
+				}
+				fullUpdateLookupIS, err = staleread.GetSessionSnapshotInfoSchema(sctx, toTS)
+				if err != nil {
+					return nil, err
+				}
+				fullUpdateSnapshot = &DataReaderSnapshot{
+					TS:         toTS,
+					InfoSchema: ensureSessionExtendedInfoSchema(fullUpdateLookupIS),
+				}
+				fullUpdateLookupIS = fullUpdateSnapshot.InfoSchema
+			}
+			if err := validateMVFullUpdateSupportingIndex(
+				ctx,
+				fullUpdateLookupIS,
+				res.BaseTableID,
+				res.GroupKeyBaseCols,
+			); err != nil {
+				return nil, err
+			}
+			// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
+			// so force-enable the switch during this one-shot optimization and restore it afterward.
+			savedEnableINLJoinInnerMultiPattern := b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern
+			b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
+			fullUpdateLookupPlan, err := optimizeSelect(ctx, res.FullUpdateLookupTemplateSelect, fullUpdateLookupIS, toTS > 0)
+			b.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern = savedEnableINLJoinInnerMultiPattern
+			if err != nil {
+				return nil, err
+			}
+			if fullUpdateLookupPlan.Schema().Len() != res.FullUpdateLookupColumnCount {
+				return nil, errors.Errorf("mview full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
+			}
+			var template *mvFullUpdateLookupTemplate
+			template, err = extractMVFullUpdateLookupTemplate(
+				fullUpdateLookupPlan,
+				res.FullUpdateLookupColumnCount,
+				len(res.GroupKeyMVOffsets),
+				res.FullUpdateLookupMVOffsets,
+				res.GroupKeyMVOffsets,
+			)
+			if err != nil {
+				return nil, err
+			}
+			fullUpdateInnerSource = template.InnerSource
+			fullUpdateInnerColumnCount = template.InnerColumnCount
+			fullUpdateIndexRanges = template.IndexRanges
+			fullUpdateKeyOff2IdxOff = template.KeyOff2IdxOff
+			fullUpdateKeyResultColIdxes = template.KeyResultColIdxes
+			fullUpdateOutputMVOffsets = append([]int(nil), template.OutputMVOffsets...)
+		}
+
+		plan := MViewDeltaMerge{
+			Source:                      sourcePlan,
+			FullUpdateInnerSource:       fullUpdateInnerSource,
+			FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
+			FullUpdateIndexRanges:       fullUpdateIndexRanges,
+			FullUpdateKeyOff2IdxOff:     fullUpdateKeyOff2IdxOff,
+			FullUpdateKeyResultColIdxes: fullUpdateKeyResultColIdxes,
+			FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
+			FullUpdateSnapshot:          fullUpdateSnapshot,
+			MVTableID:                   res.MVTableID,
+			BaseTableID:                 res.BaseTableID,
+			MLogTableID:                 res.MLogTableID,
+			MVColumnCount:               res.MVColumnCount,
+			DeltaColumnCount:            res.DeltaColumnCount,
+			MVTablePKCols:               res.MVTablePKCols,
+			GroupKeyMVOffsets:           res.GroupKeyMVOffsets,
+			CountStarMVOffset:           res.CountStarMVOffset,
+			AggInfos:                    res.AggInfos,
+		}.Init(b.ctx)
+		return plan, nil
+	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
+		diffRes, err := mview.BuildCompleteDiffSource(b.ctx, b.is, mvInfo)
 		if err != nil {
 			return nil, err
 		}
-		fullUpdateInnerSource = template.InnerSource
-		fullUpdateInnerColumnCount = template.InnerColumnCount
-		fullUpdateIndexRanges = template.IndexRanges
-		fullUpdateKeyOff2IdxOff = template.KeyOff2IdxOff
-		fullUpdateKeyResultColIdxes = template.KeyResultColIdxes
-		fullUpdateOutputMVOffsets = append([]int(nil), template.OutputMVOffsets...)
+		if diffRes.DiffSourceSelect == nil {
+			return nil, errors.New("complete diff: diff source select is nil")
+		}
+		sessionVars := b.ctx.GetSessionVars()
+		savedEnableFullOuterJoin := sessionVars.EnableFullOuterJoin
+		savedEnableCascadesPlanner := sessionVars.EnableCascadesPlanner
+		savedHasEnableCascadesPlannerHint := sessionVars.StmtCtx.HasEnableCascadesPlannerHint
+		savedStmtEnableCascadesPlanner := sessionVars.StmtCtx.EnableCascadesPlanner
+		sessionVars.EnableFullOuterJoin = true
+		sessionVars.SetEnableCascadesPlanner(false)
+		sessionVars.StmtCtx.HasEnableCascadesPlannerHint = false
+		sessionVars.StmtCtx.EnableCascadesPlanner = false
+		sourcePlan, err := optimizeSelect(ctx, diffRes.DiffSourceSelect, b.is, false)
+		sessionVars.EnableFullOuterJoin = savedEnableFullOuterJoin
+		sessionVars.SetEnableCascadesPlanner(savedEnableCascadesPlanner)
+		sessionVars.StmtCtx.HasEnableCascadesPlannerHint = savedHasEnableCascadesPlannerHint
+		sessionVars.StmtCtx.EnableCascadesPlanner = savedStmtEnableCascadesPlanner
+		if err != nil {
+			return nil, err
+		}
+		if err := diffRes.ValidateSourceLayout(sourcePlan.Schema().Len()); err != nil {
+			return nil, err
+		}
+		return MViewCompleteDeltaApply{
+			Source:            sourcePlan,
+			MVTableID:         mvInfo.ID,
+			MVColumnCount:     diffRes.MVColumnCount,
+			OpColID:           diffRes.OpColOffset,
+			MarkerMVOffset:    diffRes.MarkerMVOffset,
+			GroupKeyMVOffsets: append([]int(nil), diffRes.GroupKeyMVOffsets...),
+			MHandleCols:       diffRes.MHandleCols,
+			MRowInputColIDs:   append([]int(nil), diffRes.MRowOffsets...),
+			QRowInputColIDs:   append([]int(nil), diffRes.QRowOffsets...),
+		}.Init(b.ctx), nil
+	default:
+		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: unsupported mode %s", mode.String())
 	}
-
-	plan := MVDeltaMerge{
-		Source:                      sourcePlan,
-		FullUpdateInnerSource:       fullUpdateInnerSource,
-		FullUpdateInnerColumnCount:  fullUpdateInnerColumnCount,
-		FullUpdateIndexRanges:       fullUpdateIndexRanges,
-		FullUpdateKeyOff2IdxOff:     fullUpdateKeyOff2IdxOff,
-		FullUpdateKeyResultColIdxes: fullUpdateKeyResultColIdxes,
-		FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
-		MVTableID:                   res.MVTableID,
-		BaseTableID:                 res.BaseTableID,
-		MLogTableID:                 res.MLogTableID,
-		MVColumnCount:               res.MVColumnCount,
-		DeltaColumnCount:            res.DeltaColumnCount,
-		MVTablePKCols:               res.MVTablePKCols,
-		GroupKeyMVOffsets:           res.GroupKeyMVOffsets,
-		CountStarMVOffset:           res.CountStarMVOffset,
-		AggInfos:                    res.AggInfos,
-	}.Init(b.ctx)
-	return plan, nil
 }
 
 type mvFullUpdateLookupTemplate struct {
@@ -4011,14 +4168,33 @@ type mvFullUpdateLookupTemplate struct {
 	OutputMVOffsets   []int
 }
 
+func validateMVFullUpdateSupportingIndex(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	baseTableID int64,
+	groupKeyBaseCols []string,
+) error {
+	if len(groupKeyBaseCols) == 0 {
+		return errors.New("mview full-update lookup template: group key base columns are empty")
+	}
+	baseTable, ok := is.TableByID(ctx, baseTableID)
+	if !ok || baseTable == nil {
+		return errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
+	}
+	if !mview.HasVisibleIndexWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols) {
+		return errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
+	}
+	return nil
+}
+
 // extractMVFullUpdateLookupTemplate extracts executor-facing lookup metadata from the optimized
 // full-update lookup template plan. The optimized plan is expected to contain an IndexJoin-style
 // shape produced from mview.FullUpdateLookupTemplateSelect; this helper discards the outer probe
 // side and keeps only the inner lookup child, index-range template, key-position mapping, and the
-// output-column to MV-offset mapping needed by MVDeltaMerge full recomputation.
+// output-column to MV-offset mapping needed by MViewDeltaMerge full recomputation.
 //
 // The outer side exists only to make the optimizer build an IndexJoin and expose how probe group-key
-// columns flow into the inner lookup. During execution, MVDeltaMerge supplies one changed group-key
+// columns flow into the inner lookup. During execution, MViewDeltaMerge supplies one changed group-key
 // tuple at a time by refilling the extracted lookup metadata directly, so keeping the outer child
 // would only duplicate work.
 func extractMVFullUpdateLookupTemplate(
@@ -5576,15 +5752,102 @@ func (b *PlanBuilder) buildRefreshMaterializedView(_ context.Context, stmt *ast.
 	var authErr error
 	if user := b.ctx.GetSessionVars().User; user != nil {
 		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
-			"ALTER",
+			"OPERATE VIEW",
 			user.AuthUsername,
 			user.AuthHostname,
 			stmt.ViewName.Name.L,
 		)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.OperateViewPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+	var showViewAuthErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		showViewAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"SHOW VIEW",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.ViewName.Name.L,
+		)
+	}
+
+	switch stmt.ObserveType {
+	case ast.RefreshMaterializedViewObserveNone:
+		// fallthrough to normal refresh
+	case ast.RefreshMaterializedViewObserveDryRun:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, stmt.ViewName.Name.L, "", showViewAuthErr)
+		p := &DryRunRefreshMaterializedView{Statement: stmt}
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+		return p, nil
+	case ast.RefreshMaterializedViewObserveProfile:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, stmt.ViewName.Name.L, "", showViewAuthErr)
+		p := &ProfileRefreshMaterializedView{Statement: stmt}
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "refresh steps", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+		return p, nil
+	default:
+		return nil, errors.New("REFRESH MATERIALIZED VIEW: invalid observe option")
+	}
 
 	p := &RefreshMaterializedView{Statement: stmt}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCompareMaterializedView(_ context.Context, stmt *ast.CompareMaterializedViewStmt) (base.Plan, error) {
+	dbName := stmt.ViewName.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"OPERATE VIEW",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.ViewName.Name.L,
+		)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.OperateViewPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+
+	if stmt.OutputTable != nil {
+		outputDBName := stmt.OutputTable.Schema.L
+		if outputDBName == "" {
+			outputDBName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if outputDBName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"CREATE",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"INSERT",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+	}
+
+	p := &CompareMaterializedView{Statement: stmt}
+	if stmt.OutputTable == nil {
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "compare result", mysql.TypeString, mysql.MaxBlobWidth))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+	}
 	return p, nil
 }
 
@@ -5596,17 +5859,6 @@ func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast
 	if dbName == "" {
 		return nil, plannererrors.ErrNoDB
 	}
-
-	var authErr error
-	if user := b.ctx.GetSessionVars().User; user != nil {
-		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
-			"ALTER",
-			user.AuthUsername,
-			user.AuthHostname,
-			stmt.Table.Name.L,
-		)
-	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.Table.Name.L, "", authErr)
 
 	p := &PurgeMaterializedViewLog{Statement: stmt}
 	return p, nil
@@ -5639,7 +5891,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
-			if spec.Tp == ast.AlterTableRenameTable || spec.Tp == ast.AlterTableExchangePartition {
+			switch spec.Tp {
+			case ast.AlterTableRenameTable, ast.AlterTableExchangePartition:
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
@@ -5660,16 +5913,16 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
-			} else if spec.Tp == ast.AlterTableDropPartition {
+			case ast.AlterTableDropPartition:
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
-			} else if spec.Tp == ast.AlterTableWriteable {
+			case ast.AlterTableWriteable:
 				b.visitInfo[0].alterWritable = true
-			} else if spec.Tp == ast.AlterTableAddStatistics {
+			case ast.AlterTableAddStatistics:
 				var selectErr, insertErr error
 				user := b.ctx.GetSessionVars().User
 				if user != nil {
@@ -5682,7 +5935,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 					v.Table.Name.L, "", selectErr)
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, mysql.SystemDB,
 					"stats_extended", "", insertErr)
-			} else if spec.Tp == ast.AlterTableDropStatistics {
+			case ast.AlterTableDropStatistics:
 				user := b.ctx.GetSessionVars().User
 				if user != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP STATS_EXTENDED", user.AuthUsername,
@@ -5690,7 +5943,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
 					"stats_extended", "", authErr)
-			} else if spec.Tp == ast.AlterTableAddConstraint {
+			case ast.AlterTableAddConstraint:
 				if b.ctx.GetSessionVars().User != nil && spec.Constraint != nil &&
 					spec.Constraint.Tp == ast.ConstraintForeignKey && spec.Constraint.Refer != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("REFERENCES", b.ctx.GetSessionVars().User.AuthUsername,
@@ -5962,10 +6215,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			return nil, plannererrors.ErrNoDB
 		}
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName, v.ViewName.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, v.ViewName.Name.L, "", authErr)
 	case *ast.DropMaterializedViewStmt:
 		dbName := v.ViewName.Schema.L
 		if dbName == "" {
@@ -6000,17 +6253,16 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
-		var createAuthErr, selectAuthErr, alterAuthErr error
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		var createAuthErr, selectAuthErr error
 		if user := b.ctx.GetSessionVars().User; user != nil {
-			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
+			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
 			selectAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
-			alterAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
 		}
-		// Creating a materialized view log requires CREATE TABLE privilege (on schema) and
-		// SELECT/ALTER privilege on the base table (spec requirement).
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName, v.Table.Name.L, "", createAuthErr)
+		// Creating a materialized view log creates a view-like maintenance object and
+		// reads base table metadata/columns.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, mlogName.L, "", createAuthErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, v.Table.Name.L, "", alterAuthErr)
 	case *ast.DropMaterializedViewLogStmt:
 		dbName := v.Table.Schema.L
 		if dbName == "" {
@@ -6019,11 +6271,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, v.Table.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, mlogName.L, "", authErr)
 	case *ast.AlterMaterializedViewLogStmt:
 		dbName := v.Table.Schema.L
 		if dbName == "" {
@@ -6032,16 +6285,36 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		var selectAuthErr error
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+			selectAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, v.Table.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, mlogName.L, "", authErr)
+		for _, action := range v.Actions {
+			if action.Tp == ast.AlterMaterializedViewLogActionAddColumn {
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
+				break
+			}
+		}
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+func (b *PlanBuilder) materializedViewLogNameForBaseTable(ctx context.Context, dbName string, baseName pmodel.CIStr) pmodel.CIStr {
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if baseTable, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), baseName); err == nil {
+		return model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	}
+	return model.MaterializedViewLogTableName(baseName)
 }
 
 const (
@@ -6333,6 +6606,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowMaterializedViewLogs:
 		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowMaterializedViewRemainLogs:
+		names = []string{"mview_id", "mview_name", "mlog_id", "mlog_name", "remain_logs"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowMaterializedViewLogWaitPurge:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name", "wait_purge"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowTableStatus:
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",

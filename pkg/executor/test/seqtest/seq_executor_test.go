@@ -316,7 +316,15 @@ func TestShow(t *testing.T) {
 	require.Len(t, row, 5)
 	require.NotEqual(t, "0", row[1].(string))
 
-	tk.MustQuery("SHOW PRIVILEGES")
+	rows = tk.MustQuery("SHOW PRIVILEGES").Rows()
+	foundOperateView := false
+	for _, r := range rows {
+		if len(r) >= 2 && r[0] == "Operate view" && r[1] == "Tables" {
+			foundOperateView = true
+			break
+		}
+	}
+	require.True(t, foundOperateView)
 
 	// Test show create database
 	testSQL = `create database show_test_DB`

@@ -33,6 +33,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
 const (
@@ -43,7 +44,21 @@ const (
 
 	deltaCntStarName = "__mview_delta_cnt_star"
 	mvRowIDName      = "__mview_mv_rowid"
+
+	diffQueryAlias   = "__mvd_q"
+	diffMVTableAlias = "__mvd_m"
+	diffOpColName    = "__mvd_op"
+	diffHandlePrefix = "__mvd_h_"
+	diffOldRowPrefix = "__mvd_o_"
+	diffNewRowPrefix = "__mvd_n_"
 )
+
+// HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has a usable key layout
+// for MIN/MAX full-update lookup: either PK-is-handle on the single group key, or a public visible
+// index whose leading columns cover all group-by columns without prefix length.
+func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
+	return mviewutil.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+}
 
 // SQL construction overview:
 //   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
@@ -52,10 +67,11 @@ const (
 //      [all delta payload columns][all MV columns][optional rowid handle].
 // The executor consumes this one merged source stream and applies aggregate-specific update rules by offset.
 
-// BuildOptions defines the commit-ts lower bound (FromTS, +inf) used to read incremental mv-log rows.
-// Upper bound is provided by statement snapshot ts (for_update_ts at execution time).
+// BuildOptions defines the commit-ts window used to read incremental mv-log rows.
+// When ToTS is zero, no explicit upper bound is added and statement snapshot ts still acts as the read horizon.
 type BuildOptions struct {
 	FromTS uint64
+	ToTS   uint64
 }
 
 // BuildResult is the merge source produced by Build.
@@ -99,12 +115,139 @@ type BuildResult struct {
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
 	GroupKeyMVOffsets []int
+	// GroupKeyBaseCols stores base-table column names for GroupKeyMVOffsets in the same order.
+	GroupKeyBaseCols []string
 
 	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
 	// Build returns error when MV definition does not include COUNT(*).
 	CountStarMVOffset int
 
 	AggInfos []AggInfo
+}
+
+// CompleteDiffBuildResult is the diff-source output for COMPLETE DELTA APPLY.
+// COMPLETE DELTA APPLY is a complete-refresh implementation that recomputes the MV definition
+// result, compares it with current MV rows, and applies only the row-level INSERT/DELETE/UPDATE
+// delta instead of replacing the whole MV table.
+//
+// In the generated diff-source SELECT, Q means the recomputed query result side and M means the
+// current materialized-view table side.
+// Row layout of DiffSourceSelect output is fixed:
+//  1. diff_op
+//  2. optional _tidb_rowid handle column when MV uses extra row-id handle
+//  3. old row image (M/current MV side, MV column order)
+//  4. new row image (Q/recomputed query side, MV column order)
+//
+// MarkerMVOffset identifies which MV column is used as the side-missing marker.
+// The marker value is read from the old/new row image instead of being projected separately.
+// MHandleCols may point either to old-row-image columns (PK/common handle) or the optional row-id column.
+type CompleteDiffBuildResult struct {
+	DiffSourceSelect *ast.SelectStmt
+	// SourceColumnCount is the expected number of output columns of DiffSourceSelect after optimization.
+	SourceColumnCount int
+
+	MVTableID     int64
+	MVColumnCount int
+
+	OpColOffset       int
+	MarkerMVOffset    int
+	GroupKeyMVOffsets []int
+	MHandleCols       plannerutil.HandleCols
+	MRowOffsets       []int
+	QRowOffsets       []int
+}
+
+// ValidateSourceLayout validates output layout metadata against a concrete schema length (if provided).
+func (r *CompleteDiffBuildResult) ValidateSourceLayout(schemaLen int) error {
+	if r == nil {
+		return errors.New("complete diff build result is nil")
+	}
+	if r.DiffSourceSelect == nil {
+		return errors.New("complete diff build result: DiffSourceSelect is nil")
+	}
+	if r.MVColumnCount <= 0 {
+		return errors.New("complete diff build result: MVColumnCount is invalid")
+	}
+	if r.SourceColumnCount <= 0 {
+		return errors.New("complete diff build result: SourceColumnCount is invalid")
+	}
+	if schemaLen > 0 && schemaLen != r.SourceColumnCount {
+		return errors.Errorf(
+			"complete diff build result: schema length mismatch: got %d, expected %d",
+			schemaLen,
+			r.SourceColumnCount,
+		)
+	}
+	expected := 1 + r.MVColumnCount*2
+	if r.MHandleCols == nil {
+		return errors.New("complete diff build result: MHandleCols is nil")
+	}
+	for i := 0; i < r.MHandleCols.NumCols(); i++ {
+		col := r.MHandleCols.GetCol(i)
+		if col != nil && col.ID == model.ExtraHandleID {
+			expected++
+			break
+		}
+	}
+	if r.SourceColumnCount != expected {
+		return errors.Errorf(
+			"complete diff build result: unexpected column count: got %d, expected %d",
+			r.SourceColumnCount,
+			expected,
+		)
+	}
+	if r.OpColOffset < 0 || r.OpColOffset >= r.SourceColumnCount {
+		return errors.Errorf("complete diff build result: invalid OpColOffset %d", r.OpColOffset)
+	}
+	if r.MarkerMVOffset < 0 || r.MarkerMVOffset >= r.MVColumnCount {
+		return errors.Errorf("complete diff build result: invalid MarkerMVOffset %d", r.MarkerMVOffset)
+	}
+	if len(r.GroupKeyMVOffsets) == 0 {
+		return errors.New("complete diff build result: GroupKeyMVOffsets is empty")
+	}
+	for i, off := range r.GroupKeyMVOffsets {
+		if off < 0 || off >= r.MVColumnCount {
+			return errors.Errorf("complete diff build result: invalid GroupKeyMVOffsets[%d]=%d", i, off)
+		}
+	}
+	if len(r.MRowOffsets) != r.MVColumnCount {
+		return errors.Errorf(
+			"complete diff build result: MRowOffsets length %d != MVColumnCount %d",
+			len(r.MRowOffsets),
+			r.MVColumnCount,
+		)
+	}
+	for i, off := range r.MRowOffsets {
+		if off < 0 || off >= r.SourceColumnCount {
+			return errors.Errorf("complete diff build result: invalid MRowOffsets[%d]=%d", i, off)
+		}
+	}
+	if len(r.QRowOffsets) != r.MVColumnCount {
+		return errors.Errorf(
+			"complete diff build result: QRowOffsets length %d != MVColumnCount %d",
+			len(r.QRowOffsets),
+			r.MVColumnCount,
+		)
+	}
+	for i, off := range r.QRowOffsets {
+		if off < 0 || off >= r.SourceColumnCount {
+			return errors.Errorf("complete diff build result: invalid QRowOffsets[%d]=%d", i, off)
+		}
+	}
+	for i := 0; i < r.MHandleCols.NumCols(); i++ {
+		col := r.MHandleCols.GetCol(i)
+		if col == nil {
+			return errors.Errorf("complete diff build result: handle column %d is nil", i)
+		}
+		if col.Index < 0 || col.Index >= r.SourceColumnCount {
+			return errors.Errorf(
+				"complete diff build result: handle column %d has invalid index %d",
+				i,
+				col.Index,
+			)
+		}
+	}
+	return nil
 }
 
 // DeltaColumn describes one delta payload column in merge-source output.
@@ -138,6 +281,8 @@ type AggInfo struct {
 
 	// ArgColName is the base-table column name used as the aggregate argument. Empty for COUNT(*).
 	ArgColName string
+	// ArgNotNull records whether the aggregate argument column is NOT NULL in the base table schema.
+	ArgNotNull bool
 
 	// Dependencies stores dependency offsets in merge-source output schema.
 	// The meaning depends on Kind:
@@ -151,8 +296,9 @@ type AggInfo struct {
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
 	//   - AggMax / AggMin:
-	//     - [added_val, added_cnt, removed_val, removed_cnt] when argument is NOT NULL.
-	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] otherwise.
+	//     - [added_val, added_cnt, removed_val, removed_cnt] always.
+	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] optionally when a
+	//       matching COUNT(expr) exists for a nullable argument and can be used as an optimization.
 	//     - added_cnt/removed_cnt are counts of rows whose argument equals added_val/removed_val
 	//       in the added/removed subdomain respectively (MAX/MIN_COUNT semantics).
 	Dependencies []int
@@ -446,6 +592,7 @@ func buildFromLocal(
 	outAggInfos := make([]AggInfo, 0, len(local.aggCols))
 	for i, ac := range local.aggCols {
 		di := ac.info
+		di.ArgNotNull = aggArgNotNullByOffset[di.MVOffset]
 		deps := make([]int, 0, 5)
 		if ac.deltaName != "" {
 			off, ok := deltaOffsetByName[ac.deltaName]
@@ -478,11 +625,7 @@ func buildFromLocal(
 				return nil, errors.Errorf("internal error: delta column %s not found in output", ac.removedCountDelta)
 			}
 			deps = append(deps, addedCntOff, removedValOff, removedCntOff)
-			if !aggArgNotNullByOffset[di.MVOffset] {
-				countIdx, ok := minMaxToCountExprIdx[i]
-				if !ok {
-					return nil, errors.Errorf("internal error: %v at mv offset %d has no COUNT(expr) dependency", di.Kind, di.MVOffset)
-				}
+			if countIdx, ok := minMaxToCountExprIdx[i]; ok {
 				countAgg := local.aggCols[countIdx]
 				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
 			}
@@ -504,6 +647,10 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
+	groupKeyBaseCols, err := groupKeyBaseColNamesAtOffsets(local.MVSelect, local.groupKeyOffs)
+	if err != nil {
+		return nil, err
+	}
 
 	res := &BuildResult{
 		MergeSourceSelect:              mergeSel,
@@ -518,6 +665,7 @@ func buildFromLocal(
 		DeltaColumnCount:               len(deltaColumns),
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
+		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
 		AggInfos:                       outAggInfos,
 	}
@@ -808,9 +956,9 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 	return aggCols, hasMinMax, nil
 }
 
-// mapSumToCountExprDependencies finds, for every nullable SUM(expr), the unique matching
-// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve
-// SUM(NULL) semantics when applying incremental updates.
+// mapSumToCountExprDependencies finds, for every nullable SUM(expr), the first structurally
+// matching COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to
+// preserve SUM(NULL) semantics when applying incremental updates.
 func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	sumToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
@@ -831,13 +979,8 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
 				continue
 			}
-			if matchIdx >= 0 {
-				return nil, errors.Errorf(
-					"SUM expression %s at mv offset %d has multiple matching COUNT(expr) dependencies (offsets %d and %d)",
-					restoreExpr(ac.argExpr), ac.info.MVOffset, aggCols[matchIdx].info.MVOffset, cand.info.MVOffset,
-				)
-			}
 			matchIdx = j
+			break
 		}
 		if matchIdx < 0 {
 			return nil, errors.Errorf(
@@ -850,9 +993,9 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 	return sumToCountIdx, nil
 }
 
-// mapMinMaxToCountExprDependencies finds, for every nullable MIN(expr)/MAX(expr), the unique matching
-// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve NULL semantics
-// when fast-refresh applies MIN/MAX deltas and needs to distinguish "result is NULL" from "no non-NULL row remains".
+// mapMinMaxToCountExprDependencies finds an optional first matching COUNT(expr) for nullable
+// MIN/MAX(expr). Missing COUNT(expr) does not block build because MIN/MAX can fall back to
+// count(*) + full recompute when needed.
 func mapMinMaxToCountExprDependencies(aggCols []aggColInfo, aggArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	minMaxToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
@@ -873,19 +1016,11 @@ func mapMinMaxToCountExprDependencies(aggCols []aggColInfo, aggArgNotNullByOffse
 			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
 				continue
 			}
-			if matchIdx >= 0 {
-				return nil, errors.Errorf(
-					"%v expression %s at mv offset %d has multiple matching COUNT(expr) dependencies (offsets %d and %d)",
-					ac.info.Kind, restoreExpr(ac.argExpr), ac.info.MVOffset, aggCols[matchIdx].info.MVOffset, cand.info.MVOffset,
-				)
-			}
 			matchIdx = j
+			break
 		}
 		if matchIdx < 0 {
-			return nil, errors.Errorf(
-				"%v expression %s at mv offset %d requires matching COUNT(expr) in SELECT list",
-				ac.info.Kind, restoreExpr(ac.argExpr), ac.info.MVOffset,
-			)
+			continue
 		}
 		minMaxToCountIdx[i] = matchIdx
 	}
@@ -1145,6 +1280,9 @@ func buildMLogDeltaSelect(
 	buildMLogWhere := func() (ast.ExprNode, error) {
 		tsCol := colExpr(model.ExtraCommitTSName.L)
 		var where ast.ExprNode = binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", ""))
+		if opt.ToTS > 0 {
+			where = andExpr(where, binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")))
+		}
 		if mvSel.Where != nil {
 			mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
 			if err != nil {
@@ -1774,6 +1912,18 @@ func groupKeyBaseColExprAtOffset(mvSel *ast.SelectStmt, mvOffset int) (*ast.Colu
 	return colExpr(col.Name.Name.O), nil
 }
 
+func groupKeyBaseColNamesAtOffsets(mvSel *ast.SelectStmt, groupKeyOffsets []int) ([]string, error) {
+	groupKeyBaseCols := make([]string, 0, len(groupKeyOffsets))
+	for _, mvOffset := range groupKeyOffsets {
+		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
+		if err != nil {
+			return nil, err
+		}
+		groupKeyBaseCols = append(groupKeyBaseCols, baseColExpr.Name.Name.L)
+	}
+	return groupKeyBaseCols, nil
+}
+
 func dbNameByTableID(is infoschema.InfoSchema, tableID int64) (pmodel.CIStr, error) {
 	item, ok := is.TableItemByID(tableID)
 	if !ok {
@@ -1849,6 +1999,16 @@ func andExpr(l, r ast.ExprNode) ast.ExprNode {
 	return binary(opcode.LogicAnd, l, r)
 }
 
+func orExpr(l, r ast.ExprNode) ast.ExprNode {
+	if l == nil {
+		return r
+	}
+	if r == nil {
+		return l
+	}
+	return binary(opcode.LogicOr, l, r)
+}
+
 func aggSum(arg ast.ExprNode) *ast.AggregateFuncExpr {
 	return &ast.AggregateFuncExpr{F: ast.AggFuncSum, Args: []ast.ExprNode{arg}}
 }
@@ -1877,10 +2037,362 @@ func aggMinCount(arg ast.ExprNode) *ast.AggregateFuncExpr {
 	return &ast.AggregateFuncExpr{F: ast.AggFuncMinCount, Args: []ast.ExprNode{arg}}
 }
 
+func aggFirstRow(arg ast.ExprNode) *ast.AggregateFuncExpr {
+	return &ast.AggregateFuncExpr{F: ast.AggFuncFirstRow, Args: []ast.ExprNode{arg}}
+}
+
+func buildReadFromStorageTiFlashHint(dbName, tableName pmodel.CIStr) *ast.TableOptimizerHint {
+	return &ast.TableOptimizerHint{
+		HintName: pmodel.NewCIStr(utilhint.HintReadFromStorage),
+		HintData: pmodel.NewCIStr(utilhint.HintTiFlash),
+		Tables: []ast.HintTable{
+			{
+				DBName:    dbName,
+				TableName: tableName,
+			},
+		},
+	}
+}
+
+func buildHashJoinProbeHint(dbName, tableName pmodel.CIStr) *ast.TableOptimizerHint {
+	return &ast.TableOptimizerHint{
+		HintName: pmodel.NewCIStr(utilhint.HintHashJoinProbe),
+		Tables: []ast.HintTable{
+			{
+				DBName:    dbName,
+				TableName: tableName,
+			},
+		},
+	}
+}
+
 func ifExpr(cond, trueExpr, falseExpr ast.ExprNode) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{
 		Tp:     ast.FuncCallExprTypeGeneric,
 		FnName: pmodel.NewCIStr("IF"),
 		Args:   []ast.ExprNode{cond, trueExpr, falseExpr},
 	}
+}
+
+// BuildCompleteDiffSource builds the diff-source SELECT statement and layout metadata for
+// COMPLETE DELTA APPLY refresh.
+//
+// COMPLETE DELTA APPLY uses a full outer join between the recomputed MV definition result and
+// current MV table rows to detect the final row-level delta.
+//
+// Final SQL shape:
+//
+//	SELECT
+//	  <diff op>,
+//	  [M._tidb_rowid AS <rowid handle>],
+//	  M.<all MV columns as old row image>,
+//	  Q.<all MV columns as new row image>
+//	FROM (<MV definition SQL>) AS Q
+//	FULL OUTER JOIN <mv table> AS M
+//	  ON Q.<group_key_1> [= | <=>] M.<group_key_1>
+//	 AND ...
+//	WHERE Q.<marker_col> IS NULL
+//	   OR M.<marker_col> IS NULL
+//	   OR NOT <old/new payload equality>
+//
+// The diff op classifies each row as INSERT, DELETE, or UPDATE. The executor consumes the fixed
+// output layout together with the M/Q offset metadata to apply the delta to the MV table.
+func BuildCompleteDiffSource(
+	sctx planctx.PlanContext,
+	is infoschema.InfoSchema,
+	mv *model.TableInfo,
+) (*CompleteDiffBuildResult, error) {
+	if mv == nil {
+		return nil, errors.New("mv table info is nil")
+	}
+	if mv.MaterializedView == nil {
+		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
+	}
+	if mv.MaterializedView.SQLContent == "" {
+		return nil, errors.Errorf("materialized view %s has empty SQLContent", mv.Name.O)
+	}
+	mvSel, err := parseSelectFromSQL(sctx, mv.MaterializedView.SQLContent)
+	if err != nil {
+		return nil, err
+	}
+	if mvSel.Fields == nil || len(mvSel.Fields.Fields) != len(mv.Columns) {
+		return nil, errors.Errorf(
+			"materialized view %s select output count %d does not match mv column count %d",
+			mv.Name.O,
+			len(mvSel.Fields.Fields),
+			len(mv.Columns),
+		)
+	}
+	for i, f := range mvSel.Fields.Fields {
+		if f == nil {
+			return nil, errors.Errorf("materialized view %s select field %d is nil", mv.Name.O, i)
+		}
+		f.AsName = mv.Columns[i].Name
+	}
+
+	groupKeyOffsets, err := extractGroupKeyOffsetsFromMVSelect(mvSel)
+	if err != nil {
+		return nil, err
+	}
+	if len(groupKeyOffsets) == 0 {
+		return nil, errors.Errorf("materialized view %s has empty group key offsets", mv.Name.O)
+	}
+	groupKeySet := make(map[int]struct{}, len(groupKeyOffsets))
+	for _, off := range groupKeyOffsets {
+		if off < 0 || off >= len(mv.Columns) {
+			return nil, errors.Errorf("materialized view %s has invalid group key offset %d", mv.Name.O, off)
+		}
+		groupKeySet[off] = struct{}{}
+		col := mv.Columns[off]
+		if col == nil {
+			return nil, errors.Errorf("materialized view %s group key column at offset %d is nil", mv.Name.O, off)
+		}
+	}
+
+	markerOffset, markerCol, err := pickCompleteDiffMarkerColumn(mv)
+	if err != nil {
+		return nil, err
+	}
+	dbName, err := dbNameByTableID(is, mv.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	qSource := &ast.TableSource{
+		Source: mvSel,
+		AsName: pmodel.NewCIStr(diffQueryAlias),
+	}
+	mSource := &ast.TableSource{
+		Source: &ast.TableName{Schema: dbName, Name: mv.Name},
+		AsName: pmodel.NewCIStr(diffMVTableAlias),
+	}
+
+	var joinCond ast.ExprNode
+	for _, off := range groupKeyOffsets {
+		col := mv.Columns[off]
+		colName := col.Name.O
+		op := opcode.NullEQ
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			op = opcode.EQ
+		}
+		joinCond = andExpr(
+			joinCond,
+			binary(
+				op,
+				qualColExpr(diffQueryAlias, colName),
+				qualColExpr(diffMVTableAlias, colName),
+			),
+		)
+	}
+	if joinCond == nil {
+		return nil, errors.Errorf("materialized view %s has empty join condition", mv.Name.O)
+	}
+	join := &ast.Join{
+		Left:  qSource,
+		Right: mSource,
+		Tp:    ast.FullJoin,
+		On:    &ast.OnCondition{Expr: joinCond},
+	}
+
+	qMarkerExpr := qualColExpr(diffQueryAlias, markerCol.Name.O)
+	mMarkerExpr := qualColExpr(diffMVTableAlias, markerCol.Name.O)
+
+	payloadEq := buildCompleteDiffPayloadEqExpr(mv, groupKeySet, diffQueryAlias, diffMVTableAlias)
+	if payloadEq == nil {
+		payloadEq = ast.NewValueExpr(int64(1), "", "")
+	}
+	payloadChanged := &ast.UnaryOperationExpr{Op: opcode.Not, V: payloadEq}
+	whereExpr := orExpr(
+		orExpr(&ast.IsNullExpr{Expr: qMarkerExpr}, &ast.IsNullExpr{Expr: mMarkerExpr}),
+		payloadChanged,
+	)
+
+	useRowID := !mv.PKIsHandle && !mv.IsCommonHandle
+	fields := make([]*ast.SelectField, 0, 1+len(mv.Columns)*2)
+	if useRowID {
+		fields = make([]*ast.SelectField, 0, 2+len(mv.Columns)*2)
+	}
+	diffOpExpr := buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr)
+	fields = append(fields, &ast.SelectField{Expr: diffOpExpr, AsName: pmodel.NewCIStr(diffOpColName)})
+
+	rowIDHandleOffset := -1
+	if useRowID {
+		rowIDHandleOffset = len(fields)
+		fields = append(fields, &ast.SelectField{
+			Expr:   qualColExpr(diffMVTableAlias, model.ExtraHandleName.O),
+			AsName: pmodel.NewCIStr(diffHandlePrefix + model.ExtraHandleName.O),
+		})
+	}
+
+	mRowOffsets := make([]int, len(mv.Columns))
+	for i, col := range mv.Columns {
+		offset := len(fields)
+		fields = append(fields, &ast.SelectField{
+			Expr:   qualColExpr(diffMVTableAlias, col.Name.O),
+			AsName: pmodel.NewCIStr(diffOldRowPrefix + col.Name.O),
+		})
+		mRowOffsets[i] = offset
+	}
+
+	qRowOffsets := make([]int, len(mv.Columns))
+	for i, col := range mv.Columns {
+		offset := len(fields)
+		fields = append(fields, &ast.SelectField{
+			Expr:   qualColExpr(diffQueryAlias, col.Name.O),
+			AsName: pmodel.NewCIStr(diffNewRowPrefix + col.Name.O),
+		})
+		qRowOffsets[i] = offset
+	}
+
+	handleColsMeta, err := buildCompleteDiffHandleCols(mv, mRowOffsets, rowIDHandleOffset)
+	if err != nil {
+		return nil, err
+	}
+
+	diffSel := &ast.SelectStmt{
+		Fields: &ast.FieldList{Fields: fields},
+		From:   &ast.TableRefsClause{TableRefs: join},
+		Where:  whereExpr,
+		TableHints: []*ast.TableOptimizerHint{
+			buildReadFromStorageTiFlashHint(dbName, pmodel.NewCIStr(diffMVTableAlias)),
+			buildHashJoinProbeHint(dbName, pmodel.NewCIStr(diffMVTableAlias)),
+		},
+	}
+
+	res := &CompleteDiffBuildResult{
+		DiffSourceSelect:  diffSel,
+		SourceColumnCount: len(fields),
+		MVTableID:         mv.ID,
+		MVColumnCount:     len(mv.Columns),
+		OpColOffset:       0,
+		MarkerMVOffset:    markerOffset,
+		GroupKeyMVOffsets: append([]int(nil), groupKeyOffsets...),
+		MHandleCols:       handleColsMeta,
+		MRowOffsets:       mRowOffsets,
+		QRowOffsets:       qRowOffsets,
+	}
+	if err := res.ValidateSourceLayout(0); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func pickCompleteDiffMarkerColumn(mv *model.TableInfo) (int, *model.ColumnInfo, error) {
+	if mv == nil {
+		return -1, nil, errors.New("mv table info is nil")
+	}
+	for i, col := range mv.Columns {
+		if col == nil || col.Hidden {
+			continue
+		}
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			return i, col, nil
+		}
+	}
+	return -1, nil, errors.Errorf("materialized view %s has no visible NOT NULL column for diff marker", mv.Name.O)
+}
+
+func buildCompleteDiffHandleCols(
+	mv *model.TableInfo,
+	mRowOffsets []int,
+	rowIDHandleOffset int,
+) (plannerutil.HandleCols, error) {
+	if mv == nil {
+		return nil, errors.New("mv table info is nil")
+	}
+	switch {
+	case mv.PKIsHandle:
+		pkCol := mv.GetPkColInfo()
+		if pkCol == nil {
+			return nil, errors.Errorf("mv table %s has PKIsHandle but no primary key column", mv.Name.O)
+		}
+		if pkCol.Offset < 0 || pkCol.Offset >= len(mRowOffsets) {
+			return nil, errors.Errorf("mv table %s primary key column offset %d is invalid", mv.Name.O, pkCol.Offset)
+		}
+		return plannerutil.NewIntHandleCols(&expression.Column{
+			ID:      pkCol.ID,
+			RetType: &pkCol.FieldType,
+			Index:   mRowOffsets[pkCol.Offset],
+		}), nil
+	case mv.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(mv)
+		if pkIdx == nil {
+			return nil, errors.Errorf("mv table %s has common handle but no primary index", mv.Name.O)
+		}
+		cols := make([]*expression.Column, 0, len(pkIdx.Columns))
+		for _, idxCol := range pkIdx.Columns {
+			if idxCol.Offset < 0 || idxCol.Offset >= len(mv.Columns) {
+				return nil, errors.Errorf("mv table %s primary index column offset %d is invalid", mv.Name.O, idxCol.Offset)
+			}
+			col := mv.Columns[idxCol.Offset]
+			cols = append(cols, &expression.Column{
+				ID:      col.ID,
+				RetType: &col.FieldType,
+				Index:   mRowOffsets[idxCol.Offset],
+			})
+		}
+		return plannerutil.NewCommonHandlesColsWithoutColsAlign(mv, pkIdx, cols), nil
+	default:
+		if rowIDHandleOffset < 0 {
+			return nil, errors.Errorf("mv table %s rowid handle offset is invalid", mv.Name.O)
+		}
+		extraCol := model.NewExtraHandleColInfo()
+		return plannerutil.NewIntHandleCols(&expression.Column{
+			ID:      extraCol.ID,
+			RetType: &extraCol.FieldType,
+			Index:   rowIDHandleOffset,
+		}), nil
+	}
+}
+
+// buildCompleteDiffOpExpr builds the diff-op expression consumed by MViewCompleteDeltaApplyExec.
+// The marker column is a visible NOT NULL MV column. If the marker is NULL on one side after the
+// full outer join, that side is missing: M missing means INSERT, Q missing means DELETE. If both
+// sides exist but payload columns differ, the row is UPDATE.
+func buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr ast.ExprNode) ast.ExprNode {
+	return &ast.CaseExpr{
+		WhenClauses: []*ast.WhenClause{
+			{
+				Expr:   &ast.IsNullExpr{Expr: mMarkerExpr},
+				Result: ast.NewValueExpr(int64(1), "", ""),
+			},
+			{
+				Expr:   &ast.IsNullExpr{Expr: qMarkerExpr},
+				Result: ast.NewValueExpr(int64(2), "", ""),
+			},
+		},
+		ElseClause: ast.NewValueExpr(int64(3), "", ""),
+	}
+}
+
+// buildCompleteDiffPayloadEqExpr compares non-group-key payload columns between Q and M.
+// Group-key columns are excluded because they are already used by the full outer join condition.
+// Nullable columns use NULL-safe equality; NOT NULL columns use normal equality to keep the
+// generated expression simpler.
+func buildCompleteDiffPayloadEqExpr(
+	mv *model.TableInfo,
+	groupKeySet map[int]struct{},
+	qAlias string,
+	mAlias string,
+) ast.ExprNode {
+	if mv == nil {
+		return nil
+	}
+	var expr ast.ExprNode
+	for i, col := range mv.Columns {
+		if col == nil {
+			continue
+		}
+		if _, ok := groupKeySet[i]; ok {
+			continue
+		}
+		colName := col.Name.O
+		op := opcode.NullEQ
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			op = opcode.EQ
+		}
+		eq := binary(op, qualColExpr(qAlias, colName), qualColExpr(mAlias, colName))
+		expr = andExpr(expr, eq)
+	}
+	return expr
 }

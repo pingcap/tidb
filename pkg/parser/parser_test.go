@@ -84,7 +84,7 @@ func TestSimple(t *testing.T) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "operate", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -828,6 +828,8 @@ func TestDMLStmt(t *testing.T) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` ON `t2`.`id`=`t3`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` ON `t1`.`id`=`t2`.`id`) LEFT JOIN `t3` ON `t3`.`id`=`t2`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false, ""},
+		{"select * from t1 full join t2 on t1.a = t2.a", true, "SELECT * FROM `t1` AS `full` JOIN `t2` ON `t1`.`a`=`t2`.`a`"},
+		{"select * from t1 full outer join t2 on t1.a <=> t2.a", true, "SELECT * FROM `t1` FULL OUTER JOIN `t2` ON `t1`.`a`<=>`t2`.`a`"},
 		{"select * from t1 join t2 left join t3 using (id)", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` USING (`id`)) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3", false, ""},
@@ -1089,6 +1091,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
 
+		// for cancel materialized view job JOBID
+		{"cancel materialized view refresh job", false, ""},
+		{"cancel materialized view refresh job 1", true, "CANCEL MATERIALIZED VIEW REFRESH JOB 1"},
+		{"cancel materialized view log purge job", false, ""},
+		{"cancel materialized view log purge job 1", true, "CANCEL MATERIALIZED VIEW LOG PURGE JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -1288,16 +1296,32 @@ func TestDBAStmt(t *testing.T) {
 		// for show create materialized view log
 		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
 		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
+		// Covers parsing and restoring ALTER MATERIALIZED VIEW LOG ADD COLUMN.
+		{"alter materialized view log on test.t add column (a, b)", true, "ALTER MATERIALIZED VIEW LOG ON `test`.`t` ADD COLUMN (`a`, `b`)"},
 		// for show materialized views
 		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
 		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views from 'test'", false, ""},
 		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
 		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
+		// for show materialized view
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
+		{"show materialized view mv like 'mv%'", false, ""},
+		{"show materialized view mv where mview_id = 1", false, ""},
 		// for show materialized view logs
 		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
 		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs from 'test'", false, ""},
 		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
 		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
+		// for show materialized view log
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
+		{"show materialized view log on t like '$mlog$%'", false, ""},
+		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
@@ -5357,6 +5381,11 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
 		},
 		{
+			"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600,mview_alert_refresh_failed=yes' AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600,mview_alert_refresh_failed=yes' AS SELECT 1",
+		},
+		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
 			true,
 			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
@@ -5392,6 +5421,16 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PURGE NEXT 300",
 		},
 		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) ALERT ROWS 100",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) ALERT ROWS 100",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300 ALERT ROWS -1",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PURGE NEXT 300 ALERT ROWS -1",
+		},
+		{
 			"ALTER MATERIALIZED VIEW mv COMMENT = 'c2'",
 			true,
 			"ALTER MATERIALIZED VIEW `mv` COMMENT = 'c2'",
@@ -5422,14 +5461,24 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
 		},
 		{
+			"ALTER MATERIALIZED VIEW mv ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5,mview_alert_refresh_failed=no'",
+			true,
+			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5,mview_alert_refresh_failed=no'",
+		},
+		{
+			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300, ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=10'",
+			true,
+			"ALTER MATERIALIZED VIEW `mv` REFRESH NEXT 300, ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=10'",
+		},
+		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE IMMEDIATE",
 			true,
 			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE IMMEDIATE",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE",
-			false,
-			"",
+			true,
+			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE START WITH now()",
@@ -5472,19 +5521,104 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"REFRESH MATERIALIZED VIEW `mv` FAST",
 		},
 		{
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE FAST",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv FAST DRY RUN",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` FAST DRY RUN",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv FAST WITH PROFILE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` FAST WITH PROFILE",
+		},
+		{
 			"REFRESH MATERIALIZED VIEW mv COMPLETE",
-			true,
-			"REFRESH MATERIALIZED VIEW `mv` COMPLETE",
+			false,
+			"",
 		},
 		{
-			"REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST",
-			true,
-			"REFRESH MATERIALIZED VIEW `mv` WITH SYNC MODE FAST",
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE",
+			false,
+			"",
 		},
 		{
-			"REFRESH MATERIALIZED VIEW mv WITH SYNC MODE COMPLETE",
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE DRY RUN",
+			false,
+			"",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE WITH PROFILE",
+			false,
+			"",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE",
 			true,
-			"REFRESH MATERIALIZED VIEW `mv` WITH SYNC MODE COMPLETE",
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE OUT OF PLACE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE OUT OF PLACE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE OUT OF PLACE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE IN PLACE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE IN PLACE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DRY RUN",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE OUT OF PLACE DRY RUN",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE WITH PROFILE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE OUT OF PLACE WITH PROFILE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE DELTA APPLY",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE DELTA APPLY",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY DRY RUN",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY DRY RUN",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY WITH PROFILE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY WITH PROFILE",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv FAST OUT OF PLACE",
+			false,
+			"",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv FAST DELTA APPLY",
+			false,
+			"",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DELTA APPLY",
+			false,
+			"",
 		},
 	}
 	RunTest(t, table, false)
@@ -5499,6 +5633,8 @@ func TestMaterializedViewCreateRefreshOnClauseSyntax(t *testing.T) {
 func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {
 	p := parser.New()
 	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now()", "", "")
+	require.Error(t, err)
+	_, err = p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE", "", "")
 	require.Error(t, err)
 }
 
@@ -7438,6 +7574,8 @@ func TestAsOfClause(t *testing.T) {
 		{"START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())", true, "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())"},
 		{"START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", true, "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{"START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', '2021-04-27 11:26:13')", true, "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')"},
+		{"REFRESH MATERIALIZED VIEW `mv` FAST AS OF TIMESTAMP '2021-04-15 00:00:00'", true, "REFRESH MATERIALIZED VIEW `mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'"},
+		{"REFRESH MATERIALIZED VIEW `mv` COMPLETE AS OF TIMESTAMP '2021-04-15 00:00:00'", false, ""},
 	}
 	RunTest(t, table, false)
 }

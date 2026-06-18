@@ -45,22 +45,52 @@ func runMVServiceForTest(t *testing.T, svc *MVService, cancel context.CancelFunc
 func newRunningMVServiceForTest(t *testing.T, helper Helper) *MVService {
 	t.Helper()
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	svc.executor.Run()
+	svc.runTaskExecutors()
 	t.Cleanup(func() {
-		svc.executor.Close()
+		svc.closeTaskExecutors()
 	})
 	return svc
 }
 
 func setHistoryGCOwnerForTest(svc *MVService, ownerHash uint32) {
-	svc.nextHistoryGCAtMillis.Store(0)
-	svc.sch.mu.Lock()
-	svc.sch.ID = "nodeA"
-	svc.sch.chash.hashFunc = mustHash(map[string]uint32{
-		"nodeA#0":           10,
-		"nodeB#0":           30,
+	setServiceOwnersForTest(svc, map[string]uint32{
 		mvHistoryGCOwnerKey: ownerHash,
 	})
+	svc.nextHistoryGCAtMillis.Store(0)
+}
+
+func setRefreshAlertCleanupOwnerForTest(svc *MVService, ownerHash uint32) {
+	setServiceOwnersForTest(svc, map[string]uint32{
+		mvRefreshAlertCleanupOwnerKey: ownerHash,
+	})
+}
+
+func setTaskOwnersForTest(svc *MVService, taskHashes map[int64]uint32) {
+	overrides := make(map[string]uint32, len(taskHashes))
+	for id, hash := range taskHashes {
+		overrides[string(int64KeyToBinaryBytes(id))] = hash
+	}
+	setServiceHashOverridesForTest(svc, overrides)
+}
+
+func setServiceOwnersForTest(svc *MVService, ownerHashes map[string]uint32) {
+	setServiceHashOverridesForTest(svc, ownerHashes)
+}
+
+func setServiceHashOverridesForTest(svc *MVService, overrides map[string]uint32) {
+	svc.sch.mu.Lock()
+	svc.sch.ID = "nodeA"
+	svc.sch.chash.replicas = 1
+	mapping := map[string]uint32{
+		"nodeA#0":                     10,
+		"nodeB#0":                     30,
+		mvHistoryGCOwnerKey:           10,
+		mvRefreshAlertCleanupOwnerKey: 10,
+	}
+	for key, hash := range overrides {
+		mapping[key] = hash
+	}
+	svc.sch.chash.hashFunc = mustHash(mapping)
 	svc.sch.servers = map[string]serverInfo{
 		"nodeA": {ID: "nodeA"},
 		"nodeB": {ID: "nodeB"},

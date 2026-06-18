@@ -292,7 +292,7 @@ func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.Cr
 	if schemaName.O == "" {
 		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
-	d.checkTableInfo(ctx, schemaName, pmodel.NewCIStr("$mlog$"+stmt.Table.Name.O))
+	d.checkTableInfo(ctx, schemaName, model.MaterializedViewLogTableName(stmt.Table.Name))
 	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
 	return nil
 }
@@ -320,6 +320,47 @@ func (d *Checker) AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterM
 // AlterMaterializedViewLog implements the DDL interface.
 func (d *Checker) AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error {
 	return d.realExecutor.AlterMaterializedViewLog(ctx, stmt)
+}
+
+// CreateMaterializedViewShadowTable implements the DDL interface.
+func (d *Checker) CreateMaterializedViewShadowTable(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName pmodel.CIStr,
+	shadowTableInfo *model.TableInfo,
+) error {
+	return d.realExecutor.CreateMaterializedViewShadowTable(ctx, schemaID, schemaName, shadowTableInfo)
+}
+
+// RefreshMaterializedViewCompleteOutOfPlaceCutover implements the DDL interface.
+func (d *Checker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName pmodel.CIStr,
+	viewName pmodel.CIStr,
+	oldMViewID int64,
+	shadowTableID int64,
+	buildReadTSO uint64,
+	expectedOldMViewRevision *uint64,
+	expectedLastSuccessReadTSO uint64,
+	expectedLastSuccessReadTSONull bool,
+	nextTime *string,
+	shouldUpdateNextTime bool,
+) error {
+	return d.realExecutor.RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		ctx,
+		schemaID,
+		schemaName,
+		viewName,
+		oldMViewID,
+		shadowTableID,
+		buildReadTSO,
+		expectedOldMViewRevision,
+		expectedLastSuccessReadTSO,
+		expectedLastSuccessReadTSONull,
+		nextTime,
+		shouldUpdateNextTime,
+	)
 }
 
 // DropTable implements the DDL interface.

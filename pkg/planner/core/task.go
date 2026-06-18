@@ -398,23 +398,26 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// for hash inner join, both side is ok, by default, we use the probe side
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
-	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != logicalop.InnerJoin {
-		if p.JoinType == logicalop.RightOuterJoin {
-			outerTaskIndex = 1
+	// for full outer join, it can not keep its children's MPPPartitionType, because it will generate NULL values for both left and right sides
+	task := &MppTask{p: p}
+	var outerTask *MppTask
+	switch p.JoinType {
+	case logicalop.FullOuterJoin:
+	case logicalop.InnerJoin:
+		if p.InnerChildIdx == 0 {
+			// can not use the task from tasks because it maybe updated.
+			outerTask = rTask
 		} else {
-			outerTaskIndex = 0
+			outerTask = lTask
 		}
-	}
-	// can not use the task from tasks because it maybe updated.
-	outerTask := lTask
-	if outerTaskIndex == 1 {
+	case logicalop.RightOuterJoin:
 		outerTask = rTask
+	default:
+		outerTask = lTask
 	}
-	task := &MppTask{
-		p:        p,
-		partTp:   outerTask.partTp,
-		hashCols: outerTask.hashCols,
+	if outerTask != nil {
+		task.partTp = outerTask.partTp
+		task.hashCols = outerTask.hashCols
 	}
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
@@ -1590,6 +1593,11 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.Self
 	}
+	// max_count/min_count currently support only one-stage execution on TiFlash.
+	// Do not split them into partial/final here.
+	if copTaskType == kv.TiFlash && containsMaxMinCountAgg(p.AggFuncs) {
+		return nil, p.Self
+	}
 	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
@@ -1823,6 +1831,15 @@ func computePartialCursorOffset(name string) int {
 		offset++
 	}
 	return offset
+}
+
+func containsMaxMinCountAgg(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		if aggregation.IsMaxMinCount(aggFunc.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -2268,6 +2285,21 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		attachPlan2Task(finalAgg, t)
 		return t
 	case MppScalar:
+		if containsMaxMinCountAgg(p.AggFuncs) {
+			prop := &property.PhysicalProperty{
+				TaskTp:         property.MppTaskType,
+				ExpectedCnt:    math.MaxFloat64,
+				MPPPartitionTp: property.SinglePartitionType,
+			}
+			if mpp.needEnforceExchanger(prop) {
+				newMpp := mpp.enforceExchanger(prop)
+				if newMpp.Invalid() {
+					return newMpp
+				}
+				mpp = newMpp
+			}
+			return p.attach2TaskForMpp1Phase(mpp)
+		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !mpp.needEnforceExchanger(prop) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
