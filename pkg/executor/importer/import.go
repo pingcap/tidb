@@ -1423,13 +1423,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
-<<<<<<< HEAD
-=======
 		formatExpansionRatio, err := estimateFormatSizeExpansionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
 			return errors.Trace(err)
 		}
->>>>>>> 0f57a4e3175 (importinto: normalize size expansion ratio (#69315))
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1438,10 +1435,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-<<<<<<< HEAD
-=======
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
->>>>>>> 0f57a4e3175 (importinto: normalize size expansion ratio (#69315))
 		dataFiles = append(dataFiles, &fileMeta)
 	} else {
 		var commonPrefix string

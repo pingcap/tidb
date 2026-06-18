@@ -15,6 +15,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -26,26 +27,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow-go/v18/parquet"
-	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/expression"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/config"
-=======
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
-	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
->>>>>>> 0f57a4e3175 (importinto: normalize size expansion ratio (#69315))
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -59,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	"github.com/xitongsys/parquet-go/parquet"
+	"github.com/xitongsys/parquet-go/writer"
 	"go.uber.org/zap"
 )
 
@@ -328,153 +319,6 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
-<<<<<<< HEAD
-=======
-func newParquetPlanAndControllerForTest(ctx context.Context, t *testing.T, sctx *mock.Context) (*Plan, *LoadDataController, error) {
-	t.Helper()
-	sctx.Store = keyspaceOnlyStore{}
-
-	node, err := parser.New().ParseOneStmt("create table t(a timestamp)", "", "")
-	require.NoError(t, err)
-	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-	require.NoError(t, err)
-	tblInfo.State = model.StatePublic
-	table := tables.MockTableFromMeta(tblInfo)
-
-	fileName := filepath.Join(t.TempDir(), "data.parquet")
-	require.NoError(t, os.WriteFile(fileName, nil, 0o644))
-	format := DataFormatParquet
-	plan, err := NewImportPlan(ctx, sctx, plannercore.ImportInto{
-		Path:   fileName,
-		Format: &format,
-		Table: &resolve.TableNameW{
-			TableName: &ast.TableName{
-				Schema: ast.NewCIStr("test"),
-				Name:   ast.NewCIStr("t"),
-			},
-			DBInfo: &model.DBInfo{
-				Name: ast.NewCIStr("test"),
-				ID:   1,
-			},
-		},
-	}.Init(sctx.GetPlanCtx()), table)
-	require.NoError(t, err)
-
-	controller, err := NewLoadDataController(plan, table, &ASTArgs{})
-	return plan, controller, err
-}
-
-func TestImportPlanParquetLocation(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("import_plan_parquet_location", func(t *testing.T) {
-		sctx := mock.NewContext()
-		defer sctx.Close()
-		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
-		require.NoError(t, err)
-		sctx.GetSessionVars().TimeZone = asiaShanghai
-		sctx.GetSessionVars().StmtCtx.SetTimeZone(asiaShanghai)
-
-		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
-		require.NoError(t, err)
-		require.Equal(t, "Asia/Shanghai", plan.LocationID)
-		require.NotNil(t, controller.ParquetLocation())
-		require.Equal(t, "Asia/Shanghai", controller.ParquetLocation().String())
-
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
-		require.NoError(t, controller.InitDataFiles(ctx))
-		require.Len(t, controller.dataFiles, 1)
-		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
-	})
-
-	t.Run("import_plan_parquet_fixed_offset_location", func(t *testing.T) {
-		sctx := mock.NewContext()
-		defer sctx.Close()
-		require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "+08:00"))
-
-		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
-		require.NoError(t, err)
-		require.Equal(t, "+08:00", plan.LocationID)
-		require.NotNil(t, controller.ParquetLocation())
-		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
-		require.Equal(t, 8*3600, offset)
-
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
-		require.NoError(t, controller.InitDataFiles(ctx))
-		require.Len(t, controller.dataFiles, 1)
-		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
-	})
-
-	t.Run("import_plan_parquet_named_fixed_zone_location_is_rejected", func(t *testing.T) {
-		sctx := mock.NewContext()
-		defer sctx.Close()
-		loc := time.FixedZone("UTC+8", 8*3600)
-		sctx.GetSessionVars().TimeZone = loc
-		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
-
-		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
-		require.Equal(t, "UTC+8", plan.LocationID)
-		require.Nil(t, controller)
-		require.ErrorContains(t, err, "invalid location UTC+8")
-	})
-
-	t.Run("import_plan_parquet_unnamed_fixed_zone_location", func(t *testing.T) {
-		sctx := mock.NewContext()
-		defer sctx.Close()
-		loc := time.FixedZone("", -6*3600)
-		sctx.GetSessionVars().TimeZone = loc
-		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
-
-		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
-		require.NoError(t, err)
-		require.Equal(t, "-06:00", plan.LocationID)
-		require.NotNil(t, controller.ParquetLocation())
-		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
-		require.Equal(t, -6*3600, offset)
-	})
-
-	t.Run("legacy_import_task_meta_without_location_id_uses_utc", func(t *testing.T) {
-		sctx := mock.NewContext()
-		defer sctx.Close()
-		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
-		require.NoError(t, err)
-		sctx.GetSessionVars().TimeZone = asiaShanghai
-		sctx.GetSessionVars().StmtCtx.SetTimeZone(asiaShanghai)
-
-		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
-		require.NoError(t, err)
-		taskMetaBytes, err := json.Marshal(struct {
-			Plan *Plan
-		}{
-			Plan: plan,
-		})
-		require.NoError(t, err)
-
-		var taskMeta map[string]any
-		require.NoError(t, json.Unmarshal(taskMetaBytes, &taskMeta))
-		planMeta, ok := taskMeta["Plan"].(map[string]any)
-		require.True(t, ok)
-		delete(planMeta, "LocationID")
-		legacyTaskMetaBytes, err := json.Marshal(taskMeta)
-		require.NoError(t, err)
-
-		var legacyTaskMeta struct {
-			Plan Plan
-		}
-		require.NoError(t, json.Unmarshal(legacyTaskMetaBytes, &legacyTaskMeta))
-		require.Empty(t, legacyTaskMeta.Plan.LocationID)
-
-		legacyController, err := NewLoadDataController(&legacyTaskMeta.Plan, controller.Table, &ASTArgs{})
-		require.NoError(t, err)
-		require.Same(t, time.UTC, legacyController.ParquetLocation())
-
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
-		require.NoError(t, legacyController.InitDataFiles(ctx))
-		require.Len(t, legacyController.dataFiles, 1)
-		require.Same(t, time.UTC, legacyController.dataFiles[0].ParquetMeta.Loc)
-	})
-}
-
 func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
 	ctx := context.Background()
 
@@ -487,29 +331,28 @@ func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
 	t.Run("parquet ratio is clamped to physical file size", func(t *testing.T) {
 		dir := t.TempDir()
 		const fileName = "tiny.parquet"
-		columns := []testutils.ParquetColumn{
-			{
-				Name:      "id",
-				Type:      parquet.Types.Int64,
-				Converted: schema.ConvertedTypes.None,
-				Gen: func(numRows int) (any, []int16) {
-					data := make([]int64, numRows)
-					defLevels := make([]int16, numRows)
-					for i := range numRows {
-						data[i] = int64(i)
-						defLevels[i] = 1
-					}
-					return data, defLevels
-				},
-			},
-		}
-		require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, 1))
 
-		store, err := objstore.NewLocalStorage(dir)
+		type tinyParquetRow struct {
+			ID int64 `parquet:"name=id, type=INT64"`
+		}
+		var parquetData bytes.Buffer
+		parquetWriter, err := writer.NewParquetWriterFromWriter(&parquetData, new(tinyParquetRow), 1)
 		require.NoError(t, err)
+		parquetWriter.CompressionType = parquet.CompressionCodec_SNAPPY
+		require.NoError(t, parquetWriter.Write(tinyParquetRow{ID: 1}))
+		require.NoError(t, parquetWriter.WriteStop())
+
+		store, err := storage.NewLocalStorage(dir)
+		require.NoError(t, err)
+		require.NoError(t, store.WriteFile(ctx, fileName, parquetData.Bytes()))
 		stat, err := os.Stat(filepath.Join(dir, fileName))
 		require.NoError(t, err)
-		rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, fileName, store)
+		rows, rowSize, err := mydump.SampleParquetRowSize(ctx, mydump.SourceFileMeta{
+			Path:        fileName,
+			FileSize:    stat.Size(),
+			Compression: mydump.CompressionNone,
+			Type:        mydump.SourceTypeParquet,
+		}, store)
 		require.NoError(t, err)
 		require.Less(t, rowSize*float64(rows), float64(stat.Size()))
 
@@ -519,7 +362,6 @@ func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
 	})
 }
 
->>>>>>> 0f57a4e3175 (importinto: normalize size expansion ratio (#69315))
 func TestInitCompressedFiles(t *testing.T) {
 	username, err := user.Current()
 	require.NoError(t, err)
