@@ -1424,7 +1424,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
 		{"commit", "", false},
 		{"analyze table t", "", false},
-		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
+		{"explain analyze select sum(a+b) from t where benchmark(1000, md5(a)) = 0", ".*TableReader.*", true},
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
 	}
