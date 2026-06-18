@@ -360,6 +360,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()
 	}
+	ret.initAutoEmbeddingGeneratedCols()
 	ret.collectRuntimeStatsEnabled()
 	return ret, nil
 }

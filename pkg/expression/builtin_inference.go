@@ -34,15 +34,14 @@ var (
 )
 
 var (
-	_ builtinFunc = &BuiltinEmbedTextSig{}
+	_ builtinFunc = &builtinEmbedTextSig{}
 )
 
 type embedTextFunctionClass struct {
 	baseFunctionClass
 }
 
-// BuiltinEmbedTextSig is the signature for the `EMBED_TEXT` function.
-type BuiltinEmbedTextSig struct {
+type builtinEmbedTextSig struct {
 	baseBuiltinFunc
 	expropt.SessionVarsPropReader
 
@@ -61,8 +60,8 @@ type EmbedTextArgs struct {
 }
 
 // Clone implements builtinFunc interface.
-func (b *BuiltinEmbedTextSig) Clone() builtinFunc {
-	newSig := &BuiltinEmbedTextSig{IsFromVecSearch: b.IsFromVecSearch}
+func (b *builtinEmbedTextSig) Clone() builtinFunc {
+	newSig := &builtinEmbedTextSig{IsFromVecSearch: b.IsFromVecSearch}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -86,7 +85,7 @@ func (c *embedTextFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	sig := &BuiltinEmbedTextSig{
+	sig := &builtinEmbedTextSig{
 		baseBuiltinFunc: bf,
 		IsFromVecSearch: false,
 	}
@@ -94,7 +93,7 @@ func (c *embedTextFunctionClass) getFunction(ctx BuildContext, args []Expression
 	return sig, nil
 }
 
-func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
 	sessionEvalCtx, ok := unwrapSessionEvalContext(ctx)
 	if !ok {
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
@@ -105,6 +104,34 @@ func (b *BuiltinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, isNull, err
 	}
 	return datum.GetVectorFloat32(), false, nil
+}
+
+// MarkEmbedTextFromVecSearch marks an EMBED_TEXT() scalar function synthesized
+// from a VEC_EMBED_*_DISTANCE() expression.
+func MarkEmbedTextFromVecSearch(sf *ScalarFunction) error {
+	if sf == nil {
+		return fmt.Errorf("unexpected nil function for embed_text")
+	}
+	embedSig, ok := sf.Function.(*builtinEmbedTextSig)
+	if !ok {
+		return fmt.Errorf("unexpected function signature for embed_text: %T", sf.Function)
+	}
+	embedSig.IsFromVecSearch = true
+	return nil
+}
+
+// EvalEmbedTextArgsFromExpression evaluates arguments from a direct EMBED_TEXT()
+// scalar expression without calling the remote embedding provider.
+func EvalEmbedTextArgsFromExpression(ctx EvalContext, row chunk.Row, expr Expression) (*EmbedTextArgs, bool, error) {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return nil, false, fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
+	}
+	embedSig, ok := sf.Function.(*builtinEmbedTextSig)
+	if !ok {
+		return nil, false, fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
+	}
+	return EvalEmbedTextArgs(ctx, row, sf.GetArgs(), embedSig.IsFromVecSearch)
 }
 
 // EvalEmbedTextArgs evaluates EMBED_TEXT() arguments without calling the remote embedding provider.
@@ -197,7 +224,7 @@ func EvalEmbedTextArgsToDatum(ctx context.Context, sctx sessionctx.Context, embe
 }
 
 // RequiredOptionalEvalProps implements RequiredOptionalEvalProps interface.
-func (b *BuiltinEmbedTextSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+func (b *builtinEmbedTextSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 

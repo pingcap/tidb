@@ -55,6 +55,12 @@ const (
 	autoEmbeddingEvalMaxConcurrentTasks = 800
 )
 
+type autoEmbeddingGeneratedColumn struct {
+	offset int
+	column *table.Column
+	expr   expression.Expression
+}
+
 // InsertValues is the data to insert.
 // nolint:structcheck
 type InsertValues struct {
@@ -73,7 +79,9 @@ type InsertValues struct {
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
 
-	GenExprs []expression.Expression
+	GenExprs                         []expression.Expression
+	autoEmbeddingGeneratedCols       []autoEmbeddingGeneratedColumn
+	autoEmbeddingGeneratedColsInited bool
 
 	insertColumns []*table.Column
 
@@ -199,6 +207,7 @@ func (e *InsertValues) initInsertColumns() error {
 	if err != nil {
 		return err
 	}
+	e.initAutoEmbeddingGeneratedCols()
 	return nil
 }
 
@@ -215,6 +224,38 @@ func (e *InsertValues) initEvalBuffer() {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	e.evalBuffer = chunk.MutRowFromTypes(e.evalBufferTypes)
+}
+
+func (e *InsertValues) initAutoEmbeddingGeneratedCols() {
+	e.autoEmbeddingGeneratedColsInited = true
+	if len(e.GenExprs) == 0 || e.Table == nil {
+		e.autoEmbeddingGeneratedCols = nil
+		return
+	}
+	autoEmbeddingCols := make([]autoEmbeddingGeneratedColumn, 0)
+	gIdx := -1
+	for colIdx, gCol := range e.Table.Cols() {
+		if !gCol.IsGenerated() {
+			continue
+		}
+		gIdx++
+		if !expression.IsAutoEmbedFnCallAST(gCol.GeneratedExpr.Internal()) {
+			continue
+		}
+		autoEmbeddingCols = append(autoEmbeddingCols, autoEmbeddingGeneratedColumn{
+			offset: colIdx,
+			column: gCol,
+			expr:   e.GenExprs[gIdx],
+		})
+	}
+	e.autoEmbeddingGeneratedCols = autoEmbeddingCols
+}
+
+func (e *InsertValues) getAutoEmbeddingGeneratedCols() []autoEmbeddingGeneratedColumn {
+	if !e.autoEmbeddingGeneratedColsInited {
+		e.initAutoEmbeddingGeneratedCols()
+	}
+	return e.autoEmbeddingGeneratedCols
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
@@ -665,17 +706,11 @@ func (e *InsertValues) fillAutoEmbeddingDatums(ctx context.Context, rows [][]typ
 }
 
 func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, rows [][]types.Datum, endRowCount uint64) ([][]types.Datum, error) {
-	if len(e.GenExprs) == 0 || len(rows) == 0 {
+	if len(rows) == 0 {
 		return rows, nil
 	}
-	hasAutoEmbeddingExpr := false
-	for _, col := range e.Table.Cols() {
-		if col.IsGenerated() && expression.IsAutoEmbedFnCallAST(col.GeneratedExpr.Internal()) {
-			hasAutoEmbeddingExpr = true
-			break
-		}
-	}
-	if !hasAutoEmbeddingExpr {
+	autoEmbeddingGeneratedCols := e.getAutoEmbeddingGeneratedCols()
+	if len(autoEmbeddingGeneratedCols) == 0 {
 		return rows, nil
 	}
 
@@ -686,11 +721,9 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 	}
 
 	type autoEmbeddingEvalTask struct {
-		rowIdx int
-		colIdx int
-		col    *table.Column
-		expr   expression.Expression
-		row    []types.Datum
+		rowIdx       int
+		generatedCol autoEmbeddingGeneratedColumn
+		row          chunk.Row
 	}
 	type autoEmbeddingEvalResult struct {
 		val types.Datum
@@ -701,26 +734,17 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 		isNull bool
 	}
 
-	tasks := make([]autoEmbeddingEvalTask, 0, len(rows))
+	tasks := make([]autoEmbeddingEvalTask, 0, len(rows)*len(autoEmbeddingGeneratedCols))
 	for rowIdx, row := range rows {
 		if row == nil {
 			continue
 		}
-		gIdx := -1
-		for colIdx, gCol := range e.Table.Cols() {
-			if !gCol.IsGenerated() {
-				continue
-			}
-			gIdx++
-			if !expression.IsAutoEmbedFnCallAST(gCol.GeneratedExpr.Internal()) {
-				continue
-			}
+		evalRow := chunk.MutRowFromDatums(row).ToRow()
+		for _, col := range autoEmbeddingGeneratedCols {
 			tasks = append(tasks, autoEmbeddingEvalTask{
-				rowIdx: rowIdx,
-				colIdx: colIdx,
-				col:    gCol,
-				expr:   e.GenExprs[gIdx],
-				row:    row,
+				rowIdx:       rowIdx,
+				generatedCol: col,
+				row:          evalRow,
 			})
 		}
 	}
@@ -735,17 +759,7 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 	results := make([]autoEmbeddingEvalResult, len(tasks))
 	inputs := make([]autoEmbeddingEvalInput, len(tasks))
 	for i, task := range tasks {
-		sf, ok := task.expr.(*expression.ScalarFunction)
-		if !ok {
-			results[i].err = fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
-			continue
-		}
-		embedSig, ok := sf.Function.(*expression.BuiltinEmbedTextSig)
-		if !ok {
-			results[i].err = fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
-			continue
-		}
-		embedArgs, isNull, err := expression.EvalEmbedTextArgs(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(task.row).ToRow(), sf.GetArgs(), embedSig.IsFromVecSearch)
+		embedArgs, isNull, err := expression.EvalEmbedTextArgsFromExpression(e.Ctx().GetExprCtx().GetEvalCtx(), task.row, task.generatedCol.expr)
 		if err != nil || isNull {
 			results[i].err = err
 			inputs[i].isNull = isNull
@@ -785,20 +799,20 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 		if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(result.err) != nil {
 			return nil, result.err
 		}
-		val, err := table.CastValue(e.Ctx(), result.val, task.col.ToInfo(), false, false)
+		val, err := table.CastValue(e.Ctx(), result.val, task.generatedCol.column.ToInfo(), false, false)
 		rowIdx := int(firstBatchRowIdx) + task.rowIdx
 		if inLoadData {
 			rowIdx++
 		}
-		if err = e.handleErr(task.col, &result.val, rowIdx, err); err != nil {
+		if err = e.handleErr(task.generatedCol.column, &result.val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		rows[task.rowIdx][task.colIdx] = val
+		rows[task.rowIdx][task.generatedCol.offset] = val
 		rowCntInLoadData := uint64(0)
 		if inLoadData {
 			rowCntInLoadData = firstBatchRowIdx + uint64(task.rowIdx) + 1
 		}
-		if err = task.col.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &rows[task.rowIdx][task.colIdx], rowCntInLoadData); err != nil {
+		if err = task.generatedCol.column.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &rows[task.rowIdx][task.generatedCol.offset], rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}

@@ -92,7 +92,7 @@ func (s *builtinIlikeSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *BuiltinEmbedTextSig) SafeToShareAcrossSession() bool {
+func (s *builtinEmbedTextSig) SafeToShareAcrossSession() bool {
 	return false
 }
 

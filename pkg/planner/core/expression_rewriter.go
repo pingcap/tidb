@@ -3066,12 +3066,7 @@ func (er *expressionRewriter) rewriteVectorSearchFuncCallWithEmbedding(v *ast.Fu
 	}
 
 	fnInit := func(sf *expression.ScalarFunction) (*expression.ScalarFunction, error) {
-		embedSig, ok := sf.Function.(*expression.BuiltinEmbedTextSig)
-		if !ok {
-			return nil, errors.Errorf("unexpected function signature for %s: %T", ast.EmbedText, sf.Function)
-		}
-		embedSig.IsFromVecSearch = true
-		return sf, nil
+		return sf, expression.MarkEmbedTextFromVecSearch(sf)
 	}
 	embedExpr, err := er.newFunctionWithInit(ast.EmbedText, types.NewFieldType(mysql.TypeUnspecified), fnInit, textEmbedArgs...)
 	if err != nil {

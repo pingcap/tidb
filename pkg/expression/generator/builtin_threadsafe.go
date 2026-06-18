@@ -44,10 +44,6 @@ var (
 		"builtinIntIsFalseSig":     {},
 		// NOTE: please make sure there are test cases for all functions here.
 	}
-	specialUnsafeFuncs = map[string]struct{}{
-		"BuiltinEmbedTextSig": {},
-		// NOTE: please make sure there are test cases for all functions here.
-	}
 )
 
 func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames []string) {
@@ -64,8 +60,7 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 			return true
 		}
 		typeName := x.Name.Name
-		if _, ok := specialUnsafeFuncs[typeName]; !ok &&
-			(!strings.HasPrefix(typeName, "builtin") || !strings.HasSuffix(typeName, "Sig")) {
+		if !strings.HasPrefix(typeName, "builtin") || !strings.HasSuffix(typeName, "Sig") {
 			return true // the type name should be "builtin*Sig"
 		}
 		if x.Type == nil {
@@ -78,9 +73,6 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 		allFuncNames = append(allFuncNames, typeName)
 		if _, ok := specialSafeFuncs[typeName]; ok {
 			safeFuncNames = append(safeFuncNames, typeName)
-			return true
-		}
-		if _, ok := specialUnsafeFuncs[typeName]; ok {
 			return true
 		}
 		if len(structType.Fields.List) != 1 { // this structure only has 1 field
