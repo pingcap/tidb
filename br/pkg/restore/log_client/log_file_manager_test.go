@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -491,7 +492,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				),
 			).Item
 		} else {
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx)
+			data, err := fm.LoadDDLFiles(ctx)
 			req.NoError(err)
 			r = data
 		}
@@ -610,6 +611,7 @@ func generateKvData() ([]byte, logclient.Log) {
 		Sha256:      sha256[:],
 		RangeOffset: rangeOffset,
 		RangeLength: rangeLength,
+		Length:      rangeLength,
 	}
 }
 
@@ -643,5 +645,28 @@ func TestReadAllEntries(t *testing.T) {
 			encodekvEntryWithTS("mDDL", 50),
 			encodekvEntryWithTS("mDDL", 65),
 		}, nextKvEntries)
+	}
+	{
+		data, file := generateKvData()
+		readGate := make(chan struct{})
+		helper := &logclient.FakeStreamMetadataHelper{Data: data, ReadGate: readGate}
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)
+		file.Cf = stream.DefaultCF
+		errCh := make(chan error, 4)
+		for range 4 {
+			go func() {
+				_, _, err := fm.ReadAllEntries(ctx, file, 50)
+				errCh <- err
+			}()
+		}
+		require.Eventually(t, func() bool {
+			return helper.ActiveReadCount() == 4
+		}, time.Second, 10*time.Millisecond)
+		require.Equal(t, int32(4), helper.MaxActiveReadCount())
+		close(readGate)
+		for range 4 {
+			require.NoError(t, <-errCh)
+		}
+		require.Equal(t, int32(4), helper.MaxActiveReadCount())
 	}
 }

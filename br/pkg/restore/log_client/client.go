@@ -79,6 +79,7 @@ import (
 
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
+const maxReadMetaKVFilesConcurrency uint = 128
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
@@ -1187,17 +1188,15 @@ func (rc *LogClient) BuildMetaKVFiles(
 	// The error of transactions of meta could happen if restore write CF events successfully,
 	// but failed to restore default CF events.
 	for _, f := range files {
+		if !shouldReadMetaKVFile(f) {
+			if f.Type == backuppb.FileType_Delete {
+				log.Warn("internal error: detected delete file of meta key, skip it", zap.Any("file", f))
+			}
+			continue
+		}
 		if f.Cf == stream.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
-			continue
-		}
-		if f.Type == backuppb.FileType_Delete {
-			// this should happen abnormally.
-			// only do some preventive checks here.
-			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
-			continue
-		}
-		if f.Cf == stream.DefaultCF {
+		} else {
 			filesInDefaultCF = append(filesInDefaultCF, f)
 		}
 	}
@@ -1228,6 +1227,26 @@ func (rc *LogClient) BuildMetaKVFiles(
 		zap.Int("write files", len(filesInWriteCF)),
 	)
 	return filesInDefaultCF, filesInWriteCF, nil
+}
+
+func shouldReadMetaKVFile(file *backuppb.DataFileInfo) bool {
+	if file.Cf == stream.WriteCF {
+		return true
+	}
+	if file.Type == backuppb.FileType_Delete {
+		return false
+	}
+	return file.Cf == stream.DefaultCF
+}
+
+func countReadableMetaKVFiles(files []*backuppb.DataFileInfo) int {
+	count := 0
+	for _, file := range files {
+		if shouldReadMetaKVFile(file) {
+			count++
+		}
+	}
+	return count
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -1415,15 +1434,29 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 		}
 	}
 
-	// read all of entries from files.
-	for _, f := range files {
-		es, nextEs, err := rc.ReadAllEntries(ctx, f, filterTS)
-		if err != nil {
-			return nextKvEntries, errors.Trace(err)
-		}
+	// read all entries from files.
+	if len(files) > 0 {
+		eg, egCtx := errgroup.WithContext(ctx)
+		workerPool := tidbutil.NewWorkerPool(min(uint(len(files)), maxReadMetaKVFilesConcurrency), "read meta kv files")
+		var entriesLock sync.Mutex
+		for _, f := range files {
+			file := f
+			workerPool.ApplyOnErrorGroup(eg, func() error {
+				es, nextEs, err := rc.ReadAllEntries(egCtx, file, filterTS)
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-		curKvEntries = append(curKvEntries, es...)
-		nextKvEntries = append(nextKvEntries, nextEs...)
+				entriesLock.Lock()
+				curKvEntries = append(curKvEntries, es...)
+				nextKvEntries = append(nextKvEntries, nextEs...)
+				entriesLock.Unlock()
+				return nil
+			})
+		}
+		if err := eg.Wait(); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	// sort these entries.

@@ -20,6 +20,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -80,6 +81,7 @@ type streamMetadataHelper interface {
 		path string,
 		offset uint64,
 		length uint64,
+		rawLength uint64,
 		compressionType backuppb.CompressionType,
 		storage storage.ExternalStorage,
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
@@ -170,15 +172,37 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		// use start ts to calculate shift start ts
 		rc.startTS,
 		rc.restoreTS,
-		rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
+		rc.metadataDownloadBatchSize,
+		func(filename string) bool {
+			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
+			if err != nil {
+				return false
+			}
+			ts, status := parsedName.CalculateShiftTS(rc.startTS, rc.restoreTS)
+			switch status {
+			case backupmetas.ShiftTSFound:
+			case backupmetas.ShiftTSNotFound:
+				return true
+			default:
+				return false
+			}
+			shiftTS.Lock()
+			if !shiftTS.exists || shiftTS.value > ts {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+			return true
+		},
+		func(filename string, raw []byte) error {
 			m, err := rc.helper.ParseToMetadata(raw)
 			if err != nil {
 				return err
 			}
-			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+			log.Info("read meta from storage and parse", zap.String("path", filename), zap.Uint64("min-ts", m.MinTs),
 				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-			ts, ok := stream.UpdateShiftTS(m, rc.startTS, rc.restoreTS)
+			ts, ok := stream.UpdateShiftTSFromMetadata(m, rc.startTS, rc.restoreTS)
 			shiftTS.Lock()
 			if ok && (!shiftTS.exists || shiftTS.value > ts) {
 				shiftTS.value = ts
@@ -196,27 +220,27 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 		return nil
 	}
-	rc.shiftStartTS = shiftTS.value
+	rc.shiftStartTS = min(rc.startTS, shiftTS.value)
 	rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 	return nil
 }
 
 func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
-	return rc.streamingMetaByTS(ctx, rc.restoreTS)
+	return rc.streamingMetaByTS(ctx, func(_ string) bool { return true })
 }
 
-func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaNameIter, error) {
-	it, err := rc.createMetaIterOver(ctx, rc.storage)
+func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, cond func(path string) bool) (MetaNameIter, error) {
+	it, err := rc.createMetaIterOver(ctx, rc.storage, cond)
 	if err != nil {
 		return nil, err
 	}
 	filtered := iter.FilterOut(it, func(metaname *MetaName) bool {
-		return restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < rc.shiftStartTS
+		return rc.restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < rc.shiftStartTS
 	})
 	return filtered, nil
 }
 
-func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
+func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage, cond func(path string) bool) (MetaNameIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
@@ -224,7 +248,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 			return nil
 		}
 		newPath := stream.FilterPathByTs(path, rc.shiftStartTS, rc.restoreTS)
-		if len(newPath) > 0 {
+		if len(newPath) > 0 && cond(newPath) {
 			names = append(names, newPath)
 		}
 		return nil
@@ -247,7 +271,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 	// TODO: maybe we need to be able to adjust the concurrency to download files,
 	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
+		iter.WithBufferSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
 	return reader, nil
 }
 
@@ -303,7 +327,7 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
-		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
+		rc.helper.InitCacheEntry(g.Path, countReadableMetaKVFiles(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
 	}
 
@@ -312,8 +336,14 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 
 // LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context) ([]Log, error) {
-	m, err := rc.streamingMeta(ctx)
+func (rc *LogFileManager) LoadDDLFiles(ctx context.Context) ([]Log, error) {
+	m, err := rc.streamingMetaByTS(ctx, func(path string) bool {
+		parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(path)
+		if err != nil {
+			return true
+		}
+		return parsedName.HasDDLFiles()
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +439,7 @@ func (rc *LogFileManager) ReadAllEntries(
 	kvEntries := make([]*KvEntryWithTS, 0)
 	nextKvEntries := make([]*KvEntryWithTS, 0)
 
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
+	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.Length, file.CompressionType,
 		rc.storage, file.FileEncryptionInfo)
 	if err != nil {
 		return nil, nil, errors.Trace(err)

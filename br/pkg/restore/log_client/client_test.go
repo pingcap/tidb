@@ -830,6 +830,41 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+
+	files = []*backuppb.DataFileInfo{
+		{
+			Path: "write-put",
+			Cf:   stream.WriteCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "write-delete",
+			Cf:   stream.WriteCF,
+			Type: backuppb.FileType_Delete,
+		},
+		{
+			Path: "default-put",
+			Cf:   stream.DefaultCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "default-delete",
+			Cf:   stream.DefaultCF,
+			Type: backuppb.FileType_Delete,
+		},
+	}
+	client := logclient.NewRestoreClient(
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+	defaultFiles, writeFiles, err := client.BuildMetaKVFiles(context.Background(), files,
+		stream.NewSchemasReplace(
+			nil, false, nil, 0, nil, nil, nil, nil,
+		),
+	)
+	require.NoError(t, err)
+	require.Len(t, defaultFiles, 1)
+	require.Equal(t, "default-put", defaultFiles[0].Path)
+	require.Len(t, writeFiles, 2)
+	require.Equal(t, 3, logclient.TEST_CountReadableMetaKVFiles(files))
 }
 
 func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logclient.LogIter {

@@ -1470,7 +1470,7 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
+	ddlFiles, err := client.LoadDDLFiles(ctx)
 	if err != nil {
 		return err
 	}

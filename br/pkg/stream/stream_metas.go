@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -110,7 +111,8 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	err := FastUnmarshalMetaData(ctx, s,
 		0,
 		until,
-		ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
+		ms.MetadataDownloadBatchSize,
+		func(string) bool { return false }, func(filename string, raw []byte) error {
 			m, err := ms.Helper.ParseToMetadataHard(raw)
 			if err != nil {
 				return err
@@ -134,7 +136,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 					})
 				}
 				metadataMap.Lock()
-				metadataMap.metas[path] = &MetadataInfo{
+				metadataMap.metas[filename] = &MetadataInfo{
 					MinTS:          m.MinTs,
 					FileGroupInfos: fileGroupInfos,
 				}
@@ -142,7 +144,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 			}
 			// filter out the metadatas whose ts-range is overlap with [until, +inf)
 			// and calculate their minimum begin-default-ts
-			ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
+			ts, ok := UpdateShiftTS(filename, m, until, mathutil.MaxUint)
 			if ok {
 				metadataMap.Lock()
 				if ts < metadataMap.shiftUntilTS {
@@ -160,12 +162,6 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 		log.Warn("calculate shift-ts", zap.Uint64("start-ts", until), zap.Uint64("shift-ts", metadataMap.shiftUntilTS))
 	}
 	return metadataMap.shiftUntilTS, nil
-}
-
-// LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
-	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
-	return err
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *FileGroupInfo) (shouldBreak bool)) {
@@ -295,7 +291,28 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
-func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
+// TryParseTaggedBackupMetaFileNameWrapper parses the tagged backupmeta file name
+// from a backupmeta path after stripping its directory and meta suffix.
+func TryParseTaggedBackupMetaFileNameWrapper(filename string) (backupmetas.ParsedName, error) {
+	baseName := strings.TrimSuffix(path.Base(filename), metaSuffix)
+	return backupmetas.TryParseTaggedBackupMetaFileName(baseName)
+}
+
+func UpdateShiftTS(filename string, m *pb.Metadata, startTS, restoreTS uint64) (uint64, bool) {
+	parsedName, err := TryParseTaggedBackupMetaFileNameWrapper(filename)
+	if err == nil {
+		ts, status := parsedName.CalculateShiftTS(startTS, restoreTS)
+		switch status {
+		case backupmetas.ShiftTSFound:
+			return ts, true
+		case backupmetas.ShiftTSNotFound:
+			return 0, false
+		}
+	}
+	return UpdateShiftTSFromMetadata(m, startTS, restoreTS)
+}
+
+func UpdateShiftTSFromMetadata(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
 	var (
 		minBeginTS uint64
 		isExist    bool
