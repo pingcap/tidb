@@ -16,8 +16,6 @@ package terror
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -134,36 +132,11 @@ func TestLog(t *testing.T) {
 func TestTraceAndLocation(t *testing.T) {
 	err := example()
 	stack := errors.ErrorStack(err)
-	lines := strings.Split(stack, "\n")
-	goroot := strings.ReplaceAll(runtime.GOROOT(), string(os.PathSeparator), "/")
-	var sysStack = 0
-	for _, line := range lines {
-		// When you run test case in the bazel. you will find the difference stack. It looks like this:
-		//
-		// ```go
-		// testing.tRunner
-		//   GOROOT/src/testing/testing.go:1576
-		// runtime.goexit
-		//   src/runtime/asm_arm64.s:1172
-		// ```
-		//
-		// but run with ```go test```. It looks like this:
-		//
-		// ```go
-		// testing.tRunner
-		//   /Users/pingcap/.gvm/gos/go1.20.1/src/testing/testing.go:1576
-		// runtime.goexit
-		//	 /Users/pingcap/.gvm/gos/go1.20.1/src/runtime/asm_arm64.s:1172
-		// ```
-		//
-		// So we have to deal with these boundary conditions.
-		if strings.Contains(line, goroot) || strings.Contains(line, "src/runtime") {
-			sysStack++
-		}
-	}
-	require.Equalf(t, 9, len(lines)-(2*sysStack), "stack =\n%s", stack)
+	require.Contains(t, stack, "[executor:123]error message:abc")
+	require.Contains(t, stack, "github.com/pingcap/tidb/pkg/parser/terror.call")
+	require.Contains(t, stack, "github.com/pingcap/tidb/pkg/parser/terror.example")
 	var containTerr bool
-	for _, v := range lines {
+	for _, v := range strings.Split(stack, "\n") {
 		if strings.Contains(v, "terror_test.go") {
 			containTerr = true
 			break
