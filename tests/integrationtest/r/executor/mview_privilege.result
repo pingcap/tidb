@@ -212,15 +212,15 @@ GRANT SELECT ON `mview_privilege_test`.`t` TO 'u_db_refresh'@'%'
 GRANT SHOW VIEW ON `mview_privilege_test`.`mv` TO 'u_db_refresh'@'%'
 refresh materialized view mv complete delta apply;
 Error 1142 (42000): OPERATE VIEW command denied to user 'u_db_refresh'@'%' for table 'mv'
-compare materialized view mview_privilege_test.mv as of timestamp '2026-05-21 10:00:00';
+compare materialized view mview_privilege_test.mv as of timestamp now();
 Error 1142 (42000): OPERATE VIEW command denied to user 'u_compare_none'@'%' for table 'mv'
-compare materialized view mv as of timestamp '2026-05-21 10:00:00';
+compare materialized view mv as of timestamp now();
 Error 1142 (42000): SELECT command denied to user 'u_compare_operate'@'%' for table 't'
-compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+compare materialized view mv as of timestamp now() output into table mv_compare_output;
 Error 1142 (42000): CREATE command denied to user 'u_compare_no_create'@'%' for table 'mv_compare_output'
-compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+compare materialized view mv as of timestamp now() output into table mv_compare_output;
 Error 1142 (42000): INSERT command denied to user 'u_compare_no_insert'@'%' for table 'mv_compare_output'
-compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output_exists;
+compare materialized view mv as of timestamp now() output into table mv_compare_output_exists;
 Error 1050 (42S01): Table 'mview_privilege_test.mv_compare_output_exists' already exists
 insert into t values (5, 9);
 insert into mv values (4, 1, 1);
