@@ -32,6 +32,73 @@ func prepareForeignKeyTables(tk *testkit.TestKit) {
 	tk.MustExec("insert into parent values (1), (2)")
 }
 
+func TestForeignKeySharedLockOptimisticReverseReferenceOrder(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+
+	prepareForeignKeyTables(tk1)
+
+	// Foreign-key shared locks do not support optimistic transactions. The checks below reference
+	// parent rows in reverse orders, so the second optimistic transaction should fail at commit
+	// time with a write conflict.
+	tk1.MustExec("begin optimistic")
+	tk2.MustExec("begin optimistic")
+
+	tk1.MustExec("insert into child values (1, 1)")
+	tk2.MustExec("insert into child values (3, 2)")
+
+	tk1.MustExec("insert into child values (2, 2)")
+	tk2.MustExec("insert into child values (4, 1)")
+
+	tk1.MustExec("commit")
+	err := tk2.ExecToErr("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Write conflict")
+
+	tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestForeignKeySharedLockPessimisticReverseReferenceOrder(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+
+	prepareForeignKeyTables(tk1)
+
+	// Pessimistic transactions can acquire compatible foreign-key shared locks, so the same
+	// reverse reference order should let both transactions commit.
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk1.MustExec("insert into child values (1, 1)")
+	tk2.MustExec("insert into child values (3, 2)")
+
+	tk1.MustExec("insert into child values (2, 2)")
+	tk2.MustExec("insert into child values (4, 1)")
+
+	tk1.MustExec("commit")
+	tk2.MustExec("commit")
+
+	tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 2", "3 2", "4 1"))
+}
+
 func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
@@ -413,11 +480,17 @@ func TestSharedLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
 	insertDoneCh := make(chan error, 1)
 	insertDone := false
 	t.Cleanup(func() {
-		_, _ = tk1.Exec("rollback")
+		if _, err := tk1.Exec("rollback"); err != nil {
+			t.Errorf("rollback blocker transaction: %v", err)
+		}
 		if !insertDone {
 			select {
-			case <-insertDoneCh:
+			case err := <-insertDoneCh:
+				if err != nil {
+					t.Errorf("insert goroutine failed after rolling back blocker transaction: %v", err)
+				}
 			case <-time.After(time.Second):
+				t.Errorf("insert goroutine did not finish after rolling back blocker transaction")
 			}
 		}
 	})
