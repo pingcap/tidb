@@ -396,6 +396,7 @@ func RegisterMetrics() {
 	// StmtSummary
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
 }
 
 // Register registers custom collectors.
