@@ -831,10 +831,10 @@ func TestMLogTrackedReferenceTypes(t *testing.T) {
 
 	// Existing mlog rows are still readable after the type change.
 	tk.MustQuery(
-		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"alpha v1 12.34 7061796C6F616431 U -1",
-		"beta v2 56.78 7061796C6F616432 U 1",
+		"alpha payload1 12.34 62696E31 U -1",
+		"beta payload2 56.78 62696E32 U 1",
 	))
 
 	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
@@ -1183,22 +1183,23 @@ func TestMLogGeneratedColumn(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) stored)")
-	tk.MustExec("create materialized view log on t (a, b)")
+	// Track the stored generated column in the mlog.
+	tk.MustExec("create materialized view log on t (a, b, d)")
 
 	tk.MustExec("insert into t (a, b, c) values (1, 10, 20)")
 	tk.MustQuery(
-		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
-		"1 10 I 1",
+		"1 10 30 I 1",
 	))
 
 	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
 	tk.MustExec("update t set b=11 where a=1")
 	tk.MustQuery(
-		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"1 10 U -1",
-		"1 11 U 1",
+		"1 10 30 U -1",
+		"1 11 31 U 1",
 	))
 }
 
@@ -1208,22 +1209,23 @@ func TestMLogVirtualGeneratedColumn(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) virtual)")
-	tk.MustExec("create materialized view log on t (a, b)")
+	// Track the stored generated column in the mlog.
+	tk.MustExec("create materialized view log on t (a, b, d)")
 
 	tk.MustExec("insert into t (a, b, c) values (1, 10, 20)")
 	tk.MustQuery(
-		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
-		"1 10 I 1",
+		"1 10 30 I 1",
 	))
 
 	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
 	tk.MustExec("update t set b=11 where a=1")
 	tk.MustQuery(
-		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"1 10 U -1",
-		"1 11 U 1",
+		"1 10 30 U -1",
+		"1 11 31 U 1",
 	))
 }
 
