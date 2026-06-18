@@ -2436,6 +2436,16 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 
 // BuildTableInfoWithLike builds a new table info according to CREATE TABLE ... LIKE statement.
 func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	return buildTableInfoWithLike(ident, referTblInfo, s, false)
+}
+
+// BuildTableInfoWithLikeForMaterializedViewShadow builds a protected shadow table
+// from a materialized view table for out-of-place refresh.
+func BuildTableInfoWithLikeForMaterializedViewShadow(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
+	return buildTableInfoWithLike(ident, referTblInfo, &ast.CreateTableStmt{}, true)
+}
+
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt, allowMaterializedView bool) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
@@ -2443,7 +2453,7 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	if referTblInfo.MaterializedViewLog != nil {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view log table")
 	}
-	if referTblInfo.MaterializedView != nil {
+	if referTblInfo.MaterializedView != nil && !allowMaterializedView {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view table")
 	}
 	tblInfo := *referTblInfo

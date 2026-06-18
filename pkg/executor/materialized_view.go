@@ -4814,10 +4814,9 @@ func buildMVRefreshOutOfPlaceShadowTableInfo(
 	if tblInfo == nil || tblInfo.MaterializedView == nil {
 		return nil, errors.New("refresh materialized view complete OUT OF PLACE: invalid materialized view metadata")
 	}
-	shadowTableInfo, err := ddl.BuildTableInfoWithLike(
+	shadowTableInfo, err := ddl.BuildTableInfoWithLikeForMaterializedViewShadow(
 		ast.Ident{Schema: schemaName, Name: pmodel.NewCIStr(shadowTableName)},
 		tblInfo,
-		&ast.CreateTableStmt{},
 	)
 	if err != nil {
 		return nil, errors.Trace(err)

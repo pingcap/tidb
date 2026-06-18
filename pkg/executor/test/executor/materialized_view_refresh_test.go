@@ -3042,6 +3042,8 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+	err := tk.ExecToErr("create table mv_like like mv")
+	require.ErrorContains(t, err, "CREATE TABLE LIKE on materialized view table")
 
 	is := dom.InfoSchema()
 	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
