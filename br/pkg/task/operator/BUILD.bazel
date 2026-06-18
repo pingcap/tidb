@@ -55,6 +55,7 @@ go_test(
         "//br/pkg/metautil",
         "//br/pkg/storage",
         "//br/pkg/task",
+        "@com_github_spf13_pflag//:pflag",
         "@com_github_stretchr_testify//require",
     ],
 )

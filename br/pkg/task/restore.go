@@ -86,8 +86,6 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
-	// FlagFromReplicationStorage is used for PITR from the replication external storage
-	FlagReplicationStatusSubPrefix = "replication-status-sub-prefix"
 	// FlagRestorePhase is used for the restore phase of PITR
 	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
@@ -281,11 +279,9 @@ type RestoreConfig struct {
 	upstreamClusterID uint64 `json:"-" toml:"-"`
 	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
-	// for PITR from the replication external storage
-	ReplicationStatusSubPrefix string `json:"replication-status-sub-prefix" toml:"replication-status-sub-prefix"`
-	RestorePhase               uint64 `json:"restore-phase" toml:"restore-phase"`
-	FromReplicationStorage     bool   `json:"-" toml:"-"`
-	RestoreInPhase             bool   `json:"-" toml:"-"`
+	// for phased PITR restore
+	RestorePhase   uint64 `json:"restore-phase" toml:"restore-phase"`
+	RestoreInPhase bool   `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -314,7 +310,6 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
-	flags.String(FlagReplicationStatusSubPrefix, "", "specify the sub prefix of the replication status")
 	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
@@ -460,10 +455,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
-	cfg.ReplicationStatusSubPrefix, err = flags.GetString(FlagReplicationStatusSubPrefix)
-	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStatusSubPrefix)
-	}
 	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
@@ -477,7 +468,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
 			FlagRestorePhase, flagUseCheckpoint)
 	}
-	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStatusSubPrefix) || len(cfg.ReplicationStatusSubPrefix) > 0
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
