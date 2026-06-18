@@ -805,12 +805,12 @@ Use one `FULL OUTER JOIN`-based diff source query, then let one dedicated sink o
 
 High-level algorithm:
 
-1. Build query-side full result (`Q`) from MV definition SQL.
-2. Full-outer-join `Q` with current MV table (`M`) by the `GROUP BY` key
+1. Build recomputed full result from MV definition SQL.
+2. Full-outer-join the recomputed result with the current MV table by the `GROUP BY` key
    (which is the logical row identity in this refresh mode).
 3. Keep only changed rows:
-   - `Q-only` => `INSERT`
-   - `M-only` => `DELETE`
+   - recomputed-only => `INSERT`
+   - current-only => `DELETE`
    - both exist but payload differs => `UPDATE`
 4. Output one diff stream (`FOJ + Selection`) and feed it directly into a dedicated MV-apply sink operator.
    - this operator executes per-row `INSERT` / `UPDATE` / `DELETE` on target MV table in the same transaction.
@@ -904,8 +904,8 @@ For operator input layout, keep it explicit and stable (planner-executor contrac
 
 1. row-op column (`diff_op`);
 2. optional extra handle column (`_tidb_rowid`) only when MV uses extra row-id handle;
-3. old row image (`M`) columns for delete/update old values;
-4. new row image (`Q`) columns for insert/update new values.
+3. current row image columns for delete/update old values;
+4. recomputed row image columns for insert/update new values.
 
 Additional layout metadata stays explicit even when columns are reused:
 

@@ -41,10 +41,10 @@ import (
 )
 
 const (
-	deltaTableAlias = "delta"
-	mvTableAlias    = "mv"
-	diffQAlias      = "__mvd_q"
-	diffMAlias      = "__mvd_m"
+	deltaTableAlias     = "delta"
+	mvTableAlias        = "mv"
+	diffRecomputedAlias = "__mvd_recomputed"
+	diffCurrentAlias    = "__mvd_current"
 
 	deltaCntStarName = "__mview_delta_cnt_star"
 )
@@ -1197,12 +1197,12 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 	require.Equal(t, hint.HintReadFromStorage, storageHint.HintName.L)
 	require.Equal(t, hint.HintTiFlash, storageHint.HintData.(pmodel.CIStr).L)
 	require.Len(t, storageHint.Tables, 1)
-	require.Equal(t, diffMAlias, storageHint.Tables[0].TableName.L)
+	require.Equal(t, diffCurrentAlias, storageHint.Tables[0].TableName.L)
 	require.Equal(t, item.DBName.L, storageHint.Tables[0].DBName.L)
 	probeHint := res.DiffSourceSelect.TableHints[1]
 	require.Equal(t, hint.HintHashJoinProbe, probeHint.HintName.L)
 	require.Len(t, probeHint.Tables, 1)
-	require.Equal(t, diffMAlias, probeHint.Tables[0].TableName.L)
+	require.Equal(t, diffCurrentAlias, probeHint.Tables[0].TableName.L)
 	require.Equal(t, item.DBName.L, probeHint.Tables[0].DBName.L)
 	sctx.GetSessionVars().EnableFullOuterJoin = true
 	plan, _, err := optimizeForTest(sctx, is)(context.Background(), res.DiffSourceSelect)
@@ -1230,8 +1230,8 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 	require.Len(t, joinPredicates, 1)
 	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
 	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
-	require.Equal(t, diffQAlias, leftTable)
-	require.Equal(t, diffMAlias, rightTable)
+	require.Equal(t, diffRecomputedAlias, leftTable)
+	require.Equal(t, diffCurrentAlias, rightTable)
 	require.Equal(t, leftCol, rightCol)
 	require.Equal(t, "a", rightCol)
 	require.Equal(t, opcode.EQ, joinPredicates[0].Op)
@@ -1291,8 +1291,8 @@ func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
 	require.Len(t, joinPredicates, 1)
 	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
 	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
-	require.Equal(t, diffQAlias, leftTable)
-	require.Equal(t, diffMAlias, rightTable)
+	require.Equal(t, diffRecomputedAlias, leftTable)
+	require.Equal(t, diffCurrentAlias, rightTable)
 	require.Equal(t, leftCol, rightCol)
 	require.Equal(t, "a", rightCol)
 	require.Equal(t, opcode.NullEQ, joinPredicates[0].Op)
@@ -1555,8 +1555,8 @@ func collectPayloadComparisonOps(t *testing.T, expr ast.ExprNode) map[string]opc
 			if x.Op == opcode.NullEQ || x.Op == opcode.EQ {
 				leftTable, leftCol := columnNameRef(t, x.L)
 				rightTable, rightCol := columnNameRef(t, x.R)
-				require.Equal(t, diffQAlias, leftTable)
-				require.Equal(t, diffMAlias, rightTable)
+				require.Equal(t, diffRecomputedAlias, leftTable)
+				require.Equal(t, diffCurrentAlias, rightTable)
 				require.Equal(t, leftCol, rightCol)
 				ops[rightCol] = x.Op
 			}

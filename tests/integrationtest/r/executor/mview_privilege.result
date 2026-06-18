@@ -200,7 +200,7 @@ refresh steps
         │   └─HashAgg | estRows:8000.00 | task:cop[tikv] | group by:mview_privilege_test.t.a, funcs:sum(mview_privilege_test.t.b)->Column#13, funcs:count(1)->Column#14
         │     └─TableFullScan | estRows:10000.00 | task:cop[tikv] | table:t | keep order:false, stats:pseudo
         └─TableReader(Probe) | estRows:10000.00 | task:root | data:TableFullScan_19
-          └─TableFullScan | estRows:10000.00 | task:cop[tikv] | table:__mvd_m | keep order:false, stats:pseudo
+          └─TableFullScan | estRows:10000.00 | task:cop[tikv] | table:__mvd_current | keep order:false, stats:pseudo
 [S05 PERSIST_REFRESH_INFO]
 [S06 TXN_COMMIT]
 [S07 FINALIZE_HIST]

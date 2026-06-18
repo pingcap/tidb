@@ -45,12 +45,12 @@ const (
 	deltaCntStarName = "__mview_delta_cnt_star"
 	mvRowIDName      = "__mview_mv_rowid"
 
-	diffQueryAlias   = "__mvd_q"
-	diffMVTableAlias = "__mvd_m"
-	diffOpColName    = "__mvd_op"
-	diffHandlePrefix = "__mvd_h_"
-	diffOldRowPrefix = "__mvd_o_"
-	diffNewRowPrefix = "__mvd_n_"
+	diffRecomputedAlias = "__mvd_recomputed"
+	diffCurrentAlias    = "__mvd_current"
+	diffOpColName       = "__mvd_op"
+	diffHandlePrefix    = "__mvd_h_"
+	diffOldRowPrefix    = "__mvd_o_"
+	diffNewRowPrefix    = "__mvd_n_"
 )
 
 // HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has a usable key layout
@@ -1451,7 +1451,7 @@ func buildMLogDeltaSelect(
 //	 AND ...
 //
 // Nullable MV group keys keep null-safe equality (<=>) so NULL-group semantics stay consistent
-// with GROUP BY. When the MV-side group key is NOT NULL, regular equality (=) is equivalent.
+// with GROUP BY. When the current-side group key is NOT NULL, regular equality (=) is equivalent.
 // Delta is placed on the left side so every changed group survives even when MV row does not exist yet.
 func buildMergeSourceSelect(
 	dbName pmodel.CIStr,
@@ -2084,19 +2084,19 @@ func ifExpr(cond, trueExpr, falseExpr ast.ExprNode) *ast.FuncCallExpr {
 //
 //	SELECT
 //	  <diff op>,
-//	  [M._tidb_rowid AS <rowid handle>],
-//	  M.<all MV columns as old row image>,
-//	  Q.<all MV columns as new row image>
-//	FROM (<MV definition SQL>) AS Q
-//	FULL OUTER JOIN <mv table> AS M
-//	  ON Q.<group_key_1> [= | <=>] M.<group_key_1>
+//	  [current._tidb_rowid AS <rowid handle>],
+//	  current.<all MV columns as current row image>,
+//	  recomputed.<all MV columns as recomputed row image>
+//	FROM (<MV definition SQL>) AS recomputed
+//	FULL OUTER JOIN <mv table> AS current
+//	  ON recomputed.<group_key_1> [= | <=>] current.<group_key_1>
 //	 AND ...
-//	WHERE Q.<marker_col> IS NULL
-//	   OR M.<marker_col> IS NULL
+//	WHERE recomputed.<marker_col> IS NULL
+//	   OR current.<marker_col> IS NULL
 //	   OR NOT <old/new payload equality>
 //
 // The diff op classifies each row as INSERT, DELETE, or UPDATE. The executor consumes the fixed
-// output layout together with the M/Q offset metadata to apply the delta to the MV table.
+// output layout together with the current/recomputed offset metadata to apply the delta to the MV table.
 func BuildCompleteDiffSource(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
@@ -2158,13 +2158,13 @@ func BuildCompleteDiffSource(
 		return nil, err
 	}
 
-	qSource := &ast.TableSource{
+	recomputedSource := &ast.TableSource{
 		Source: mvSel,
-		AsName: pmodel.NewCIStr(diffQueryAlias),
+		AsName: pmodel.NewCIStr(diffRecomputedAlias),
 	}
-	mSource := &ast.TableSource{
+	currentSource := &ast.TableSource{
 		Source: &ast.TableName{Schema: dbName, Name: mv.Name},
-		AsName: pmodel.NewCIStr(diffMVTableAlias),
+		AsName: pmodel.NewCIStr(diffCurrentAlias),
 	}
 
 	var joinCond ast.ExprNode
@@ -2179,8 +2179,8 @@ func BuildCompleteDiffSource(
 			joinCond,
 			binary(
 				op,
-				qualColExpr(diffQueryAlias, colName),
-				qualColExpr(diffMVTableAlias, colName),
+				qualColExpr(diffRecomputedAlias, colName),
+				qualColExpr(diffCurrentAlias, colName),
 			),
 		)
 	}
@@ -2188,22 +2188,22 @@ func BuildCompleteDiffSource(
 		return nil, errors.Errorf("materialized view %s has empty join condition", mv.Name.O)
 	}
 	join := &ast.Join{
-		Left:  qSource,
-		Right: mSource,
+		Left:  recomputedSource,
+		Right: currentSource,
 		Tp:    ast.FullJoin,
 		On:    &ast.OnCondition{Expr: joinCond},
 	}
 
-	qMarkerExpr := qualColExpr(diffQueryAlias, markerCol.Name.O)
-	mMarkerExpr := qualColExpr(diffMVTableAlias, markerCol.Name.O)
+	recomputedMarkerExpr := qualColExpr(diffRecomputedAlias, markerCol.Name.O)
+	currentMarkerExpr := qualColExpr(diffCurrentAlias, markerCol.Name.O)
 
-	payloadEq := buildCompleteDiffPayloadEqExpr(mv, groupKeySet, diffQueryAlias, diffMVTableAlias)
+	payloadEq := buildCompleteDiffPayloadEqExpr(mv, groupKeySet, diffRecomputedAlias, diffCurrentAlias)
 	if payloadEq == nil {
 		payloadEq = ast.NewValueExpr(int64(1), "", "")
 	}
 	payloadChanged := &ast.UnaryOperationExpr{Op: opcode.Not, V: payloadEq}
 	whereExpr := orExpr(
-		orExpr(&ast.IsNullExpr{Expr: qMarkerExpr}, &ast.IsNullExpr{Expr: mMarkerExpr}),
+		orExpr(&ast.IsNullExpr{Expr: recomputedMarkerExpr}, &ast.IsNullExpr{Expr: currentMarkerExpr}),
 		payloadChanged,
 	)
 
@@ -2212,14 +2212,14 @@ func BuildCompleteDiffSource(
 	if useRowID {
 		fields = make([]*ast.SelectField, 0, 2+len(mv.Columns)*2)
 	}
-	diffOpExpr := buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr)
+	diffOpExpr := buildCompleteDiffOpExpr(recomputedMarkerExpr, currentMarkerExpr)
 	fields = append(fields, &ast.SelectField{Expr: diffOpExpr, AsName: pmodel.NewCIStr(diffOpColName)})
 
 	rowIDHandleOffset := -1
 	if useRowID {
 		rowIDHandleOffset = len(fields)
 		fields = append(fields, &ast.SelectField{
-			Expr:   qualColExpr(diffMVTableAlias, model.ExtraHandleName.O),
+			Expr:   qualColExpr(diffCurrentAlias, model.ExtraHandleName.O),
 			AsName: pmodel.NewCIStr(diffHandlePrefix + model.ExtraHandleName.O),
 		})
 	}
@@ -2228,7 +2228,7 @@ func BuildCompleteDiffSource(
 	for i, col := range mv.Columns {
 		offset := len(fields)
 		fields = append(fields, &ast.SelectField{
-			Expr:   qualColExpr(diffMVTableAlias, col.Name.O),
+			Expr:   qualColExpr(diffCurrentAlias, col.Name.O),
 			AsName: pmodel.NewCIStr(diffOldRowPrefix + col.Name.O),
 		})
 		currentRowOffsets[i] = offset
@@ -2238,7 +2238,7 @@ func BuildCompleteDiffSource(
 	for i, col := range mv.Columns {
 		offset := len(fields)
 		fields = append(fields, &ast.SelectField{
-			Expr:   qualColExpr(diffQueryAlias, col.Name.O),
+			Expr:   qualColExpr(diffRecomputedAlias, col.Name.O),
 			AsName: pmodel.NewCIStr(diffNewRowPrefix + col.Name.O),
 		})
 		recomputedRowOffsets[i] = offset
@@ -2254,8 +2254,8 @@ func BuildCompleteDiffSource(
 		From:   &ast.TableRefsClause{TableRefs: join},
 		Where:  whereExpr,
 		TableHints: []*ast.TableOptimizerHint{
-			buildReadFromStorageTiFlashHint(dbName, pmodel.NewCIStr(diffMVTableAlias)),
-			buildHashJoinProbeHint(dbName, pmodel.NewCIStr(diffMVTableAlias)),
+			buildReadFromStorageTiFlashHint(dbName, pmodel.NewCIStr(diffCurrentAlias)),
+			buildHashJoinProbeHint(dbName, pmodel.NewCIStr(diffCurrentAlias)),
 		},
 	}
 
@@ -2294,7 +2294,7 @@ func pickCompleteDiffMarkerColumn(mv *model.TableInfo) (int, *model.ColumnInfo, 
 
 func buildCompleteDiffHandleCols(
 	mv *model.TableInfo,
-	mRowOffsets []int,
+	currentRowOffsets []int,
 	rowIDHandleOffset int,
 ) (plannerutil.HandleCols, error) {
 	if mv == nil {
@@ -2306,13 +2306,13 @@ func buildCompleteDiffHandleCols(
 		if pkCol == nil {
 			return nil, errors.Errorf("mv table %s has PKIsHandle but no primary key column", mv.Name.O)
 		}
-		if pkCol.Offset < 0 || pkCol.Offset >= len(mRowOffsets) {
+		if pkCol.Offset < 0 || pkCol.Offset >= len(currentRowOffsets) {
 			return nil, errors.Errorf("mv table %s primary key column offset %d is invalid", mv.Name.O, pkCol.Offset)
 		}
 		return plannerutil.NewIntHandleCols(&expression.Column{
 			ID:      pkCol.ID,
 			RetType: &pkCol.FieldType,
-			Index:   mRowOffsets[pkCol.Offset],
+			Index:   currentRowOffsets[pkCol.Offset],
 		}), nil
 	case mv.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(mv)
@@ -2328,7 +2328,7 @@ func buildCompleteDiffHandleCols(
 			cols = append(cols, &expression.Column{
 				ID:      col.ID,
 				RetType: &col.FieldType,
-				Index:   mRowOffsets[idxCol.Offset],
+				Index:   currentRowOffsets[idxCol.Offset],
 			})
 		}
 		return plannerutil.NewCommonHandlesColsWithoutColsAlign(mv, pkIdx, cols), nil
@@ -2347,17 +2347,17 @@ func buildCompleteDiffHandleCols(
 
 // buildCompleteDiffOpExpr builds the diff-op expression consumed by MViewCompleteDeltaApplyExec.
 // The marker column is a visible NOT NULL MV column. If the marker is NULL on one side after the
-// full outer join, that side is missing: M missing means INSERT, Q missing means DELETE. If both
-// sides exist but payload columns differ, the row is UPDATE.
-func buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr ast.ExprNode) ast.ExprNode {
+// full outer join, that side is missing: current missing means INSERT, recomputed missing means
+// DELETE. If both sides exist but payload columns differ, the row is UPDATE.
+func buildCompleteDiffOpExpr(recomputedMarkerExpr, currentMarkerExpr ast.ExprNode) ast.ExprNode {
 	return &ast.CaseExpr{
 		WhenClauses: []*ast.WhenClause{
 			{
-				Expr:   &ast.IsNullExpr{Expr: mMarkerExpr},
+				Expr:   &ast.IsNullExpr{Expr: currentMarkerExpr},
 				Result: ast.NewValueExpr(int64(1), "", ""),
 			},
 			{
-				Expr:   &ast.IsNullExpr{Expr: qMarkerExpr},
+				Expr:   &ast.IsNullExpr{Expr: recomputedMarkerExpr},
 				Result: ast.NewValueExpr(int64(2), "", ""),
 			},
 		},
@@ -2365,15 +2365,15 @@ func buildCompleteDiffOpExpr(qMarkerExpr, mMarkerExpr ast.ExprNode) ast.ExprNode
 	}
 }
 
-// buildCompleteDiffPayloadEqExpr compares non-group-key payload columns between Q and M.
+// buildCompleteDiffPayloadEqExpr compares non-group-key payload columns between recomputed and current sides.
 // Group-key columns are excluded because they are already used by the full outer join condition.
 // Nullable columns use NULL-safe equality; NOT NULL columns use normal equality to keep the
 // generated expression simpler.
 func buildCompleteDiffPayloadEqExpr(
 	mv *model.TableInfo,
 	groupKeySet map[int]struct{},
-	qAlias string,
-	mAlias string,
+	recomputedAlias string,
+	currentAlias string,
 ) ast.ExprNode {
 	if mv == nil {
 		return nil
@@ -2391,7 +2391,7 @@ func buildCompleteDiffPayloadEqExpr(
 		if mysql.HasNotNullFlag(col.GetFlag()) {
 			op = opcode.EQ
 		}
-		eq := binary(op, qualColExpr(qAlias, colName), qualColExpr(mAlias, colName))
+		eq := binary(op, qualColExpr(recomputedAlias, colName), qualColExpr(currentAlias, colName))
 		expr = andExpr(expr, eq)
 	}
 	return expr
