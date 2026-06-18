@@ -1238,13 +1238,6 @@ func CheckMaterializedViewLogColumnSupported(col *model.ColumnInfo) error {
 }
 
 func checkMaterializedViewLogColumnSupportedForOp(operation string, col *model.ColumnInfo) error {
-	if col.IsGenerated() {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
-			"%s does not support generated column %s",
-			operation,
-			col.Name.O,
-		)
-	}
 	if col.GetType() == mysql.TypeJSON {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
 			"%s does not support JSON column %s",

@@ -174,13 +174,16 @@ func TestCreateMaterializedViewLogRejectUnsupportedColumns(t *testing.T) {
 	err := tk.ExecToErr("create materialized view log on t_json (id, j)")
 	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG does not support JSON column j")
 
-	tk.MustExec("create table t_gen (id bigint not null primary key, g1 int not null, g2 int as (g1 + 1) virtual)")
-	err = tk.ExecToErr("create materialized view log on t_gen (id, g2)")
-	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG does not support generated column g2")
-
-	tk.MustExec("create table t_gen_stored (id bigint not null primary key, g1 int not null, g2 int as (g1 + 1) stored)")
-	err = tk.ExecToErr("create materialized view log on t_gen_stored (id, g2)")
-	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG does not support generated column g2")
+	tk.MustExec("create table t_gen (id bigint not null primary key, g1 int not null, g_virtual int as (g1 + 1) virtual, g_stored int as (g1 + 2) stored)")
+	tk.MustExec("create materialized view log on t_gen (id, g_virtual, g_stored)")
+	tk.MustExec("insert into t_gen (id, g1) values (1, 10)")
+	tk.MustExec("update t_gen set g1 = 20 where id = 1")
+	tk.MustQuery("select id, g_virtual, g_stored, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_gen`").Sort().
+		Check(testkit.Rows(
+			"1 11 12 I 1",
+			"1 11 12 U -1",
+			"1 21 22 U 1",
+		))
 
 	tk.MustExec("create table t_untracked_unsupported (id bigint not null primary key, b blob null, j json null, g int as (id + 1) stored)")
 	tk.MustExec("create materialized view log on t_untracked_unsupported (id)")
@@ -352,8 +355,14 @@ func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
 	err = tk.ExecToErr("alter materialized view log on t_add_mlog_unsupported add column (j)")
 	require.ErrorContains(t, err, "ALTER MATERIALIZED VIEW LOG does not support JSON column j")
 
-	err = tk.ExecToErr("alter materialized view log on t_add_mlog_unsupported add column (g2)")
-	require.ErrorContains(t, err, "ALTER MATERIALIZED VIEW LOG does not support generated column g2")
+	tk.MustExec("insert into t_add_mlog_unsupported (id, g1) values (1, 10)")
+	tk.MustExec("alter materialized view log on t_add_mlog_unsupported add column (g2)")
+	tk.MustExec("update t_add_mlog_unsupported set g1 = 20 where id = 1")
+	tk.MustQuery("select id, g2, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_add_mlog_unsupported` where `_MLOG$_DML_TYPE` = 'U'").Sort().
+		Check(testkit.Rows(
+			"1 11 U -1",
+			"1 21 U 1",
+		))
 }
 
 // TestAlterMaterializedViewLogAddColumnPrivilege verifies that ADD COLUMN
