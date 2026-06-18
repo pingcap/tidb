@@ -3511,9 +3511,7 @@ mask_date(cast('2012-01-02' as date), 'Y-01-01')	mask_date(cast('2012-01-02' as 
 select mask_date(cast('2012-01-02' as date), '2020-1-2');
 mask_date(cast('2012-01-02' as date), '2020-1-2')
 2020-01-02
--- error 1210
 select mask_date(cast('2012-01-02' as date), 'Y-13-01');
 Error 1210 (HY000): Incorrect arguments to mask_date
--- error 1210
 select mask_date('2012-01-02', '2020-01-01');
 Error 1210 (HY000): Incorrect arguments to mask_date

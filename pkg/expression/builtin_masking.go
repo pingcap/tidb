@@ -613,7 +613,10 @@ func applyMaskDateTemplate(ctx EvalContext, input types.Time, tmpl string) (type
 	formatted := fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 	date, err := types.ParseTime(typeCtx(ctx), formatted, mysql.TypeDate, 0)
 	if err != nil {
-		return types.ZeroTime, handleInvalidTimeError(ctx, err)
+		// A template that reassembles into an out-of-range or calendar-invalid
+		// date is an argument error, not a runtime data error, so it must not be
+		// softened to a warning by sql_mode.
+		return types.ZeroTime, errIncorrectArgs.GenWithStackByArgs("mask_date")
 	}
 	return date, nil
 }
