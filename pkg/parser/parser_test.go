@@ -5458,9 +5458,10 @@ func TestSystemVersionedColumnMariaDBEnabled(t *testing.T) {
 		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
 		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
 		{"CREATE TABLE t (a TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)"},
-		// Bare `AS ROW START` (no `GENERATED ALWAYS`) parses and gets
+		// Bare `AS ROW START/END` (no `GENERATED ALWAYS`) parses and gets
 		// canonicalised on restore.
 		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
 		// ALTER TABLE ... MODIFY/CHANGE must accept the same column option
 		// so the CREATE/ADD and MODIFY/CHANGE code paths stay consistent.
 		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` MODIFY COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
@@ -8211,18 +8212,22 @@ func TestCompatMariaDB(t *testing.T) {
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
 	}
 	RunTest(t, cases, false, false)
+}
 
-	mariaDBCases := []testCase{
+func TestUUIDTypeMariaDBEnabled(t *testing.T) {
+	cases := []testCase{
 		{`CREATE TABLE t (id UUID)`, true, "CREATE TABLE `t` (`id` CHAR(36))"},
 		{`CREATE TABLE t1 (a UUID, b VARCHAR(32) NOT NULL)`, true, "CREATE TABLE `t1` (`a` CHAR(36),`b` VARCHAR(32) NOT NULL)"},
 		{`CREATE TABLE uuid (uuid UUID NOT NULL DEFAULT UUID())`, true, "CREATE TABLE `uuid` (`uuid` CHAR(36) NOT NULL DEFAULT (UUID()))"},
 	}
-	RunTest(t, mariaDBCases, false, true)
+	RunTest(t, cases, false, true)
+}
 
-	nonMariaDBCases := []testCase{
+func TestUUIDTypeMariaDBDisabled(t *testing.T) {
+	cases := []testCase{
 		{`CREATE TABLE t (id UUID)`, false, ""},
 	}
-	RunTest(t, nonMariaDBCases, false, false)
+	RunTest(t, cases, false, false)
 }
 
 func TestSecondaryEngineAttribute(t *testing.T) {

@@ -526,7 +526,8 @@ const (
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
 	ColumnOptionSecondaryEngineAttribute
-	// MariaDB-only `GENERATED ALWAYS AS ROW {START|END}` markers.
+	// MariaDB-only `GENERATED ALWAYS AS ROW {START|END}` markers. They are
+	// preserved for parser/restore compatibility and carry no engine semantics.
 	ColumnOptionMariaDBRowStart
 	ColumnOptionMariaDBRowEnd
 )
