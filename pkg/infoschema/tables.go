@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -2812,6 +2811,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *vari
 			} else {
 				log.Warn(result.Err.Error())
 			}
+			continue
 		}
 		results = append(results, result)
 	}
@@ -2850,7 +2850,6 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	}
 	conn, err := grpc.Dial(address, opt)
 	if err != nil {
-		copr.GlobalMPPInfoManager.Delete(address)
 		return nil, err
 	}
 	defer func() {
@@ -2865,7 +2864,6 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	defer cancel()
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
 	if err != nil {
-		copr.GlobalMPPInfoManager.Delete(address)
 		return nil, err
 	}
 	return r.Items, nil
