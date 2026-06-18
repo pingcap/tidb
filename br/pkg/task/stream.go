@@ -1339,6 +1339,14 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// index ingestion is not captured by regular log backup, so we need to manually ingest again
+	var addIndexSQLStorage storeapi.Storage
+	if shouldOpenPiTRAddIndexSQLStorage(cfg) {
+		_, addIndexSQLStorage, err = GetStorage(ctx, cfg.PiTRAddIndexSQLStorage, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	// if not set by user, restore to the max TS available
 	if cfg.RestoreTS == 0 {
@@ -1476,6 +1484,7 @@ func RunStreamRestore(
 		tableMappingManager: metaInfoProcessor.GetTableMappingManager(),
 		logClient:           logClient,
 		ddlFiles:            ddlFiles,
+		addIndexSQLStorage:  addIndexSQLStorage,
 	}
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
 		return errors.Trace(err)
@@ -1489,6 +1498,11 @@ type LogRestoreConfig struct {
 	tableMappingManager *stream.TableMappingManager
 	logClient           *logclient.LogClient
 	ddlFiles            []logclient.Log
+	addIndexSQLStorage  storeapi.Storage
+}
+
+func shouldOpenPiTRAddIndexSQLStorage(cfg *RestoreConfig) bool {
+	return len(cfg.PiTRAddIndexSQLStorage) > 0 && cfg.RestorePhase != 1
 }
 
 // restoreStream starts the log restore
@@ -1826,15 +1840,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	var addIndexSQLStorage storeapi.Storage
-	if len(cfg.PiTRAddIndexSQLStorage) > 0 {
-		_, addIndexSQLStorage, err = GetStorage(ctx, cfg.PiTRAddIndexSQLStorage, &cfg.Config)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, addIndexSQLStorage); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, cfg.addIndexSQLStorage); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 

@@ -1735,8 +1735,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			log.Info("load ingest index repair sqls from checkpoint",
 				zap.String("category", "ingest"),
 				zap.Int("index-sql-count", len(sqls)),
-				zap.Int("foreign-key-sql-count", len(fkSqls)),
-				zap.Reflect("sqls", sqls))
+				zap.Int("foreign-key-sql-count", len(fkSqls)))
 			return sqls, fkSqls, true, nil
 		}
 	}

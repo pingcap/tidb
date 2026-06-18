@@ -2360,6 +2360,7 @@ func TestRepairIngestIndexOutputAddIndexSQL(t *testing.T) {
 	checkpointStorage, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	logStorageMetaManager := checkpoint.NewLogStorageMetaManager(checkpointStorage, nil, 123, "test", 1)
+	defer logStorageMetaManager.Close()
 	sqlStorage, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, sqlStorage))
