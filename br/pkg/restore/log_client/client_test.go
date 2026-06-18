@@ -107,8 +107,8 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 }
 
 func requireLockMetaInStorage(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	storage storeapi.Storage,
 	pathPrefix string,
 	resource operation.LockResourceType,
@@ -166,7 +166,7 @@ func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
 	require.NoError(t, err)
 	defer migs.ReadLock.UnlockOnCleanUp(ctx)
 
-	meta := requireLockMetaInStorage(t, ctx, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	meta := requireLockMetaInStorage(ctx, t, stg, "v1/LOCK", operation.LockResourceMigrationRead)
 	require.Equal(t, opCtx.OperationID, meta.OwnerID)
 	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
 	require.Contains(t, meta.Hint, "restore_id=456")
