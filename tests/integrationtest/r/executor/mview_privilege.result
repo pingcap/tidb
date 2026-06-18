@@ -191,7 +191,7 @@ refresh steps
 [S02 LOCK_REFRESH_INFO]
 [S03 INSERT_HIST_RUNNING]
 [S04 DATA_CHANGE_COMPLETE_DELTA_APPLY]
-  MViewCompleteDeltaApply | estRows:N/A | task:root | op_offset:0, m_marker_offset:1, q_marker_offset:4, m_group_keys_offset:[1], q_group_keys_offset:[4], m_handle_offset:[1], m_row_offset:[1,2,3], q_row_offset:[4,5,6]
+  MViewCompleteDeltaApply | estRows:N/A | task:root | op_offset:0, current_marker_offset:1, recomputed_marker_offset:4, current_group_keys_offset:[1], recomputed_group_keys_offset:[4], current_handle_offset:[1], current_row_offset:[1,2,3], recomputed_row_offset:[4,5,6]
   └─Projection | estRows:8000.00 | task:root | case(isnull(mview_privilege_test.mv.a), 1, isnull(mview_privilege_test.t.a), 2, 3)->Column#11, mview_privilege_test.mv.a, mview_privilege_test.mv.s, mview_privilege_test.mv.cnt, mview_privilege_test.t.a, Column#5, Column#6
     └─Selection | estRows:8000.00 | task:root | or(isnull(mview_privilege_test.t.a), or(isnull(mview_privilege_test.mv.a), not(and(nulleq(Column#5, mview_privilege_test.mv.s), eq(Column#6, mview_privilege_test.mv.cnt)))))
       └─HashJoin | estRows:10000.00 | task:root | full outer join, equal:[eq(mview_privilege_test.t.a, mview_privilege_test.mv.a)]
