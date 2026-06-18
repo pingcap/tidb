@@ -99,8 +99,8 @@ const (
 
 type compareMaterializedViewDiffLayout struct {
 	groupKeyOffsets       []int
-	leftMarkerColIdx      int
-	rightMarkerColIdx     int
+	mvMarkerColIdx        int
+	baseMarkerColIdx      int
 	payloadCompareColumns []mvCompleteDeltaCompareColumn
 }
 
@@ -1682,7 +1682,7 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 	}
 	defer func() { _ = mvQueryExec.Close() }()
 
-	hashJoinExec := newCompareMaterializedViewHashJoinExec(e.Ctx(), baseQueryExec, mvQueryExec, layout.groupKeyOffsets, visibleCols)
+	hashJoinExec := newCompareMaterializedViewHashJoinExec(e.Ctx(), mvQueryExec, baseQueryExec, layout.groupKeyOffsets, visibleCols)
 	if err := exec.Open(ctx, hashJoinExec); err != nil {
 		_ = hashJoinExec.Close()
 		return err
@@ -1723,12 +1723,12 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 			}
 		}
 
-		leftMarkerCol := joinResult.Column(layout.leftMarkerColIdx)
-		rightMarkerCol := joinResult.Column(layout.rightMarkerColIdx)
+		mvMarkerCol := joinResult.Column(layout.mvMarkerColIdx)
+		baseMarkerCol := joinResult.Column(layout.baseMarkerColIdx)
 		for rowIdx := 0; rowIdx < joinResult.NumRows(); rowIdx++ {
 			diffType := classifyCompareMaterializedViewRowDiff(
-				leftMarkerCol.IsNull(rowIdx),
-				rightMarkerCol.IsNull(rowIdx),
+				mvMarkerCol.IsNull(rowIdx),
+				baseMarkerCol.IsNull(rowIdx),
 				changedRows[rowIdx] != 0,
 			)
 			if diffType == "" {
@@ -2099,11 +2099,11 @@ func buildCompareMaterializedViewDiffLayout(
 	for _, offset := range diffMeta.GroupKeyMVOffsets {
 		groupKeySet[offset] = struct{}{}
 	}
-
+	// Schema: MView(probe) + BaseQuery(build)
 	layout := &compareMaterializedViewDiffLayout{
-		groupKeyOffsets:   append([]int(nil), diffMeta.GroupKeyMVOffsets...),
-		leftMarkerColIdx:  diffMeta.MarkerMVOffset,
-		rightMarkerColIdx: len(visibleCols) + diffMeta.MarkerMVOffset,
+		groupKeyOffsets:  append([]int(nil), diffMeta.GroupKeyMVOffsets...),
+		mvMarkerColIdx:   diffMeta.MarkerMVOffset,
+		baseMarkerColIdx: len(visibleCols) + diffMeta.MarkerMVOffset,
 	}
 	layout.payloadCompareColumns = make([]mvCompleteDeltaCompareColumn, 0, len(visibleCols)-len(groupKeySet))
 	for offset, col := range visibleCols {
@@ -2164,11 +2164,11 @@ func newCompareMaterializedViewHashJoinExec(
 		buildCompareMaterializedViewOrdinalSlice(len(leftTypes)),
 		buildCompareMaterializedViewOrdinalSlice(len(rightTypes)),
 	}
-	// Compare always uses BaseQuery@R as the probe/left side and MV@S as the
+	// Compare uses MV@S as the probe/left side and BaseQuery@R as the
 	// build/right side. This matches the full outer hash join builder setup for
 	// build=right, probe=left:
-	// - unmatched build rows are (NULL-left, right), handled by RightOuterJoin;
-	// - unmatched probe rows are (left, NULL-right), handled by LeftOuterJoin.
+	// - unmatched build rows are (NULL-MV, base), handled by RightOuterJoin;
+	// - unmatched probe rows are (MV, NULL-base), handled by LeftOuterJoin.
 	fullJoinBuildJoiner := join.NewJoiner(
 		ctx,
 		logicalop.RightOuterJoin,
@@ -2311,12 +2311,12 @@ func buildCompareMaterializedViewOrdinalSlice(colCnt int) []int {
 	return ordinals
 }
 
-func classifyCompareMaterializedViewRowDiff(leftMissing, rightMissing, payloadChanged bool) string {
+func classifyCompareMaterializedViewRowDiff(mvMissing, baseMissing, payloadChanged bool) string {
 	switch {
-	case leftMissing:
-		return compareMaterializedViewExcessiveType
-	case rightMissing:
+	case mvMissing:
 		return compareMaterializedViewVacuumType
+	case baseMissing:
+		return compareMaterializedViewExcessiveType
 	case payloadChanged:
 		return compareMaterializedViewDifferType
 	default:
@@ -2422,7 +2422,8 @@ func (w *compareMaterializedViewOutputWriter) writeRow(ctx context.Context, row 
 	if err := w.ensureTxn(ctx); err != nil {
 		return err
 	}
-	useRight := diffType != compareMaterializedViewVacuumType
+	// Schema: MView(probe) + BaseQuery(build)
+	useRight := diffType == compareMaterializedViewVacuumType
 	for colIdx := 0; colIdx < w.mvColumnCount; colIdx++ {
 		sourceColIdx := colIdx
 		if useRight {

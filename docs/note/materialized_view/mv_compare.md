@@ -153,7 +153,7 @@ Diff categories:
 Implementation shape:
 
 1. Build `MV@S` and `Base@R` child executors.
-2. In `CompareMaterializedViewExec`, wire those two child executors into a full outer `HashJoinV1Exec`.
+2. In `CompareMaterializedViewExec`, wire those two child executors into a full outer `HashJoinV1Exec`, with `MV@S` as the probe/left side and `BaseQuery@R` as the build/right side.
 3. Consume hash-join output rows and classify them into:
    - matched-but-different -> `mview_differ`
    - base-only -> `mview_vacuum`
@@ -212,7 +212,8 @@ For grouped MV, this keeps compare semantics aligned with COMPLETE DELTA APPLY d
 2. Summary mode should still count differing rows accurately; it cannot stop after the first mismatch.
 3. Output-table mode should stream diff rows and avoid retaining full diff in memory.
 4. Output-table writes are batched to avoid a single very large transaction.
-5. The current design uses full-outer diff semantics for clarity and correctness. If a better execution strategy is introduced later, it should preserve the same compare semantics.
+5. The current hash-join wiring uses `BaseQuery@R` as the build side. For grouped MV definitions, the base query may already require aggregation state; building the join hash table from the base-query result lets that side finish before probing the MV scan, reducing active-stage overlap between base aggregation work and an additional MV-side build table.
+6. The current design uses full-outer diff semantics for clarity and correctness. If a better execution strategy is introduced later, it should preserve the same compare semantics.
 
 ## Code map (implementation landing)
 
