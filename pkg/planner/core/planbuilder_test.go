@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -1111,27 +1110,11 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
-	bak := config.GetGlobalKeyspaceName()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = "aaa"
-	})
-	t.Cleanup(func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = bak
-		})
-	})
-
 	for _, str := range []string{
-<<<<<<< HEAD
-		"S3://bucket?External-id=abc",
-		"s3://bucket?external_id=abc",
-		"s3://bucket?external-id=aaa&external_id=abc",
-=======
 		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
 		"oss://bucket?External-id=abc&role-arn=arn",
 		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1141,17 +1124,10 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
-<<<<<<< HEAD
-		"s3://bucket?external-id=aaa",
-		"s3://bucket?external_id=aaa",
-		"s3://bucket?external-id=aaa&external_id=aaa",
-		"s3://bucket",
-=======
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?access_key=ak&secret_access_key=sk",
 		"oss://bucket?role-arn=arn",
 		"oss://bucket?role_arn=arn",
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
