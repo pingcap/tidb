@@ -812,21 +812,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		e.byItems = nil
 	}
 	var tps []*types.FieldType
-	tblScanIdxForRewritePartitionID := -1
 	if e.indexLookUpPushDown {
 		tps = e.RetFieldTypes()
-		if e.partitionTableMode {
-			for idx, executor := range e.dagPB.Executors {
-				if executor.Tp == tipb.ExecType_TypeTableScan {
-					tblScanIdxForRewritePartitionID = idx
-					break
-				}
-			}
-			if tblScanIdxForRewritePartitionID < 0 {
-				intest.Assert(false)
-				return errors.New("cannot find table scan executor in for partition index lookup push down")
-			}
-		}
 	} else {
 		tps = e.getRetTpsForIndexReader()
 	}
@@ -870,9 +857,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				}
 				result, err := e.buildIndexSelectResultForRange(
 					ctx,
-					nextRange,
 					kvRanges[nextRange],
-					tblScanIdxForRewritePartitionID,
 					tps,
 					idxID,
 					tracker,
@@ -926,9 +911,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 			result, err := e.buildIndexSelectResultForRange(
 				ctx,
-				idx,
 				kvRanges[idx],
-				tblScanIdxForRewritePartitionID,
 				tps,
 				idxID,
 				tracker,
@@ -1032,9 +1015,7 @@ func getMergeSortIndexScanConcurrency(needMerge bool, kvRangesCount int, distSQL
 
 func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	ctx context.Context,
-	rangeIdx int,
 	kvRange []kv.KeyRange,
-	tblScanIdxForRewritePartitionID int,
 	tps []*types.FieldType,
 	idxID int,
 	tracker *memory.Tracker,
@@ -1043,12 +1024,6 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	indexScanConcurrency int,
 	sharedCoprRequestRateLimit *tikvutil.RateLimit,
 ) (distsql.SelectResult, error) {
-	if tblScanIdxForRewritePartitionID >= 0 {
-		// We should set the TblScan's TableID to the partition physical ID to make sure
-		// the push-down index lookup can encode the table handle key correctly.
-		e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[rangeIdx].GetPhysicalID()
-	}
-
 	var builder distsql.RequestBuilder
 	// Set concurrency before SetDAGRequest intentionally.
 	// SetDAGRequest may override this value (e.g. to 1) for small-limit DAGs.
