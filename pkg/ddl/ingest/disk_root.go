@@ -264,7 +264,7 @@ func checkLocalSortFreeDisk(
 		allJobsGapBytes = allJobsRequiredBytes - allJobsUsedBytes
 	}
 	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
-	if availableBytes > totalRequiredBytes {
+	if availableBytes >= totalRequiredBytes {
 		logutil.DDLIngestLogger().Info("local sort free disk check passed",
 			zap.Uint64("totalRequiredBytes", totalRequiredBytes),
 			zap.Uint64("availableBytes", availableBytes),
