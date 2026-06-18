@@ -79,6 +79,8 @@ func TestForeignKeySharedLockPessimisticReverseReferenceOrder(t *testing.T) {
 	tk2.MustExec("use test")
 	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
 	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	prepareForeignKeyTables(tk1)
 
