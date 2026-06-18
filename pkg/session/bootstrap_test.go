@@ -2891,3 +2891,78 @@ func TestTiDBUpgradeToVer230(t *testing.T) {
 	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
 	require.Contains(t, createWatchDoneSQL, "idx_done_time")
 }
+
+// TestTiDBUpgradeToVer232 verifies version232 repairs the v8.5.5 hotfix family
+// upgrade (see the version232 comment in bootstrap.go). It exercises the
+// release-8.5-20260323-v8.5.5 case, where both `max_node_count` and `i_user`
+// indexes are missing; the release-8.5-20260527-v8.5.5 case (only
+// `max_node_count` missing, `i_user` already present) is covered by the same
+// re-apply plus `ErrDupKeyName`/`ErrColumnExists` tolerance.
+func TestTiDBUpgradeToVer232(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	getTableCreateSQLFn := func(se sessiontypes.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err := res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Simulate the 0323 final state: version225 applied, but `max_node_count`
+	// and `i_user` indexes were never created (0323 reused version224/225 for
+	// other DDLs).
+	ver225 := version225
+	seV225 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver225))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV225, ver225)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// Drop `max_node_count` (upstream version224 DDL, skipped on both 0323 and 0527).
+	seV225.SetValue(sessionctx.Initing, true)
+	seV225.GetSessionVars().SQLMode = 0
+	mustExecute(seV225, "ALTER TABLE mysql.tidb_global_task DROP COLUMN max_node_count")
+	mustExecute(seV225, "ALTER TABLE mysql.tidb_global_task_history DROP COLUMN max_node_count")
+	createTaskSQL := getTableCreateSQLFn(seV225, "tidb_global_task")
+	require.NotContains(t, createTaskSQL, "max_node_count")
+
+	// Drop all `i_user` indexes (upstream version225 DDL, skipped on 0323).
+	privTables := []string{"user", "global_priv", "db", "tables_priv", "columns_priv", "global_grants", "default_roles"}
+	for _, tbl := range privTables {
+		mustExecute(seV225, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX i_user", tbl))
+		createSQL := getTableCreateSQLFn(seV225, tbl)
+		require.NotContains(t, createSQL, "i_user")
+	}
+
+	// Upgrade to current version; version232 should repair the missing column
+	// and indexes.
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify `max_node_count` has been re-added.
+	createTaskSQL = getTableCreateSQLFn(seCurVer, "tidb_global_task")
+	require.Contains(t, createTaskSQL, "max_node_count")
+	createTaskHistorySQL := getTableCreateSQLFn(seCurVer, "tidb_global_task_history")
+	require.Contains(t, createTaskHistorySQL, "max_node_count")
+
+	// Verify all `i_user` indexes have been re-added.
+	for _, tbl := range privTables {
+		createSQL := getTableCreateSQLFn(seCurVer, tbl)
+		require.Contains(t, createSQL, "i_user")
+	}
+}
