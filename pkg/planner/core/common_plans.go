@@ -736,25 +736,25 @@ type MViewCompleteDeltaApply struct {
 	MarkerMVOffset int
 	// GroupKeyMVOffsets stores GROUP BY key offsets in MV column order.
 	GroupKeyMVOffsets []int `plan-cache-clone:"shallow"`
-	// MHandleCols contains physical locator columns from the current-MV side.
-	MHandleCols util.HandleCols `plan-cache-clone:"shallow"`
-	// MRowInputColIDs and QRowInputColIDs store the full old/new row-image input layout in MV column order.
-	MRowInputColIDs []int `plan-cache-clone:"shallow"`
-	QRowInputColIDs []int `plan-cache-clone:"shallow"`
+	// CurrentHandleCols contains physical locator columns from the current-MV side.
+	CurrentHandleCols util.HandleCols `plan-cache-clone:"shallow"`
+	// CurrentRowInputColIDs and RecomputedRowInputColIDs store the full old/new row-image input layout in MV column order.
+	CurrentRowInputColIDs    []int `plan-cache-clone:"shallow"`
+	RecomputedRowInputColIDs []int `plan-cache-clone:"shallow"`
 }
 
 // ExplainInfo returns the key sink mapping metadata for complete delta MV apply.
 func (p *MViewCompleteDeltaApply) ExplainInfo() string {
 	return fmt.Sprintf(
-		"op_offset:%d, m_marker_offset:%d, q_marker_offset:%d, m_group_keys_offset:%s, q_group_keys_offset:%s, m_handle_offset:%s, m_row_offset:%s, q_row_offset:%s",
+		"op_offset:%d, current_marker_offset:%d, recomputed_marker_offset:%d, current_group_keys_offset:%s, recomputed_group_keys_offset:%s, current_handle_offset:%s, current_row_offset:%s, recomputed_row_offset:%s",
 		p.OpColID,
-		inputOffsetAtMVOffset(p.MRowInputColIDs, p.MarkerMVOffset),
-		inputOffsetAtMVOffset(p.QRowInputColIDs, p.MarkerMVOffset),
-		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.MRowInputColIDs, p.GroupKeyMVOffsets)),
-		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.QRowInputColIDs, p.GroupKeyMVOffsets)),
-		formatHandleColsInputOffsets(p.MHandleCols),
-		formatMViewDeltaMergeOffsets(p.MRowInputColIDs),
-		formatMViewDeltaMergeOffsets(p.QRowInputColIDs),
+		inputOffsetAtMVOffset(p.CurrentRowInputColIDs, p.MarkerMVOffset),
+		inputOffsetAtMVOffset(p.RecomputedRowInputColIDs, p.MarkerMVOffset),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.CurrentRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.RecomputedRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatHandleColsInputOffsets(p.CurrentHandleCols),
+		formatMViewDeltaMergeOffsets(p.CurrentRowInputColIDs),
+		formatMViewDeltaMergeOffsets(p.RecomputedRowInputColIDs),
 	)
 }
 
@@ -799,8 +799,8 @@ func (p *MViewCompleteDeltaApply) MemoryUsage() (sum int64) {
 
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfInt*3 + size.SizeOfSlice*3
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
-	sum += int64(cap(p.MRowInputColIDs)) * size.SizeOfInt
-	sum += int64(cap(p.QRowInputColIDs)) * size.SizeOfInt
+	sum += int64(cap(p.CurrentRowInputColIDs)) * size.SizeOfInt
+	sum += int64(cap(p.RecomputedRowInputColIDs)) * size.SizeOfInt
 	if p.Source != nil {
 		sum += p.Source.MemoryUsage()
 	}

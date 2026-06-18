@@ -156,11 +156,11 @@ func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testi
 		BaseExecutor: exec.NewBaseExecutor(sctx, childSchema, 0),
 	}
 	applyExec := &MViewCompleteDeltaApplyExec{
-		BaseExecutor:         exec.NewBaseExecutor(sctx, nil, 0, child),
-		TargetTable:          targetTbl,
-		TargetHandleCols:     plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
-		MWritableInputColIDs: []int{1},
-		QWritableInputColIDs: []int{0},
+		BaseExecutor:                  exec.NewBaseExecutor(sctx, nil, 0, child),
+		TargetTable:                   targetTbl,
+		TargetHandleCols:              plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
+		CurrentWritableInputColIDs:    []int{1},
+		RecomputedWritableInputColIDs: []int{0},
 	}
 
 	err := applyExec.Open(context.Background())
