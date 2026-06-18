@@ -831,6 +831,9 @@ func TestDMLStmt(t *testing.T) {
 		{"select a into a from t", true, "SELECT `a` INTO `a` FROM `t`"},
 		{"select a, b into a, bc from t", true, "SELECT `a`,`b` INTO `a`,`bc` FROM `t`"},
 		{"select a, b+1 into a, bc from t", true, "SELECT `a`,`b`+1 INTO `a`,`bc` FROM `t`"},
+		{"select * from t into outfile 'ttt' union select * from u", true, "SELECT * FROM `t` INTO OUTFILE 'ttt' UNION SELECT * FROM `u`"},
+		{"select * from t union select * from u into outfile 'ttt'", true, "SELECT * FROM `t` UNION SELECT * FROM `u` INTO OUTFILE 'ttt'"},
+		{"select 1 union select 2 into @a", true, "SELECT 1 UNION SELECT 2 INTO @`a`"},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true, "SELECT * FROM ((`t1`) JOIN `t2`) JOIN `t3`"},
@@ -4159,6 +4162,9 @@ func TestErrorMsg(t *testing.T) {
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")
 
+	_, _, err = p.Parse("SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a", "", "")
+	require.EqualError(t, err, "[parser:1221]Incorrect usage of INTO and subquery")
+
 	_, _, err = p.Parse("load data infile 'aaa' into table aaa FIELDS  Enclosed by '\\\\b';", "", "")
 	require.EqualError(t, err, "[parser:1083]Field separator argument is not what is expected; check the manual")
 
@@ -5222,6 +5228,12 @@ func TestParserErrMsg(t *testing.T) {
 	RunErrMsgTest(t, funcCallMsgCases)
 }
 
+func TestSelectIntoInSubqueryErrMsg(t *testing.T) {
+	p := parser.New()
+	_, _, err := p.Parse("SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a", "", "")
+	require.EqualError(t, err, "[parser:1221]Incorrect usage of INTO and subquery")
+}
+
 type subqueryChecker struct {
 	text string
 	t    *testing.T
@@ -5269,6 +5281,9 @@ func TestSubquery(t *testing.T) {
 		{"select * from (((select * from t1)) union (select * from t1) union (select * from t1)) a", true, "SELECT * FROM ((SELECT * FROM `t1`) UNION (SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)) AS `a`"},
 		{"SELECT COUNT(*) FROM plan_executions WHERE (EXISTS((SELECT * FROM triggers WHERE plan_executions.trigger_id=triggers.id AND triggers.type='CRON')))", true, "SELECT COUNT(1) FROM `plan_executions` WHERE (EXISTS (SELECT * FROM `triggers` WHERE `plan_executions`.`trigger_id`=`triggers`.`id` AND `triggers`.`type`=_UTF8MB4'CRON'))"},
 		{"select exists((select 1));", true, "SELECT EXISTS (SELECT 1)"},
+		{"SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a", false, ""},
+		{"(SELECT 1 INTO @v) UNION SELECT 2", false, ""},
+		{"SELECT 1 UNION (SELECT 2 INTO @v)", false, ""},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
 		{"(WITH v0 AS (SELECT TRUE) (SELECT 'abc' EXCEPT (SELECT TRUE)))", true, "WITH `v0` AS (SELECT TRUE) (SELECT _UTF8MB4'abc' EXCEPT (SELECT TRUE))"},

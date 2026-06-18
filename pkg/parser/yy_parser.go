@@ -241,6 +241,14 @@ func (p *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	}
 }
 
+func (p *Parser) rejectSelectIntoInSubquery(yylex yyLexer, _ int, rs ast.ResultSetNode) int {
+	if !hasIntoInResultSet(rs) {
+		return 0
+	}
+	yylex.AppendError(ErrWrongUsage.GenWithStackByArgs("INTO", "subquery"))
+	return 1
+}
+
 func (*Parser) startOffset(v *yySymType) int {
 	return v.offset
 }

@@ -431,3 +431,20 @@ func TestProcedureRestoreLimit(t *testing.T) {
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
+
+func TestSelectIntoVarsAtEndRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			"SELECT `a` FROM `t` INTO v_temp",
+			"SELECT `a` INTO `v_temp` FROM `t`",
+		},
+		{
+			"SELECT `a`, `b` FROM `t` WHERE `id`=1 INTO v_a, v_b",
+			"SELECT `a`,`b` INTO `v_a`,`v_b` FROM `t` WHERE `id`=1",
+		},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.SelectStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}

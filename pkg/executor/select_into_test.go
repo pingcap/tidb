@@ -437,6 +437,46 @@ func TestSelectIntoUserVarsDetachChunkData(t *testing.T) {
 	tk.MustQuery("select @s1, @s2").Check(testkit.Rows("alice bob"))
 }
 
+func TestSelectIntoVarsAtEndOfSelectFrom(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_report")
+	tk.MustExec("create table test_report(id int)")
+	tk.MustExec("insert into test_report values (3), (7)")
+	tk.MustExec(`
+create procedure sp_select_into_at_end(out p_end int, out p_before int)
+begin
+	declare v_end int default -1;
+	declare v_before int default -1;
+	select ifnull(max(id), 0) from test_report into v_end;
+	select ifnull(min(id), 0) into v_before from test_report;
+	set p_end = v_end;
+	set p_before = v_before;
+end`)
+	tk.MustExec("call sp_select_into_at_end(@p_end, @p_before)")
+	tk.MustQuery("select @p_end, @p_before").Check(testkit.Rows("7 3"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec("select id from test_report where id = 7 into @selected_id")
+	tk.MustQuery("select @selected_id").Check(testkit.Rows("7"))
+}
+
+func TestSelectIntoInSubqueryIsRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("insert into t1 values (1)")
+
+	tk.MustGetErrMsg(
+		"SELECT 1 FROM (SELECT 1 FROM t1 INTO @v) a",
+		"[parser:1221]Incorrect usage of INTO and subquery",
+	)
+}
+
 func TestSelectIntoSPVarErrorMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
