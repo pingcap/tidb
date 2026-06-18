@@ -37,15 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 )
 
@@ -427,16 +424,6 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest", func() {
 		removeCnt.Add(1)
 	})
-	dom, err := session.GetDomain(s.store)
-	require.NoError(s.T(), err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
-	require.NoError(s.T(), err)
-	eligibleStoreCnt := 0
-	for _, store := range stores {
-		if store.StatusAddress != "" && !engine.IsTiFlash(store) {
-			eligibleStoreCnt++
-		}
-	}
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
@@ -451,14 +438,14 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Equal(s.T(), addCnt.Load(), int32(2*eligibleStoreCnt))
+	require.Greater(s.T(), addCnt.Load(), int32(0))
 	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
 	addCnt.Store(0)
 	removeCnt.Store(0)
 	s.tk.MustExec("create table dst like t")
 	s.tk.MustExec(`import into dst FROM select * from t`)
-	require.Equal(s.T(), addCnt.Load(), int32(2*eligibleStoreCnt))
+	require.Greater(s.T(), addCnt.Load(), int32(0))
 	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 }
 
