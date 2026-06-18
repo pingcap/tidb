@@ -20,10 +20,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -122,14 +125,25 @@ func TestKVEncoderCastErrorMessage(t *testing.T) {
 }
 
 func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(c1 enum('a','b'))")
-
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	enumType := types.NewFieldType(mysql.TypeEnum)
+	enumType.SetElems([]string{"a", "b"})
+	enumType.SetCharset(mysql.DefaultCharset)
+	enumType.SetCollate(mysql.DefaultCollationName)
+	col := &model.ColumnInfo{
+		ID:        1,
+		Name:      ast.NewCIStr("c1"),
+		State:     model.StatePublic,
+		Offset:    0,
+		FieldType: *enumType,
+	}
+	tblInfo := &model.TableInfo{
+		ID:         1,
+		Name:       ast.NewCIStr("t"),
+		Columns:    []*model.ColumnInfo{col},
+		PKIsHandle: false,
+		State:      model.StatePublic,
+	}
+	table, err := tables.TableFromMeta(backendkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encodeCfg := &encode.EncodingConfig{
