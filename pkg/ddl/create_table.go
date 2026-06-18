@@ -2453,6 +2453,9 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	if referTblInfo.MaterializedViewLog != nil {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view log table")
 	}
+	if referTblInfo.MaterializedViewShadow != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view shadow table")
+	}
 	if referTblInfo.MaterializedView != nil && !allowMaterializedView {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE TABLE LIKE on materialized view table")
 	}

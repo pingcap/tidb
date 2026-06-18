@@ -3166,6 +3166,9 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testin
 	require.ErrorContains(t, err, "not updatable")
 	err = tk.ExecToErr(fmt.Sprintf("alter table `%s` add column x int", shadowTableName))
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view shadow table")
+	err = tk.ExecToErr(fmt.Sprintf("create table shadow_like like `%s`", shadowTableName))
+	require.ErrorContains(t, err, "CREATE TABLE LIKE on materialized view shadow table")
+	tk.MustQuery("show tables like 'shadow_like'").Check(testkit.Rows())
 
 	require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
 	enabled = false
