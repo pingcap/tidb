@@ -2879,7 +2879,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		args.PartitionID = partDef.ID
 		job.FillArgs(args)
 		// might be used later, ignore the lint warning.
-		// nolint: ineffassign
+		//nolint: ineffassign
 		defID = partDef.ID
 		err = updateDDLJob2Table(jobCtx.stepCtx, w.sess, job, true)
 		if err != nil {

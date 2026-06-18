@@ -439,7 +439,7 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 				// with unique indexes.
 				// Currently it can also do:
 				// 	Error "[kv:1062]Duplicate entry '7' for key 't.c'" does not contain "Injected error by reorgPartFail2"
-				// require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+				//require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
 				tk.MustQuery(`show create table t` + suffixComment).Check(oldCreate)
 				if partition == nil {
 					require.Nil(t, tOrg.Meta().Partition, suffix)
