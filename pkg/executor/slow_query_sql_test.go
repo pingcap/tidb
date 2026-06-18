@@ -465,7 +465,8 @@ func TestWarningsInSlowQuery(t *testing.T) {
 func checkStorageEngines(t *testing.T, tk *testkit.TestKit, where, expected string) {
 	t.Helper()
 	tk.EventuallyMustQueryAndCheck(
-		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where "+where,
+		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where ("+where+") "+
+			"and query not like '%information_schema.slow_query%'",
 		nil, testkit.Rows(expected), 2*time.Second, 50*time.Millisecond)
 }
 
@@ -525,6 +526,13 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	query := "select a from t_pointget where a = 1"
 	tk.MustHavePlan(query, "Point_Get")
 	tk.MustExec(query)
+	// Simulate one retry of checkStorageEngines. With threshold 0, slow_query
+	// inspection statements are themselves slow-logged and can match broad
+	// predicates like the point-get predicate below.
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query where query like 'select%t_pointget%;'")
+	tk.EventuallyMustQueryAndCheck(
+		"select count(*) > 0 from information_schema.slow_query where query like '%information_schema.slow_query%t_pointget%;'",
+		nil, testkit.Rows("1"), 2*time.Second, 50*time.Millisecond)
 	checkStorageEngines(t, tk, "query like 'select%t_pointget%;'", "1 0")
 
 	// Index readers should register as reading from TiKV
