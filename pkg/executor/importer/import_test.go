@@ -34,8 +34,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
-	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -539,7 +537,7 @@ func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
 	t.Run("parquet ratio is clamped to physical file size", func(t *testing.T) {
 		dir := t.TempDir()
 		const fileName = "tiny.parquet"
-		columns := []testutils.ParquetColumn{
+		columns := []mydump.ParquetColumn{
 			{
 				Name:      "id",
 				Type:      parquet.Types.Int64,
@@ -555,13 +553,13 @@ func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
 				},
 			},
 		}
-		require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, 1))
+		require.NoError(t, mydump.WriteParquetFile(dir, fileName, columns, 1))
 
 		store, err := objstore.NewLocalStorage(dir)
 		require.NoError(t, err)
 		stat, err := os.Stat(filepath.Join(dir, fileName))
 		require.NoError(t, err)
-		rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, fileName, store)
+		rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, fileName, store)
 		require.NoError(t, err)
 		require.Less(t, rowSize*float64(rows), float64(stat.Size()))
 

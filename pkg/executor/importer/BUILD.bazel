@@ -117,19 +117,13 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 39,
-=======
-    shard_count = 41,
->>>>>>> 0f57a4e3175 (importinto: normalize size expansion ratio (#69315))
+    shard_count = 40,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
-        "//pkg/dumpformat/parquetfile",
-        "//pkg/dumpformat/testutils",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
