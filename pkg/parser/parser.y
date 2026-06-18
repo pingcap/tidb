@@ -1445,6 +1445,7 @@ import (
 	MLogCreateOption                       "materialized view log create option"
 	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
+	AlterMLogPurgeClause                   "ALTER materialized view log PURGE clause"
 	MLogAccumulationAlertClauseOpt         "materialized view log optional ALERT ROWS clause"
 	MLogAccumulationAlertClause            "materialized view log ALERT ROWS clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
@@ -5587,13 +5588,23 @@ AlterMaterializedViewLogActionList:
 	}
 
 AlterMaterializedViewLogAction:
-	MLogPurgeClause
+	AlterMLogPurgeClause
 	{
 		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: $1.(*ast.MLogPurgeClause)}
 	}
 |	"ADD" ColumnKeywordOpt '(' ColumnList ')'
 	{
 		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionAddColumn, Cols: $4.([]model.CIStr)}
+	}
+
+AlterMLogPurgeClause:
+	MLogPurgeClause
+	{
+		$$ = $1
+	}
+|	"PURGE"
+	{
+		$$ = &ast.MLogPurgeClause{}
 	}
 
 DropMaterializedViewStmt:

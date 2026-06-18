@@ -5477,8 +5477,8 @@ func TestMaterializedViewStatements(t *testing.T) {
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE",
-			false,
-			"",
+			true,
+			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE START WITH now()",
@@ -5633,6 +5633,8 @@ func TestMaterializedViewCreateRefreshOnClauseSyntax(t *testing.T) {
 func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {
 	p := parser.New()
 	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now()", "", "")
+	require.Error(t, err)
+	_, err = p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE", "", "")
 	require.Error(t, err)
 }
 

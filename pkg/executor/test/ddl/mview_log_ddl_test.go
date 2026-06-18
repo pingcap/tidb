@@ -744,17 +744,15 @@ func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
 		mlogID,
 	)).Check(testkit.Rows("1 1 1"))
 
-	/*
-		tk.MustExec("alter materialized view log on t purge")
-		_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
-		require.Equal(t, "DEFERRED", purgeMethod)
-		require.Equal(t, "", purgeStartWith)
-		require.Equal(t, "", purgeNext)
-		tk.MustQuery(fmt.Sprintf(
-			"select NEXT_TIME is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
-			mlogID,
-		)).Check(testkit.Rows("1"))
-	*/
+	tk.MustExec("alter materialized view log on t purge")
+	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
+	require.Equal(t, "DEFERRED", purgeMethod)
+	require.Equal(t, "", purgeStartWith)
+	require.Equal(t, "", purgeNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows("1"))
 
 	err := tk.ExecToErr("alter materialized view log on t purge immediate")
 	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for ALTER MATERIALIZED VIEW LOG")
@@ -762,7 +760,7 @@ func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
 	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
 	require.Equal(t, "DEFERRED", purgeMethod)
 	require.Equal(t, "", purgeStartWith)
-	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
+	require.Equal(t, "", purgeNext)
 
 	tk.MustExec("drop materialized view log on t")
 }
