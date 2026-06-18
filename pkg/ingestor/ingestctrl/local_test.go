@@ -2468,11 +2468,18 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	}()
 
 	var pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls int
+	var routerClientEnabled bool
 	inputPDCli := &mockPdClient{}
 	tikvPDCli := &mockPdClient{}
-	newPDClient = func(_ context.Context, apiContext pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+	newPDClient = func(_ context.Context, apiContext pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
 		pdClientCalls++
 		require.Equal(t, pd.NewAPIContextV1(), apiContext)
+		option := opt.NewOption()
+		option.SetEnableRouterClient(true)
+		for _, clientOpt := range opts {
+			clientOpt(option)
+		}
+		routerClientEnabled = option.GetEnableRouterClient()
 		return tikvPDCli, nil
 	}
 	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
@@ -2494,6 +2501,9 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		pdAddrs:   []string{"127.0.0.1:2379"},
 		tls:       &common.TLS{},
 		tikvCodec: keyspace.CodecV1,
+		BackendConfig: BackendConfig{
+			DisablePDClientRouterClient: true,
+		},
 	}
 
 	dupeController, err := b.GetDupeController(context.Background(), 1, nil)
@@ -2503,6 +2513,29 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	require.Equal(t, 1, safePointKVCalls)
 	require.Equal(t, 1, rpcClientCalls)
 	require.Equal(t, 1, kvStoreCalls)
+	require.False(t, routerClientEnabled)
+	require.False(t, inputPDCli.closed)
+	require.True(t, tikvPDCli.closed)
+	require.Nil(t, b.tikvCli)
+
+	pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls = 0, 0, 0, 0
+	routerClientEnabled = false
+	inputPDCli = &mockPdClient{}
+	tikvPDCli = &mockPdClient{}
+	b = &Backend{
+		pdCli:     inputPDCli,
+		pdAddrs:   []string{"127.0.0.1:2379"},
+		tls:       &common.TLS{},
+		tikvCodec: keyspace.CodecV1,
+	}
+	dupeController, err = b.GetDupeController(context.Background(), 1, nil)
+	require.Nil(t, dupeController)
+	require.ErrorContains(t, err, "mock kv store error")
+	require.Equal(t, 1, pdClientCalls)
+	require.Equal(t, 1, safePointKVCalls)
+	require.Equal(t, 1, rpcClientCalls)
+	require.Equal(t, 1, kvStoreCalls)
+	require.True(t, routerClientEnabled)
 	require.False(t, inputPDCli.closed)
 	require.True(t, tikvPDCli.closed)
 	require.Nil(t, b.tikvCli)

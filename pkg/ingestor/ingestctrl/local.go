@@ -487,6 +487,8 @@ type BackendConfig struct {
 	ResourceGroupName         string
 	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
+	// DisablePDClientRouterClient uses legacy PD region RPCs for callers that must work with older PD clusters.
+	DisablePDClientRouterClient bool
 	// whether disable automatic compactions of pebble db of engine.
 	// deduplicate pebble db is not affected by this option.
 	// see DisableAutomaticCompactions of pebble.Options for more details.
@@ -845,7 +847,11 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 	// the lifecycle of input PD client, while the PD client inside this is
 	// managed outside.
 	apiContext := keyspace.BuildAPIContext(local.KeyspaceName)
-	pdCliForTiKV, err := newPDClient(ctx, apiContext, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	pdClientOptions := PDClientOptions()
+	if local.DisablePDClientRouterClient {
+		pdClientOptions = append(pdClientOptions, opt.WithEnableRouterClient(false))
+	}
+	pdCliForTiKV, err := newPDClient(ctx, apiContext, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), pdClientOptions...)
 	if err != nil {
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
