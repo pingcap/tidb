@@ -3756,7 +3756,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	if err != nil || reorgInfo == nil || reorgInfo.first {
+	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
 
