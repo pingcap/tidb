@@ -556,25 +556,16 @@ partition by range (v) (
   partition p0 values less than (100),
   partition p1 values less than maxvalue
 )`)
-	tk.MustExec("insert into t_base values (98, 10), (99, 20)")
-	tk.MustExec("create materialized view log on repro015.t_base (id, v)")
-	tk.MustExec(`create materialized view repro015.mv (cnt, v)
+	err = tk.ExecToErr("create materialized view log on repro015.t_base (id, v)")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG on partition table")
+	err = tk.ExecToErr(`create materialized view repro015.mv (cnt, v)
 refresh fast
 as
 select count(*) as cnt, v
 from repro015.t_base
 group by v`)
-	tk.MustExec(`create table repro015.` + "`right`" + ` (
-  id bigint not null,
-  v int not null,
-  primary key (v) /*T![clustered_index] CLUSTERED */
-)`)
-	err = tk.ExecToErr("alter table repro015.t_base exchange partition p0 with table repro015.`right`")
-	require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table with materialized view dependencies")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW on partition table")
 
-	tk.MustExec("drop table repro015.`right`")
-	tk.MustExec("drop materialized view repro015.mv")
-	tk.MustExec("drop materialized view log on repro015.t_base")
 	tk.MustExec("drop table repro015.t_base")
 	tk.MustExec(`create table repro015.t_base (
   id bigint not null,
