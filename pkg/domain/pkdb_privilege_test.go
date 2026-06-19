@@ -36,6 +36,12 @@ func TestStandbyInitialPrivilegeLoadFailureDoesNotFailBootstrap(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	require.NotNil(t, dom.PrivilegeHandle())
 	tk := testkit.NewTestKit(t, store)
+	identity, err := tk.Session().MatchIdentity("root", "127.0.0.1")
+	require.NoError(t, err)
+	require.Equal(t, "root", identity.Username)
+	require.Equal(t, "%", identity.Hostname)
+	_, err = tk.Session().AuthPluginForUser(identity)
+	require.NoError(t, err)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1"}, nil, nil, nil))
 }
 

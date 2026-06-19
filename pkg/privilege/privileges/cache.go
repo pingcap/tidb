@@ -125,12 +125,16 @@ type UserRecord struct {
 	ResourceGroup        string
 }
 
-// NewUserRecord return a UserRecord, only use for unit test.
+// NewUserRecord returns a UserRecord with host match caches initialized.
 func NewUserRecord(host, user string) UserRecord {
+	patChars, patTypes := stringutil.CompilePatternBinary(host, '\\')
 	return UserRecord{
 		baseRecord: baseRecord{
-			Host: host,
-			User: user,
+			Host:      host,
+			User:      user,
+			patChars:  patChars,
+			patTypes:  patTypes,
+			hostIPNet: parseHostIPNet(host),
 		},
 	}
 }
