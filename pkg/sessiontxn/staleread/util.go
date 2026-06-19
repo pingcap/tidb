@@ -18,8 +18,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -105,4 +107,28 @@ func GetExternalTimestamp(ctx context.Context, sc *stmtctx.StatementContext) (ui
 		return 0, plannererrors.ErrAsOf.FastGenWithCause(err.Error())
 	}
 	return externalTimestamp.(uint64), nil
+}
+
+// GetStandbyReadTS returns the min resolved timestamp used for reads in
+// standby mode.
+func GetStandbyReadTS(ctx context.Context, store kv.Storage) (uint64, error) {
+	failpoint.Inject("mockStandbyReadTS", func(val failpoint.Value) (uint64, error) {
+		return uint64(val.(int)), nil
+	})
+	realStore, ok := store.(kv.StorageWithPD)
+	if !ok {
+		return 0, errors.New("standby replication requires pd client")
+	}
+	pdHTTPClient := realStore.GetPDHTTPClient()
+	if pdHTTPClient == nil {
+		return 0, errors.New("standby replication requires pd http client")
+	}
+	ts, _, err := pdHTTPClient.GetMinResolvedTSByStoresIDs(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	if ts == 0 {
+		return 0, errors.New("standby read timestamp is not ready")
+	}
+	return ts, nil
 }

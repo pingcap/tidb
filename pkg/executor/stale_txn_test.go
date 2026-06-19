@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1207,6 +1208,34 @@ func TestStaleSessionQuery(t *testing.T) {
 	// assert stale read is not exist after empty the variable
 	tk.MustExec(`set @@tidb_read_staleness=""`)
 	require.Len(t, tk.MustQuery("select * from t10").Rows(), 3)
+}
+
+func TestStandbyBeginUsesStandbyReadTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+
+	readTime := time.Now()
+	readTS := oracle.GoTimeToTS(readTime)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStandbyReadTS", fmt.Sprintf("return(%d)", readTS)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStandbyReadTS"))
+	})
+
+	pkdbrepl.SetStandbyModeForTest(true)
+	t.Cleanup(func() {
+		pkdbrepl.SetStandbyModeForTest(false)
+	})
+
+	tk.MustExec("begin")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertStaleTSO", fmt.Sprintf("return(%d)", readTime.Unix())))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertStaleTSO"))
+	})
+	tk.MustQuery("select * from t")
+	tk.MustExec("commit")
 }
 
 func TestStaleReadCompatibility(t *testing.T) {

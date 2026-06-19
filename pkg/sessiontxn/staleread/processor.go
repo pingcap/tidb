@@ -306,7 +306,11 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 }
 
 func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
-	if (sctx.GetSessionVars().EnableExternalTSRead && !sctx.GetSessionVars().InRestrictedSQL) || pkdbrepl.IsStandbyMode() {
+	if pkdbrepl.IsStandbyMode() {
+		return GetStandbyReadTS(ctx, sctx.GetStore())
+	}
+
+	if sctx.GetSessionVars().EnableExternalTSRead && !sctx.GetSessionVars().InRestrictedSQL {
 		externalTimestamp, err := GetExternalTimestamp(ctx, sctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return 0, err

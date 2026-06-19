@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -229,6 +231,27 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+}
+
+func TestStaleReadProcessorUsesStandbyReadTS(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	p := genStaleReadPoint(t, tk)
+	tn := astTableWithAsOf(t, "")
+
+	pkdbrepl.SetStandbyModeForTest(true)
+	t.Cleanup(func() {
+		pkdbrepl.SetStandbyModeForTest(false)
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStandbyReadTS", fmt.Sprintf("return(%d)", p.ts))
+	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+
+	processor := createProcessor(t, tk.Session())
+	err := processor.OnSelectTable(tn)
+	require.NoError(t, err)
+	require.True(t, processor.IsStaleness())
+	require.Equal(t, p.ts, processor.GetStalenessReadTS())
+	require.Nil(t, processor.GetStalenessTSEvaluatorForPrepare())
 }
 
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
