@@ -648,8 +648,7 @@ func isSynced(ctx context.Context, cli logReplStateScanClient, commitIndexes []r
 				)
 				return false, nil
 			}
-			if firstState.Region.RegionEpoch.Version < region.RegionEpoch.Version ||
-				firstState.Region.RegionEpoch.Version == region.RegionEpoch.Version && firstState.AppliedIndex < commitIndex {
+			if !logReplStateCoversRegionCommit(firstState, region, commitIndex) {
 				logutil.BgLogger().Info(
 					"region not synced yet during wait for standby sync",
 					zap.Uint64("regionID", region.Id),
@@ -684,6 +683,18 @@ func isSynced(ctx context.Context, cli logReplStateScanClient, commitIndexes []r
 	}
 
 	return true, nil
+}
+
+func logReplStateCoversRegionCommit(state *logreplicationpb.LogReplicationState, region *metapb.Region, commitIndex uint64) bool {
+	stateEpoch := state.GetRegion().GetRegionEpoch()
+	regionEpoch := region.GetRegionEpoch()
+	if stateEpoch.GetVersion() != regionEpoch.GetVersion() {
+		return stateEpoch.GetVersion() > regionEpoch.GetVersion()
+	}
+	if stateEpoch.GetConfVer() != regionEpoch.GetConfVer() {
+		return stateEpoch.GetConfVer() > regionEpoch.GetConfVer()
+	}
+	return state.GetAppliedIndex() >= commitIndex
 }
 
 type waitCleanupTiKV struct{}

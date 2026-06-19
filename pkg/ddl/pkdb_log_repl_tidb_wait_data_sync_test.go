@@ -740,6 +740,50 @@ func TestIsSyncedReturnsFalseWhenEpochVersionNotEnough(t *testing.T) {
 	cli.assertDone()
 }
 
+func TestIsSyncedUsesConfVerToCompareSameVersionStates(t *testing.T) {
+	testCases := []struct {
+		name        string
+		commitIndex regionCommitIndex
+		state       *logreplicationpb.LogReplicationState
+		wantSynced  bool
+	}{
+		{
+			name:        "newer_conf_ver_covers_older_commit_index",
+			commitIndex: newTestRegionCommitIndexWithConfVer(1, "", "b", 10, 9, 100),
+			state:       newTestReplStateWithConfVer(1, "", "b", 10, 10, 1),
+			wantSynced:  true,
+		},
+		{
+			name:        "same_conf_ver_still_requires_applied_index",
+			commitIndex: newTestRegionCommitIndexWithConfVer(1, "", "b", 10, 9, 100),
+			state:       newTestReplStateWithConfVer(1, "", "b", 10, 9, 99),
+			wantSynced:  false,
+		},
+		{
+			name:        "older_conf_ver_is_not_synced_even_with_higher_applied_index",
+			commitIndex: newTestRegionCommitIndexWithConfVer(1, "", "b", 10, 9, 100),
+			state:       newTestReplStateWithConfVer(1, "", "b", 10, 8, 101),
+			wantSynced:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cli := newLogReplStateScanClientForRange(
+				t,
+				tc.commitIndex.region.StartKey,
+				tc.commitIndex.region.EndKey,
+				[]*logreplicationpb.LogReplicationState{tc.state},
+			)
+
+			synced, err := isSynced(context.Background(), cli, []regionCommitIndex{tc.commitIndex})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantSynced, synced)
+			cli.assertDone()
+		})
+	}
+}
+
 func TestIsSyncedHandlesRegionKeyRangeChangeAfterSplitMerge(t *testing.T) {
 	testCases := []struct {
 		name       string
@@ -1068,6 +1112,16 @@ func newTestRegionCommitIndex(
 	epochVersion uint64,
 	commitIndex uint64,
 ) regionCommitIndex {
+	return newTestRegionCommitIndexWithConfVer(regionID, startKey, endKey, epochVersion, 0, commitIndex)
+}
+
+func newTestRegionCommitIndexWithConfVer(
+	regionID uint64,
+	startKey, endKey string,
+	epochVersion uint64,
+	epochConfVer uint64,
+	commitIndex uint64,
+) regionCommitIndex {
 	return regionCommitIndex{
 		region: &metapb.Region{
 			Id:       regionID,
@@ -1075,6 +1129,7 @@ func newTestRegionCommitIndex(
 			EndKey:   []byte(endKey),
 			RegionEpoch: &metapb.RegionEpoch{
 				Version: epochVersion,
+				ConfVer: epochConfVer,
 			},
 		},
 		commitIndex: commitIndex,
@@ -1087,6 +1142,16 @@ func newTestReplState(
 	epochVersion uint64,
 	appliedIndex uint64,
 ) *logreplicationpb.LogReplicationState {
+	return newTestReplStateWithConfVer(regionID, startKey, endKey, epochVersion, 0, appliedIndex)
+}
+
+func newTestReplStateWithConfVer(
+	regionID uint64,
+	startKey, endKey string,
+	epochVersion uint64,
+	epochConfVer uint64,
+	appliedIndex uint64,
+) *logreplicationpb.LogReplicationState {
 	return &logreplicationpb.LogReplicationState{
 		Region: &metapb.Region{
 			Id:       regionID,
@@ -1094,6 +1159,7 @@ func newTestReplState(
 			EndKey:   []byte(endKey),
 			RegionEpoch: &metapb.RegionEpoch{
 				Version: epochVersion,
+				ConfVer: epochConfVer,
 			},
 		},
 		StartKey:     []byte(startKey),
