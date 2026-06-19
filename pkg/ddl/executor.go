@@ -1086,7 +1086,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-
+	if baseTable.Meta().GetPartitionInfo() != nil {
+		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW LOG")
+	}
 	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	if err := checkTooLongTable(mlogNameCIStr); err != nil {
 		return err
@@ -4954,10 +4956,6 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 
 func checkTableMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *model.TableInfo, op string) error {
 	return checkTableMaterializedViewConstraintsWithOptions(sv, tblInfo, op, false)
-}
-
-func checkTableMaterializedViewConstraintsAllowMVTable(sv *variable.SessionVars, tblInfo *model.TableInfo, op string) error {
-	return checkTableMaterializedViewConstraintsWithOptions(sv, tblInfo, op, true)
 }
 
 func checkTableMaterializedViewConstraintsWithOptions(

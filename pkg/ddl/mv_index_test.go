@@ -104,3 +104,29 @@ func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema = database() and table_name = '%s'", mlogName)).
 		Check(testkit.Rows())
 }
+
+func TestCreateMaterializedViewOnPartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_part_range, `$mlog$t_part_range`, mv_part_range")
+	tk.MustExec(`create table t_part_range (
+		id bigint not null primary key,
+		g1 int not null,
+		v1 bigint not null
+	) partition by range (id) (
+		partition p0 values less than (100),
+		partition p1 values less than (maxvalue)
+	)`)
+
+	tk.MustGetErrMsg(
+		"create materialized view log on t_part_range (id, g1, v1)",
+		"[ddl:8200]Unsupported CREATE MATERIALIZED VIEW LOG on partition table",
+	)
+	tk.MustQuery("show tables like '$mlog$t_part_range'").Check(testkit.Rows())
+	tk.MustGetErrMsg(
+		"create materialized view mv_part_range (g1, cnt) as select g1, count(*) as cnt from t_part_range group by g1",
+		"[ddl:8200]Unsupported CREATE MATERIALIZED VIEW on partition table",
+	)
+}
