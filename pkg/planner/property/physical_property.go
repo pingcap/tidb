@@ -330,6 +330,16 @@ type PhysicalProperty struct {
 	// partial paths of IndexMerge.
 	// Currently only set when TopN is directly above a DataSource.
 	AdvisorySortItems []SortItem
+
+	// CorrelatedProbeLevel records how many correlated nested-loop probe boundaries
+	// (Apply probe sides and IndexJoin inner sides) enclose this required property.
+	// 0 means "not under any correlated probe" (the common, single-table case).
+	// It is incremented each time a required property is pushed into a correlated
+	// probe child, so a leaf scan can tell its depth in the probing hierarchy and
+	// mute the find-first-row optimism (OptOrderingIdxSelRatio) accordingly: the
+	// deeper the probe, the less we can trust that the first qualifying row is found
+	// early, because that optimism compounds multiplicatively across nesting levels.
+	CorrelatedProbeLevel int
 }
 
 // PartialOrderInfo records information needed for partial order optimization.
@@ -700,6 +710,11 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	// encode CorrelatedProbeLevel only when non-zero, so single-table properties
+	// keep their previous hashcode and existing plan testdata is unaffected.
+	if p.CorrelatedProbeLevel > 0 {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.CorrelatedProbeLevel))
+	}
 	return p.hashcode
 }
 
@@ -722,6 +737,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		NoCopPushDown:         p.NoCopPushDown,
 		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
 		AdvisorySortItems:     p.AdvisorySortItems,
+		CorrelatedProbeLevel:  p.CorrelatedProbeLevel, // preserve probe depth through pass-through operators
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}

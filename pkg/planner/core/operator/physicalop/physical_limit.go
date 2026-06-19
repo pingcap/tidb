@@ -64,7 +64,8 @@ func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset),
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown,
+			CorrelatedProbeLevel: prop.CorrelatedProbeLevel}
 		limit := PhysicalLimit{
 			Offset:      p.Offset,
 			Count:       p.Count,
@@ -205,7 +206,8 @@ func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) [
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems,
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown,
+			CorrelatedProbeLevel: prop.CorrelatedProbeLevel}
 		limit := PhysicalLimit{
 			Count:       lt.Count,
 			Offset:      lt.Offset,
