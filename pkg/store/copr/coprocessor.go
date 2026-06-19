@@ -1590,6 +1590,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.String("storeAddr", task.storeAddr),
 			zap.String("error", otherErr),
 		}
+		// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+		// guard At(0)/At(Len-1) to avoid a nil dereference.
 		if task.ranges.Len() > 0 {
 			otherErrFields = append(otherErrFields,
 				zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
@@ -1738,6 +1740,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.String("storeAddr", task.storeAddr),
 				zap.Error(err),
 			}
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
 			if task.ranges.Len() > 0 {
 				otherErrFields = append(otherErrFields,
 					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
@@ -1771,6 +1775,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.Int("rangeNums", task.ranges.Len()),
 				zap.String("storeAddr", task.storeAddr),
 			}
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
 			if task.ranges.Len() > 0 {
 				missingFields = append(missingFields,
 					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
