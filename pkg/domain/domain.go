@@ -2245,8 +2245,14 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		return err
 	}
 	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
-	if err := do.privHandle.Update(); err != nil {
-		return errors.Trace(err)
+	privilegeLoaded := true
+	if err := do.updatePrivilegeHandle(); err != nil {
+		if isStandbyModeForPrivilegeLoad() {
+			privilegeLoaded = false
+			logutil.BgLogger().Warn("initial load privilege failed in standby mode, will retry", zap.Error(err))
+		} else {
+			return errors.Trace(err)
+		}
 	}
 
 	var watchCh clientv3.WatchChan
@@ -2254,6 +2260,12 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 		duration = 10 * time.Minute
+	}
+	reloadDuration := func() time.Duration {
+		if !privilegeLoaded {
+			return initialPrivilegeLoadRetryInterval
+		}
+		return duration
 	}
 
 	do.wg.Run(func() {
@@ -2269,7 +2281,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-do.exit:
 				return
 			case _, ok = <-watchCh:
-			case <-time.After(duration):
+			case <-time.After(reloadDuration()):
 			case <-pkdbrepl.StandbyUserReloadTickCh:
 			}
 			if !ok {
@@ -2283,14 +2295,25 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update()
+			err := do.updatePrivilegeHandle()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Warn("load privilege failed", zap.Error(err))
+				continue
 			}
+			privilegeLoaded = true
 		}
 	}, "loadPrivilegeInLoop")
 	return nil
+}
+
+func (do *Domain) updatePrivilegeHandle() error {
+	failpoint.Inject("mockLoadPrivilegeFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock load privilege failed"))
+		}
+	})
+	return do.privHandle.Update()
 }
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
@@ -3247,6 +3270,15 @@ const (
 	sysVarCacheKey        = "/tidb/sysvars"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
+
+var initialPrivilegeLoadRetryInterval = time.Second
+
+func isStandbyModeForPrivilegeLoad() bool {
+	failpoint.Inject("mockStandbyModeForPrivilegeLoad", func(val failpoint.Value) {
+		failpoint.Return(val.(bool))
+	})
+	return pkdbrepl.IsStandbyMode()
+}
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.

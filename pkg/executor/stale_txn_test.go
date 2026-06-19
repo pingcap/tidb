@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -1236,6 +1238,45 @@ func TestStandbyBeginUsesStandbyReadTS(t *testing.T) {
 	})
 	tk.MustQuery("select * from t")
 	tk.MustExec("commit")
+}
+
+func TestStandbyRestrictedSQLUsesStandbyReadTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+
+	readTime := time.Now()
+	readTS := oracle.GoTimeToTS(readTime)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStandbyReadTS", fmt.Sprintf("return(%d)", readTS)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStandbyReadTS"))
+	})
+
+	pkdbrepl.SetStandbyModeForTest(true)
+	t.Cleanup(func() {
+		pkdbrepl.SetStandbyModeForTest(false)
+	})
+
+	const standbyReadTSRecord = "standbyRestrictedSQLReadTS"
+	tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/recordStandbyReadTS", fmt.Sprintf(`return("%s")`, standbyReadTSRecord)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/recordStandbyReadTS"))
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertStaleTSO", fmt.Sprintf("return(%d)", readTime.Unix())))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertStaleTSO"))
+	})
+
+	_, _, err := tk.Session().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"select HIGH_PRIORITY Host, User from mysql.user",
+	)
+	require.NoError(t, err)
+	records, ok := tk.Session().Value(sessiontxn.AssertRecordsKey).(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, records[standbyReadTSRecord])
 }
 
 func TestStaleReadCompatibility(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -307,6 +308,9 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 
 func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 	if pkdbrepl.IsStandbyMode() {
+		failpoint.Inject("recordStandbyReadTS", func(val failpoint.Value) {
+			sessiontxn.RecordAssert(sctx, val.(string), true)
+		})
 		return GetStandbyReadTS(ctx, sctx.GetStore())
 	}
 
