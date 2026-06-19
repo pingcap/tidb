@@ -2320,14 +2320,25 @@ func (do *Domain) updatePrivilegeHandle() error {
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	err := do.rebuildSysVarCache(ctx)
-	if err != nil {
-		return err
+	sysVarCacheLoaded := true
+	if err := do.updateSysVarCache(ctx); err != nil {
+		if isStandbyModeForSysVarCacheLoad() {
+			sysVarCacheLoaded = false
+			logutil.BgLogger().Warn("initial load sysvar cache failed in standby mode, will retry", zap.Error(err))
+		} else {
+			return err
+		}
 	}
 	var watchCh clientv3.WatchChan
 	duration := 30 * time.Second
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+	}
+	reloadDuration := func() time.Duration {
+		if !sysVarCacheLoaded {
+			return initialSysVarCacheLoadRetryInterval
+		}
+		return duration
 	}
 
 	do.wg.Run(func() {
@@ -2343,7 +2354,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case <-do.exit:
 				return
 			case _, ok = <-watchCh:
-			case <-time.After(duration):
+			case <-time.After(reloadDuration()):
 			}
 
 			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
@@ -2369,14 +2380,25 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			err := do.rebuildSysVarCache(ctx)
+			err := do.updateSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Warn("LoadSysVarCacheLoop failed", zap.Error(err))
+				continue
 			}
+			sysVarCacheLoaded = true
 		}
 	}, "LoadSysVarCacheLoop")
 	return nil
+}
+
+func (do *Domain) updateSysVarCache(ctx sessionctx.Context) error {
+	failpoint.Inject("mockLoadSysVarCacheFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock load sysvar cache failed"))
+		}
+	})
+	return do.rebuildSysVarCache(ctx)
 }
 
 // WatchTiFlashComputeNodeChange create a routine to watch if the topology of tiflash_compute node is changed.
@@ -3271,10 +3293,20 @@ const (
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
-var initialPrivilegeLoadRetryInterval = time.Second
+var (
+	initialPrivilegeLoadRetryInterval   = time.Second
+	initialSysVarCacheLoadRetryInterval = time.Second
+)
 
 func isStandbyModeForPrivilegeLoad() bool {
 	failpoint.Inject("mockStandbyModeForPrivilegeLoad", func(val failpoint.Value) {
+		failpoint.Return(val.(bool))
+	})
+	return pkdbrepl.IsStandbyMode()
+}
+
+func isStandbyModeForSysVarCacheLoad() bool {
+	failpoint.Inject("mockStandbyModeForSysVarCacheLoad", func(val failpoint.Value) {
 		failpoint.Return(val.(bool))
 	})
 	return pkdbrepl.IsStandbyMode()

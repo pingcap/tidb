@@ -35,3 +35,17 @@ func TestStandbyInitialPrivilegeLoadFailureDoesNotFailBootstrap(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	require.NotNil(t, dom.PrivilegeHandle())
 }
+
+func TestStandbyInitialSysVarCacheLoadFailureDoesNotFailBootstrap(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/mockStandbyModeForSysVarCacheLoad", "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/mockStandbyModeForSysVarCacheLoad"))
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/mockLoadSysVarCacheFailed", "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/mockLoadSysVarCacheFailed"))
+	})
+
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	require.NotNil(t, dom)
+}
