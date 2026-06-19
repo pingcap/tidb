@@ -1287,9 +1287,7 @@ func TestMLogPartitionedTableNotSupported(t *testing.T) {
 			"partition p1 values less than (maxvalue)" +
 			")",
 	)
-	tk.MustExec("create materialized view log on t (a, b)")
-
-	tk.MustGetErrCode("insert into t values (1,100)", mysql.ErrNotSupportedYet)
+	tk.MustGetErrCode("create materialized view log on t (a, b)", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestMLogTransactionRollback(t *testing.T) {

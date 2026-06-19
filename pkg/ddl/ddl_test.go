@@ -132,6 +132,16 @@ func TestGetJobCheckIntervalForCreateMaterializedViewShadow(t *testing.T) {
 	require.False(t, changed)
 }
 
+func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrDatabaseNotExists.GenWithStackByArgs("test")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("invalid job")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrWrongObject.GenWithStackByArgs("test", "t", "BASE TABLE")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", model.StateDeleteOnly)))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")))
+	require.False(t, isCreateMaterializedViewBaseCheckCancelledErr(fmt.Errorf("retry later")))
+}
+
 func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 	compactSQL := func(sql string) string {
 		return strings.Join(strings.Fields(sql), " ")

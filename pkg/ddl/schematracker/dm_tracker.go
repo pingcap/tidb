@@ -251,6 +251,9 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
+	if baseTable.GetPartitionInfo() != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE MATERIALIZED VIEW LOG on partition table")
+	}
 
 	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Name)
 	if _, err := d.TableByName(context.Background(), schemaName, mlogNameCIStr); err == nil {
