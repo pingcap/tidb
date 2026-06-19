@@ -625,9 +625,8 @@ partition by range (id) (
   partition p0 values less than (100),
   partition p1 values less than maxvalue
 )`)
-	tk.MustExec("create materialized view log on t_base_part (id, v)")
-	err = tk.ExecToErr("alter table t_base_part remove partitioning")
-	require.ErrorContains(t, err, "ALTER TABLE ... REMOVE PARTITIONING with materialized view log")
+	err = tk.ExecToErr("create materialized view log on t_base_part (id, v)")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG on partition table")
 }
 
 func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.T) {
