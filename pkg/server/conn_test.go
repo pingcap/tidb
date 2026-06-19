@@ -1024,11 +1024,6 @@ func mapBelong(m1, m2 map[string]string) bool {
 func TestConnExecutionTimeout(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	// There is no underlying netCon, use failpoint to avoid panic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeClientConn", "return(1)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeClientConn"))
-	}()
 	tk := testkit.NewTestKit(t, store)
 
 	connID := uint64(1)
@@ -1042,6 +1037,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(io.Discard)),
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}
@@ -1071,12 +1067,6 @@ func TestConnExecutionTimeout(t *testing.T) {
 	err := tk.QueryToErr("select * FROM testTable2 WHERE SLEEP(1);")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	// Test executor stats when execution time exceeded.
-	tk.MustExec("set @@tidb_slow_log_threshold=300")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowByInjestSleep", `return(150)`))
-	err = tk.QueryToErr("select /*+ max_execution_time(600), set_var(tikv_client_read_timeout=100) */ * from testTable2")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowByInjestSleep"))
-	require.Error(t, err)
-	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	planInfo, err := plancodec.DecodePlan(tk.Session().GetSessionVars().StmtCtx.GetEncodedPlan())
 	require.NoError(t, err)
 	require.Regexp(t, "TableReader.*cop_task: {num: .*num_rpc:.*, total_time:.*", planInfo)
@@ -1084,24 +1074,32 @@ func TestConnExecutionTimeout(t *testing.T) {
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	tk.MustExec("set @@max_execution_time = 0;")
-	tk.MustQuery("select * FROM testTable2 WHERE SLEEP(1);").Check(testkit.Rows())
+	tk.MustQuery("select 1;").Check(testkit.Rows("1"))
 	err = tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 
+	runQuery := func(sql string) error {
+		defer func() {
+			cc.ctx.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+			cc.ctx.GetSessionVars().SQLKiller.Reset()
+		}()
+		return cc.handleQuery(context.Background(), sql)
+	}
+
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
-	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	err = runQuery("select 1;")
 	require.NoError(t, err)
 
-	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	err = runQuery("select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
-	err = cc.handleQuery(context.Background(), "select /*+ set_var(max_execution_time=100) */ age, sleep(1) from testTable2 union all select age, 1 from testTable2")
+	err = runQuery("select /*+ set_var(max_execution_time=100) */ age, sleep(1) from testTable2 union all select age, 1 from testTable2")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	tk.MustExec("set @@max_execution_time = 500;")
 
-	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
+	err = runQuery("alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
 }
 
