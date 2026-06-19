@@ -609,6 +609,9 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 				if baseColMap[col.L] == nil {
 					return infoschema.ErrColumnNotExists.GenWithStackByArgs(col.O, s.Table.Name.O)
 				}
+				if err := checkMaterializedViewLogColumnSupportedForOp("ALTER MATERIALIZED VIEW LOG", baseColMap[col.L]); err != nil {
+					return err
+				}
 				mlogColSet[col.L] = struct{}{}
 			}
 		default:

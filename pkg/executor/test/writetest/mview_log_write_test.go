@@ -803,23 +803,23 @@ func TestMLogTrackedReferenceTypes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t (id int primary key, s varchar(20), j json, d decimal(10,2), b blob)")
-	tk.MustExec("create materialized view log on t (s, j, d, b)")
+	tk.MustExec("create table t (id int primary key, s varchar(20), txt text, d decimal(10,2), vb varbinary(20))")
+	tk.MustExec("create materialized view log on t (s, txt, d, vb)")
 
-	tk.MustExec(`insert into t values (1, 'alpha', '{"k":"v1"}', 12.34, 'payload1')`)
+	tk.MustExec("insert into t values (1, 'alpha', 'payload1', 12.34, 'bin1')")
 	tk.MustQuery(
-		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
-		"alpha v1 12.34 7061796C6F616431 I 1",
+		"alpha payload1 12.34 62696E31 I 1",
 	))
 
 	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
-	tk.MustExec(`update t set s='beta', j='{"k":"v2"}', d=56.78, b='payload2' where id=1`)
+	tk.MustExec("update t set s='beta', txt='payload2', d=56.78, vb='bin2' where id=1")
 	tk.MustQuery(
-		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"alpha v1 12.34 7061796C6F616431 U -1",
-		"beta v2 56.78 7061796C6F616432 U 1",
+		"alpha payload1 12.34 62696E31 U -1",
+		"beta payload2 56.78 62696E32 U 1",
 	))
 
 	// No-reorg modify on a tracked column should also update the mlog physical column type.
@@ -831,10 +831,10 @@ func TestMLogTrackedReferenceTypes(t *testing.T) {
 
 	// Existing mlog rows are still readable after the type change.
 	tk.MustQuery(
-		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"alpha v1 12.34 7061796C6F616431 U -1",
-		"beta v2 56.78 7061796C6F616432 U 1",
+		"alpha payload1 12.34 62696E31 U -1",
+		"beta payload2 56.78 62696E32 U 1",
 	))
 
 	execAsMViewMaintenance(tk, "delete from `$mlog$t`")

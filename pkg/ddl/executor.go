@@ -1119,6 +1119,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		if baseCol == nil {
 			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
 		}
+		if err := CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
+			return err
+		}
 		ft := baseCol.FieldType
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
@@ -1226,6 +1229,30 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, mlogTableInfo, jobW.SchemaID, scatterScope))
+}
+
+// CheckMaterializedViewLogColumnSupported validates whether a base table column
+// can be copied into a materialized view log table.
+func CheckMaterializedViewLogColumnSupported(col *model.ColumnInfo) error {
+	return checkMaterializedViewLogColumnSupportedForOp("CREATE MATERIALIZED VIEW LOG", col)
+}
+
+func checkMaterializedViewLogColumnSupportedForOp(operation string, col *model.ColumnInfo) error {
+	if col.GetType() == mysql.TypeJSON {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
+			"%s does not support JSON column %s",
+			operation,
+			col.Name.O,
+		)
+	}
+	if types.IsTypeBlob(col.GetType()) && col.GetCharset() == charset.CharsetBin {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
+			"%s does not support BLOB column %s",
+			operation,
+			col.Name.O,
+		)
+	}
+	return nil
 }
 
 func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
