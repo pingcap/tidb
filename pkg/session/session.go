@@ -2059,6 +2059,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if err := s.waitSourceWriteGate(ctx, stmtNode); err != nil {
+		return nil, err
+	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
@@ -2294,6 +2297,33 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 		return errors.New("cannot run IMPORT INTO in explicit transaction")
 	}
 	return nil
+}
+
+func (s *session) waitSourceWriteGate(ctx context.Context, stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if vars.InRestrictedSQL || !pkdbrepl.IsSourceWriteGateBlocked() {
+		return nil
+	}
+	if sourceWriteGateAllowsStmt(stmtNode, vars) || planner.IsReadOnly(stmtNode, vars) {
+		return nil
+	}
+	pkdbrepl.CheckSourceWriteGateBlocking(ctx)
+	return ctx.Err()
+}
+
+func sourceWriteGateAllowsStmt(stmtNode ast.StmtNode, vars *variable.SessionVars) bool {
+	switch n := stmtNode.(type) {
+	case *ast.BeginStmt, *ast.RollbackStmt:
+		return true
+	case *ast.ExecuteStmt:
+		ps, err := plannercore.GetPreparedStmt(n, vars)
+		if err != nil || ps == nil || ps.PreparedAst == nil {
+			return false
+		}
+		return sourceWriteGateAllowsStmt(ps.PreparedAst.Stmt, vars)
+	default:
+		return false
+	}
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {

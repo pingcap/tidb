@@ -1754,6 +1754,7 @@ func (do *Domain) Init(
 	// actions, because TiKV may have inconsistent data and we must use min resolved
 	// TS to read inside standby mode even for the first read.
 	pkdbrepl.InitStandby(do.ctx, do.etcdClient)
+	pkdbrepl.InitSourceWriteGate(do.ctx, do.etcdClient)
 	go pkdbrepl.WatchRestart(do.etcdClient, do.exit, do)
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
@@ -1862,6 +1863,9 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(func() {
 		pkdbrepl.WatchStandby(do.ctx, do.etcdClient)
 	}, "WatchStandby")
+	do.wg.Run(func() {
+		pkdbrepl.WatchSourceWriteGate(do.ctx, do.etcdClient)
+	}, "WatchSourceWriteGate")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
