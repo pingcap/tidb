@@ -145,8 +145,7 @@ func tryBroadcast(ctx context.Context, sctx sessionctx.Context, sql string) erro
 	if err == nil {
 		return nil
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "exec type") || !strings.Contains(msg, "doesn't support yet") {
+	if !isUnsupportedBroadcastQueryErr(err) {
 		return err
 	}
 	statslogutil.StatsLogger().Warn(
@@ -155,6 +154,19 @@ func tryBroadcast(ctx context.Context, sctx sessionctx.Context, sql string) erro
 		zap.Error(err),
 	)
 	return nil
+}
+
+// isUnsupportedBroadcastQueryErr reports whether err is a peer rejecting the
+// BroadcastQuery coprocessor executor with "this exec type <n> doesn't support
+// yet". An older TiDB that predates BroadcastQuery support returns this during a
+// rolling upgrade. The broadcast only ever sends a BroadcastQuery executor, so
+// that phrase coming back unambiguously means an unsupported peer.
+func isUnsupportedBroadcastQueryErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "exec type") && strings.Contains(msg, "doesn't support yet")
 }
 
 // collectStatsDeltaFlushObjectsForAnalyze returns the database-qualified table
