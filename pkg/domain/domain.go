@@ -2249,6 +2249,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err := do.updatePrivilegeHandle(); err != nil {
 		if isStandbyModeForPrivilegeLoad() {
 			privilegeLoaded = false
+			do.privHandle.UseStandbyInitialRootPrivilege()
 			logutil.BgLogger().Warn("initial load privilege failed in standby mode, will retry", zap.Error(err))
 		} else {
 			return errors.Trace(err)

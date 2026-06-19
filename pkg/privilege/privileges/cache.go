@@ -2114,6 +2114,20 @@ func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
 	return ret
 }
 
+// UseStandbyInitialRootPrivilege installs a temporary root privilege cache for
+// standby TiDB startup before mysql.user can be loaded successfully.
+func (h *Handle) UseStandbyInitialRootPrivilege() {
+	var priv MySQLPrivilege
+	root := NewUserRecord("%", "root")
+	root.AuthenticationString = ""
+	root.AuthPlugin = mysql.AuthNativePassword
+	root.Privileges = userTablePrivilegeMask | mysql.GrantPriv
+	priv.user = []UserRecord{root}
+	priv.SortUserTable()
+	priv.buildUserMap()
+	h.priv.Store(&priv)
+}
+
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
 func (h *Handle) ensureActiveUser(user string) error {
 	return nil

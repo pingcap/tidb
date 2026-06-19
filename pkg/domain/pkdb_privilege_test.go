@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,8 +33,10 @@ func TestStandbyInitialPrivilegeLoadFailureDoesNotFailBootstrap(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/mockLoadPrivilegeFailed"))
 	})
 
-	_, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	require.NotNil(t, dom.PrivilegeHandle())
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1"}, nil, nil, nil))
 }
 
 func TestStandbyInitialSysVarCacheLoadFailureDoesNotFailBootstrap(t *testing.T) {
