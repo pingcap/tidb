@@ -4349,6 +4349,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 	executeDataChangesDur = time.Since(executeDataChangesStart)
+	failpoint.Inject("mockRefreshMaterializedViewErrorAfterDataChanges", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok {
+			failpoint.Return(finalizeFailure(errors.New(msg)))
+		}
+		failpoint.Return(finalizeFailure(errors.New("mock refresh materialized view error after data changes")))
+	})
 	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
 
 	actualRefreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
@@ -4582,6 +4588,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}); err != nil {
 		return 0, err
 	}
+	failpoint.Inject("mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok {
+			failpoint.Return(uint64(0), errors.New(msg))
+		}
+		failpoint.Return(uint64(0), errors.New("mock refresh materialized view out-of-place build error after load shadow"))
+	})
 	failpoint.Inject("mockRefreshMaterializedViewOutOfPlaceBuildReadTSO", func(val failpoint.Value) {
 		s, ok := val.(string)
 		if !ok {
