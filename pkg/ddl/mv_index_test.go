@@ -156,6 +156,26 @@ func TestCreateUniqueIndexOnMaterializedView(t *testing.T) {
 		"alter table mv_unique_agg add unique key uk_g1 (g1)",
 		"[ddl:8200]Unsupported ALTER TABLE ADD UNIQUE INDEX on materialized view table",
 	)
+	tk.MustGetErrMsg(
+		"alter table mv_unique_agg add primary key (g1) nonclustered",
+		"[ddl:8200]Unsupported ALTER TABLE ADD PRIMARY KEY on materialized view table",
+	)
 	tk.MustExec("create index idx_mv_g1 on mv_unique_agg (g1)")
 	tk.MustExec("alter table mv_unique_agg add key idx_mv_cnt (cnt)")
+
+	tk.MustExec(`create table t_mv_nullable_key (
+		id bigint not null primary key,
+		g1 int,
+		v1 bigint not null,
+		key idx_g1 (g1)
+	)`)
+	tk.MustExec("insert into t_mv_nullable_key values (1, null, 10)")
+	tk.MustExec("create materialized view log on t_mv_nullable_key (id, g1, v1)")
+	tk.MustExec(`create materialized view mv_nullable_key_agg (g1, cnt)
+		refresh fast
+		as select g1, count(*) as cnt from t_mv_nullable_key group by g1`)
+	tk.MustGetErrMsg(
+		"alter table mv_nullable_key_agg add primary key (cnt) nonclustered",
+		"[ddl:8200]Unsupported ALTER TABLE ADD PRIMARY KEY on materialized view table",
+	)
 }

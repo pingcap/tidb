@@ -1047,6 +1047,9 @@ func (d *SchemaTracker) createPrimaryKey(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := ddl.CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "ALTER TABLE ADD PRIMARY KEY", true); err != nil {
+		return err
+	}
 
 	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 

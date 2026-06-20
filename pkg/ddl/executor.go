@@ -1993,17 +1993,19 @@ func checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs []*ast.AlterTable
 	}
 	return nil
 }
-func hasAlterTableAddUniqueIndexOperation(specs []*ast.AlterTableSpec) bool {
+func hasAlterTableAddUniqueIndexOperation(specs []*ast.AlterTableSpec) (string, bool) {
 	for _, spec := range specs {
 		if spec.Tp != ast.AlterTableAddConstraint || spec.Constraint == nil {
 			continue
 		}
 		switch spec.Constraint.Tp {
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			return true
+			return "ALTER TABLE ADD UNIQUE INDEX", true
+		case ast.ConstraintPrimaryKey:
+			return "ALTER TABLE ADD PRIMARY KEY", true
 		}
 	}
-	return false
+	return "", false
 }
 
 func collectAlterTableSpecAffectedColumns(spec *ast.AlterTableSpec) []string {
@@ -2124,8 +2126,8 @@ func checkAlterTableMaterializedViewConstraints(
 
 	if tblInfo.MaterializedView != nil {
 		// MATERIALIZED VIEW table allows TiFlash replica and index-related ALTER TABLE operations.
-		if hasAlterTableAddUniqueIndexOperation(specs) {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE ADD UNIQUE INDEX on materialized view table")
+		if op, ok := hasAlterTableAddUniqueIndexOperation(specs); ok {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 		}
 		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) {
 			return nil
@@ -5275,6 +5277,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "ALTER TABLE ADD PRIMARY KEY", true); err != nil {
+		return err
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
