@@ -57,4 +57,6 @@ func TestStandbyInitialSysVarCacheLoadFailureDoesNotFailBootstrap(t *testing.T) 
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	require.NotNil(t, dom)
+	_, err := dom.GetSessionCache()
+	require.NoError(t, err)
 }

@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -59,7 +61,10 @@ func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
 // on creating a new session.
 func (do *Domain) GetSessionCache() (map[string]string, error) {
 	if err := do.rebuildSysVarCacheIfNeeded(); err != nil {
-		return nil, err
+		if !isStandbyModeForSysVarCacheLoad() {
+			return nil, err
+		}
+		logutil.BgLogger().Warn("session sysvar cache rebuild failed in standby mode, using current cache and waiting for background retry", zap.Error(err))
 	}
 	do.sysVarCache.RLock()
 	defer do.sysVarCache.RUnlock()
@@ -102,6 +107,12 @@ func (*Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, err
 // rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
 func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
+	failpoint.Inject("mockLoadSysVarCacheFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock load sysvar cache failed"))
+		}
+	})
+
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	if ctx == nil {
