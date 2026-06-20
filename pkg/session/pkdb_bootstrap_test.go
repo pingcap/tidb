@@ -44,6 +44,11 @@ func TestStandbyBootstrapSnapshotInitializers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentEEBootstrapVersion, bootstrapEEVer)
 
+	bootstrapVer, bootstrapEEVer, err = getStoreBootstrapVersionsAtTS(store, ver.Ver)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, bootstrapVer)
+	require.Equal(t, currentEEBootstrapVersion, bootstrapEEVer)
+
 	variable.EnableMDL.Store(true)
 	require.NoError(t, InitMDLVariableAtTS(store, ver.Ver))
 	require.False(t, variable.EnableMDL.Load())

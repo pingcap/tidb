@@ -3935,20 +3935,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	startMode := ddl.Normal
 	if standbyStartup {
-		var ver, verEE int64
-		ver, err = getStoreBootstrapVersionWithCacheAtTS(store, standbyReadTS)
+		standbyReadTS, err = waitStandbyBootstrapMetadata(ctx, store, standbyReadTS)
 		if err != nil {
 			return nil, err
-		}
-		verEE, err = getStoreEEBootstrapVersionAtTS(store, standbyReadTS)
-		if err != nil {
-			return nil, err
-		}
-		if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
-			return nil, errors.Errorf(
-				"standby startup requires an already bootstrapped store at the current binary version, got bootstrap=%d/%d ee=%d/%d",
-				ver, currentBootstrapVersion, verEE, currentEEBootstrapVersion,
-			)
 		}
 		if err = InitTiDBSchemaCacheSizeAtTS(store, standbyReadTS); err != nil {
 			return nil, err
@@ -4557,6 +4546,61 @@ func getStoreEEBootstrapVersionAtTS(store kv.Storage, readTS uint64) (int64, err
 	}
 
 	return ver, nil
+}
+
+var standbyBootstrapMetadataRetryInterval = time.Second
+
+func waitStandbyBootstrapMetadata(ctx context.Context, store kv.Storage, readTS uint64) (uint64, error) {
+	for {
+		ver, verEE, err := getStoreBootstrapVersionsAtTS(store, readTS)
+		if err != nil {
+			return 0, err
+		}
+		if ver >= currentBootstrapVersion && verEE >= currentEEBootstrapVersion {
+			setStoreBootstrapped(store.UUID())
+			return readTS, nil
+		}
+		logutil.BgLogger().Warn("standby bootstrap metadata is not ready",
+			zap.Uint64("readTS", readTS),
+			zap.Int64("bootstrapVersion", ver),
+			zap.Int64("currentBootstrapVersion", currentBootstrapVersion),
+			zap.Int64("eeBootstrapVersion", verEE),
+			zap.Int64("currentEEBootstrapVersion", currentEEBootstrapVersion))
+
+		select {
+		case <-ctx.Done():
+			return 0, errors.Trace(ctx.Err())
+		case <-time.After(standbyBootstrapMetadataRetryInterval):
+		}
+
+		standbyEnabled, nextReadTS, err := getBootstrapStandbyReadTS(ctx, store)
+		if err != nil {
+			return 0, err
+		}
+		if !standbyEnabled {
+			return 0, errors.New("standby mode disabled before bootstrap metadata became ready")
+		}
+		readTS = nextReadTS
+	}
+}
+
+func getStoreBootstrapVersionsAtTS(store kv.Storage, readTS uint64) (int64, int64, error) {
+	t := meta.NewReader(store.GetSnapshot(kv.NewVersion(readTS)))
+	ver, err := t.GetBootstrapVersion()
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	eeReader, ok := t.(interface {
+		GetBootstrapEEVersion() (int64, error)
+	})
+	if !ok {
+		return 0, 0, errors.New("snapshot meta reader does not support enterprise bootstrap version")
+	}
+	verEE, err := eeReader.GetBootstrapEEVersion()
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return ver, verEE, nil
 }
 
 func getBootstrapStandbyReadTS(ctx context.Context, store kv.Storage) (bool, uint64, error) {
