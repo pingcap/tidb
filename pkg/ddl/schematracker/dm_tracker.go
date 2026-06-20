@@ -571,7 +571,7 @@ func (d *SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) 
 func (d *SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return d.createIndex(ctx, ident, stmt.KeyType, pmodel.NewCIStr(stmt.IndexName),
-		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
+		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists, "CREATE INDEX")
 }
 
 func (d *SchemaTracker) putTableIfNoError(err error, dbName pmodel.CIStr, tbInfo *model.TableInfo) {
@@ -590,10 +590,17 @@ func (d *SchemaTracker) createIndex(
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	ifNotExists bool,
+	op string,
 ) (err error) {
 	unique := keyType == ast.IndexKeyTypeUnique
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
+		return err
+	}
+	if unique && op == "CREATE INDEX" {
+		op = "CREATE UNIQUE INDEX"
+	}
+	if err := ddl.CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, op, unique); err != nil {
 		return err
 	}
 
@@ -1040,6 +1047,9 @@ func (d *SchemaTracker) createPrimaryKey(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := ddl.CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "ALTER TABLE ADD PRIMARY KEY", true); err != nil {
+		return err
+	}
 
 	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
@@ -1132,10 +1142,10 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, pmodel.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists, "ALTER TABLE ADD INDEX")
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, pmodel.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					spec.Constraint.Keys, constr.Option, false, "ALTER TABLE ADD UNIQUE INDEX") // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
 				err = d.createPrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
