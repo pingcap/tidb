@@ -5,9 +5,53 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStandbyBootstrapSnapshotInitializers(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	dom.Close()
+	unsetStoreBootstrapped(store.UUID())
+	t.Cleanup(func() {
+		unsetStoreBootstrapped(store.UUID())
+	})
+
+	oldEnableMDL := variable.EnableMDL.Load()
+	oldSchemaCacheSize := variable.SchemaCacheSize.Load()
+	t.Cleanup(func() {
+		variable.EnableMDL.Store(oldEnableMDL)
+		variable.SchemaCacheSize.Store(oldSchemaCacheSize)
+	})
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.SetMetadataLock(false))
+	require.NoError(t, m.SetSchemaCacheSize(123))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	bootstrapVer, err := getStoreBootstrapVersionWithCacheAtTS(store, ver.Ver)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, bootstrapVer)
+
+	bootstrapEEVer, err := getStoreEEBootstrapVersionAtTS(store, ver.Ver)
+	require.NoError(t, err)
+	require.Equal(t, currentEEBootstrapVersion, bootstrapEEVer)
+
+	variable.EnableMDL.Store(true)
+	require.NoError(t, InitMDLVariableAtTS(store, ver.Ver))
+	require.False(t, variable.EnableMDL.Load())
+
+	variable.SchemaCacheSize.Store(0)
+	require.NoError(t, InitTiDBSchemaCacheSizeAtTS(store, ver.Ver))
+	require.Equal(t, uint64(123), variable.SchemaCacheSize.Load())
+}
 
 func TestUpgradeCleansStaleRoutineMetadata(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)

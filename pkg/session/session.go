@@ -99,6 +99,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -3755,6 +3756,22 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
+// InitTiDBSchemaCacheSizeAtTS initializes the tidb schema cache size from a
+// snapshot. It is used during standby startup before local current TSO can see
+// replicated bootstrap metadata.
+func InitTiDBSchemaCacheSizeAtTS(store kv.Storage, readTS uint64) error {
+	t := meta.NewReader(store.GetSnapshot(kv.NewVersion(readTS)))
+	size, isNull, err := t.GetSchemaCacheSize()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if isNull {
+		size = variable.DefTiDBSchemaCacheSize
+	}
+	variable.SchemaCacheSize.Store(size)
+	return nil
+}
+
 // InitMDLVariableForUpgrade initializes the metadata lock variable.
 func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	isNull := false
@@ -3800,6 +3817,23 @@ func InitMDLVariable(store kv.Storage) error {
 	})
 	variable.EnableMDL.Store(enable)
 	return err
+}
+
+// InitMDLVariableAtTS initializes the metadata lock variable from a snapshot.
+// It is used during standby startup before local current TSO can see replicated
+// bootstrap metadata.
+func InitMDLVariableAtTS(store kv.Storage, readTS uint64) error {
+	t := meta.NewReader(store.GetSnapshot(kv.NewVersion(readTS)))
+	enable, isNull, err := t.GetMetadataLock()
+	if err != nil {
+		return err
+	}
+	if isNull {
+		enable = true
+		logutil.BgLogger().Warn("metadata lock is null during standby startup; using default enabled value")
+	}
+	variable.EnableMDL.Store(enable)
+	return nil
 }
 
 func executeDutySeparation(s types.Session, sql string, args ...any) error {
@@ -3892,39 +3926,67 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
-	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-	if err != nil {
-		return nil, err
-	}
 	// Set the lower_case_table_names before bootstrap to initialize infoschema cache correctly.
 	// The validity will be checked later before reading system table mysql.tidb.
 	model.SetLowerCaseTableNamesOnBootstrap(cfg.LowerCaseTableNamesOnFirstBootstrap)
-
-	err = InitMDLTable(store)
+	standbyStartup, standbyReadTS, err := getBootstrapStandbyReadTS(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	err = InitDDLJobTables(store, meta.BackfillTableVersion)
-	if err != nil {
-		return nil, err
-	}
-	err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
-	if err != nil {
-		return nil, err
-	}
-	err = InitTiDBSchemaCacheSize(store)
-	if err != nil {
-		return nil, err
-	}
-	ver := getStoreBootstrapVersionWithCache(store)
-	verEE := getStoreEEBootstrapVersion(store)
 	startMode := ddl.Normal
-	if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
-		startMode = runInBootstrapSession(store, ver, verEE)
-	} else {
-		err = InitMDLVariable(store)
+	if standbyStartup {
+		var ver, verEE int64
+		ver, err = getStoreBootstrapVersionWithCacheAtTS(store, standbyReadTS)
 		if err != nil {
 			return nil, err
+		}
+		verEE, err = getStoreEEBootstrapVersionAtTS(store, standbyReadTS)
+		if err != nil {
+			return nil, err
+		}
+		if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
+			return nil, errors.Errorf(
+				"standby startup requires an already bootstrapped store at the current binary version, got bootstrap=%d/%d ee=%d/%d",
+				ver, currentBootstrapVersion, verEE, currentEEBootstrapVersion,
+			)
+		}
+		if err = InitTiDBSchemaCacheSizeAtTS(store, standbyReadTS); err != nil {
+			return nil, err
+		}
+		if err = InitMDLVariableAtTS(store, standbyReadTS); err != nil {
+			return nil, err
+		}
+	} else {
+		err = InitDDLJobTables(store, meta.BaseDDLTableVersion)
+		if err != nil {
+			return nil, err
+		}
+
+		err = InitMDLTable(store)
+		if err != nil {
+			return nil, err
+		}
+		err = InitDDLJobTables(store, meta.BackfillTableVersion)
+		if err != nil {
+			return nil, err
+		}
+		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		if err != nil {
+			return nil, err
+		}
+		err = InitTiDBSchemaCacheSize(store)
+		if err != nil {
+			return nil, err
+		}
+		ver := getStoreBootstrapVersionWithCache(store)
+		verEE := getStoreEEBootstrapVersion(store)
+		if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
+			startMode = runInBootstrapSession(store, ver, verEE)
+		} else {
+			err = InitMDLVariable(store)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -3956,8 +4018,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	ses[0].GetSessionVars().InRestrictedSQL = true
+	setBootstrapReadTS := func(se *session) {
+		if standbyStartup {
+			se.GetSessionVars().TxnReadTS.SetTxnReadTS(standbyReadTS)
+		}
+	}
 
 	// get system tz from mysql.tidb
+	setBootstrapReadTS(ses[0])
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
 	if err != nil {
 		return nil, err
@@ -3965,12 +4033,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	timeutil.SetSystemTZ(tz)
 
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
+	setBootstrapReadTS(ses[0])
 	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
 	if err != nil {
 		return nil, err
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
+	setBootstrapReadTS(ses[0])
 	lowerCaseTableNames, err := loadLowerCaseTableNames(ctx, ses[0])
 	if err != nil {
 		return nil, err
@@ -4414,6 +4484,34 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	return ver
 }
 
+func getStoreBootstrapVersionWithCacheAtTS(store kv.Storage, readTS uint64) (int64, error) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	// check in memory
+	_, ok := storeBootstrapped[store.UUID()]
+	if ok {
+		return currentBootstrapVersion, nil
+	}
+
+	ver, err := getStoreBootstrapVersionAtTS(store, readTS)
+	if err != nil {
+		return 0, err
+	}
+	if ver > notBootstrapped {
+		// here mean memory is not ok, but other server has already finished it
+		storeBootstrapped[store.UUID()] = true
+	}
+
+	modifyBootstrapVersionForTest(ver)
+	return ver, nil
+}
+
+func getStoreBootstrapVersionAtTS(store kv.Storage, readTS uint64) (int64, error) {
+	t := meta.NewReader(store.GetSnapshot(kv.NewVersion(readTS)))
+	ver, err := t.GetBootstrapVersion()
+	return ver, errors.Trace(err)
+}
+
 func getStoreEEBootstrapVersion(store kv.Storage) int64 {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
@@ -4431,6 +4529,75 @@ func getStoreEEBootstrapVersion(store kv.Storage) int64 {
 	}
 
 	return ver
+}
+
+func getStoreEEBootstrapVersionAtTS(store kv.Storage, readTS uint64) (int64, error) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	// check in memory
+	_, ok := storeEEBootstrapped[store.UUID()]
+	if ok {
+		return currentEEBootstrapVersion, nil
+	}
+
+	t := meta.NewReader(store.GetSnapshot(kv.NewVersion(readTS)))
+	eeReader, ok := t.(interface {
+		GetBootstrapEEVersion() (int64, error)
+	})
+	if !ok {
+		return 0, errors.New("snapshot meta reader does not support enterprise bootstrap version")
+	}
+	ver, err := eeReader.GetBootstrapEEVersion()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if ver > notBootstrapped {
+		// here means memory is not ok, but other server has already finished it
+		storeEEBootstrapped[store.UUID()] = true
+	}
+
+	return ver, nil
+}
+
+func getBootstrapStandbyReadTS(ctx context.Context, store kv.Storage) (bool, uint64, error) {
+	etcdStore, addrs, err := storepkg.GetEtcdAddrs(store)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+	if len(addrs) == 0 {
+		return false, 0, nil
+	}
+	etcdCli, err := storepkg.NewEtcdCliWithAddrs(addrs, etcdStore)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+	defer func() {
+		terror.Log(etcdCli.Close())
+	}()
+
+	standbyEnabled, _, err := pkdbrepl.GetStandbyModeFromEtcd(ctx, etcdCli)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+	if !standbyEnabled {
+		return false, 0, nil
+	}
+	realStore, ok := store.(kv.StorageWithPD)
+	if !ok {
+		return false, 0, errors.New("standby replication requires pd client")
+	}
+	pdHTTPClient := realStore.GetPDHTTPClient()
+	if pdHTTPClient == nil {
+		return false, 0, errors.New("standby replication requires pd http client")
+	}
+	readTS, _, err := pdHTTPClient.GetMinResolvedTSByStoresIDs(ctx, nil)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+	if readTS == 0 {
+		return false, 0, errors.New("standby read timestamp is not ready")
+	}
+	return true, readTS, nil
 }
 
 func finishBootstrap(store kv.Storage) {

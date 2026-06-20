@@ -136,11 +136,12 @@ func InitStandby(ctx context.Context, etcdCli *clientv3.Client) {
 	}
 
 	var (
-		resp *clientv3.GetResponse
-		err  error
+		standbyEnabled bool
+		revision       int64
+		err            error
 	)
 	for {
-		resp, err = etcdCli.Get(ctx, constants.PkdbEtcdStandbyModeKey)
+		standbyEnabled, revision, err = GetStandbyModeFromEtcd(ctx, etcdCli)
 		if err == nil {
 			break
 		}
@@ -151,13 +152,26 @@ func InitStandby(ctx context.Context, etcdCli *clientv3.Client) {
 		}
 	}
 
-	if len(resp.Kvs) > 0 && string(resp.Kvs[0].Value) == "1" {
+	if standbyEnabled {
 		enableStandbyMode()
 	}
-	watchRevision = resp.Header.Revision
+	watchRevision = revision
 }
 
 var watchRevision int64
+
+// GetStandbyModeFromEtcd reads the persisted standby marker without mutating
+// process-local standby state.
+func GetStandbyModeFromEtcd(ctx context.Context, etcdCli *clientv3.Client) (bool, int64, error) {
+	if etcdCli == nil {
+		return false, 0, nil
+	}
+	resp, err := etcdCli.Get(ctx, constants.PkdbEtcdStandbyModeKey)
+	if err != nil {
+		return false, 0, err
+	}
+	return len(resp.Kvs) > 0 && string(resp.Kvs[0].Value) == "1", resp.Header.Revision, nil
+}
 
 var (
 	// watchStandbyRetryInterval is used when standby watch is interrupted and needs
