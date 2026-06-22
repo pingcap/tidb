@@ -586,6 +586,45 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 	require.ErrorContains(t, err, "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
 }
 
+func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.mv (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a)"))
+	require.NoError(t, err)
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.`$mlog$t` (a)"))
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
+
+	mvInfo := mustTableByName(t, tracker, "test", "mv")
+	mvInfo.MaterializedView = &model.MaterializedViewInfo{}
+	require.NoError(t, tracker.PutTable(pmodel.NewCIStr("test"), mvInfo))
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow")
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mvInfo.ID}
+	require.NoError(t, tracker.PutTable(pmodel.NewCIStr("test"), shadowInfo))
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.shadow (a)"))
+	require.Error(t, err)
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
+}
+
 func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
 	tracker := schematracker.NewSchemaTracker(2)
 	tracker.CreateTestDB(nil)

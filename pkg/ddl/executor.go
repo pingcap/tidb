@@ -1083,7 +1083,13 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return err
 	}
 	baseTableID := baseTable.Meta().ID
-	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+	baseTableInfo := baseTable.Meta()
+	if baseTableInfo.IsView() ||
+		baseTableInfo.IsSequence() ||
+		baseTableInfo.TempTableType != model.TempTableNone ||
+		baseTableInfo.MaterializedView != nil ||
+		baseTableInfo.MaterializedViewShadow != nil ||
+		baseTableInfo.MaterializedViewLog != nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	if baseTable.Meta().GetPartitionInfo() != nil {
@@ -1101,8 +1107,8 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return err
 	}
 
-	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
-	for _, col := range baseTable.Meta().Columns {
+	colMap := make(map[string]*model.ColumnInfo, len(baseTableInfo.Columns))
+	for _, col := range baseTableInfo.Columns {
 		colMap[col.Name.L] = col
 	}
 
@@ -1206,7 +1212,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 
 	involvingSchemas := []model.InvolvingSchemaInfo{
 		{Database: schema.Name.L, Table: mlogTableInfo.Name.L},
-		{Database: schema.Name.L, Table: baseTable.Meta().Name.L},
+		{Database: schema.Name.L, Table: baseTableInfo.Name.L},
 	}
 	job := &model.Job{
 		Version:             model.GetJobVerInUse(),
