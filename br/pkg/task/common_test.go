@@ -342,6 +342,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		RegionScanConcurrency:    256,
 		WithPlacementPolicy:      "STRICT",
 		UseCheckpoint:            true,
+		ProtectTables:            true,
 		AllowPITRFromIncremental: true,
 	}
 }

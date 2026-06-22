@@ -204,6 +204,11 @@ func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
 }
 
+// SetUseCheckpointEnabled records whether checkpoint storage/table metadata should be consulted.
+func (rc *LogClient) SetUseCheckpointEnabled(useCheckpoint bool) {
+	rc.useCheckpoint = useCheckpoint
+}
+
 func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
 	rc.checkRequirements = checkRequirements
 }

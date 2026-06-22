@@ -78,6 +78,7 @@ const (
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
+	flagProtectTables            = "protect-tables"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -310,6 +311,7 @@ type RestoreConfig struct {
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
+	ProtectTables                 bool                            `json:"protect-tables" toml:"protect-tables"`
 	UpstreamClusterID             uint64                          `json:"-" toml:"-"`
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
 	logCheckpointMetaManager      checkpoint.LogMetaManagerT      `json:"-" toml:"-"`
@@ -357,6 +359,7 @@ type immutableRestoreConfig struct {
 	WithSysTable      bool
 	FastLoadSysTables bool
 	LoadStats         bool
+	ProtectTables     bool
 }
 
 func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
@@ -368,6 +371,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 		WithSysTable:      cfg.WithSysTable,
 		FastLoadSysTables: cfg.FastLoadSysTables,
 		LoadStats:         cfg.LoadStats,
+		ProtectTables:     cfg.ProtectTables,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -393,6 +397,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.String(flagCheckpointStorage, "", "specify the external storage url where checkpoint data is saved, eg, s3://bucket/path/prefix")
 	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
+	flags.Bool(flagProtectTables, true, "protect restored tables until restore finishes")
+	_ = flags.MarkHidden(flagProtectTables)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
@@ -547,6 +553,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.CheckpointStorage, err = flags.GetString(flagCheckpointStorage)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagCheckpointStorage)
+	}
+	cfg.ProtectTables, err = flags.GetBool(flagProtectTables)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagProtectTables)
 	}
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
@@ -1106,6 +1116,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		} else {
+			if err := resetRestoreModeTablesAfterFailedRestore(c, g, cmdName, cfg, mgr); err != nil {
+				log.Error("failed to reset restore-mode tables after failed restore",
+					zap.Uint64("restoreId", cfg.RestoreID),
+					zap.Error(err),
+					zap.NamedError("restoreError", restoreErr))
+				restoreErr = errors.Annotatef(restoreErr,
+					"failed to reset restore-mode tables after failed restore: %v", err)
+			}
 			log.Info("unregistering restore task from registry",
 				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreErr))
 			if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
@@ -1143,6 +1161,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Clear the checkpoint data if needed
 	cleanUpCheckpoints(c, cfg)
 	return nil
+}
+
+func resetRestoreModeTablesAfterFailedRestore(
+	ctx context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *RestoreConfig,
+	mgr *conn.Mgr,
+) error {
+	if cfg.ProtectTables {
+		tablesToNormal, err := collectAbortRestoreModeTables(ctx, g, cmdName, cfg, mgr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := setAbortRestoreTablesToNormal(ctx, g, mgr, tablesToNormal); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return dropTemporarySystemSchemasAfterAbort(ctx, g, mgr, cfg)
 }
 
 func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
@@ -1386,6 +1423,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
+	keepTableModeRestore := isPiTR && cfg.ProtectTables && !client.IsIncremental()
 	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
 		if loadStatsPhysical {
 			log.Warn("Cannot set --fast-load-sys-tables when it is not full restore. Fallback to logically load stats.")
@@ -1528,7 +1566,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
+	// Protect newly created user tables during snapshot restore. System tables
+	// stay writable because snapshot system table restore updates them. Incremental
+	// snapshot restore may reuse existing normal tables via CREATE TABLE IF NOT
+	// EXISTS, so it cannot request Restore mode there.
+	if cfg.ProtectTables && !client.IsIncremental() && (!isPiTR || keepTableModeRestore) {
+		for i, table := range tables {
+			if table.Info.IsSequence() || table.Info.IsView() {
+				continue
+			}
+			if _, ok := utils.GetSysDBCIStrName(table.DB.Name); ok {
+				continue
+			}
+			tableCopy := *table
+			tableCopy.Info = table.Info.Clone()
+			tableCopy.Info.Mode = model.TableModeRestore
+			tables[i] = &tableCopy
+		}
+	}
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -1730,6 +1785,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.InjectCall("run-snapshot-restore-after-create-tables", &err)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	/* failpoint */
 	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
@@ -1844,6 +1903,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LoadStatsPhysical:    loadStatsPhysical,
 		LoadSysTablePhysical: loadSysTablePhysical,
 		WaitTiflashReady:     cfg.WaitTiflashReady,
+		KeepTableModeRestore: keepTableModeRestore,
 
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
@@ -2074,10 +2134,18 @@ func filterRestoreFiles(
 	cfg *RestoreConfig,
 	loadStatsPhysical bool,
 ) (tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database, err error) {
+	return filterRestoreFilesFromDatabases(client.GetDatabases(), cfg, loadStatsPhysical)
+}
+
+func filterRestoreFilesFromDatabases(
+	databases []*metautil.Database,
+	cfg *RestoreConfig,
+	loadStatsPhysical bool,
+) (tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database, err error) {
 	tableMap = make(map[int64]*metautil.Table)
 	dbMap = make(map[int64]*metautil.Database)
 
-	for _, db := range client.GetDatabases() {
+	for _, db := range databases {
 		dbName := db.Info.Name.O
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
@@ -2743,25 +2811,11 @@ func createDBsAndTables(
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
-	isIncremental bool) {
-	if cfg.ExplicitFilter && isPiTR && !isIncremental {
-		for i, table := range tables {
-			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
-			if table.Info.IsSequence() {
-				continue
-			}
-			tableCopy := *table
-			tableCopy.Info = table.Info.Clone()
-			tableCopy.Info.Mode = model.TableModeRestore
-			tables[i] = &tableCopy
-		}
-		log.Info("set tables to restore mode for filtered PiTR restore", zap.Int("table count", len(tables)))
-	}
-}
-
-// RunRestoreAbort aborts a restore task by finding it in the registry and cleaning up
-// Similar to resumeOrCreate, it first resolves the restoredTS then finds and deletes the matching paused task
+// RunRestoreAbort aborts a restore task by finding it in the registry and cleaning up.
+//
+// It stays in restore.go near its original position so reviewers can compare
+// abort cleanup changes in place. Abort-specific table collection helpers live
+// in abort.go.
 func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
@@ -2845,7 +2899,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// find and delete matching paused task atomically
 	// this will first resolve the restoredTS (similar to resumeOrCreate) then find and delete the task
-	deletedRestoreID, err := restoreRegistry.FindAndDeleteMatchingTask(ctx, registrationInfo, isRestoredTSUserSpecified)
+	deletedRestoreID, resolvedRestoreTS, err := restoreRegistry.FindAndDeleteMatchingTask(ctx, registrationInfo, isRestoredTSUserSpecified)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2862,26 +2916,73 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// update config with restore ID to clean up checkpoint
 	cfg.RestoreID = deletedRestoreID
+	cfg.RestoreTS = resolvedRestoreTS
 
 	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
+	var checkpointManagerInitErr error
 	if len(cfg.CheckpointStorage) > 0 {
 		clusterID := mgr.GetPDClient().GetClusterID(ctx)
 		log.Info("initializing storage checkpoint meta managers for cleanup",
 			zap.Uint64("restoreID", deletedRestoreID),
 			zap.Uint64("clusterID", clusterID))
-		if err := cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, deletedRestoreID); err != nil {
+		var err error
+		if IsStreamRestore(cmdName) {
+			err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, deletedRestoreID)
+		} else {
+			err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID, deletedRestoreID)
+		}
+		if err != nil {
 			log.Warn("failed to initialize storage checkpoint meta managers for cleanup", zap.Error(err))
+			checkpointManagerInitErr = err
 		}
 	} else {
 		log.Info("initializing table checkpoint meta managers for cleanup",
 			zap.Uint64("restoreID", deletedRestoreID))
-		if err := cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), deletedRestoreID); err != nil {
-			log.Warn("failed to initialize table checkpoint meta managers for cleanup", zap.Error(err))
+		var err error
+		if IsStreamRestore(cmdName) {
+			err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), deletedRestoreID)
+		} else {
+			err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), deletedRestoreID)
 		}
+		if err != nil {
+			log.Warn("failed to initialize table checkpoint meta managers for cleanup", zap.Error(err))
+			checkpointManagerInitErr = err
+		}
+	}
+
+	// Collect target tables before checkpoint cleanup because PiTR restore table
+	// identities can come from the checkpoint-persisted ID map. After cleanup,
+	// abort may no longer have a precise source for the incremental restore tables.
+	tablesToNormal, collectTablesErr := collectAbortRestoreModeTables(ctx, g, cmdName, cfg, mgr)
+	if collectTablesErr != nil {
+		log.Warn("failed to collect restore-mode tables before checkpoint cleanup", zap.Error(collectTablesErr))
 	}
 
 	// clean up checkpoint data
 	cleanUpCheckpoints(ctx, cfg)
+
+	if cfg.UseCheckpoint && checkpointManagerInitErr != nil {
+		return errors.Trace(checkpointManagerInitErr)
+	}
+	if cfg.UseCheckpoint {
+		checkpointPersisted, err := hasCheckpointPersisted(ctx, cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if checkpointPersisted {
+			return errors.New("checkpoint data still exists after cleanup")
+		}
+	}
+
+	if collectTablesErr != nil {
+		return errors.Trace(collectTablesErr)
+	}
+	if err := setAbortRestoreTablesToNormal(ctx, g, mgr, tablesToNormal); err != nil {
+		return errors.Trace(err)
+	}
+	if err := dropTemporarySystemSchemasAfterAbort(ctx, g, mgr, cfg); err != nil {
+		return errors.Trace(err)
+	}
 
 	log.Info("successfully aborted restore task and cleaned up checkpoint data. "+
 		"Use drop statements to clean up the restored data from the cluster if you want to.",
