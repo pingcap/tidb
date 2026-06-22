@@ -5612,11 +5612,15 @@ DropMaterializedViewStmt:
 	{
 		$$ = &ast.DropMaterializedViewStmt{ViewName: $4.(*ast.TableName)}
 	}
+|	"DROP" "MATERIALIZED" "VIEW" "IF" "EXISTS" TableName
+	{
+		$$ = &ast.DropMaterializedViewStmt{IfExists: true, ViewName: $6.(*ast.TableName)}
+	}
 
 DropMaterializedViewLogStmt:
-	"DROP" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	"DROP" "MATERIALIZED" "VIEW" "LOG" IfExists "ON" TableName
 	{
-		$$ = &ast.DropMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+		$$ = &ast.DropMaterializedViewLogStmt{IfExists: $5.(bool), Table: $7.(*ast.TableName)}
 	}
 
 PurgeMaterializedViewLogStmt:
