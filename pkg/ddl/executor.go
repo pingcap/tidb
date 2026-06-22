@@ -7354,7 +7354,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		if historyJob == nil {
 			currentJob, getCurrentJobErr := e.getCurrentDDLJobByID(jobID)
 			if getCurrentJobErr != nil {
-				logutil.DDLLogger().Error("get current DDL job failed, check again", zap.Error(getCurrentJobErr))
+				logutil.DDLLogger().Warn("get current DDL job failed, check again", zap.Error(getCurrentJobErr))
 				continue
 			}
 			if currentJob != nil && currentJob.IsPausedBySystemForKVDiskFull() {
