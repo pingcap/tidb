@@ -510,6 +510,10 @@ type StatementContext struct {
 	// uses this to enable the fts-like-fallback round for cost competition even
 	// when round 1's native plan is executable.
 	AlternativeLogicalPlanHasPredicateContextMatch bool
+	// FTSFunctionIsUsed indicates that FTS_MATCH_WORD() appears in the current
+	// statement, allowing the optimizer to run FTS-specific validation and
+	// rewrite rules only when needed.
+	FTSFunctionIsUsed bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -687,6 +691,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.FTSFunctionIsUsed = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has

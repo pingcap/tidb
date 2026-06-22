@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -75,9 +76,11 @@ const initialMaxCores uint64 = 10000
 
 var (
 	// the old ref of optRuleList for downgrading to old optimizing routine.
-	logicalRuleList = optRuleList
+	logicalRuleList  = optRuleList
+	logicalRuleFlags = optRuleFlags
 	// the new normalizeRuleList is special for prev-phase of memo, which is for always-good rules.
-	normalizeRuleList = optRuleList
+	normalizeRuleList  = optRuleList
+	normalizeRuleFlags = optRuleFlags
 	// note this two list will differ when some trade-off rules is moved out of norm phase for cascades.
 )
 
@@ -93,6 +96,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ProjectionEliminator{},
 	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
+	&FullTextIndexResolverWhere{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
@@ -103,6 +107,8 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&FullTextIndexResolverTopN{},
+	&FullTextIndexResolverProjection{},
 	&rule.OrderAwareJoinReorder{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
@@ -112,7 +118,46 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
+	&FullTextIndexResolverRejectRemaining{},
 	&ResolveExpand{},
+}
+
+var optRuleFlags = []uint64{
+	rule.FlagGcSubstitute,
+	rule.FlagPruneColumns,
+	rule.FlagStabilizeResults,
+	rule.FlagBuildKeyInfo,
+	rule.FlagDecorrelate,
+	rule.FlagSemiJoinRewrite,
+	rule.FlagEliminateAgg,
+	rule.FlagSkewDistinctAgg,
+	rule.FlagEliminateProjection,
+	rule.FlagMaxMinEliminate,
+	rule.FlagConstantPropagation,
+	rule.FlagFullTextIndexResolveWhere,
+	rule.FlagConvertOuterToInnerJoin,
+	rule.FlagPredicatePushDown,
+	rule.FlagJoinKeyTypeCast,
+	rule.FlagEliminateOuterJoin,
+	rule.FlagPartitionProcessor,
+	rule.FlagCollectPredicateColumnsPoint,
+	rule.FlagPushDownAgg,
+	rule.FlagDeriveTopNFromWindow,
+	rule.FlagPredicateSimplification,
+	rule.FlagPushDownTopN,
+	rule.FlagFullTextIndexResolveTopN,
+	rule.FlagFullTextIndexResolveProjection,
+	rule.FlagOrderAwareJoinReorder,
+	rule.FlagSyncWaitStatsLoadPoint,
+	rule.FlagJoinReOrder,
+	rule.FlagOuterJoinToSemiJoin,
+	rule.FlagCorrelate,
+	rule.FlagPruneColumnsAgain,
+	rule.FlagPushDownSequence,
+	rule.FlagEliminateUnionAllDualItem,
+	rule.FlagEmptySelectionEliminator,
+	rule.FlagFullTextIndexResolveReject,
+	rule.FlagResolveExpand,
 }
 
 // Interaction Rule List
@@ -353,6 +398,12 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed && deploymode.IsStarter() {
+		flag |= rule.FlagFullTextIndexResolveWhere
+		flag |= rule.FlagFullTextIndexResolveTopN
+		flag |= rule.FlagFullTextIndexResolveProjection
+		flag |= rule.FlagFullTextIndexResolveReject
 	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
@@ -983,10 +1034,9 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
-		// The order of flags is same as the order of optRule in the list.
-		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
-		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		// The rule list defines the execution order. The parallel flag list
+		// maps each rule to its stable bitmask value.
+		if flag&normalizeRuleFlags[i] == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
 		logic, _, err = rule.Optimize(ctx, logic)
@@ -1005,10 +1055,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
-		// The order of flags is same as the order of optRule in the list.
-		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
-		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		// The rule list defines the execution order. The parallel flag list
+		// maps each rule to its stable bitmask value.
+		if flag&logicalRuleFlags[i] == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
 		var planChanged bool
