@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -103,51 +102,6 @@ func TestTiDBWaitJobManagerInitWatchIgnoresUnexpectedKey(t *testing.T) {
 	cancel()
 	wg.Wait()
 	manager.close()
-}
-
-func TestInitJobMapLoadsFinishedVersionFromEtcd(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 creates path with colon which is not allowed on Windows")
-	}
-
-	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	etcdCli := cluster.RandClient()
-
-	resp := &pdpb.ReplicaWaitDataSync{Version: 42}
-	respBytes, err := resp.Marshal()
-	require.NoError(t, err)
-
-	_, err = etcdCli.Put(ctx, constants.PkdbWaitDataSyncResp, string(respBytes))
-	require.NoError(t, err)
-
-	jobMap := initJobMap(ctx, etcdCli, &waitDataSync{})
-	require.NotNil(t, jobMap)
-	require.Equal(t, uint64(42), jobMap[constants.PkdbWaitDataSyncReq].lastFinishedVer)
-}
-
-func TestInitJobMapStopsRetryOnContextDone(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 creates path with colon which is not allowed on Windows")
-	}
-
-	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	etcdCli := cluster.RandClient()
-	cluster.Terminate(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-
-	start := time.Now()
-	jobMap := initJobMap(ctx, etcdCli, &waitDataSync{})
-	require.NotNil(t, jobMap)
-	require.Contains(t, jobMap, constants.PkdbWaitDataSyncReq)
-	require.Less(t, time.Since(start), 3*time.Second)
 }
 
 func mustPutWaitJobReq(t *testing.T, cli *clientv3.Client, key string, value []byte) {

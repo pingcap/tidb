@@ -588,11 +588,6 @@ func pkdbIsRetryableRegionInfoError(err error) bool {
 	}
 }
 
-func pkdbIsRegionInfoNotFound(err error) bool {
-	st, ok := status.FromError(err)
-	return ok && st.Code() == codes.NotFound
-}
-
 func adjustRetryStartKey(key []byte) []byte {
 	if key == nil {
 		// retry start key should not be nil. Minimum start key should use zero-length
