@@ -296,7 +296,7 @@ func (s *BaseScheduler) onPausing() error {
 	task := s.getTaskClone()
 	s.sampleLogger.Info("on pausing state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	cntByStates, subTaskErrs, err := s.taskMgr.GetSubtaskStateCntAndErrorsByStep(s.ctx, task.ID, task.Step)
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
@@ -305,6 +305,10 @@ func (s *BaseScheduler) onPausing() error {
 	if runningPendingCnt > 0 {
 		s.logger.Debug("on pausing state, this task keeps current state", zap.Stringer("state", task.State))
 		return nil
+	}
+	subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
+	if err != nil {
+		return err
 	}
 	pausedFailed, err := s.pauseFailedSubtasksOnKVDiskFull(task, cntByStates, subTaskErrs)
 	if err != nil {
@@ -435,12 +439,16 @@ func (s *BaseScheduler) onRunning() error {
 		zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	// check current step finishes.
-	cntByStates, subTaskErrs, err := s.taskMgr.GetSubtaskStateCntAndErrorsByStep(s.ctx, task.ID, task.Step)
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
+		subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
+		if err != nil {
+			return err
+		}
 		if len(subTaskErrs) == 0 {
 			taskErr := errors.Errorf("subtasks in failed/canceled state without error, taskID %d, step %d, failed %d, canceled %d",
 				task.ID, task.Step, cntByStates[proto.SubtaskStateFailed], cntByStates[proto.SubtaskStateCanceled])
@@ -468,6 +476,18 @@ func (s *BaseScheduler) onRunning() error {
 	s.OnTick(s.ctx, task)
 	s.logger.Debug("on running state, this task keeps current state", zap.Stringer("state", task.State))
 	return nil
+}
+
+func (s *BaseScheduler) getSubtaskErrorsIfAnyFailedOrCanceled(task *proto.Task, cntByStates map[proto.SubtaskState]int64) ([]error, error) {
+	if cntByStates[proto.SubtaskStateFailed] == 0 && cntByStates[proto.SubtaskStateCanceled] == 0 {
+		return nil, nil
+	}
+	subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
+	if err != nil {
+		s.logger.Warn("collect subtask error failed", zap.Error(err))
+		return nil, err
+	}
+	return subTaskErrs, nil
 }
 
 func shouldPauseOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64, subTaskErrs []error) bool {
