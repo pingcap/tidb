@@ -806,7 +806,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
-			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+			if testRoundAndSQL, ok := val.(string); ok &&
+				testRoundAndSQL == round.name+":"+node.Node.OriginalText() {
 				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
 			}
 		})
