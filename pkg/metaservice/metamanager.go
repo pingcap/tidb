@@ -16,7 +16,6 @@ package metaservice
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -164,10 +163,7 @@ func keyspaceDescription(keyspaceMeta *keyspacepb.KeyspaceMeta) string {
 	if keyspaceMeta == nil {
 		return "default"
 	}
-	if name := keyspaceMeta.GetName(); name != "" {
-		return name
-	}
-	return fmt.Sprintf("id=%d", keyspaceMeta.GetId())
+	return keyspaceMeta.GetName()
 }
 
 // GroupAddrs returns the meta service group addresses.
