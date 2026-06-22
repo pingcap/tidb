@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -398,7 +399,7 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
+	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed && deploymode.IsStarter() {
 		flag |= rule.FlagFullTextIndexResolveWhere
 		flag |= rule.FlagFullTextIndexResolveTopN
 		flag |= rule.FlagFullTextIndexResolveProjection

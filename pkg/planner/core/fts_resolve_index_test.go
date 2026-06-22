@@ -122,7 +122,7 @@ func TestTiFlashFTSMatchWordDirtyTxn(t *testing.T) {
 
 		tk.MustExec("begin")
 		tk.MustExec("insert into fts_t values (1, 'hello', 'dirty')")
-		tk.MustContainErrMsg("select * from fts_t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
+		tk.MustContainErrMsg("select * from fts_t where fts_match_word('hello', title)", "FTS_MATCH_WORD() cannot be used in a transaction with uncommitted changes")
 		tk.MustExec("rollback")
 	})
 }

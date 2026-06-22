@@ -31,6 +31,8 @@ import (
 
 const maxFTSTopK = ^uint32(0)
 
+const ftsMatchWordDirtyTxnErrMsg = "FTS_MATCH_WORD() cannot be used in a transaction with uncommitted changes"
+
 var ftsScoreType = func() types.FieldType {
 	tp := *types.NewFieldType(mysql.TypeFloat)
 	tp.SetFlag(mysql.NotNullFlag)
@@ -381,6 +383,10 @@ func (o *FullTextIndexResolverRejectRemaining) visit(plan base.LogicalPlan) erro
 				return plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in SELECT must not be wrapped in expressions. A valid example: SELECT FTS_MATCH_WORD(...) FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
 			}
 		}
+	case *logicalop.LogicalUnionScan:
+		if containsFullTextSearchFn(p.Conditions) {
+			return plannererrors.ErrWrongUsage.FastGen(ftsMatchWordDirtyTxnErrMsg)
+		}
 	case *logicalop.DataSource:
 		for _, item := range p.PushedDownConds {
 			if expression.ContainsFullTextSearchFn(item) {
@@ -388,6 +394,11 @@ func (o *FullTextIndexResolverRejectRemaining) visit(plan base.LogicalPlan) erro
 			}
 		}
 	case *logicalop.LogicalSelection:
+		if len(p.Children()) == 1 {
+			if _, ok := p.Children()[0].(*logicalop.LogicalUnionScan); ok && containsFullTextSearchFn(p.Conditions) {
+				return plannererrors.ErrWrongUsage.FastGen(ftsMatchWordDirtyTxnErrMsg)
+			}
+		}
 		for _, cond := range p.Conditions {
 			if expression.ContainsFullTextSearchFn(cond) {
 				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
@@ -415,4 +426,13 @@ func (o *FullTextIndexResolverRejectRemaining) visit(plan base.LogicalPlan) erro
 		}
 	}
 	return nil
+}
+
+func containsFullTextSearchFn(exprs []expression.Expression) bool {
+	for _, expr := range exprs {
+		if expression.ContainsFullTextSearchFn(expr) {
+			return true
+		}
+	}
+	return false
 }
