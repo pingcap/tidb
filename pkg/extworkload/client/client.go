@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package client is the gRPC client to the external workload controller. Every
-// request carries the keyspace identity in externalworkloadpb.RequestHeader so
-// the controller can route to the right pool.
+// Package client is the gRPC client to the external workload controller.
+// Requests that act on workload state carry keyspace identity in
+// externalworkloadpb.RequestHeader so the controller can route to the right pool.
 package client
 
 import (
