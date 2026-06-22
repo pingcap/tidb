@@ -1088,6 +1088,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		baseTableInfo.IsSequence() ||
 		baseTableInfo.TempTableType != model.TempTableNone ||
 		baseTableInfo.MaterializedView != nil ||
+		baseTableInfo.MaterializedViewShadow != nil ||
 		baseTableInfo.MaterializedViewLog != nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
