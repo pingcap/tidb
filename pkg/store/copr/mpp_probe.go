@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -45,6 +47,8 @@ const (
 	MaxRecoveryTimeLimit = 15 * time.Minute
 	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
 	MaxObsoletTimeLimit = time.Hour
+	// mppInfoManagerCacheSize is used to prevent unbounded memory growth in extreme cases.
+	mppInfoManagerCacheSize = 1000
 )
 
 // MPPStoreState the state for MPPStore.
@@ -87,33 +91,42 @@ type MPPServerInfo struct {
 
 // MppInfoManager manages info for all tiflash nodes
 type MppInfoManager struct {
-	cachedStores map[string]*MPPServerInfo
+	cachedStores *kvcache.SimpleLRUCache
 	lock         sync.Mutex
+}
+
+type mppInfoManagerStoreKey string
+
+func (k mppInfoManagerStoreKey) Hash() []byte {
+	return hack.Slice(string(k))
+}
+
+func newMppInfoManager() *MppInfoManager {
+	return &MppInfoManager{
+		cachedStores: kvcache.NewSimpleLRUCache(mppInfoManagerCacheSize, 0, 0),
+	}
 }
 
 // Add adds serverInfo.
 func (t *MppInfoManager) Add(serverInfo *MPPServerInfo) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
-	t.cachedStores[serverInfo.Address] = serverInfo
-}
-
-// Delete deletes related info
-func (t *MppInfoManager) Delete(address string) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-	delete(t.cachedStores, address)
+	t.cachedStores.Put(mppInfoManagerStoreKey(serverInfo.Address), serverInfo)
 }
 
 // Get gets related info
 func (t *MppInfoManager) Get(address string) *MPPServerInfo {
 	t.lock.Lock()
 	defer t.lock.Unlock()
-	ret, ok := t.cachedStores[address]
+	ret, ok := t.cachedStores.Get(mppInfoManagerStoreKey(address))
 	if !ok {
 		return nil
 	}
-	return ret
+	serverInfo, ok := ret.(*MPPServerInfo)
+	if !ok {
+		return nil
+	}
+	return serverInfo
 }
 
 func (t *MPPStoreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
@@ -311,7 +324,5 @@ func init() {
 		maxObsoletTimeLimit:  MaxObsoletTimeLimit,
 	}
 
-	GlobalMPPInfoManager = &MppInfoManager{
-		cachedStores: make(map[string]*MPPServerInfo),
-	}
+	GlobalMPPInfoManager = newMppInfoManager()
 }
