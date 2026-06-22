@@ -99,16 +99,14 @@ type CheckpointAdvancer struct {
 }
 
 const (
-	// Keep resolve-lock ScanLock maxVersion well behind very recent transactions.
-	// client-go's default lock TTL is 3000ms; use 2x TTL here so ScanLock avoids
-	// active memory locks that may trigger the locked error described in
-	// https://github.com/pingcap/tidb/issues/57134.
-	resolveLockMaxVersionRecentMargin = 6 * time.Second
-
 	// If ScanLock still meets a newer in-memory lock, retry with a lower
 	// maxVersion. Keep the retry bounded so an active workload cannot make the
 	// advancer scan locks repeatedly in one tick.
 	resolveLockMaxVersionMaxRetry = 2
+
+	// On ScanLock locked errors, lower maxVersion inside
+	// [checkpoint+resolveLockRetryLowerBoundLag, initial maxVersion].
+	resolveLockRetryLowerBoundLag = 10 * time.Second
 
 	logBackupConfigRefreshInterval = time.Minute
 	logBackupConfigFetchTimeout    = 10 * time.Second
@@ -855,39 +853,35 @@ func (c *CheckpointAdvancer) tryResolveLocksForCheckpoint(ctx context.Context) {
 		c.inResolvingLock.Store(false)
 		return
 	}
-	safeMaxVersion := tsoBeforeFromTS(currentTS, resolveLockMaxVersionRecentMargin)
-	targetUpperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, resolveLockInterval, currentTS)
-	maxVersion := resolveLockMaxVersion(targetUpperBound, safeMaxVersion)
-	retryStartMaxVersion, retryStartValid := resolveLockRetryStartMaxVersion(
-		checkpointToResolve.TS, resolveLockInterval, currentTS, maxVersion)
+	maxVersion := resolveLockTargetUpperBound(checkpointToResolve.TS, resolveLockInterval, currentTS)
 	if maxVersion <= checkpointToResolve.TS {
 		log.Info("skip resolving locks because maxVersion is not greater than checkpoint",
 			zap.Uint64("checkpoint", checkpointToResolve.TS),
 			zap.Uint64("current-ts", currentTS),
 			zap.Duration("resolve-lock-interval", resolveLockInterval),
-			zap.Uint64("target-upper-bound", targetUpperBound),
-			zap.Uint64("safe-max-version", safeMaxVersion),
-			zap.Uint64("max-version", maxVersion),
-			zap.Uint64("retry-start-max-version", retryStartMaxVersion),
-			zap.Bool("retry-start-valid", retryStartValid))
+			zap.Uint64("max-version", maxVersion))
 		c.inResolvingLock.Store(false)
 		return
 	}
-	targets := c.resolveLockTargetsForCheckpoint(checkpointToResolve, targetUpperBound)
+	retryLowerBound, retryLowerBoundValid := resolveLockRetryLowerBound(checkpointToResolve.TS, maxVersion)
+	targets := c.resolveLockTargetsForCheckpoint(checkpointToResolve, maxVersion)
 	if len(targets) != 0 {
-		log.Info("Advancer starts to resolve locks",
-			zap.Int("targets", len(targets)),
-			zap.Duration("resolve-lock-interval", resolveLockInterval),
-			zap.Uint64("current-ts", currentTS),
-			zap.Uint64("target-upper-bound", targetUpperBound),
-			zap.Uint64("safe-max-version", safeMaxVersion),
-			zap.Uint64("max-version", maxVersion),
-			zap.Uint64("retry-start-max-version", retryStartMaxVersion),
-			zap.Bool("retry-start-valid", retryStartValid))
 		// use new context here to avoid timeout
-		ctx := context.Background()
-		c.asyncResolveLocksForRanges(ctx, targets, checkpointToResolve, resolveLockInterval,
-			targetUpperBound, safeMaxVersion, maxVersion, retryStartMaxVersion, retryStartValid)
+		ctx := logutil.ContextWithField(context.Background(),
+			zap.String("category", "advancer"),
+			logutil.Key("StartKey", checkpointToResolve.StartKey),
+			logutil.Key("EndKey", checkpointToResolve.EndKey),
+			zap.Uint64("checkpoint", checkpointToResolve.TS),
+			zap.Uint64("current-ts", currentTS),
+			zap.Duration("resolve-lock-interval", resolveLockInterval),
+			zap.Uint64("max-version", maxVersion),
+			zap.Uint64("retry-lower-bound", retryLowerBound),
+			zap.Bool("retry-lower-bound-valid", retryLowerBoundValid),
+			zap.Int("targets", len(targets)),
+		)
+		logutil.CL(ctx).Info("Advancer starts to resolve locks")
+		c.asyncResolveLocksForRanges(ctx, targets, checkpointToResolve,
+			maxVersion, retryLowerBound, retryLowerBoundValid)
 	} else {
 		// don't forget set state back
 		c.inResolvingLock.Store(false)
@@ -903,7 +897,10 @@ func (c *CheckpointAdvancer) checkpointToResolve(resolveLockInterval time.Durati
 	return c.lastCheckpoint
 }
 
-func (c *CheckpointAdvancer) resolveLockTargetsForCheckpoint(checkpointToResolve *checkpoint, upperBound uint64) []spans.Valued {
+func (c *CheckpointAdvancer) resolveLockTargetsForCheckpoint(
+	checkpointToResolve *checkpoint,
+	upperBound uint64,
+) []spans.Valued {
 	var targets []spans.Valued
 	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 		if vsf == nil || vsf.MinValue() != checkpointToResolve.TS {
@@ -945,39 +942,15 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 }
 
 func resolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval time.Duration, currentTS uint64) uint64 {
-	upperBound := checkpointTS + 1
 	if resolveLockInterval <= 0 {
-		return upperBound
+		return tsoAfter(checkpointTS, resolveLockRetryLowerBoundLag)
 	}
-	if flushedBefore := tsoBeforeFromTS(currentTS, resolveLockInterval); flushedBefore > upperBound {
-		upperBound = flushedBefore
-	}
-	if checkpointWindow := tsoAfter(checkpointTS, resolveLockInterval/3); checkpointWindow > upperBound {
-		upperBound = checkpointWindow
-	}
-	return upperBound
+	return tsoBeforeFromTS(currentTS, 2*resolveLockInterval)
 }
 
-func resolveLockMaxVersion(targetUpperBound uint64, safeMaxVersion uint64) uint64 {
-	if safeMaxVersion > 0 && safeMaxVersion < targetUpperBound {
-		return safeMaxVersion
-	}
-	return targetUpperBound
-}
-
-func resolveLockRetryStartMaxVersion(
-	checkpointTS uint64,
-	resolveLockInterval time.Duration,
-	currentTS uint64,
-	maxVersion uint64,
-) (uint64, bool) {
-	if resolveLockInterval <= 0 {
-		return 0, false
-	}
-	flushedBefore := tsoBeforeFromTS(currentTS, resolveLockInterval)
-	checkpointWindow := tsoAfter(checkpointTS, resolveLockInterval/3)
-	retryStartMaxVersion := min(checkpointWindow, flushedBefore)
-	return retryStartMaxVersion, retryStartMaxVersion > checkpointTS && retryStartMaxVersion < maxVersion
+func resolveLockRetryLowerBound(checkpointTS uint64, maxVersion uint64) (uint64, bool) {
+	lowerBound := tsoAfter(checkpointTS, resolveLockRetryLowerBoundLag)
+	return lowerBound, lowerBound > checkpointTS && lowerBound < maxVersion
 }
 
 func isScanLockLockedError(err error) bool {
@@ -993,9 +966,8 @@ func lowerResolveLockMaxVersion(maxVersion uint64, lowerBound uint64) (uint64, b
 	if maxVersion <= lowerBound || maxVersion-lowerBound <= 1 {
 		return 0, false
 	}
-	// Lower within the unresolved checkpoint window instead of subtracting a
-	// fixed duration, so a large lag can move away from recent memory locks fast
-	// while still keeping maxVersion above the checkpoint.
+	// Lower inside the retry window instead of subtracting a fixed duration, so
+	// a large lag can move away from newer memory locks quickly.
 	return lowerBound + (maxVersion-lowerBound)/2, true
 }
 
@@ -1003,9 +975,8 @@ func resolveLocksForRangeWithMaxVersionRetry(
 	ctx context.Context,
 	resolver tikv.RegionLockResolver,
 	maxVersion uint64,
-	minMaxVersion uint64,
-	retryStartMaxVersion uint64,
-	retryStartValid bool,
+	retryLowerBound uint64,
+	retryLowerBoundValid bool,
 	startKey []byte,
 	endKey []byte,
 ) (rangetask.TaskStat, error) {
@@ -1016,14 +987,14 @@ func resolveLocksForRangeWithMaxVersionRetry(
 		if err == nil || !isScanLockLockedError(err) || retry >= resolveLockMaxVersionMaxRetry {
 			return stat, err
 		}
-		nextMaxVersion, ok := retryStartMaxVersion, retryStartValid && retry == 0
-		if !ok {
-			nextMaxVersion, ok = lowerResolveLockMaxVersion(currentMaxVersion, minMaxVersion)
+		if !retryLowerBoundValid {
+			return stat, err
 		}
+		nextMaxVersion, ok := lowerResolveLockMaxVersion(currentMaxVersion, retryLowerBound)
 		if !ok {
 			return stat, err
 		}
-		log.Warn("retry resolving locks with lower maxVersion due to ScanLock locked error",
+		logutil.CL(ctx).Warn("retry resolving locks with lower maxVersion due to ScanLock locked error",
 			zap.Uint64("current-max-version", currentMaxVersion),
 			zap.Uint64("next-max-version", nextMaxVersion),
 			logutil.ShortError(err))
@@ -1035,12 +1006,9 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(
 	ctx context.Context,
 	targets []spans.Valued,
 	checkpointToResolve *checkpoint,
-	resolveLockInterval time.Duration,
-	targetUpperBound uint64,
-	safeMaxVersion uint64,
 	maxVersion uint64,
-	retryStartMaxVersion uint64,
-	retryStartValid bool,
+	retryLowerBound uint64,
+	retryLowerBoundValid bool,
 ) {
 	// run in another goroutine
 	// do not block main tick here
@@ -1049,8 +1017,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return resolveLocksForRangeWithMaxVersionRetry(
-				ctx, c.env, maxVersion, checkpointToResolve.TS, retryStartMaxVersion, retryStartValid,
-				r.StartKey, r.EndKey)
+				ctx, c.env, maxVersion, retryLowerBound, retryLowerBoundValid, r.StartKey, r.EndKey)
 		}
 		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup
@@ -1070,25 +1037,12 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(
 				if err != nil {
 					// wait for next tick
 					meetError.Store(true)
-					log.Warn("resolve locks failed, wait for next tick", zap.String("category", "advancer"),
-						zap.String("uuid", "log backup advancer"),
-						zap.Error(err))
+					logutil.CL(ctx).Warn("resolve locks failed, wait for next tick", zap.Error(err))
 				}
 			})
 		}
 		wg.Wait()
-		log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
-			zap.String("uuid", "log backup advancer"),
-			logutil.Key("StartKey", checkpointToResolve.StartKey),
-			logutil.Key("EndKey", checkpointToResolve.EndKey),
-			zap.Uint64("checkpoint", checkpointToResolve.TS),
-			zap.Duration("resolve-lock-interval", resolveLockInterval),
-			zap.Uint64("target-upper-bound", targetUpperBound),
-			zap.Uint64("safe-max-version", safeMaxVersion),
-			zap.Uint64("max-version", maxVersion),
-			zap.Uint64("retry-start-max-version", retryStartMaxVersion),
-			zap.Bool("retry-start-valid", retryStartValid),
-			zap.Int("targets", len(targets)))
+		logutil.CL(ctx).Info("finish resolve locks for checkpoint")
 		c.updateResolveLockTimeAfterResolving(checkpointToResolve, meetError.Load())
 		c.inResolvingLock.Store(false)
 	}()

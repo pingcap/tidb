@@ -24,6 +24,7 @@ go_library(
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
         "//pkg/config",
+        "//pkg/config/configtypes",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/objstore",
@@ -76,7 +77,7 @@ go_test(
     embed = [":streamhelper"],
     flaky = True,
     race = "on",
-    shard_count = 44,
+    shard_count = 48,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",

@@ -94,8 +94,12 @@ func TESTResolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval ti
 	return resolveLockTargetUpperBound(checkpointTS, resolveLockInterval, oracle.GoTimeToTS(now))
 }
 
-func TESTResolveLockMaxVersion(targetUpperBound uint64, safeMaxVersion uint64) uint64 {
-	return resolveLockMaxVersion(targetUpperBound, safeMaxVersion)
+func TESTResolveLockRetryLowerBound(checkpointTS uint64, maxVersion uint64) (uint64, bool) {
+	return resolveLockRetryLowerBound(checkpointTS, maxVersion)
+}
+
+func TESTLowerResolveLockMaxVersion(maxVersion uint64, lowerBound uint64) (uint64, bool) {
+	return lowerResolveLockMaxVersion(maxVersion, lowerBound)
 }
 
 func SetGlobalCheckpointStorageFactoryForTest(

@@ -14,6 +14,7 @@ import (
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
@@ -226,7 +227,7 @@ func GetLogBackupFlushIntervalFromTiKVConfig(
 
 func parseLogBackupFlushIntervalFromConfig(resp []byte) (time.Duration, error) {
 	type logbackup struct {
-		FlushInterval string `json:"flush-interval"`
+		FlushInterval *configtypes.Duration `json:"flush-interval"`
 	}
 
 	type config struct {
@@ -237,17 +238,13 @@ func parseLogBackupFlushIntervalFromConfig(resp []byte) (time.Duration, error) {
 	if e != nil {
 		return 0, e
 	}
-	if c.LogBackup.FlushInterval == "" {
+	if c.LogBackup.FlushInterval == nil {
 		return 0, errors.New("log-backup.flush-interval is not found in TiKV config")
 	}
-	flushInterval, e := time.ParseDuration(c.LogBackup.FlushInterval)
-	if e != nil {
-		return 0, errors.Annotate(e, "failed to parse log-backup.flush-interval from TiKV config")
-	}
-	if flushInterval <= 0 {
+	if c.LogBackup.FlushInterval.Duration <= 0 {
 		return 0, errors.Errorf("invalid log-backup.flush-interval %s", c.LogBackup.FlushInterval)
 	}
-	return flushInterval, nil
+	return c.LogBackup.FlushInterval.Duration, nil
 }
 
 type LogBackupService interface {

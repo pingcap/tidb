@@ -759,14 +759,19 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
 		8*time.Second, 50*time.Microsecond)
 	require.Equal(t, int32(3), scanLockCount.Load())
-	require.Greater(t, firstMaxVersion.Load(), secondMaxVersion.Load())
-	require.Greater(t, secondMaxVersion.Load(), minCheckpoint)
-	require.Equal(t,
-		oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(adv.Config().GetResolveLockInterval()/3)),
-		secondMaxVersion.Load())
-	require.Greater(t, secondMaxVersion.Load(), thirdMaxVersion.Load())
-	require.Greater(t, thirdMaxVersion.Load(), minCheckpoint)
-	require.Equal(t, minCheckpoint+(secondMaxVersion.Load()-minCheckpoint)/2, thirdMaxVersion.Load())
+
+	expectedUpperBound := streamhelper.TESTResolveLockTargetUpperBound(
+		minCheckpoint, adv.Config().GetResolveLockInterval(), checkpointTime.Add(30*time.Second))
+	require.Equal(t, expectedUpperBound, firstMaxVersion.Load())
+	retryLowerBound, ok := streamhelper.TESTResolveLockRetryLowerBound(minCheckpoint, expectedUpperBound)
+	require.True(t, ok)
+	require.Equal(t, oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)), retryLowerBound)
+	expectedSecondMaxVersion, ok := streamhelper.TESTLowerResolveLockMaxVersion(expectedUpperBound, retryLowerBound)
+	require.True(t, ok)
+	require.Equal(t, expectedSecondMaxVersion, secondMaxVersion.Load())
+	expectedThirdMaxVersion, ok := streamhelper.TESTLowerResolveLockMaxVersion(expectedSecondMaxVersion, retryLowerBound)
+	require.True(t, ok)
+	require.Equal(t, expectedThirdMaxVersion, thirdMaxVersion.Load())
 }
 
 func TestResolveLockMaxVersion(t *testing.T) {
@@ -775,22 +780,24 @@ func TestResolveLockMaxVersion(t *testing.T) {
 	resolveLockInterval := 30 * time.Second
 
 	require.Equal(t,
-		oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)),
-		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(35*time.Second)))
-	require.Equal(t,
-		oracle.GoTimeToTS(checkpointTime.Add(30*time.Second)),
+		checkpointTS,
 		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(time.Minute)))
 	require.Equal(t,
-		checkpointTS+1,
+		oracle.GoTimeToTS(checkpointTime.Add(5*time.Second)),
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(65*time.Second)))
+	require.Equal(t,
+		oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)),
 		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, 0, checkpointTime.Add(time.Minute)))
 
-	targetUpperBound := oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second))
-	require.Equal(t,
-		targetUpperBound,
-		streamhelper.TESTResolveLockMaxVersion(targetUpperBound, oracle.GoTimeToTS(checkpointTime.Add(40*time.Second))))
-	require.Equal(t,
-		oracle.GoTimeToTS(checkpointTime.Add(24*time.Second)),
-		streamhelper.TESTResolveLockMaxVersion(targetUpperBound, oracle.GoTimeToTS(checkpointTime.Add(24*time.Second))))
+	maxVersion := oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second))
+	retryLowerBound, ok := streamhelper.TESTResolveLockRetryLowerBound(checkpointTS, maxVersion)
+	require.True(t, ok)
+	require.Equal(t, oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)), retryLowerBound)
+	nextMaxVersion, ok := streamhelper.TESTLowerResolveLockMaxVersion(maxVersion, retryLowerBound)
+	require.True(t, ok)
+	require.Equal(t, retryLowerBound+(maxVersion-retryLowerBound)/2, nextMaxVersion)
+	_, ok = streamhelper.TESTResolveLockRetryLowerBound(checkpointTS, oracle.GoTimeToTS(checkpointTime.Add(5*time.Second)))
+	require.False(t, ok)
 }
 
 func TestResolveLockIntervalUsesTiKVFlushInterval(t *testing.T) {
@@ -852,8 +859,7 @@ func TestResolveLockTargetsUseUpperBound(t *testing.T) {
 	})
 	adv.StartTaskListener(ctx)
 
-	checkpointTime := time.Now().Add(-25 * time.Second)
-	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(25 * time.Second)))
+	checkpointTime := time.Now().Add(-50 * time.Second)
 	checkpointTS := oracle.GoTimeToTS(checkpointTime)
 	withinUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(6 * time.Second))
 	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(8 * time.Second))
@@ -864,6 +870,9 @@ func TestResolveLockTargetsUseUpperBound(t *testing.T) {
 	})
 
 	adv.TESTSetLastCheckpointToCurrentMin()
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(40 * time.Second)))
+	require.Equal(t, 0, adv.TESTResolveLockTargetCount())
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(47 * time.Second)))
 	require.Equal(t, 2, adv.TESTResolveLockTargetCount())
 }
 
