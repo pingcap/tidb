@@ -1153,14 +1153,8 @@ func TestMLogAlterDropTrackedGeneratedColumnCurrentBehavior(t *testing.T) {
 		t.Run(ca.name, func(t *testing.T) {
 			tk.MustExec("create table " + ca.table + " (id int primary key, base int, g int as (base + 1) " + ca.kind + ")")
 			tk.MustExec("create materialized view log on " + ca.table + " (id, g)")
-			tk.MustExec("alter table " + ca.table + " drop column g")
-
-			err := tk.ExecToErr("insert into " + ca.table + " values (1, 10)")
-			require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
-			err = tk.ExecToErr("update " + ca.table + " set base=11 where id=1")
-			require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
-			err = tk.ExecToErr("delete from " + ca.table + " where id=1")
-			require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
+			err := tk.ExecToErr("alter table " + ca.table + " drop column g")
+			require.ErrorContains(t, err, "referenced by materialized view log")
 		})
 	}
 }
@@ -1205,10 +1199,8 @@ func TestMLogAlterRenameTrackedGeneratedColumnCurrentBehavior(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, base int, g int as (base + 1) virtual)")
 	tk.MustExec("create materialized view log on t (id, g)")
-	tk.MustExec("alter table t rename column g to g2")
-
-	err := tk.ExecToErr("insert into t (id, base) values (1, 10)")
-	require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
+	err := tk.ExecToErr("alter table t rename column g to g2")
+	require.ErrorContains(t, err, "referenced by materialized view log")
 }
 
 func TestMLogAutoIncrement(t *testing.T) {
