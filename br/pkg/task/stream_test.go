@@ -42,6 +42,49 @@ func TestShiftTS(t *testing.T) {
 	require.Equal(t, delta, streamShiftDuration)
 }
 
+func TestShouldOpenPiTRAddIndexSQLStorage(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  RestoreConfig
+		want bool
+	}{
+		{
+			name: "empty storage",
+			cfg:  RestoreConfig{},
+			want: false,
+		},
+		{
+			name: "full flow opens storage",
+			cfg: RestoreConfig{
+				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
+			},
+			want: true,
+		},
+		{
+			name: "phase 1 does not open storage",
+			cfg: RestoreConfig{
+				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
+				RestorePhase:           1,
+			},
+			want: false,
+		},
+		{
+			name: "phase 2 opens storage",
+			cfg: RestoreConfig{
+				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
+				RestorePhase:           2,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldOpenPiTRAddIndexSQLStorage(&tt.cfg))
+		})
+	}
+}
+
 func TestCheckLogRange(t *testing.T) {
 	cases := []struct {
 		restoreFrom uint64
@@ -173,6 +216,51 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ts, err := getGlobalCheckpointFromStorage(ctx, s)
 	require.Nil(t, err)
 	require.Equal(t, ts, uint64(99))
+}
+
+func TestGetMaxRecoverableCheckpointFromStoragePrefersResumeState(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := objstore.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
+		{
+			storeID:          1,
+			globalCheckpoint: 99,
+		},
+	})
+	require.Nil(t, err)
+
+	err = s.WriteFile(ctx, resumeStateFileName, []byte(`{"last_checkpoint":88}`))
+	require.Nil(t, err)
+
+	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, uint64(88), ts)
+}
+
+func TestGetMaxRecoverableCheckpointFromStorageFallbackToGlobalCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := objstore.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
+		{
+			storeID:          1,
+			globalCheckpoint: 98,
+		},
+		{
+			storeID:          2,
+			globalCheckpoint: 99,
+		},
+	})
+	require.Nil(t, err)
+
+	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, uint64(99), ts)
 }
 
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {

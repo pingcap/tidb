@@ -556,12 +556,12 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	// retry for 3 times
 	currGID := getGlobalID(ctx, t, store)
 	var counter int64
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGenGIDRetryableError", `3*return(true)`)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onGenGIDRetry", func() {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGIDRetryableError", `3*return(true)`)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/onGenGIDRetry", func() {
 		m := submitter.DDLJobDoneChMap()
-		require.Equal(t, 1, len(m.Keys()))
-		_, ok := m.Load(currGID + counter*100 + 2)
-		require.True(t, ok)
+		// The retry hook runs after the transaction failure path cleans up
+		// registered job-done channels, and before the next retry registers new ones.
+		require.Empty(t, m.Keys())
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMutator(txn)

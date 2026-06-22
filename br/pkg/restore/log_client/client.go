@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -83,6 +84,7 @@ import (
 
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
+const maxReadMetaKVFilesConcurrency uint = 128
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
@@ -1111,15 +1113,15 @@ func SeparateAndSortFilesByCF(files []*backuppb.DataFileInfo) ([]*backuppb.DataF
 	// The error of transactions of meta could happen if restore write CF events successfully,
 	// but failed to restore default CF events.
 	for _, f := range files {
+		if !shouldReadMetaKVFile(f) {
+			if f.Type == backuppb.FileType_Delete {
+				log.Warn("internal error: detected delete file of meta key, skip it", zap.Any("file", f))
+			}
+			continue
+		}
 		if f.Cf == consts.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
-			continue
-		}
-		if f.Type == backuppb.FileType_Delete {
-			log.Warn("internal error: detected delete file of meta key, skip it", zap.Any("file", f))
-			continue
-		}
-		if f.Cf == consts.DefaultCF {
+		} else {
 			filesInDefaultCF = append(filesInDefaultCF, f)
 		}
 	}
@@ -1128,6 +1130,26 @@ func SeparateAndSortFilesByCF(files []*backuppb.DataFileInfo) ([]*backuppb.DataF
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
 	return filesInDefaultCF, filesInWriteCF
+}
+
+func shouldReadMetaKVFile(file *backuppb.DataFileInfo) bool {
+	if file.Cf == consts.WriteCF {
+		return true
+	}
+	if file.Type == backuppb.FileType_Delete {
+		return false
+	}
+	return file.Cf == consts.DefaultCF
+}
+
+func countReadableMetaKVFiles(files []*backuppb.DataFileInfo) int {
+	count := 0
+	for _, file := range files {
+		if shouldReadMetaKVFile(file) {
+			count++
+		}
+	}
+	return count
 }
 
 // LoadAndProcessMetaKVFilesInBatch restores meta kv files to TiKV in strict TS order. It does so in batch and after
@@ -1280,14 +1302,28 @@ func (rc *LogClient) filterAndSortKvEntriesFromFiles(
 	}
 
 	// read all entries from files.
-	for _, f := range files {
-		es, filteredOutEs, err := rc.ReadFilteredEntriesFromFiles(ctx, f, filterTS)
-		if err != nil {
+	if len(files) > 0 {
+		eg, egCtx := errgroup.WithContext(ctx)
+		workerPool := tidbutil.NewWorkerPool(min(uint(len(files)), maxReadMetaKVFilesConcurrency), "read meta kv files")
+		var entriesLock sync.Mutex
+		for _, f := range files {
+			file := f
+			workerPool.ApplyOnErrorGroup(eg, func() error {
+				es, filteredOutEs, err := rc.ReadFilteredEntriesFromFiles(egCtx, file, filterTS)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				entriesLock.Lock()
+				curKvEntries = append(curKvEntries, es...)
+				filteredOutKvEntries = append(filteredOutKvEntries, filteredOutEs...)
+				entriesLock.Unlock()
+				return nil
+			})
+		}
+		if err := eg.Wait(); err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-
-		curKvEntries = append(curKvEntries, es...)
-		filteredOutKvEntries = append(filteredOutKvEntries, filteredOutEs...)
 	}
 
 	// sort these entries.
@@ -1697,6 +1733,7 @@ const (
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
 	alterTableDropForeignKeyFormat = "ALTER TABLE %n.%n DROP FOREIGN KEY %n"
+	repairIngestIndexSQLFile       = "add-index.sql"
 )
 
 func (rc *LogClient) generateRepairIngestIndexSQLs(
@@ -1718,7 +1755,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			}
 			sqls = checkpointSQLs.SQLs
 			fkSqls = checkpointSQLs.FKSQLs
-			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
+			log.Info("load ingest index repair sqls from checkpoint",
+				zap.String("category", "ingest"),
+				zap.Int("index-sql-count", len(sqls)),
+				zap.Int("foreign-key-sql-count", len(fkSqls)))
 			return sqls, fkSqls, true, nil
 		}
 	}
@@ -1820,6 +1860,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	}); err != nil {
 		return sqls, fkSqls, false, errors.Trace(err)
 	}
+	log.Info("generated ingest index repair sqls",
+		zap.String("category", "ingest"),
+		zap.Int("index-sql-count", len(sqls)),
+		zap.Int("foreign-key-sql-count", len(fkSqls)))
 
 	if rc.useCheckpoint && len(sqls) > 0 {
 		if err := logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
@@ -1832,12 +1876,61 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	return sqls, fkSqls, false, nil
 }
 
-// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func writeRepairIngestIndexSQLFile(
+	ctx context.Context,
+	storage storeapi.Storage,
+	sqls []checkpoint.CheckpointIngestIndexRepairSQL,
+	fkSqls []checkpoint.CheckpointForeignKeyUpdateSQL,
+) error {
+	if storage == nil {
+		return nil
+	}
+
+	var builder strings.Builder
+	sqlCount := 0
+	builder.WriteString("-- SQLs for rebuilding indexes skipped by PITR restore.\n")
+	builder.WriteString("-- Execute them manually after restore if you need these indexes and foreign keys.\n")
+	for _, sql := range sqls {
+		if sql.IndexRepaired {
+			continue
+		}
+		if err := sqlescape.FormatSQL(&builder, sql.AddSQL, sql.AddArgs...); err != nil {
+			return errors.Trace(err)
+		}
+		builder.WriteString(";\n")
+		sqlCount++
+	}
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		if err := sqlescape.FormatSQL(&builder, fk.AddSQL, fk.AddArgs...); err != nil {
+			return errors.Trace(err)
+		}
+		builder.WriteString(";\n")
+		sqlCount++
+	}
+	if sqlCount == 0 {
+		log.Info("no repair ingest index sqls need to be written to external storage")
+		return nil
+	}
+	if err := storage.WriteFile(ctx, repairIngestIndexSQLFile, []byte(builder.String())); err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("write repair ingest index sqls to external storage",
+		zap.String("file", repairIngestIndexSQLFile),
+		zap.Int("sql-count", sqlCount))
+	return nil
+}
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-adds them,
+// or writes the add-index SQLs to external storage when addIndexSQLStorage is set.
 func (rc *LogClient) RepairIngestIndex(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	g glue.Glue,
+	addIndexSQLStorage storeapi.Storage,
 ) error {
 	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
 	if err != nil {
@@ -1962,6 +2055,10 @@ func (rc *LogClient) RepairIngestIndex(
 					return errors.Trace(err)
 				}
 			}
+			if addIndexSQLStorage != nil {
+				w.Increment()
+				return nil
+			}
 			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
 				if v != nil && v.(bool) {
 					failpoint.Return(errors.New("failed before create ingest index"))
@@ -1977,6 +2074,12 @@ func (rc *LogClient) RepairIngestIndex(
 	}
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
+	}
+	if addIndexSQLStorage != nil {
+		if err := writeRepairIngestIndexSQLFile(ctx, addIndexSQLStorage, sqls, fkSqls); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
 	}
 	eg, ectx = errgroup.WithContext(ctx)
 	for _, fk := range fkSqls {

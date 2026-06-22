@@ -126,7 +126,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 45,
+    shard_count = 49,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
@@ -164,6 +164,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_spf13_cobra//:cobra",
         "@com_github_spf13_pflag//:pflag",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

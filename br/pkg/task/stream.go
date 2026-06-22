@@ -90,6 +90,8 @@ const (
 	flagGCSafePointTTS     = "gc-ttl"
 	flagMessage            = "message"
 
+	resumeStateFileName = "crr-checkpoint/resume-state.json"
+
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
 		"You may check the metadata and continue by wait other task finish or manually delete the lock file " + truncateLockPath + " at the external storage."
@@ -1335,9 +1337,17 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
+	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// index ingestion is not captured by regular log backup, so we need to manually ingest again
+	var addIndexSQLStorage storeapi.Storage
+	if shouldOpenPiTRAddIndexSQLStorage(cfg) {
+		_, addIndexSQLStorage, err = GetStorage(ctx, cfg.PiTRAddIndexSQLStorage, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// if not set by user, restore to the max TS available
@@ -1414,7 +1424,7 @@ func RunStreamRestore(
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
-		log.Info("reading meta kv files to collect table info and id mapping information")
+		log.Info("reading meta kv files to collect table info and id mapping information", zap.Int("ddl files count", len(ddlFiles)))
 		err = metaInfoProcessor.ReadMetaKVFilesAndBuildInfo(ctx, ddlFiles)
 		if err != nil {
 			return errors.Trace(err)
@@ -1476,6 +1486,7 @@ func RunStreamRestore(
 		tableMappingManager: metaInfoProcessor.GetTableMappingManager(),
 		logClient:           logClient,
 		ddlFiles:            ddlFiles,
+		addIndexSQLStorage:  addIndexSQLStorage,
 	}
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
 		return errors.Trace(err)
@@ -1489,6 +1500,11 @@ type LogRestoreConfig struct {
 	tableMappingManager *stream.TableMappingManager
 	logClient           *logclient.LogClient
 	ddlFiles            []logclient.Log
+	addIndexSQLStorage  storeapi.Storage
+}
+
+func shouldOpenPiTRAddIndexSQLStorage(cfg *RestoreConfig) bool {
+	return len(cfg.PiTRAddIndexSQLStorage) > 0 && cfg.RestorePhase != 1
 }
 
 // restoreStream starts the log restore
@@ -1826,8 +1842,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, cfg.addIndexSQLStorage); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1966,15 +1981,13 @@ func getLogInfo(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, false, "")
+	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 }
 
 func getLogInfoFromStorage(
 	ctx context.Context,
 	s storeapi.Storage,
 	checkRequirements bool,
-	fromReplicationStorage bool,
-	replicationStatusSubPrefix string,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -2007,19 +2020,9 @@ func getLogInfoFromStorage(
 	logMinTS := max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	var logMaxTS uint64
-	if fromReplicationStorage {
-		ts, err := getGlobalCheckpointFromReplicationStorage(ctx, s, replicationStatusSubPrefix)
-		if err != nil {
-			return backupLogInfo{}, errors.Trace(err)
-		}
-		logMaxTS = ts
-	} else {
-		ts, err := getGlobalCheckpointFromStorage(ctx, s)
-		if err != nil {
-			return backupLogInfo{}, errors.Trace(err)
-		}
-		logMaxTS = ts
+	logMaxTS, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	if err != nil {
+		return backupLogInfo{}, errors.Trace(err)
 	}
 	logMaxTS = max(logMinTS, logMaxTS)
 
@@ -2049,21 +2052,39 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storeapi.Storage) (ui
 	return globalCheckPointTS, errors.Trace(err)
 }
 
-func getGlobalCheckpointFromReplicationStorage(ctx context.Context, s storeapi.Storage, replicationStatusSubPrefix string) (uint64, error) {
-	// parse the replication status
-	statusFileName, err := service.GetStatusFileName(replicationStatusSubPrefix)
+func getMaxRecoverableCheckpointFromStorage(ctx context.Context, s storeapi.Storage) (uint64, error) {
+	ts, exists, err := getCheckpointFromResumeState(ctx, s)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	statusContent, err := s.ReadFile(ctx, statusFileName)
+	if exists {
+		return ts, nil
+	}
+	return getGlobalCheckpointFromStorage(ctx, s)
+}
+
+// PersistentState captures the calculator progress needed to resume after restart.
+type PersistentState struct {
+	LastCheckpoint uint64 `json:"last_checkpoint"`
+}
+
+func getCheckpointFromResumeState(ctx context.Context, s storeapi.Storage) (uint64, bool, error) {
+	exists, err := s.FileExists(ctx, resumeStateFileName)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, false, errors.Trace(err)
+	}
+	if !exists {
+		return 0, false, nil
+	}
+	statusContent, err := s.ReadFile(ctx, resumeStateFileName)
+	if err != nil {
+		return 0, true, errors.Trace(err)
 	}
 	var state service.PersistentState
 	if err := json.Unmarshal(statusContent, &state); err != nil {
-		return 0, fmt.Errorf("decode persisted resume state %s: %w", statusFileName, err)
+		return 0, true, fmt.Errorf("decode persisted resume state %s: %w", resumeStateFileName, err)
 	}
-	return state.LastCheckpoint, nil
+	return state.LastCheckpoint, true, nil
 }
 
 // getFullBackupTS gets the snapshot-ts of full backup
