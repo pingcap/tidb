@@ -95,7 +95,7 @@ func buildFullTextIndexExtra(indexInfo *model.IndexInfo, queryInfo *tipb.FTSQuer
 
 func (p *PhysicalTableScan) hasFullTextIndexPushDown() bool {
 	for _, idx := range p.UsedColumnarIndexes {
-		if idx != nil && idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
+		if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
 			return true
 		}
 	}
@@ -536,95 +536,120 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false, ectx))
 		}
 	}
-	if len(p.UsedColumnarIndexes) > 0 {
-		annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
-		invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
-		ftsIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
-		for _, idx := range p.UsedColumnarIndexes {
-			if idx == nil {
-				continue
-			}
-			if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector {
-				annIndexBuffer := bytes.NewBuffer(make([]byte, 0, 256))
-				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
-				annIndexBuffer.WriteString("(")
-				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
-				annIndexBuffer.WriteString("..")
-				if normalized {
-					annIndexBuffer.WriteString("[?]")
-				} else {
-					v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
-					if err != nil {
-						annIndexBuffer.WriteString("[?]")
-					} else {
-						annIndexBuffer.WriteString(v.TruncatedString())
-					}
-				}
-				annIndexBuffer.WriteString(", limit:")
-				if normalized {
-					annIndexBuffer.WriteString("?")
-				} else {
-					fmt.Fprint(annIndexBuffer, idx.QueryInfo.GetAnnQueryInfo().TopK)
-				}
-				annIndexBuffer.WriteString(")")
-
-				if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
-					annIndexBuffer.WriteString("->")
-					cols := p.Schema().Columns
-					annIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
-				}
-				annIndexes = append(annIndexes, annIndexBuffer.String())
-			} else if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted {
-				invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
-			} else if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
-				ftsQueryInfo := idx.QueryInfo.GetFtsQueryInfo()
-				if ftsQueryInfo == nil {
-					continue
-				}
-				ftsIndexBuffer := &strings.Builder{}
-				ftsIndexBuffer.Grow(128)
-				if ftsQueryInfo.TopK != nil && *ftsQueryInfo.TopK < ^uint32(0) {
-					ftsIndexBuffer.WriteString("top")
-					if normalized {
-						ftsIndexBuffer.WriteString("K")
-					} else {
-						fmt.Fprint(ftsIndexBuffer, *ftsQueryInfo.TopK)
-					}
-					ftsIndexBuffer.WriteString(" ")
-				}
-				if normalized {
-					ftsIndexBuffer.WriteString("?")
-				} else {
-					redact.WriteRedact(ftsIndexBuffer, ftsQueryInfo.QueryText, redactMode)
-				}
-				if len(ftsQueryInfo.ColumnNames) > 0 {
-					ftsIndexBuffer.WriteString(" IN ")
-					ftsIndexBuffer.WriteString(ftsQueryInfo.ColumnNames[0])
-				}
-				cols := p.Schema().Columns
-				if len(cols) > 0 && ftsQueryInfo.QueryType == tipb.FTSQueryType_FTSQueryTypeWithScore &&
-					cols[len(cols)-1].ID == model.VirtualColFTSScoreID {
-					ftsIndexBuffer.WriteString("->")
-					ftsIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
-				}
-				ftsIndexes = append(ftsIndexes, ftsIndexBuffer.String())
-			}
-		}
-		if len(annIndexes) > 0 {
-			buffer.WriteString(", annIndex:")
-			buffer.WriteString(strings.Join(annIndexes, ", "))
-		}
-		if len(invertedIndexes) > 0 {
-			buffer.WriteString(", invertedindex:")
-			buffer.WriteString(strings.Join(invertedIndexes, ", "))
-		}
-		if len(ftsIndexes) > 0 {
-			buffer.WriteString(", ftsIndex:")
-			buffer.WriteString(strings.Join(ftsIndexes, ", "))
-		}
+	if columnarIndexes := p.explainColumnarIndexes(normalized, redactMode, ectx); columnarIndexes != "" {
+		buffer.WriteString(columnarIndexes)
 	}
 
 	return buffer.String()
+}
+
+func (p *PhysicalTableScan) explainColumnarIndexes(normalized bool, redactMode string, ectx expression.EvalContext) string {
+	if len(p.UsedColumnarIndexes) == 0 {
+		return ""
+	}
+
+	annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	ftsIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx == nil || idx.QueryInfo == nil {
+			continue
+		}
+
+		switch idx.QueryInfo.IndexType {
+		case tipb.ColumnarIndexType_TypeVector:
+			annIndexes = append(annIndexes, p.explainANNIndex(idx, normalized, ectx))
+		case tipb.ColumnarIndexType_TypeInverted:
+			invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
+		case tipb.ColumnarIndexType_TypeFulltext:
+			if ftsIndex := p.explainFullTextIndex(idx, normalized, redactMode, ectx); ftsIndex != "" {
+				ftsIndexes = append(ftsIndexes, ftsIndex)
+			}
+		}
+	}
+
+	buffer := &strings.Builder{}
+	if len(annIndexes) > 0 {
+		buffer.WriteString(", annIndex:")
+		buffer.WriteString(strings.Join(annIndexes, ", "))
+	}
+	if len(invertedIndexes) > 0 {
+		buffer.WriteString(", invertedindex:")
+		buffer.WriteString(strings.Join(invertedIndexes, ", "))
+	}
+	if len(ftsIndexes) > 0 {
+		buffer.WriteString(", ftsIndex:")
+		buffer.WriteString(strings.Join(ftsIndexes, ", "))
+	}
+	return buffer.String()
+}
+
+func (p *PhysicalTableScan) explainANNIndex(idx *ColumnarIndexExtra, normalized bool, ectx expression.EvalContext) string {
+	annQueryInfo := idx.QueryInfo.GetAnnQueryInfo()
+	annIndexBuffer := bytes.NewBuffer(make([]byte, 0, 256))
+	annIndexBuffer.WriteString(annQueryInfo.GetDistanceMetric().String())
+	annIndexBuffer.WriteString("(")
+	annIndexBuffer.WriteString(annQueryInfo.GetColumnName())
+	annIndexBuffer.WriteString("..")
+	if normalized {
+		annIndexBuffer.WriteString("[?]")
+	} else {
+		v, _, err := types.ZeroCopyDeserializeVectorFloat32(annQueryInfo.RefVecF32)
+		if err != nil {
+			annIndexBuffer.WriteString("[?]")
+		} else {
+			annIndexBuffer.WriteString(v.TruncatedString())
+		}
+	}
+	annIndexBuffer.WriteString(", limit:")
+	if normalized {
+		annIndexBuffer.WriteString("?")
+	} else {
+		fmt.Fprint(annIndexBuffer, annQueryInfo.TopK)
+	}
+	annIndexBuffer.WriteString(")")
+
+	if annQueryInfo.GetEnableDistanceProj() {
+		annIndexBuffer.WriteString("->")
+		cols := p.Schema().Columns
+		annIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
+	}
+	return annIndexBuffer.String()
+}
+
+func (p *PhysicalTableScan) explainFullTextIndex(idx *ColumnarIndexExtra, normalized bool, redactMode string, ectx expression.EvalContext) string {
+	ftsQueryInfo := idx.QueryInfo.GetFtsQueryInfo()
+	if ftsQueryInfo == nil {
+		return ""
+	}
+
+	ftsIndexBuffer := &strings.Builder{}
+	ftsIndexBuffer.Grow(128)
+	if ftsQueryInfo.TopK != nil && *ftsQueryInfo.TopK < ^uint32(0) {
+		ftsIndexBuffer.WriteString("top")
+		if normalized {
+			ftsIndexBuffer.WriteString("K")
+		} else {
+			fmt.Fprint(ftsIndexBuffer, *ftsQueryInfo.TopK)
+		}
+		ftsIndexBuffer.WriteString(" ")
+	}
+	if normalized {
+		ftsIndexBuffer.WriteString("?")
+	} else {
+		redact.WriteRedact(ftsIndexBuffer, ftsQueryInfo.QueryText, redactMode)
+	}
+	if len(ftsQueryInfo.ColumnNames) > 0 {
+		ftsIndexBuffer.WriteString(" IN ")
+		ftsIndexBuffer.WriteString(ftsQueryInfo.ColumnNames[0])
+	}
+	cols := p.Schema().Columns
+	if len(cols) > 0 && ftsQueryInfo.QueryType == tipb.FTSQueryType_FTSQueryTypeWithScore &&
+		cols[len(cols)-1].ID == model.VirtualColFTSScoreID {
+		ftsIndexBuffer.WriteString("->")
+		ftsIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
+	}
+	return ftsIndexBuffer.String()
 }
 
 func (p *PhysicalTableScan) haveCorCol() bool {
