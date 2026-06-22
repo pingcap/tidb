@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1693,8 +1694,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.BuildMigrations(migs.Migs)
-
 	skipCleanup := false
 	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
 		// Skip the cleanup - this keeps the read lock held
@@ -1702,10 +1701,16 @@ func restoreStream(
 		log.Info("Skipping migration read lock cleanup due to failpoint")
 		skipCleanup = true
 	})
-
 	if !skipCleanup {
 		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
 	}
+	if cfg.RetainLatestMVCCVersion {
+		if err := client.ValidateRetainLatestMVCCCompactionCoverage(migs.Migs); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	client.BuildMigrations(migs.Migs)
+
 	ddlFiles := cfg.ddlFiles
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
@@ -1751,8 +1756,48 @@ func restoreStream(
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
-	totalWorkUnits := numberOfKVsInSST + client.Stats.NumEntries
+	var checkpointSSTProgress int64
+	updateSSTStatsWithCheckpoint := func(kvCount, size uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		totalKVCount += kvCount
+		totalSize += size
+		checkpointTotalKVCount += kvCount
+		checkpointTotalSize += size
+		checkpointSSTProgress += int64(kvCount)
+	}
+	compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
+		ctx, sstsIter, rewriteRules, sstCheckpointSets,
+		updateSSTStatsWithCheckpoint, splitSize, splitKeys,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sstFileSets, numberOfKVsInSST, err := client.CollectSSTFileSets(ctx, compactedSplitIter, rewriteRules)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	type hasWriteCFLogFileResult struct {
+		file *logclient.LogDataFileInfo
+		err  error
+	}
+	var hasWriteCFLogFileResultCh <-chan hasWriteCFLogFileResult
+	if cfg.RetainLatestMVCCVersion {
+		ch := make(chan hasWriteCFLogFileResult, 1)
+		hasWriteCFLogFileResultCh = ch
+		go func() {
+			writeCFLogFile, err := hasAnyWriteCFLogFile(ctx, logFilesIter)
+			ch <- hasWriteCFLogFileResult{file: writeCFLogFile, err: err}
+		}()
+	}
+
+	totalWorkUnits := checkpointSSTProgress + numberOfKVsInSST + client.Stats.NumEntries
 	err = glue.WithProgress(ctx, g, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress, func(p glue.Progress) (pErr error) {
+		if checkpointSSTProgress > 0 {
+			p.IncBy(checkpointSSTProgress)
+		}
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -1763,17 +1808,32 @@ func restoreStream(
 			// increase the progress
 			p.IncBy(int64(kvCount))
 		}
-		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
-			ctx, sstsIter, rewriteRules, sstCheckpointSets,
-			updateStatsWithCheckpoint, splitSize, splitKeys,
-		)
+
+		err = client.RestoreSSTFileSets(ctx, sstFileSets, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
-		if err != nil {
-			return errors.Trace(err)
+		if hasWriteCFLogFileResultCh != nil {
+			result := <-hasWriteCFLogFileResultCh
+			if result.err != nil {
+				return errors.Trace(result.err)
+			}
+			if result.file != nil {
+				logutil.CL(ctx).Warn("found write CF log files when retain-latest-mvcc-version is enabled; skip log restore because compacted SST coverage has been validated",
+					zap.Uint64("start-ts", cfg.StartTS),
+					zap.Uint64("restore-ts", cfg.RestoreTS),
+					zap.String("path", result.file.GetPath()),
+					zap.String("cf", result.file.GetCf()),
+					zap.Uint64("min-ts", result.file.GetMinTs()),
+					zap.Uint64("max-ts", result.file.GetMaxTs()),
+					zap.String("metadata-group", result.file.MetaDataGroupName),
+					zap.Int("offset-in-meta-group", result.file.OffsetInMetaGroup),
+					zap.Int("offset-in-merged-group", result.file.OffsetInMergedGroup))
+			}
+			log.Info("enabled restoring compacted SSTs with newest MVCC versions only; skip user DML log restore",
+				zap.String("flag", FlagRetainLatestMVCCVersion))
+			logFilesIter = iter.FromSlice([]*logclient.LogDataFileInfo{})
 		}
 
 		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
@@ -1885,7 +1945,10 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
-	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
+	err = client.InitClients(
+		ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency),
+		cfg.ConcurrencyPerStore.Value, cfg.RetainLatestMVCCVersion,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2349,6 +2412,24 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
+}
+
+func hasAnyWriteCFLogFile(ctx context.Context, fileIter logclient.LogIter) (*logclient.LogDataFileInfo, error) {
+	for {
+		r := fileIter.TryNext(ctx)
+		if r.Err != nil {
+			return nil, errors.Trace(r.Err)
+		}
+		if r.Finished {
+			return nil, nil
+		}
+		if r.Item == nil || r.Item.DataFileInfo == nil {
+			continue
+		}
+		if r.Item.GetCf() == consts.WriteCF {
+			return r.Item, nil
+		}
+	}
 }
 
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {

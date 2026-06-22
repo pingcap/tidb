@@ -62,6 +62,13 @@ type ImporterClient interface {
 		req *import_sstpb.DownloadRequest,
 	) (*import_sstpb.DownloadResponse, error)
 
+	// BatchDownloadLatestMVCC downloads SSTs keeping only the latest MVCC version per key (compacted SST restore).
+	BatchDownloadLatestMVCC(
+		ctx context.Context,
+		storeID uint64,
+		req *import_sstpb.DownloadRequest,
+	) (*import_sstpb.DownloadResponse, error)
+
 	MultiIngest(
 		ctx context.Context,
 		storeID uint64,
@@ -82,6 +89,9 @@ type ImporterClient interface {
 	CloseGrpcClient() error
 
 	CheckBatchDownloadSupport(ctx context.Context, stores []uint64) (bool, error)
+
+	// CheckBatchDownloadLatestMVCCSupport returns an error if any store returns Unimplemented for BatchDownloadLatestMVCC.
+	CheckBatchDownloadLatestMVCCSupport(ctx context.Context, stores []uint64) error
 
 	CheckMultiIngestSupport(ctx context.Context, stores []uint64) error
 
@@ -161,6 +171,18 @@ func (ic *importClient) BatchDownloadSST(
 		return nil, errors.Trace(err)
 	}
 	return client.BatchDownload(ctx, req)
+}
+
+func (ic *importClient) BatchDownloadLatestMVCC(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	client, err := ic.GetImportClient(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return client.BatchDownloadLatestMVCC(ctx, req)
 }
 
 func (ic *importClient) SetDownloadSpeedLimit(
@@ -281,6 +303,24 @@ func (ic *importClient) CheckBatchDownloadSupport(ctx context.Context, stores []
 		}
 	}
 	return true, nil
+}
+
+func (ic *importClient) CheckBatchDownloadLatestMVCCSupport(ctx context.Context, stores []uint64) error {
+	for _, storeID := range stores {
+		_, err := ic.BatchDownloadLatestMVCC(ctx, storeID, &import_sstpb.DownloadRequest{})
+		if err != nil {
+			if s, ok := status.FromError(err); ok {
+				if s.Code() == codes.Unimplemented {
+					return errors.Errorf(
+						"tikv node doesn't support BatchDownloadLatestMVCC; upgrade TiKV or disable --retain-latest-mvcc-version (store id %d)",
+						storeID,
+					)
+				}
+			}
+			return errors.Annotatef(err, "failed to check BatchDownloadLatestMVCC support. (store id %d)", storeID)
+		}
+	}
+	return nil
 }
 
 func (ic *importClient) CheckMultiIngestSupport(ctx context.Context, stores []uint64) error {
