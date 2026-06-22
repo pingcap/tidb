@@ -76,7 +76,7 @@ jobs:
           echo "Skip stale bazel update for PR #${{ steps.pr.outputs.pr_number }}."
       - name: Download Fork Bazel Files Artifact
         if: steps.pr.outputs.same_repo != 'true' && steps.pr.outputs.stale != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: bazel-files
           path: bazel-artifact
@@ -112,7 +112,7 @@ jobs:
           exit 1
       - name: Checkout PR branch
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: ${{ steps.pr.outputs.head_repo }}
           ref: ${{ steps.pr.outputs.head_ref }}
@@ -122,7 +122,7 @@ jobs:
           persist-credentials: false
       - name: Download Bazel Files Artifact
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: bazel-files
           path: bazel-artifact
