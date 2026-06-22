@@ -207,10 +207,13 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		tikv.WithCodec(codec),
 	)
 
-	metaServiceInfo, pdAddrs, spkv, err = newSafePointKV(pdCli, codec, tlsConfig)
+	safePointSetup, err := newSafePointKV(pdCli, codec, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	metaServiceInfo = safePointSetup.metaServiceInfo
+	pdAddrs = safePointSetup.pdAddrs
+	spkv = safePointSetup.spkv
 
 	s, err = tikv.NewKVStore(
 		uuid,
@@ -255,21 +258,33 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	return store, nil
 }
 
+type safePointKVSetup struct {
+	metaServiceInfo *metaservice.Info
+	pdAddrs         []string
+	groupAddrs      []string
+	spkv            *tikv.EtcdSafePointKV
+}
+
 func newSafePointKV(
 	pdCli pd.Client,
 	codec tikv.Codec,
 	tlsConfig *tls.Config,
-) (metaServiceInfo *metaservice.Info, pdAddrs []string, spkv *tikv.EtcdSafePointKV, err error) {
-	var groupAddrs []string
-	metaServiceInfo, groupAddrs, err = metaservice.GetInfoAndGroupAddrs(context.Background(), pdCli, codec.GetKeyspaceMeta())
+) (safePointKVSetup, error) {
+	metaServiceInfo, groupAddrs, err := metaservice.GetInfoAndGroupAddrs(
+		context.Background(), pdCli, codec.GetKeyspaceMeta())
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return safePointKVSetup{}, errors.Trace(err)
 	}
-	spkv, err = tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
+	spkv, err := tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return safePointKVSetup{}, errors.Trace(err)
 	}
-	return metaServiceInfo, metaServiceInfo.PDAddrs, spkv, nil
+	return safePointKVSetup{
+		metaServiceInfo: metaServiceInfo,
+		pdAddrs:         metaServiceInfo.PDAddrs,
+		groupAddrs:      groupAddrs,
+		spkv:            spkv,
+	}, nil
 }
 
 func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
