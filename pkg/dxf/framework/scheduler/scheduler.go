@@ -421,31 +421,31 @@ func (s *BaseScheduler) onRunning() error {
 		zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	// check current step finishes.
-	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
+	cntByStates, subTaskErrs, err := s.taskMgr.GetSubtaskStateCntAndErrorsByStep(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
-		subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
-		if err != nil {
-			return err
+		if len(subTaskErrs) == 0 {
+			taskErr := errors.Errorf("subtasks in failed/canceled state without error, taskID %d, step %d, failed %d, canceled %d",
+				task.ID, task.Step, cntByStates[proto.SubtaskStateFailed], cntByStates[proto.SubtaskStateCanceled])
+			s.logger.Warn("subtasks encounter failed/canceled states without error", zap.Error(taskErr))
+			return s.revertTaskOrManualRecover(taskErr)
 		}
-		if len(subTaskErrs) > 0 {
-			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
-			if shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
-				if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
-					return errors.Trace(err)
-				}
-				taskClone := *task
-				taskClone.State = proto.TaskStatePausing
-				taskClone.Error = subTaskErrs[0]
-				s.task.Store(&taskClone)
-				return nil
+		s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
+		if shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+			if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+				return errors.Trace(err)
 			}
-			// we only store the first error as task error.
-			return s.revertTaskOrManualRecover(subTaskErrs[0])
+			taskClone := *task
+			taskClone.State = proto.TaskStatePausing
+			taskClone.Error = subTaskErrs[0]
+			s.task.Store(&taskClone)
+			return nil
 		}
+		// we only store the first error as task error.
+		return s.revertTaskOrManualRecover(subTaskErrs[0])
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
 	}

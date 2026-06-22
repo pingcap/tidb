@@ -789,6 +789,9 @@ func (mgr *TaskManager) GetSubtaskStateCntAndErrorsByStep(ctx context.Context, t
 		if err != nil {
 			return nil, nil, err
 		}
+		if subTaskErr == nil {
+			continue
+		}
 		subTaskErrors = append(subTaskErrors, subTaskErr)
 	}
 
