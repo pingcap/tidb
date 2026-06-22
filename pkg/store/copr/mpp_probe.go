@@ -35,8 +35,8 @@ import (
 // GlobalMPPFailedStoreProber mpp failed store probe
 var GlobalMPPFailedStoreProber *MPPFailedStoreProber
 
-// GlobalMPPInfoManager manages all stores' information
-var GlobalMPPInfoManager *MppInfoManager
+// GlobalMPPServerInfoManager manages all stores' information
+var GlobalMPPServerInfoManager *MppServerInfoManager
 
 const (
 	// DetectPeriod detect period
@@ -47,8 +47,8 @@ const (
 	MaxRecoveryTimeLimit = 15 * time.Minute
 	// MaxObsoletTimeLimit no request for a long time,that might be obsoleted
 	MaxObsoletTimeLimit = time.Hour
-	// mppInfoManagerCacheSize is used to prevent unbounded memory growth in extreme cases.
-	mppInfoManagerCacheSize = 1000
+	// mppServerInfoManagerCacheSize is used to prevent unbounded memory growth in extreme cases.
+	mppServerInfoManagerCacheSize = 1000
 )
 
 // MPPStoreState the state for MPPStore.
@@ -89,36 +89,43 @@ type MPPServerInfo struct {
 	StartTimestamp  int64
 }
 
-// MppInfoManager manages info for all tiflash nodes
-type MppInfoManager struct {
+// MppServerInfoManager manages info for all tiflash nodes
+type MppServerInfoManager struct {
 	cachedStores *kvcache.SimpleLRUCache
 	lock         sync.Mutex
 }
 
-type mppInfoManagerStoreKey string
+type mppServerInfoManagerStoreKey string
 
-func (k mppInfoManagerStoreKey) Hash() []byte {
+func (k mppServerInfoManagerStoreKey) Hash() []byte {
 	return hack.Slice(string(k))
 }
 
-func newMppInfoManager() *MppInfoManager {
-	return &MppInfoManager{
-		cachedStores: kvcache.NewSimpleLRUCache(mppInfoManagerCacheSize, 0, 0),
+func newMppServerInfoManager() *MppServerInfoManager {
+	return &MppServerInfoManager{
+		cachedStores: kvcache.NewSimpleLRUCache(mppServerInfoManagerCacheSize, 0, 0),
 	}
 }
 
 // Add adds serverInfo.
-func (t *MppInfoManager) Add(serverInfo *MPPServerInfo) {
+func (t *MppServerInfoManager) Add(serverInfo *MPPServerInfo) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
-	t.cachedStores.Put(mppInfoManagerStoreKey(serverInfo.Address), serverInfo)
+	t.cachedStores.Put(mppServerInfoManagerStoreKey(serverInfo.Address), serverInfo)
+}
+
+// Delete deletes serverInfo.
+func (t *MppServerInfoManager) Delete(address string) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	t.cachedStores.Delete(mppServerInfoManagerStoreKey(address))
 }
 
 // Get gets related info
-func (t *MppInfoManager) Get(address string) *MPPServerInfo {
+func (t *MppServerInfoManager) Get(address string) *MPPServerInfo {
 	t.lock.Lock()
 	defer t.lock.Unlock()
-	ret, ok := t.cachedStores.Get(mppInfoManagerStoreKey(address))
+	ret, ok := t.cachedStores.Get(mppServerInfoManagerStoreKey(address))
 	if !ok {
 		return nil
 	}
@@ -324,5 +331,5 @@ func init() {
 		maxObsoletTimeLimit:  MaxObsoletTimeLimit,
 	}
 
-	GlobalMPPInfoManager = newMppInfoManager()
+	GlobalMPPServerInfoManager = newMppServerInfoManager()
 }

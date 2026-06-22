@@ -278,19 +278,19 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	t.Run("refresh cached logical cores when tiflash restarts", func(t *testing.T) {
 		const staleAddr = "127.0.0.1:3933"
 		const validAddr = "127.0.0.2:3933"
-		copr.GlobalMPPInfoManager.Delete(staleAddr)
-		copr.GlobalMPPInfoManager.Delete(validAddr)
+		copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+		copr.GlobalMPPServerInfoManager.Delete(validAddr)
 		t.Cleanup(func() {
-			copr.GlobalMPPInfoManager.Delete(staleAddr)
-			copr.GlobalMPPInfoManager.Delete(validAddr)
+			copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+			copr.GlobalMPPServerInfoManager.Delete(validAddr)
 		})
 
-		copr.GlobalMPPInfoManager.Add(&copr.MPPServerInfo{
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
 			Address:         staleAddr,
 			LogicalCPUCount: 8,
 			StartTimestamp:  100,
 		})
-		copr.GlobalMPPInfoManager.Add(&copr.MPPServerInfo{
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
 			Address:         validAddr,
 			LogicalCPUCount: 16,
 			StartTimestamp:  200,

@@ -192,8 +192,8 @@ func TestMPPFailedStoreAssertFailed(t *testing.T) {
 	GlobalMPPFailedStoreProber.IsRecovery(ctx, "errorinfo", 0)
 }
 
-func TestMppInfoManager(t *testing.T) {
-	manager := newMppInfoManager()
+func TestMppServerInfoManager(t *testing.T) {
+	manager := newMppServerInfoManager()
 	manager.Delete("123") // Should happen nothing
 	manager.Add(&MPPServerInfo{
 		Address:         "123",
@@ -212,18 +212,18 @@ func TestMppInfoManager(t *testing.T) {
 	info = manager.Get("123")
 	require.True(t, info == nil)
 
-	for i := 0; i < mppInfoManagerCacheSize; i++ {
+	for i := 0; i < mppServerInfoManagerCacheSize; i++ {
 		manager.Add(&MPPServerInfo{
 			Address: fmt.Sprintf("store-%d", i),
 		})
 	}
-	require.Equal(t, mppInfoManagerCacheSize, manager.cachedStores.Size())
+	require.Equal(t, mppServerInfoManagerCacheSize, manager.cachedStores.Size())
 	require.NotNil(t, manager.Get("store-0"))
 
 	manager.Add(&MPPServerInfo{
-		Address: fmt.Sprintf("store-%d", mppInfoManagerCacheSize),
+		Address: fmt.Sprintf("store-%d", mppServerInfoManagerCacheSize),
 	})
-	require.Equal(t, mppInfoManagerCacheSize, manager.cachedStores.Size())
+	require.Equal(t, mppServerInfoManagerCacheSize, manager.cachedStores.Size())
 	require.NotNil(t, manager.Get("store-0"))
 	require.Nil(t, manager.Get("store-1"))
 }
