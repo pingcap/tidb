@@ -16,21 +16,21 @@ package extworkload
 
 import "github.com/pingcap/tidb/pkg/config"
 
-// IsEnabled reports whether a Manager is installed for this process.
-func IsEnabled() bool { return globalManager != nil }
+// IsEnabled reports whether a Manager is present.
+func IsEnabled(m Manager) bool { return m != nil }
 
-// IsMaster reports whether this TiDB is acting as the external workload master.
-func IsMaster() bool { return roleIs(config.RoleMaster) }
+// IsMaster reports whether this TiDB is in the regular TiDB role.
+func IsMaster(m Manager) bool { return roleIs(m, config.RoleMaster) }
 
 // IsGCV2Worker reports whether this TiDB is a dedicated keyspace-level GC worker.
-func IsGCV2Worker() bool { return roleIs(config.RoleGCV2Worker) }
+func IsGCV2Worker(m Manager) bool { return roleIs(m, config.RoleGCV2Worker) }
 
 // IsTTLTaskWorker reports whether this TiDB should run TTL jobs.
-func IsTTLTaskWorker() bool { return roleIs(config.RoleTTLTaskWorker) }
+func IsTTLTaskWorker(m Manager) bool { return roleIs(m, config.RoleTTLTaskWorker) }
 
 // IsAutoAnalyzeWorker reports whether this TiDB should run auto-analyze jobs.
-func IsAutoAnalyzeWorker() bool { return roleIs(config.RoleAutoAnalyzeWorker) }
+func IsAutoAnalyzeWorker(m Manager) bool { return roleIs(m, config.RoleAutoAnalyzeWorker) }
 
-func roleIs(role config.ExternalWorkloadRole) bool {
-	return IsEnabled() && globalManager.Role() == role
+func roleIs(m Manager, role config.ExternalWorkloadRole) bool {
+	return IsEnabled(m) && m.Role() == role
 }

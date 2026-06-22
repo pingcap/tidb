@@ -29,22 +29,20 @@ type stubManager struct {
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
 func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return nil }
+func (s *stubManager) Close() error                      { return nil }
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
-	restore := SetManagerForTest(nil)
-	t.Cleanup(restore)
-
-	require.False(t, IsEnabled())
-	require.False(t, IsMaster())
-	require.False(t, IsGCV2Worker())
-	require.False(t, IsTTLTaskWorker())
-	require.False(t, IsAutoAnalyzeWorker())
+	require.False(t, IsEnabled(nil))
+	require.False(t, IsMaster(nil))
+	require.False(t, IsGCV2Worker(nil))
+	require.False(t, IsTTLTaskWorker(nil))
+	require.False(t, IsAutoAnalyzeWorker(nil))
 }
 
 func TestRolePredicatesDedicated(t *testing.T) {
 	cases := []struct {
 		role config.ExternalWorkloadRole
-		pred func() bool
+		pred func(Manager) bool
 	}{
 		{config.RoleMaster, IsMaster},
 		{config.RoleGCV2Worker, IsGCV2Worker},
@@ -53,10 +51,9 @@ func TestRolePredicatesDedicated(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(string(c.role), func(t *testing.T) {
-			restore := SetManagerForTest(&stubManager{role: c.role})
-			t.Cleanup(restore)
+			mgr := &stubManager{role: c.role}
 			for _, other := range cases {
-				require.Equal(t, other.role == c.role, other.pred(),
+				require.Equal(t, other.role == c.role, other.pred(mgr),
 					"%s predicate result for role %s", other.role, c.role)
 			}
 		})

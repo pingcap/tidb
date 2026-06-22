@@ -1921,9 +1921,9 @@ func TestExternalWorkloadValid(t *testing.T) {
 	conf = NewConfig()
 	conf.DeployMode = deploymode.Starter
 	conf.ExternalWorkload.Enable = true
-	require.ErrorContains(t, conf.Valid(), "external-workload api-server must not be empty")
+	require.ErrorContains(t, conf.Valid(), "external-workload controller-addr must not be empty")
 
-	conf.ExternalWorkload.APIServerAddr = "http://127.0.0.1:1234"
+	conf.ExternalWorkload.ControllerAddr = "http://127.0.0.1:1234"
 	conf.ExternalWorkload.TidbPool = ""
 	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
 

@@ -17,6 +17,7 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -24,13 +25,20 @@ go_library(
 go_test(
     name = "extworkload_test",
     timeout = "short",
-    srcs = ["util_test.go"],
+    srcs = [
+        "manager_test.go",
+        "util_test.go",
+    ],
     embed = [":extworkload"],
     flaky = True,
     shard_count = 2,
     deps = [
         "//pkg/config",
+        "//pkg/extworkload/client",
+        "//pkg/metrics",
+        "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
     ],
 )

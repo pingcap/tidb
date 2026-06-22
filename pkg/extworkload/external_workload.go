@@ -14,9 +14,8 @@
 
 // Package extworkload exposes a Manager that lets TiDB coordinate background
 // workloads (GCV2, TTL, and auto-analyze) with an external workload controller.
-// The Manager is only installed under Starter deploy mode when the
-// [external-workload] section is enabled; otherwise GetManager returns nil and
-// TiDB continues to run all background workloads itself.
+// TiDB only creates a Manager in Starter deploy mode when [external-workload]
+// is enabled.
 package extworkload
 
 import (
@@ -28,6 +27,8 @@ import (
 
 // Manager coordinates TiDB background workloads with the external workload controller.
 type Manager interface {
+	Close() error
+
 	// Role returns the role this TiDB is acting in.
 	Role() config.ExternalWorkloadRole
 	// Meta returns the keyspace metadata bound to this TiDB.
@@ -58,18 +59,4 @@ type Manager interface {
 	RegisterAutoAnalyze(ctx context.Context, taskID uint64) error
 	// RecycleAutoAnalyze reports that an auto-analyze task has completed.
 	RecycleAutoAnalyze(ctx context.Context, taskID uint64) error
-}
-
-var globalManager Manager
-
-// GetManager returns the installed Manager, or nil if none is installed.
-func GetManager() Manager { return globalManager }
-
-// SetManagerForTest installs m as the global manager and returns a restore
-// function. It bypasses InitManager's deploy-mode and idempotency guards and
-// must only be used in tests.
-func SetManagerForTest(m Manager) (restore func()) {
-	prev := globalManager
-	globalManager = m
-	return func() { globalManager = prev }
 }

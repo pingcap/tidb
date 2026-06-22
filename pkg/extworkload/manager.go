@@ -23,26 +23,21 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/extworkload/client"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-)
-
-// Worker type identifiers used in metric labels.
-const (
-	WorkerTypeGCV2        = "gcv2"
-	WorkerTypeTTL         = "ttl"
-	WorkerTypeAutoAnalyze = "auto-analyze"
+	"google.golang.org/grpc"
 )
 
 // defGCLifeTimeSec is the gc_life_time (seconds) seeded to the controller
 // at InitializeGCV2 time, before the local gc_life_time variable is loaded.
 const defGCLifeTimeSec = 600
 
-// dialTimeout bounds the synchronous dial + Ping during InitManager.
+// dialTimeout bounds the synchronous dial + Ping during manager creation.
 const dialTimeout = 30 * time.Second
+
+const requestTimeout = 30 * time.Second
 
 var _ Manager = (*manager)(nil)
 
@@ -52,28 +47,32 @@ type manager struct {
 	meta *keyspacepb.KeyspaceMeta
 }
 
-// InitManager installs the global Manager when Starter external workload is enabled.
-func InitManager(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg config.ExternalWorkload) error {
-	if !deploymode.IsStarter() || !cfg.Enable {
-		return nil
-	}
-	if globalManager != nil {
-		return nil
+type metricLabels struct {
+	workerType string
+	action     string
+}
+
+type metricLabelsKey struct{}
+
+// NewManager creates a Manager for an enabled external workload config.
+func NewManager(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg config.ExternalWorkload) (Manager, error) {
+	if !cfg.Enable {
+		return nil, nil
 	}
 	if keyspaceMeta == nil {
-		return errors.New("external workload controller requires a non-nil keyspace meta")
+		return nil, errors.New("external workload controller requires a non-nil keyspace meta")
 	}
 
 	cli, err := dialClient(ctx, keyspaceMeta, cfg)
 	if err != nil {
-		return errors.Annotate(err, "init external workload client")
+		return nil, errors.Annotate(err, "init external workload client")
 	}
-	globalManager = &manager{cli: cli, role: cfg.Role, meta: keyspaceMeta}
+	m := &manager{cli: cli, role: cfg.Role, meta: keyspaceMeta}
 	logutil.BgLogger().Info("external workload manager installed",
 		zap.String("role", string(cfg.Role)),
 		zap.String("keyspace", keyspaceMeta.GetName()),
 		zap.Uint32("keyspace-id", keyspaceMeta.GetId()))
-	return nil
+	return m, nil
 }
 
 func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg config.ExternalWorkload) (client.Client, error) {
@@ -93,8 +92,9 @@ func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg 
 		KeyspaceID:     keyspaceMeta.GetId(),
 		KeyspaceName:   keyspaceMeta.GetName(),
 		TiDBPool:       cfg.TidbPool,
-		ControllerAddr: cfg.APIServerAddr,
+		ControllerAddr: cfg.ControllerAddr,
 		TLSConfig:      tlsCfg,
+		Interceptors:   []grpc.UnaryClientInterceptor{metricsInterceptor()},
 	})
 	if err != nil {
 		return nil, err
@@ -109,62 +109,106 @@ func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg 
 	return cli, nil
 }
 
+func (m *manager) Close() error                      { return m.cli.Close() }
 func (m *manager) Role() config.ExternalWorkloadRole { return m.role }
 func (m *manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
 
-// bumpCounter increments the per-event counter exposed by pkg/metrics.
-func bumpCounter(workerType, action string) {
-	metrics.ExternalWorkloadTaskCounter.WithLabelValues(workerType, action).Inc()
+func metricsInterceptor() grpc.UnaryClientInterceptor {
+	return func(
+		ctx context.Context,
+		method string,
+		req any,
+		reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		if labels, ok := ctx.Value(metricLabelsKey{}).(metricLabels); ok && metrics.ExternalWorkloadTaskCounter != nil {
+			metrics.ExternalWorkloadTaskCounter.WithLabelValues(labels.workerType, labels.action).Inc()
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+func withMetric(ctx context.Context, workerType, action string) context.Context {
+	return context.WithValue(ctx, metricLabelsKey{}, metricLabels{workerType: workerType, action: action})
+}
+
+func withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, requestTimeout)
 }
 
 func (m *manager) InitializeGCV2(ctx context.Context) error {
-	bumpCounter(WorkerTypeGCV2, metrics.WorkerActionInit)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionInit)
 	return m.cli.RegisterGCV2(ctx, 0, defGCLifeTimeSec)
 }
 
 func (m *manager) AbortGCV2(ctx context.Context) error {
-	bumpCounter(WorkerTypeGCV2, metrics.WorkerActionAbort)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionAbort)
+	// MaxUint64 asks the controller to recycle all GCV2 tasks.
 	return m.cli.RecycleGCV2(ctx, math.MaxUint64)
 }
 
 func (m *manager) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error {
-	bumpCounter(WorkerTypeGCV2, metrics.WorkerActionRegister)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionRegister)
 	return m.cli.RegisterGCV2(ctx, safePoint, gcLifeTime)
 }
 
 func (m *manager) RecycleGCV2(ctx context.Context, safePoint uint64) error {
-	bumpCounter(WorkerTypeGCV2, metrics.WorkerActionRecycle)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionRecycle)
 	return m.cli.RecycleGCV2(ctx, safePoint)
 }
 
 func (m *manager) UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error {
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
 	return m.cli.UpdateGCLifeTime(ctx, gcLifeTime)
 }
 
 func (m *manager) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {
-	bumpCounter(WorkerTypeTTL, metrics.WorkerActionRegister)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleTTLTaskWorker), metrics.WorkerActionRegister)
 	return m.cli.RegisterTTLTask(ctx, tableID, ttlJobEnable)
 }
 
 func (m *manager) DeleteTTLTableInfo(ctx context.Context, tableID int64) error {
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
 	return m.cli.DeleteTTLTableInfo(ctx, tableID)
 }
 
 func (m *manager) RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error {
-	bumpCounter(WorkerTypeTTL, metrics.WorkerActionRecycle)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleTTLTaskWorker), metrics.WorkerActionRecycle)
 	return m.cli.RecycleTTLTask(ctx, completedJobCreateTime)
 }
 
 func (m *manager) UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error {
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
 	return m.cli.UpdateTTLJobEnable(ctx, ttlJobEnable)
 }
 
 func (m *manager) RegisterAutoAnalyze(ctx context.Context, taskID uint64) error {
-	bumpCounter(WorkerTypeAutoAnalyze, metrics.WorkerActionRegister)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleAutoAnalyzeWorker), metrics.WorkerActionRegister)
 	return m.cli.RegisterAutoAnalyze(ctx, taskID)
 }
 
 func (m *manager) RecycleAutoAnalyze(ctx context.Context, taskID uint64) error {
-	bumpCounter(WorkerTypeAutoAnalyze, metrics.WorkerActionRecycle)
+	ctx, cancel := withRequestTimeout(ctx)
+	defer cancel()
+	ctx = withMetric(ctx, string(config.RoleAutoAnalyzeWorker), metrics.WorkerActionRecycle)
 	return m.cli.RecycleAutoAnalyze(ctx, taskID)
 }

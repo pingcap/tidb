@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net/url"
+	"runtime"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -31,46 +32,46 @@ import (
 )
 
 // ErrControllerPaused is returned when the controller responds with
-// ErrorType_PAUSED to a request that addresses a paused handler. Callers
+// ErrorType_PAUSED to a temporarily paused worker. Callers
 // may match with errors.Is.
-var ErrControllerPaused = errors.New("external workload controller: handler paused")
+var ErrControllerPaused = errors.New("external workload controller: worker paused")
 
 // Option configures the gRPC client.
 type Option struct {
-	KeyspaceID     uint32
-	KeyspaceName   string
-	TiDBPool       string
+	KeyspaceID   uint32
+	KeyspaceName string
+	// TiDBPool names the serving pool, for example vip-tidb-pool or super-vip-tidb-pool.
+	TiDBPool string
+	// ControllerAddr is the external workload controller address.
 	ControllerAddr string
 	TLSConfig      *tls.Config
+	Interceptors   []grpc.UnaryClientInterceptor
 }
 
-// Client is the gRPC client to the external workload controller.
+// Client wraps the kvproto ExternalWorkloadController service.
 type Client interface {
 	Close() error
 	Ping(ctx context.Context) error
 
-	GCV2Client
-	TTLClient
-	AutoAnalyzeClient
+	gcv2Client
+	ttlClient
+	autoAnalyzeClient
 }
 
-// GCV2Client covers the keyspace-level GC RPCs.
-type GCV2Client interface {
+type gcv2Client interface {
 	RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error
 	RecycleGCV2(ctx context.Context, safePoint uint64) error
 	UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error
 }
 
-// TTLClient covers the TTL RPCs.
-type TTLClient interface {
+type ttlClient interface {
 	RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error
 	DeleteTTLTableInfo(ctx context.Context, tableID int64) error
 	RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error
 	UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error
 }
 
-// AutoAnalyzeClient covers the auto-analyze RPCs.
-type AutoAnalyzeClient interface {
+type autoAnalyzeClient interface {
 	RegisterAutoAnalyze(ctx context.Context, taskID uint64) error
 	RecycleAutoAnalyze(ctx context.Context, taskID uint64) error
 }
@@ -81,18 +82,21 @@ func New(opt *Option) (Client, error) {
 	if opt == nil {
 		return nil, errors.New("external workload client: nil option")
 	}
-	host, err := parseHost(opt.ControllerAddr)
+	host, err := normalizeAddr(opt.ControllerAddr)
 	if err != nil {
 		return nil, err
 	}
-	var dialOpt grpc.DialOption
+	dialOpts := make([]grpc.DialOption, 0, 2)
 	if opt.TLSConfig != nil {
-		dialOpt = grpc.WithTransportCredentials(credentials.NewTLS(opt.TLSConfig))
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(opt.TLSConfig)))
 	} else {
-		dialOpt = grpc.WithTransportCredentials(insecure.NewCredentials())
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	if len(opt.Interceptors) > 0 {
+		dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(opt.Interceptors...))
 	}
 
-	conn, err := grpc.NewClient(host, dialOpt)
+	conn, err := grpc.NewClient(host, dialOpts...)
 	if err != nil {
 		return nil, errors.Annotate(err, "create external workload controller client")
 	}
@@ -103,10 +107,13 @@ func New(opt *Option) (Client, error) {
 	}, nil
 }
 
-func parseHost(addr string) (string, error) {
+func normalizeAddr(addr string) (string, error) {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return "", errors.New("external workload client: empty controller address")
+	}
+	if !strings.Contains(addr, "://") {
+		return addr, nil
 	}
 	u, err := url.Parse(addr)
 	if err != nil {
@@ -115,8 +122,7 @@ func parseHost(addr string) (string, error) {
 	if u.Host != "" {
 		return u.Host, nil
 	}
-	// Accept bare host:port (no scheme).
-	return addr, nil
+	return "", errors.Errorf("external workload client: controller address %q has no host", addr)
 }
 
 type grpcClient struct {
@@ -137,7 +143,7 @@ func (c *grpcClient) header() *pb.RequestHeader {
 
 func (c *grpcClient) Ping(ctx context.Context) error {
 	resp, err := c.stub.Ping(ctx, &pb.PingRequest{})
-	return mapResponse("Ping", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error {
@@ -146,7 +152,7 @@ func (c *grpcClient) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeT
 		SafePoint:  safePoint,
 		GcLifeTime: gcLifeTime,
 	})
-	return mapResponse("RegisterGCV2", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) RecycleGCV2(ctx context.Context, safePoint uint64) error {
@@ -154,7 +160,7 @@ func (c *grpcClient) RecycleGCV2(ctx context.Context, safePoint uint64) error {
 		Header:    c.header(),
 		SafePoint: safePoint,
 	})
-	return mapResponse("RecycleGCV2", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error {
@@ -162,7 +168,7 @@ func (c *grpcClient) UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) err
 		Header:     c.header(),
 		GcLifeTime: gcLifeTime,
 	})
-	return mapResponse("UpdateGCLifeTime", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {
@@ -171,7 +177,7 @@ func (c *grpcClient) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobE
 		TableId:      tableID,
 		TtlJobEnable: ttlJobEnable,
 	})
-	return mapResponse("RegisterTTLTask", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) DeleteTTLTableInfo(ctx context.Context, tableID int64) error {
@@ -179,7 +185,7 @@ func (c *grpcClient) DeleteTTLTableInfo(ctx context.Context, tableID int64) erro
 		Header:  c.header(),
 		TableId: tableID,
 	})
-	return mapResponse("DeleteTTLTableInfo", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) RecycleTTLTask(ctx context.Context, completedJobCreateTime uint64) error {
@@ -187,7 +193,7 @@ func (c *grpcClient) RecycleTTLTask(ctx context.Context, completedJobCreateTime 
 		Header:                 c.header(),
 		CompletedJobCreateTime: completedJobCreateTime,
 	})
-	return mapResponse("RecycleTTLTask", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) error {
@@ -195,7 +201,7 @@ func (c *grpcClient) UpdateTTLJobEnable(ctx context.Context, ttlJobEnable bool) 
 		Header:       c.header(),
 		TtlJobEnable: ttlJobEnable,
 	})
-	return mapResponse("UpdateTTLJobEnable", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) RegisterAutoAnalyze(ctx context.Context, taskID uint64) error {
@@ -203,7 +209,7 @@ func (c *grpcClient) RegisterAutoAnalyze(ctx context.Context, taskID uint64) err
 		Header: c.header(),
 		TaskId: taskID,
 	})
-	return mapResponse("RegisterAutoAnalyze", resp, err)
+	return mapResponse(resp, err)
 }
 
 func (c *grpcClient) RecycleAutoAnalyze(ctx context.Context, taskID uint64) error {
@@ -211,19 +217,19 @@ func (c *grpcClient) RecycleAutoAnalyze(ctx context.Context, taskID uint64) erro
 		Header: c.header(),
 		TaskId: taskID,
 	})
-	return mapResponse("RecycleAutoAnalyze", resp, err)
+	return mapResponse(resp, err)
 }
 
 type respWithError interface {
 	GetError() *pb.Error
 }
 
-func mapResponse(method string, resp respWithError, err error) error {
+func mapResponse(resp respWithError, err error) error {
 	if err != nil {
-		return errors.Annotatef(err, "external workload rpc %s", method)
+		return errors.Annotatef(err, "external workload rpc %s", callerRPCName())
 	}
 	if resp == nil {
-		return errors.Errorf("external workload rpc %s: empty response", method)
+		return errors.Errorf("external workload rpc %s: empty response", callerRPCName())
 	}
 	e := resp.GetError()
 	if e == nil || e.GetType() == pb.ErrorType_OK {
@@ -232,5 +238,21 @@ func mapResponse(method string, resp respWithError, err error) error {
 	if e.GetType() == pb.ErrorType_PAUSED {
 		return ErrControllerPaused
 	}
-	return errors.Errorf("external workload rpc %s: %s", method, e.GetMessage())
+	return errors.Errorf("external workload rpc %s: %s", callerRPCName(), e.GetMessage())
+}
+
+func callerRPCName() string {
+	pc, _, _, ok := runtime.Caller(2)
+	if !ok {
+		return "unknown"
+	}
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		return "unknown"
+	}
+	name := fn.Name()
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
 }
