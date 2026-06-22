@@ -46,6 +46,7 @@ func TestShouldAutoPauseExistingKVDiskFullTask(t *testing.T) {
 	job.SetResumeReason(model.JobResumeReasonKVDiskFull)
 	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
 
+	job.ClearResumeReason()
 	task.State = proto.TaskStateRunning
 	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
 
