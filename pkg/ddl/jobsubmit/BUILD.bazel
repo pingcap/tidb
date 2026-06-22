@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "jobsubmit",
+    srcs = [
+        "submit.go",
+        "types.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/jobsubmit",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/bdr",
+        "//pkg/ddl/logutil",
+        "//pkg/ddl/serverstate",
+        "//pkg/ddl/session",
+        "//pkg/ddl/systable",
+        "//pkg/ddl/util",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/terror",
+        "//pkg/util/dbterror",
+        "//pkg/util/filter",
+        "//pkg/util/intest",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "jobsubmit_test",
+    timeout = "short",
+    srcs = ["submit_test.go"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        ":jobsubmit",
+        "//pkg/ddl/serverstate",
+        "//pkg/ddl/session",
+        "//pkg/ddl/systable",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+    ],
+)

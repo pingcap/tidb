@@ -112,8 +112,6 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
-	// FlagFromReplicationStorage is used for PITR from the replication external storage
-	FlagReplicationStatusSubPrefix = "replication-status-sub-prefix"
 	// FlagRestorePhase is used for the restore phase of PITR
 	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
@@ -121,6 +119,8 @@ const (
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRAddIndexSQLStorage is used for PITR to output add index SQLs instead of rebuilding indexes.
+	FlagPiTRAddIndexSQLStorage = "pitr-add-index-sql-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
@@ -291,6 +291,9 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	// PiTRAddIndexSQLStorage is the external storage used to output add index SQLs instead of rebuilding indexes.
+	PiTRAddIndexSQLStorage string `json:"pitr-add-index-sql-storage" toml:"pitr-add-index-sql-storage"`
+
 	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
 	// In this restore mode, the restore will not perform timestamp rewrite on the incremental data.
 	AllowPITRFromIncremental bool `json:"allow-pitr-from-incremental" toml:"allow-pitr-from-incremental"`
@@ -325,11 +328,9 @@ type RestoreConfig struct {
 	RestoreStartTS      uint64                      `json:"-" toml:"-"`
 	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
 
-	// for PITR from the replication external storage
-	ReplicationStatusSubPrefix string `json:"replication-status-sub-prefix" toml:"replication-status-sub-prefix"`
-	RestorePhase               uint64 `json:"restore-phase" toml:"restore-phase"`
-	FromReplicationStorage     bool   `json:"-" toml:"-"`
-	RestoreInPhase             bool   `json:"-" toml:"-"`
+	// for phased PITR restore
+	RestorePhase   uint64 `json:"restore-phase" toml:"restore-phase"`
+	RestoreInPhase bool   `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -394,7 +395,6 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagCheckpointStorage, "", "specify the external storage url where checkpoint data is saved, eg, s3://bucket/path/prefix")
-	flags.String(FlagReplicationStatusSubPrefix, "", "specify the sub prefix of the replication status")
 	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
@@ -420,6 +420,8 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().String(FlagPiTRAddIndexSQLStorage, "", "specify the external storage url where PITR add index SQLs are saved. "+
+		"When set, PITR drops incomplete indexes but does not rebuild them automatically; the SQLs are written to add-index.sql under this storage.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
@@ -446,6 +448,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PiTRAddIndexSQLStorage, err = flags.GetString(FlagPiTRAddIndexSQLStorage); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -565,10 +570,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
-	cfg.ReplicationStatusSubPrefix, err = flags.GetString(FlagReplicationStatusSubPrefix)
-	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStatusSubPrefix)
-	}
 	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
@@ -582,7 +583,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
 			FlagRestorePhase, flagUseCheckpoint)
 	}
-	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStatusSubPrefix) || len(cfg.ReplicationStatusSubPrefix) > 0
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -1598,7 +1598,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 		keyRange := rewriteKeyRanges(preAllocRange)
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
-			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+			ctx, mgr, importModeSwitcher, keyRange, !cfg.Online)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1615,7 +1615,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
 		log.Info("finish restoring pd scheduler")
 	}()
 
@@ -2801,7 +2801,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
+			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 			if err != nil {
 				return errors.Trace(err)
 			}

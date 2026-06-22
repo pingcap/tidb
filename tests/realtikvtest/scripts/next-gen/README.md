@@ -67,20 +67,24 @@ This script runs external starter-mode tests against a real `tidb-server`
 process. It first reuses `bootstrap-test-with-cluster.sh` to start PD, TiKV,
 TiKV-Worker, and MinIO. Then it starts `bin/tidb-server` with
 `deploy-mode = "starter"` and runs Go tests through the MySQL protocol and
-status HTTP APIs. By default, the script starts TiDB in standby mode, activates
-the configured keyspace through `/tidb-pool/activate`, and then runs the tests
-against the activated external server. For the default `startertest` run, the
-script also runs a final destructive phase that verifies graceful exit waits for
-held client connections before shutting down the external `tidb-server`.
+status HTTP APIs. The standard `startertest` Makefile target runs against a
+non-`SYSTEM` keyspace. For a non-`SYSTEM` target keyspace, the script first
+bootstraps the shared `SYSTEM` keyspace with a no-op starter server, then
+creates the target keyspace through the PD keyspace API. It then starts TiDB in
+standby mode, activates the configured keyspace through `/tidb-pool/activate`,
+and runs the tests against the activated external server. For the default
+`startertest` run, the script also runs a final destructive phase that verifies
+graceful exit waits for held client connections before shutting down the
+external `tidb-server`.
 
 This script is an independent direct entry point and is not part of generic
 `run-tests.sh` suite discovery. For the standard next-gen RealTiKV CI flow, use
-the `bazel_startertest` Makefile wrapper through `run-tests.sh`; that wrapper
+the `startertest` Makefile target through `run-tests.sh`; that target
 intentionally calls this shell runner because starter coverage needs an external
 `tidb-server` process:
 
 ```bash
-tests/realtikvtest/scripts/next-gen/run-tests.sh bazel_startertest
+tests/realtikvtest/scripts/next-gen/run-tests.sh startertest
 ```
 
 When `TIDB_SERVER_BIN` is not set, the script builds `bin/tidb-server` from the
@@ -118,6 +122,13 @@ Useful environment variables:
   external server (default: `localhost:19000`)
 - `STARTER_KEYSPACE_NAME`: Starter keyspace activated by the script
   (default: `SYSTEM`)
+- `STARTER_PREPARE_KEYSPACE`: Whether to bootstrap the shared `SYSTEM` keyspace
+  and create a non-`SYSTEM` `STARTER_KEYSPACE_NAME` before starting the tested
+  starter server (default: `1`)
+- `STARTER_KEYSPACE_CREATE_BODY`: Optional custom request body for creating
+  a non-`SYSTEM` `STARTER_KEYSPACE_NAME` through the PD keyspace API
+- `STARTER_SYSTEM_BOOTSTRAP_TIMEOUT`: Timeout for the no-op `SYSTEM` bootstrap
+  phase before creating a non-`SYSTEM` keyspace (default: `2m`)
 - `STARTER_STANDBY_MODE`: Whether to start in standby mode and activate before
   running tests (default: `1`; set to `0` to start directly with
   `-keyspace-name`)
@@ -135,8 +146,8 @@ Useful environment variables:
   `tidb-server` (default: `120`)
 - `STARTER_RUN_EXIT_WAIT_TEST`: Whether to run the final destructive
   graceful-exit wait test. By default it runs only for `startertest` when no
-  extra `go test` arguments are passed. The `bazel_startertest` Makefile wrapper
-  sets this to `1` explicitly because it passes `-count=1`.
+  extra `go test` arguments are passed. The `startertest` Makefile target sets
+  this to `1` explicitly because it passes `-count=1`.
 - `STARTER_EXIT_WAIT_TEST_TIMEOUT`: Timeout for the final destructive
   graceful-exit wait test (default: `2m`)
 - `STARTER_TIDB_PORT` / `STARTER_TIDB_STATUS_PORT`: Preferred starting ports
