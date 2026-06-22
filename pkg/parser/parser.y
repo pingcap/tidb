@@ -58,6 +58,7 @@ import (
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
+	fullJoinType         "FULL OUTER JOIN"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -317,6 +318,7 @@ import (
 	after                 "AFTER"
 	against               "AGAINST"
 	ago                   "AGO"
+	alert                 "ALERT"
 	algorithm             "ALGORITHM"
 	always                "ALWAYS"
 	any                   "ANY"
@@ -372,6 +374,7 @@ import (
 	commit                "COMMIT"
 	committed             "COMMITTED"
 	compact               "COMPACT"
+	compare               "COMPARE"
 	complete              "COMPLETE"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
@@ -401,6 +404,7 @@ import (
 	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	delta                 "DELTA"
 	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
@@ -533,7 +537,9 @@ import (
 	only                  "ONLY"
 	onDuplicate           "ON_DUPLICATE"
 	open                  "OPEN"
+	operate               "OPERATE"
 	optional              "OPTIONAL"
+	output                "OUTPUT"
 	packKeys              "PACK_KEYS"
 	pageSym               "PAGE"
 	parser                "PARSER"
@@ -985,8 +991,10 @@ import (
 	BinlogStmt                    "Binlog base64 statement"
 	BRIEStmt                      "BACKUP or RESTORE statement"
 	CalibrateResourceStmt         "CALIBRATE RESOURCE statement"
+	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW ... JOB statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                    "COMMIT statement"
+	CompareMaterializedViewStmt   "COMPARE MATERIALIZED VIEW statement"
 	CreateTableStmt               "CREATE TABLE statement"
 	CreateViewStmt                "CREATE VIEW  statement"
 	CreateMaterializedViewStmt    "CREATE MATERIALIZED VIEW statement"
@@ -1437,15 +1445,18 @@ import (
 	MLogCreateOption                       "materialized view log create option"
 	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
+	AlterMLogPurgeClause                   "ALTER materialized view log PURGE clause"
+	MLogAccumulationAlertClauseOpt         "materialized view log optional ALERT ROWS clause"
+	MLogAccumulationAlertClause            "materialized view log ALERT ROWS clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
-	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
-	RefreshOutOfPlaceOpt                   "REFRESH MATERIALIZED VIEW OUT OF PLACE option"
+	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
+	CompareMaterializedViewOutputOpt       "COMPARE MATERIALIZED VIEW OUTPUT INTO TABLE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -1699,7 +1710,7 @@ import (
 %right '('
 %left ')'
 %precedence higherThanParenthese
-%left join straightJoin inner cross left right full natural
+%left join straightJoin inner cross left right full fullJoinType natural
 %precedence lowerThanOn
 %precedence on using
 %right assignmentEq
@@ -5396,14 +5407,15 @@ MViewStartWithOrNext:
 	}
 
 CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
 	{
 		opts := $10.(*mlogCreateOptions)
 		x := &ast.CreateMaterializedViewLogStmt{
-			Table:   $6.(*ast.TableName),
-			Cols:    $8.([]model.CIStr),
-			Options: opts.options,
-			Purge:   $11.(*ast.MLogPurgeClause),
+			Table:             $6.(*ast.TableName),
+			Cols:              $8.([]model.CIStr),
+			Options:           opts.options,
+			Purge:             $11.(*ast.MLogPurgeClause),
+			AccumulationAlert: $12.(*ast.MLogAccumulationAlertClause),
 		}
 		$$ = x
 	}
@@ -5489,6 +5501,22 @@ MLogPurgeClause:
 		$$ = &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: $4}
 	}
 
+MLogAccumulationAlertClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MLogAccumulationAlertClause)(nil)
+	}
+|	MLogAccumulationAlertClause
+	{
+		$$ = $1
+	}
+
+MLogAccumulationAlertClause:
+	"ALERT" "ROWS" SignedNum
+	{
+		$$ = &ast.MLogAccumulationAlertClause{Rows: $3.(int64)}
+	}
+
 MLogStartWithOpt:
 	/* EMPTY */
 	{
@@ -5560,9 +5588,23 @@ AlterMaterializedViewLogActionList:
 	}
 
 AlterMaterializedViewLogAction:
-	MLogPurgeClause
+	AlterMLogPurgeClause
 	{
 		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: $1.(*ast.MLogPurgeClause)}
+	}
+|	"ADD" ColumnKeywordOpt '(' ColumnList ')'
+	{
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionAddColumn, Cols: $4.([]model.CIStr)}
+	}
+
+AlterMLogPurgeClause:
+	MLogPurgeClause
+	{
+		$$ = $1
+	}
+|	"PURGE"
+	{
+		$$ = &ast.MLogPurgeClause{}
 	}
 
 DropMaterializedViewStmt:
@@ -5583,27 +5625,70 @@ PurgeMaterializedViewLogStmt:
 		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
 	}
 
-RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt RefreshMaterializedViewType RefreshOutOfPlaceOpt RefreshMaterializedViewObserveOpt
+CancelMaterializedViewJobStmt:
+	"CANCEL" "MATERIALIZED" "VIEW" "REFRESH" "JOB" Int64Num
 	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeRefresh,
+			JobID: $6.(int64),
+		}
+	}
+|	"CANCEL" "MATERIALIZED" "VIEW" "LOG" "PURGE" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
+			JobID: $7.(int64),
+		}
+	}
+
+CompareMaterializedViewStmt:
+	"COMPARE" "MATERIALIZED" "VIEW" TableName AsOfClause CompareMaterializedViewOutputOpt
+	{
+		$$ = &ast.CompareMaterializedViewStmt{
+			ViewName:    $4.(*ast.TableName),
+			AsOf:        $5.(*ast.AsOfClause),
+			OutputTable: $6.(*ast.TableName),
+		}
+	}
+
+CompareMaterializedViewOutputOpt:
+	%prec empty
+	{
+		$$ = (*ast.TableName)(nil)
+	}
+|	"OUTPUT" "INTO" "TABLE" TableName
+	{
+		$$ = $4.(*ast.TableName)
+	}
+
+RefreshMaterializedViewStmt:
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
+	{
+		completeType := $7.(ast.RefreshMaterializedViewCompleteType)
 		observeType := $8.(ast.RefreshMaterializedViewObserveType)
 		$$ = &ast.RefreshMaterializedViewStmt{
 			ViewName:      $4.(*ast.TableName),
 			WithAsyncMode: $5.(bool),
-			Type:          $6.(ast.RefreshMaterializedViewType),
-			OutOfPlace:    $7.(bool),
+			Type:          ast.RefreshMaterializedViewTypeComplete,
+			CompleteType:  completeType,
 			ObserveType:   observeType,
 		}
 	}
-
-RefreshMaterializedViewType:
-	"COMPLETE"
+|	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "FAST" AsOfClauseOpt RefreshMaterializedViewObserveOpt
 	{
-		$$ = ast.RefreshMaterializedViewTypeComplete
-	}
-|	"FAST"
-	{
-		$$ = ast.RefreshMaterializedViewTypeFast
+		var asOf *ast.AsOfClause
+		if $7 != nil {
+			asOf = $7.(*ast.AsOfClause)
+		}
+		observeType := $8.(ast.RefreshMaterializedViewObserveType)
+		$$ = &ast.RefreshMaterializedViewStmt{
+			ViewName:      $4.(*ast.TableName),
+			WithAsyncMode: $5.(bool),
+			Type:          ast.RefreshMaterializedViewTypeFast,
+			CompleteType:  ast.RefreshMaterializedViewCompleteTypeInPlace,
+			AsOf:          asOf,
+			ObserveType:   observeType,
+		}
 	}
 
 RefreshMaterializedViewObserveOpt:
@@ -5630,14 +5715,18 @@ RefreshWithAsyncModeOpt:
 		$$ = true
 	}
 
-RefreshOutOfPlaceOpt:
-	/* EMPTY */
+RefreshCompleteMode:
+	"IN" "PLACE"
 	{
-		$$ = false
+		$$ = ast.RefreshMaterializedViewCompleteTypeInPlace
 	}
 |	"OUT" "OF" "PLACE"
 	{
-		$$ = true
+		$$ = ast.RefreshMaterializedViewCompleteTypeOutOfPlace
+	}
+|	"DELTA" "APPLY"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeDeltaApply
 	}
 
 /******************************************************************
@@ -7211,6 +7300,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
+|	"DELTA"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
@@ -7241,6 +7331,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPARE"
 |	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
@@ -7286,6 +7377,8 @@ UnReservedKeyword:
 |	"NAMES"
 |	"NVARCHAR"
 |	"OFFSET"
+|	"OPERATE"
+|	"OUTPUT"
 |	"PACK_KEYS"
 |	"PARSER"
 |	"PASSWORD" %prec lowerThanEq
@@ -7527,6 +7620,7 @@ UnReservedKeyword:
 |	"LASTVAL"
 |	"SETVAL"
 |	"AGO"
+|	"ALERT"
 |	"BACKUP"
 |	"BACKUPS"
 |	"CONCURRENCY"
@@ -10568,6 +10662,10 @@ JoinType:
 	{
 		$$ = ast.RightJoin
 	}
+|	fullJoinType
+	{
+		$$ = ast.FullJoin
+	}
 
 OuterOpt:
 	{}
@@ -12027,6 +12125,28 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "MATERIALIZED" "VIEW" TableName identifier
+	{
+		if !strings.EqualFold($5, "remain_logs") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected REMAIN_LOGS"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewRemainLogs,
+			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName identifier
+	{
+		if !strings.EqualFold($7, "wait_purge") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected WAIT_PURGE"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewLogWaitPurge,
+			Table: $6.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "TABLE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -12801,7 +12921,9 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelMaterializedViewJobStmt
 |	CancelDistributionJobStmt
+|	CompareMaterializedViewStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
@@ -15197,6 +15319,10 @@ PrivType:
 |	"SHOW" "VIEW"
 	{
 		$$ = mysql.ShowViewPriv
+	}
+|	"OPERATE" "VIEW"
+	{
+		$$ = mysql.OperateViewPriv
 	}
 |	"CREATE" "ROLE"
 	{

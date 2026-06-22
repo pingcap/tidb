@@ -273,7 +273,7 @@ func TestCaseInsensitive(t *testing.T) {
 	tk.MustExec("CREATE DATABASE TCTrain;")
 	tk.MustExec("CREATE TABLE TCTrain.TCTrainOrder (id int);")
 	tk.MustExec("TRUNCATE TABLE mysql.user")
-	tk.MustExec(`INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
+	tk.MustExec(`INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
 	var p privileges.MySQLPrivilege
 	se := tk.Session()
 	require.NoError(t, p.LoadDBTable(se.GetRestrictedSQLExecutor()))

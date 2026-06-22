@@ -285,7 +285,11 @@ func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 		Location:          &model.TimeZoneLocation{Name: "UTC"},
 		ResourceGroupName: "default",
 	}
-	restore, err := initCreateMaterializedViewBuildSession(sctx, reorgMeta, sctx.GetSessionVars().CurrentDB)
+	job := &model.Job{
+		ReorgMeta:   reorgMeta,
+		SessionVars: make(map[string]string),
+	}
+	restore, err := initCreateMaterializedViewBuildSession(sctx, job, sctx.GetSessionVars().CurrentDB)
 	require.NoError(t, err)
 	require.True(t, sctx.GetSessionVars().InMaterializedViewMaintenance)
 

@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1533,4 +1535,32 @@ func TestExplainExpand(t *testing.T) {
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
 	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
+}
+
+func TestDisableReuseChunk(t *testing.T) {
+	originMemTotal := memory.MemTotal
+	defer func() {
+		memory.MemTotal = originMemTotal
+	}()
+	memory.MemTotal = func() (uint64, error) {
+		return 256 * size.GB, nil
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
+	defer func() {
+		core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+	}()
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+	tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+	core.MaxMemoryLimitForOverlongType = 0
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+	core.MaxMemoryLimitForOverlongType = 500 * size.GB
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
 }

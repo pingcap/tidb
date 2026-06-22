@@ -1,0 +1,77 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/stretchr/testify/require"
+)
+
+func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a as k, count(1) from t group by k")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "a")
+	require.NoError(t, err)
+	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, []int{0}, usage.directOutputOffsets)
+	require.True(t, usage.isGroupKey)
+}
+
+func TestAnalyzeMVColumnUsageWhereReferenceUnsupported(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a, count(1) from t where b > 0 group by a")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "b")
+	require.NoError(t, err)
+	require.Equal(t, "WHERE clause", usage.unsupportedReason)
+	require.Empty(t, usage.directOutputOffsets)
+	require.False(t, usage.isGroupKey)
+}
+
+func TestFieldTypeForMVRelatedColumnClearsBaseOnlyFlags(t *testing.T) {
+	oldRelatedFT := parser_types.NewFieldType(mysql.TypeLong)
+	oldRelatedFT.AddFlag(mysql.UniqueKeyFlag)
+	oldRelatedCol := &model.ColumnInfo{FieldType: *oldRelatedFT}
+
+	baseNewFT := parser_types.NewFieldType(mysql.TypeLonglong)
+	baseNewFT.AddFlag(mysql.NotNullFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag |
+		mysql.PreventNullInsertFlag | mysql.GeneratedColumnFlag | mysql.PriKeyFlag)
+	baseNewCol := &model.ColumnInfo{FieldType: *baseNewFT}
+
+	newFieldType := fieldTypeForMVRelatedColumn(oldRelatedCol, baseNewCol)
+	require.True(t, mysql.HasNotNullFlag(newFieldType.GetFlag()))
+	require.True(t, mysql.HasUniKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPriKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasAutoIncrementFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasOnUpdateNowFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPreventNullInsertFlag(newFieldType.GetFlag()))
+	require.Zero(t, newFieldType.GetFlag()&mysql.GeneratedColumnFlag)
+}
+
+func TestAnalyzeMVColumnUsageGroupByOrdinal(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a, count(1) from t group by 1")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "a")
+	require.NoError(t, err)
+	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, []int{0}, usage.directOutputOffsets)
+	require.True(t, usage.isGroupKey)
+}
