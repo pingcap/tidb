@@ -638,14 +638,14 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 func splitTiFlashLogicalCoreCache(serversInfo []infoschema.ServerInfo) (serversNeedingRefresh []infoschema.ServerInfo, minLogicalCores uint64) {
 	minLogicalCores = initialMaxCores
 	for _, info := range serversInfo {
-		mppInfo := copr.GlobalMPPServerInfoManager.Get(info.Address)
+		mppServerInfo := copr.GlobalMPPServerInfoManager.Get(info.Address)
 		// TiFlash may restart with a different CPU configuration while keeping the same
 		// address, so refresh the cached logical core count when StartTimestamp changes.
-		if mppInfo == nil || mppInfo.StartTimestamp != info.StartTimestamp {
+		if mppServerInfo == nil || mppServerInfo.StartTimestamp != info.StartTimestamp {
 			serversNeedingRefresh = append(serversNeedingRefresh, info)
 			continue
 		}
-		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCPUCount)
+		minLogicalCores = min(minLogicalCores, mppServerInfo.LogicalCPUCount)
 	}
 	return
 }
