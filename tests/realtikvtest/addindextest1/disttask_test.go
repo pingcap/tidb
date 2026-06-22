@@ -171,7 +171,7 @@ func TestAddIndexDistAutoPauseOnKVDiskFull(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task=0;")
 	})
-	failpointName := "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"
+	failpointName := "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace"
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.State == model.JobStatePausing && job.HasPauseReason(model.JobPauseReasonKVDiskFull) {
 			time.Sleep(300 * time.Millisecond)
