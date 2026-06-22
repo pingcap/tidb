@@ -2448,3 +2448,26 @@ func TestPurgeMaterializedViewLogInternalSQLNoScheduleSetsNextTimeNull(t *testin
 		mlogID,
 	)).Check(testkit.Rows("auto"))
 }
+
+func TestCreateMaterializedViewLogAllowsGeneratedColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t_gen (" +
+		"id BIGINT NOT NULL PRIMARY KEY," +
+		"base BIGINT NOT NULL," +
+		"gv BIGINT AS (base + 1) VIRTUAL," +
+		"gs BIGINT AS (base + 2) STORED" +
+		")")
+	tk.MustExec("CREATE MATERIALIZED VIEW LOG ON t_gen (id, gv, gs)")
+
+	tk.MustQuery("select column_name from information_schema.columns where table_schema='test' and table_name='$mlog$t_gen' order by ordinal_position").
+		Check(testkit.Rows("id", "gv", "gs", "_MLOG$_DML_TYPE", "_MLOG$_OLD_NEW"))
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_gen"))
+	require.NoError(t, err)
+	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+	require.Equal(t, []pmodel.CIStr{pmodel.NewCIStr("id"), pmodel.NewCIStr("gv"), pmodel.NewCIStr("gs")}, mlogTable.Meta().MaterializedViewLog.Columns)
+}
