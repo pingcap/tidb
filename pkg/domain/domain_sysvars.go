@@ -44,6 +44,8 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 	setMVServiceTaskMaxConcurrencyFunc := do.setMVServiceTaskMaxConcurrency
 	variable.SetMVServiceTaskMaxConcurrency.Store(&setMVServiceTaskMaxConcurrencyFunc)
+	setMVServiceRefreshTaskConcurrencyRatioFunc := do.setMVServiceRefreshTaskConcurrencyRatio
+	variable.SetMVServiceRefreshTaskConcurrencyRatio.Store(&setMVServiceRefreshTaskConcurrencyRatioFunc)
 	setMVServiceTaskThresholdCPUFunc := do.setMVServiceTaskThresholdCPU
 	variable.SetMVServiceTaskThresholdCPU.Store(&setMVServiceTaskThresholdCPUFunc)
 	setMVServiceTaskThresholdMemoryFunc := do.setMVServiceTaskThresholdMemory
@@ -132,6 +134,13 @@ func (do *Domain) setMVServiceTaskMaxConcurrency(maxConcurrency int) {
 		return
 	}
 	do.mvService.SetTaskMaxConcurrency(maxConcurrency)
+}
+
+func (do *Domain) setMVServiceRefreshTaskConcurrencyRatio(ratio float64) {
+	if do.GetMVService() == nil {
+		return
+	}
+	do.mvService.SetRefreshTaskConcurrencyRatio(ratio)
 }
 
 func (do *Domain) setMVServiceTaskThresholdCPU(threshold float64) {

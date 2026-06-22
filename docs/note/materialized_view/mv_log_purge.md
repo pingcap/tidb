@@ -6,6 +6,15 @@ This document describes the current implementation and behavior of:
 PURGE MATERIALIZED VIEW LOG ON <base_table>
 ```
 
+and the MLog-side alert clause on `CREATE MATERIALIZED VIEW LOG`:
+
+```sql
+CREATE MATERIALIZED VIEW LOG ON <base_table>
+  (...)
+  [PURGE {IMMEDIATE | [START WITH expr] NEXT expr}]
+  [ALERT ROWS n]
+```
+
 It also records the design rationale and follow-up items for the refined MV/MLog system-table schema.
 
 ## Current status
@@ -217,6 +226,35 @@ Related dependency from `CREATE MATERIALIZED VIEW` side:
 
 - purge computes `safe_purge_tso` from `mysql.tidb_mview_refresh_info` of dependent MVs;
 - `CREATE MATERIALIZED VIEW` creates/upserts those refresh-info rows and also initializes their `NEXT_TIME` with the same create-time schedule rule style (create-time `START WITH`/`NEXT` derivation).
+
+## MLog accumulation alert threshold (`ALERT ROWS`)
+
+`CREATE MATERIALIZED VIEW LOG` can optionally persist an MLog accumulation alert threshold:
+
+```sql
+CREATE MATERIALIZED VIEW LOG ON t (c1, c2) ALERT ROWS 100000;
+```
+
+Semantics:
+
+1. `ALERT ROWS n` means: when the current MLog row count is strictly greater than `n`, the MLog is considered accumulated for monitoring.
+2. If the clause is omitted, alerting is disabled by default.
+3. If user explicitly sets `ALERT ROWS 0`, alerting is also disabled for this MLog.
+4. If user explicitly sets a negative value, `CREATE MATERIALIZED VIEW LOG` returns an error.
+
+Persistence / restore:
+
+- the original clause is stored in `TableInfo.MaterializedViewLog.LogAccumulationAlertRows`;
+- omitted clause is persisted as `NULL`/absent metadata and restored without `ALERT ROWS`;
+- explicit `0` is persisted and preserved by `SHOW CREATE TABLE`.
+
+Runtime observability:
+
+- MVService periodically scans every MLog tracked by `mysql.tidb_mlog_purge_info`;
+- for each MLog with alerting enabled, it checks the current physical MLog row count;
+- if the count is greater than the effective threshold, the MLog is reported into metric `tidb_mv_service_task_status{type="mvlog_accumulation"}`.
+
+This metric reports the number of MLogs currently exceeding their configured accumulation threshold, after TiDB-node ownership filtering, so the same MLog is not double-counted by multiple nodes.
 
 ## Error handling notes
 

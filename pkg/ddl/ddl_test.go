@@ -132,6 +132,16 @@ func TestGetJobCheckIntervalForCreateMaterializedViewShadow(t *testing.T) {
 	require.False(t, changed)
 }
 
+func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrDatabaseNotExists.GenWithStackByArgs("test")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("invalid job")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrWrongObject.GenWithStackByArgs("test", "t", "BASE TABLE")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", model.StateDeleteOnly)))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")))
+	require.False(t, isCreateMaterializedViewBaseCheckCancelledErr(fmt.Errorf("retry later")))
+}
+
 func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 	compactSQL := func(sql string) string {
 		return strings.Join(strings.Fields(sql), " ")
@@ -725,6 +735,18 @@ func TestBuildCreateMaterializedViewImportSQLDiskQuota(t *testing.T) {
 	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "100gib")
 	require.NoError(t, err)
 	require.Contains(t, sql, "WITH disable_precheck, disk_quota='100gib'")
+}
+
+func TestBuildCreateMaterializedViewImportSQLThreadAndDiskQuota(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, thread=12, disk_quota='64gib'")
 }
 
 func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {

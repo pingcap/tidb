@@ -123,10 +123,12 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_objective":                              {},
 	"mpp_exchange_compression_mode":                   {},
 	"tidb_allow_fallback_to_tikv":                     {},
+	"tidb_enable_full_outer_join":                     {},
 	"tiflash_fastscan":                                {},
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
 	"tidb_hash_join_version":                          {},
+	"tidb_enable_cache_prepare_stmt":                  {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},

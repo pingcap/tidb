@@ -21,8 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMultiValuedIndexOnlineDDL(t *testing.T) {
@@ -71,4 +74,108 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	tk.MustExec("insert into t values (1, '[1,2,3]');")
 	tk.MustExec("insert into t values (2, '[2,3]');")
 	tk.MustGetErrCode("alter table t add unique index idx((cast(a as signed array)));", errno.ErrDupEntry)
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	mlogName := model.MaterializedViewLogTableName(pmodel.NewCIStr(baseName)).O
+	expectedMLogName := model.MaterializedViewLogTableNamePrefix +
+		strings.Repeat("t", mysql.MaxTableNameLength-len([]rune(model.MaterializedViewLogTableNamePrefix)))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName)))
+	require.Equal(t, expectedMLogName, mlogName)
+
+	tk.MustExec(fmt.Sprintf("drop table if exists `%s`", baseName))
+	tk.MustExec(fmt.Sprintf("drop table if exists `%s`", mlogName))
+	tk.MustExec(fmt.Sprintf("create table `%s` (id int primary key)", baseName))
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (id)", baseName))
+
+	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema = database() and table_name = '%s'", mlogName)).
+		Check(testkit.Rows(mlogName))
+
+	tk.MustExec(fmt.Sprintf("insert into `%s` values (1)", baseName))
+	tk.MustQuery(fmt.Sprintf("select id, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `%s`", mlogName)).
+		Check(testkit.Rows("1 I 1"))
+
+	tk.MustExec(fmt.Sprintf("drop materialized view log on `%s`", baseName))
+	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema = database() and table_name = '%s'", mlogName)).
+		Check(testkit.Rows())
+}
+
+func TestCreateMaterializedViewOnPartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_part_range, `$mlog$t_part_range`, mv_part_range")
+	tk.MustExec(`create table t_part_range (
+		id bigint not null primary key,
+		g1 int not null,
+		v1 bigint not null
+	) partition by range (id) (
+		partition p0 values less than (100),
+		partition p1 values less than (maxvalue)
+	)`)
+
+	tk.MustGetErrMsg(
+		"create materialized view log on t_part_range (id, g1, v1)",
+		"[ddl:8200]Unsupported CREATE MATERIALIZED VIEW LOG on partition table",
+	)
+	tk.MustQuery("show tables like '$mlog$t_part_range'").Check(testkit.Rows())
+	tk.MustGetErrMsg(
+		"create materialized view mv_part_range (g1, cnt) as select g1, count(*) as cnt from t_part_range group by g1",
+		"[ddl:8200]Unsupported CREATE MATERIALIZED VIEW on partition table",
+	)
+}
+
+func TestCreateUniqueIndexOnMaterializedView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t_mv_unique (
+		id bigint not null primary key,
+		g1 int not null,
+		v1 bigint not null,
+		key idx_g1 (g1)
+	)`)
+	tk.MustExec("insert into t_mv_unique values (1, 1, 10), (2, 1, 20)")
+	tk.MustExec("create materialized view log on t_mv_unique (id, g1, v1)")
+	tk.MustExec(`create materialized view mv_unique_agg (g1, cnt)
+		refresh fast
+		as select g1, count(*) as cnt from t_mv_unique group by g1`)
+
+	tk.MustGetErrMsg(
+		"create unique index u_g1 on mv_unique_agg (g1)",
+		"[ddl:8200]Unsupported CREATE UNIQUE INDEX on materialized view table",
+	)
+	tk.MustGetErrMsg(
+		"alter table mv_unique_agg add unique key uk_g1 (g1)",
+		"[ddl:8200]Unsupported ALTER TABLE ADD UNIQUE INDEX on materialized view table",
+	)
+	tk.MustGetErrMsg(
+		"alter table mv_unique_agg add primary key (g1) nonclustered",
+		"[ddl:8200]Unsupported ALTER TABLE ADD PRIMARY KEY on materialized view table",
+	)
+	tk.MustExec("create index idx_mv_g1 on mv_unique_agg (g1)")
+	tk.MustExec("alter table mv_unique_agg add key idx_mv_cnt (cnt)")
+
+	tk.MustExec(`create table t_mv_nullable_key (
+		id bigint not null primary key,
+		g1 int,
+		v1 bigint not null,
+		key idx_g1 (g1)
+	)`)
+	tk.MustExec("insert into t_mv_nullable_key values (1, null, 10)")
+	tk.MustExec("create materialized view log on t_mv_nullable_key (id, g1, v1)")
+	tk.MustExec(`create materialized view mv_nullable_key_agg (g1, cnt)
+		refresh fast
+		as select g1, count(*) as cnt from t_mv_nullable_key group by g1`)
+	tk.MustGetErrMsg(
+		"alter table mv_nullable_key_agg add primary key (cnt) nonclustered",
+		"[ddl:8200]Unsupported ALTER TABLE ADD PRIMARY KEY on materialized view table",
+	)
 }

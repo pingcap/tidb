@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -571,7 +573,7 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 		return stmt.(*ast.CreateMaterializedViewLogStmt)
 	}
 
-	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next now()"))
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
 
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
@@ -612,4 +614,24 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
 	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	execCreate(t, tracker, fmt.Sprintf("create table test.`%s` (a int)", baseName))
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(fmt.Sprintf("create materialized view log on test.`%s` (a)", baseName), "", "")
+	require.NoError(t, err)
+
+	err = tracker.CreateMaterializedViewLog(sctx, stmt.(*ast.CreateMaterializedViewLogStmt))
+	require.NoError(t, err)
+
+	mlogName := model.MaterializedViewLogTableName(pmodel.NewCIStr(baseName))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName.O)))
+	mlogInfo := mustTableByName(t, tracker, "test", mlogName.O)
+	require.NotNil(t, mlogInfo.MaterializedViewLog)
 }

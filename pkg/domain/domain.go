@@ -1784,9 +1784,23 @@ func (do *Domain) StartMVService() error {
 	if do.GetMVService() == nil {
 		return errors.New("failed to register MV service")
 	}
-	do.wg.Run(do.mvService.Run, "mvService")
-	do.wg.Run(do.notifyMVSMetadataChange, "mvServiceNotify")
-	do.wg.Run(do.watchMVSMetaChange, "watchMVSMetaChange")
+	runMVServiceLoopWithRecover := func(loopName string, loop func()) {
+		do.wg.RunWithRecover(loop, func(r any) {
+			if r == nil {
+				return
+			}
+			logutil.BgLogger().Error("panic in MVService domain loop",
+				zap.String("loop", loopName),
+				zap.Any("panic", r),
+				zap.Stack("stack"),
+			)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+			metrics.MVServicePanicGauge.Inc()
+		}, loopName)
+	}
+	runMVServiceLoopWithRecover("mvService", do.mvService.Run)
+	runMVServiceLoopWithRecover("mvServiceNotify", do.notifyMVSMetadataChange)
+	runMVServiceLoopWithRecover("watchMVSMetaChange", do.watchMVSMetaChange)
 	return nil
 }
 
@@ -1799,13 +1813,9 @@ func (do *Domain) watchMVSMetaChange() {
 	if do.etcdClient == nil {
 		return
 	}
-	watchCh := do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
-	defer func() {
-		logutil.BgLogger().Info("watchMVSMetaChange exited.")
-	}()
-	defer util.Recover(metrics.LabelDomain, "watchMVSMetaChange", nil, false)
 
-	var count int
+	watchCh := do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+	count := 0
 	for {
 		ok := true
 		select {

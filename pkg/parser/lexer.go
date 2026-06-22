@@ -226,8 +226,10 @@ func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 // 0 and invalid are special token id this function would return:
 // return 0 tells parser that scanner meets EOF,
 // return invalid tells parser that scanner meets illegal character.
-func (s *Scanner) Lex(v *yySymType) int {
-	tok, pos, lit := s.scan()
+func (s *Scanner) Lex(v *yySymType) (tok int) {
+	var pos Pos
+	var lit string
+	tok, pos, lit = s.scan()
 	s.lastScanOffset = pos.Offset
 	s.lastKeyword3 = s.lastKeyword2
 	s.lastKeyword2 = s.lastKeyword
@@ -243,6 +245,23 @@ func (s *Scanner) Lex(v *yySymType) int {
 			s.lastKeyword = tok1
 		}
 	}
+
+	// `FULL OUTER JOIN` needs special handling because `FULL` is an unreserved keyword,
+	// and it can also be used as a table alias / identifier (e.g. `t AS full` or `FROM full`).
+	// If we rely on grammar only, `t1 full outer join t2` would be reduced as `t1 AS full`
+	// first, and then fail to parse at `OUTER`. To avoid the ambiguity, the lexer returns
+	// a dedicated token `fullJoinType` when `FULL` is followed by `OUTER JOIN`.
+	//
+	// Note: we intentionally do NOT treat `FULL JOIN` as a shorthand for `FULL OUTER JOIN`,
+	// so `t1 full join t2` will keep the MySQL-compatible meaning: `t1 AS full JOIN t2`.
+	if tok == full {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == outer && tok2 == join {
+			tok = fullJoinType
+			s.lastKeyword = fullJoinType
+		}
+	}
+
 	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
