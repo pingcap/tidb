@@ -3708,7 +3708,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAlterSyncMaxLagSeconds, Value: strconv.Itoa(DefTiDBAlterSyncMaxLagSeconds), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32},
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,

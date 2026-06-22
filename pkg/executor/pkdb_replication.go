@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -153,78 +152,6 @@ type AlterLogReplicationExec struct {
 func (e *AlterLogReplicationExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
-
-	// wait until lag is low before switching to sync replication
-	if e.ProtectionMode != ast.ProtectionModeMaximumPerformance {
-		maxLagSec := int64(variable.DefTiDBAlterSyncMaxLagSeconds)
-		if s, err := e.Ctx().GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBAlterSyncMaxLagSeconds); err == nil {
-			if v, err := strconv.ParseInt(s, 10, 64); err == nil && v >= 0 {
-				maxLagSec = v
-			}
-		}
-
-	waitLagRetryLoop:
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-				return err
-			}
-
-			// TODO(lance6716): query by name
-			statuses, err := pdCli.ListLogReplStatuses(ctx)
-			if err != nil {
-				return err
-			}
-
-			var targetStatus *pdpb.LogReplicationStatus
-			for _, status := range statuses {
-				if status.GetName() == e.Name.L {
-					targetStatus = status
-				}
-			}
-			if targetStatus == nil {
-				return errors.Errorf("no replication status found for %s", e.Name)
-			}
-
-			lagSec := int64(-1)
-			replicationMode := targetStatus.GetReplicationMode()
-			replicationState := targetStatus.GetState()
-			switch replicationState {
-			case pdpb.LogReplication_PAUSED.String():
-				return errors.Errorf("replication status for %s is %s, can't ALTER", e.Name.L, replicationState)
-			case pdpb.LogReplication_INITIALIZING.String():
-				// leave lagSec = -1 to retry
-			case pdpb.LogReplication_REPLICATING.String():
-				switch replicationMode {
-				case pdpb.LogReplication_SYNC.String():
-					break waitLagRetryLoop
-				case pdpb.LogReplication_ASYNC.String():
-					lagSec = targetStatus.GetCheckpointLagSec()
-				}
-			default:
-				// leave lagSec = -1 to retry
-				logutil.Logger(ctx).Warn("unknown replication state, will retry", zap.String("replication_state", replicationState))
-			}
-
-			if lagSec < 0 || lagSec > maxLagSec {
-				logutil.Logger(ctx).Warn("lag is too large or unavailable, will wait lag decreased",
-					zap.String("replicationState", replicationState),
-					zap.String("replicationMode", replicationMode),
-					zap.Int64("currentLagSec", lagSec),
-					zap.Int64("maxLagSec", maxLagSec))
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					continue
-				}
-			}
-
-			break
-		}
-	}
 
 	opts := pd.LogReplicationOptions{
 		ProtectionMode:     astProtectionModeToPB(e.ProtectionMode),
