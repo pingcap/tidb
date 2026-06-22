@@ -486,6 +486,9 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
+	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
+	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
+	AlternativeLogicalPlanSemiJoinRewrite bool
 	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
 	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
 	// false (the default, matching Alt-disabled behavior) the rewriter emits
@@ -683,6 +686,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanFTSLikeFallback = false
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
+	sc.AlternativeLogicalPlanSemiJoinRewrite = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -708,6 +712,12 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
 // the correlate-to-Apply alternative.
 func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 	sc.AlternativeLogicalPlanPreferCorrelate = true
+}
+
+// MarkAlternativeLogicalPlanSemiJoinRewrite records that the current first round
+// found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
+	sc.AlternativeLogicalPlanSemiJoinRewrite = true
 }
 
 // CtxID returns the context id of the statement
