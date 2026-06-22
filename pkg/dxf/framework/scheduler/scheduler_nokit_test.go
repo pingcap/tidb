@@ -209,9 +209,22 @@ func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
 	}
 	sch := createScheduler(&task, true, taskMgr, ctrl)
 
-	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+	schExt := schmock.NewMockExtension(ctrl)
+	sch.Extension = schExt
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePending: 1,
+		proto.SubtaskStateRunning: 1,
+	}, nil)
+	schExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return()
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStateRunning, sch.GetTask().State)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateFailed: 2,
-	}, []error{taskErr, taskErr2}, nil)
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr, taskErr2}, nil)
 	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, task.State, task.Step, taskErr).Return(nil)
 
 	require.NoError(t, sch.onRunning())
@@ -219,9 +232,10 @@ func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
 	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
 	require.True(t, ctrl.Satisfied())
 
-	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateFailed: 1,
-	}, []error{taskErr}, nil)
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr}, nil)
 	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, proto.TaskStatePausing, task.Step, taskErr).Return(nil)
 
 	require.NoError(t, sch.onPausing())
@@ -229,9 +243,9 @@ func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
 	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
 	require.True(t, ctrl.Satisfied())
 
-	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePaused: 1,
-	}, nil, nil)
+	}, nil)
 	taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(nil)
 
 	require.NoError(t, sch.onPausing())
@@ -339,9 +353,9 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		return &cloneTask.TaskBase, nil
 	})
-	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), cloneTask.ID, cloneTask.Step).Return(map[proto.SubtaskState]int64{
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, cloneTask.Step).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePending: 0,
-		proto.SubtaskStateRunning: 0}, nil, nil)
+		proto.SubtaskStateRunning: 0}, nil)
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStatePaused
 		return &cloneTask.TaskBase, nil
@@ -442,14 +456,14 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	t.Run("test onPausing", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
-		taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil, nil)
+		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(fmt.Errorf("pause err"))
 		require.ErrorContains(t, scheduler.onPausing(), "pause err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		// pause task successfully
-		taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil, nil)
+		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(nil)
 		require.NoError(t, scheduler.onPausing())
 		tmpTask := task
