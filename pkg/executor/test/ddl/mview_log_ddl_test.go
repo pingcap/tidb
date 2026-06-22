@@ -189,6 +189,21 @@ func TestCreateMaterializedViewLogRejectUnsupportedColumns(t *testing.T) {
 	tk.MustExec("create materialized view log on t_untracked_unsupported (id)")
 }
 
+func TestCreateMaterializedViewLogPreservesTextColumnTypes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_text_types (id bigint not null primary key, c_tiny tinytext, c_text text, c_medium mediumtext, c_long longtext)")
+	tk.MustExec("create materialized view log on t_text_types (id, c_tiny, c_text, c_medium, c_long)")
+
+	showCreate := tk.MustQuery("show create table `$mlog$t_text_types`").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "  `c_tiny` tinytext DEFAULT NULL")
+	require.Contains(t, showCreate, "  `c_text` text DEFAULT NULL")
+	require.Contains(t, showCreate, "  `c_medium` mediumtext DEFAULT NULL")
+	require.Contains(t, showCreate, "  `c_long` longtext DEFAULT NULL")
+}
+
 // TestAlterMaterializedViewLogAddColumnBasic verifies that ADD COLUMN updates
 // mlog metadata, backfills old log rows with mlog defaults, and records future
 // changes only when newly tracked columns are touched.
@@ -229,6 +244,7 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 	require.Equal(t, " ", fmt.Sprint(colByName["s"].GetOriginDefaultValue()))
 	require.Equal(t, "0000-00-00", fmt.Sprint(colByName["d"].GetOriginDefaultValue()))
 	require.Equal(t, " ", fmt.Sprint(colByName["note"].GetOriginDefaultValue()))
+	require.Equal(t, mysql.TypeBlob, colByName["note"].GetType())
 
 	tk.MustQuery("select n, hex(s), cast(d as char), hex(note), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_add_mlog_col`").
 		Check(testkit.Rows("0 20 0000-00-00 20 I 1"))

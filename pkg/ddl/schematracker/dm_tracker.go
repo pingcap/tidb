@@ -290,8 +290,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		if err := ddl.CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
 			return err
 		}
-		ft := baseCol.FieldType
-		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+		ft := ddl.FieldTypeForMaterializedViewLogColumn(baseCol)
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: c},
 			Tp:   &ft,
