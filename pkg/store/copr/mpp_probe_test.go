@@ -192,9 +192,9 @@ func TestMPPFailedStoreAssertFailed(t *testing.T) {
 }
 
 func TestMppInfoManager(t *testing.T) {
-	manager := &MppInfoManager{cachedStores: make(map[string]*MPPInfo)}
+	manager := &MppInfoManager{cachedStores: make(map[string]*MPPServerInfo)}
 	manager.Delete("123") // Should happen nothing
-	manager.Add(&MPPInfo{
+	manager.Add(&MPPServerInfo{
 		Address:         "123",
 		LogicalCPUCount: 123,
 		StartTimestamp:  456,

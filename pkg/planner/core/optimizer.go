@@ -673,7 +673,7 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 				if row[4].GetString() == "cpu-logical-cores" {
 					logicalCpus, err := strconv.Atoi(row[5].GetString())
 					if err == nil && logicalCpus > 0 {
-						copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
+						copr.GlobalMPPInfoManager.Add(&copr.MPPServerInfo{
 							Address:         serversNeedingRefresh[info.Idx].Address,
 							LogicalCPUCount: uint64(logicalCpus),
 							StartTimestamp:  serversNeedingRefresh[info.Idx].StartTimestamp,

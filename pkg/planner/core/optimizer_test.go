@@ -285,12 +285,12 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 			copr.GlobalMPPInfoManager.Delete(validAddr)
 		})
 
-		copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
+		copr.GlobalMPPInfoManager.Add(&copr.MPPServerInfo{
 			Address:         staleAddr,
 			LogicalCPUCount: 8,
 			StartTimestamp:  100,
 		})
-		copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
+		copr.GlobalMPPInfoManager.Add(&copr.MPPServerInfo{
 			Address:         validAddr,
 			LogicalCPUCount: 16,
 			StartTimestamp:  200,
