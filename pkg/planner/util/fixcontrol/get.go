@@ -136,7 +136,7 @@ func GetInt(fixControlMap map[uint64]string, key uint64) (value int64, exists bo
 		return 0, false, nil
 	}
 	// The same as TidbOptInt64 in sessionctx/variable.
-	value, parseErr = strconv.ParseInt(strings.TrimSpace(rawValue), 10, 64)
+	value, parseErr = strconv.ParseInt(rawValue, 10, 64)
 	return value, true, parseErr
 }
 
@@ -164,8 +164,8 @@ func GetPositiveIntWithDefault(fixControlMap map[uint64]string, key uint64, defa
 	case "off", "false":
 		return 0, false
 	}
-	value, exists, err := GetInt(fixControlMap, key)
-	if !exists || err != nil || value <= 0 {
+	value, err := strconv.ParseInt(strings.TrimSpace(rawValue), 10, 64)
+	if err != nil || value <= 0 {
 		return 0, false
 	}
 	return value, true

@@ -91,7 +91,7 @@ func TestFixControl(t *testing.T) {
 	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "on"}, 1, 12345))
 	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "off"}, 1, 12345))
 	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "false"}, 1, 12345))
-	require.Equal(t, int64(26), fixcontrol.GetIntWithDefault(map[uint64]string{1: " 26 "}, 1, 12345))
+	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: " 26 "}, 1, 12345))
 }
 
 func TestGetPositiveIntWithDefault(t *testing.T) {
