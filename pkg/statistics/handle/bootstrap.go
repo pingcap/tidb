@@ -53,22 +53,16 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
-func (*Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
 	var (
 		physicalID    int64
 		maxPhysicalID int64
 	)
-	tableExists := func(physicalID int64) bool {
-		_, found := is.TableItemByID(physicalID)
-		if found {
-			return true
-		}
-		_, found = is.TableItemByPartitionID(physicalID)
-		return found
-	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
-		if !tableExists(physicalID) {
+		// Use the init-stats helper so InfoSchema V1 avoids the expensive
+		// TableItemByPartitionID full partition scan when filtering stats_meta.
+		if _, found := h.TableItemByIDForInitStats(is, physicalID); !found {
 			// The table corresponding to this physical ID has been dropped but the stats meta has not yet been garbage collected.
 			continue
 		}
