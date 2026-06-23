@@ -87,6 +87,10 @@ func TestFixControl(t *testing.T) {
 		require.Equal(t, output[i].Warnings, warning)
 		require.Equal(t, output[i].Variable, rows)
 	}
+
+	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "on"}, 1, 12345))
+	require.Equal(t, int64(0), fixcontrol.GetIntWithDefault(map[uint64]string{1: "off"}, 1, 12345))
+	require.Equal(t, int64(26), fixcontrol.GetIntWithDefault(map[uint64]string{1: " 26 "}, 1, 12345))
 }
 
 func TestParseToMapEmptyValue(t *testing.T) {

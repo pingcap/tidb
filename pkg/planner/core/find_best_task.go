@@ -20,7 +20,6 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -211,22 +210,15 @@ func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool 
 }
 
 func boundedLimitIndexLookupThreshold(fixControlMap map[uint64]string) (uint64, bool) {
-	raw, exists := fixcontrol.GetStr(fixControlMap, fixcontrol.Fix69405)
-	if !exists {
-		return defaultBoundedLimitIndexLookupThreshold, true
-	}
-	raw = strings.TrimSpace(raw)
-	switch strings.ToLower(raw) {
-	case "on", "true":
-		return defaultBoundedLimitIndexLookupThreshold, true
-	case "off", "false", "0":
+	threshold := fixcontrol.GetIntWithDefault(
+		fixControlMap,
+		fixcontrol.Fix69405,
+		int64(defaultBoundedLimitIndexLookupThreshold),
+	)
+	if threshold <= 0 {
 		return 0, false
 	}
-	threshold, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil || threshold == 0 {
-		return 0, false
-	}
-	return threshold, true
+	return uint64(threshold), true
 }
 
 // isPureOrderedLimitIndexLookupForTopN accepts only the simple safe shape:

@@ -126,7 +126,7 @@ func GetBoolWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal 
 	return value
 }
 
-// GetInt fetches the given key from the fix control map as an uint64 type.
+// GetInt fetches the given key from the fix control map as an int64 type.
 func GetInt(fixControlMap map[uint64]string, key uint64) (value int64, exists bool, parseErr error) {
 	if fixControlMap == nil {
 		return 0, false, nil
@@ -136,13 +136,23 @@ func GetInt(fixControlMap map[uint64]string, key uint64) (value int64, exists bo
 		return 0, false, nil
 	}
 	// The same as TidbOptInt64 in sessionctx/variable.
-	value, parseErr = strconv.ParseInt(rawValue, 10, 64)
+	value, parseErr = strconv.ParseInt(strings.TrimSpace(rawValue), 10, 64)
 	return value, true, parseErr
 }
 
-// GetIntWithDefault fetches the given key from the fix control map as an uint64 type,
-// // and a default value would be returned when fail to fetch the expected key.
+// GetIntWithDefault fetches the given key from the fix control map as an int64 type,
+// and a default value would be returned when fail to fetch the expected key.
 func GetIntWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal int64) int64 {
+	rawValue, exists := GetStr(fixControlMap, key)
+	if !exists {
+		return defaultVal
+	}
+	switch strings.ToLower(strings.TrimSpace(rawValue)) {
+	case "on", "true":
+		return defaultVal
+	case "off", "false":
+		return 0
+	}
 	value, exists, err := GetInt(fixControlMap, key)
 	if !exists || err != nil {
 		return defaultVal
