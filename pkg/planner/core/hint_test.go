@@ -181,5 +181,12 @@ func TestHintSuite(t *testing.T) {
 					"2 beta fifth",
 				))
 		})
+
+		t.Run("TestSetVarBoundedLimitIndexLookupThreshold", func(t *testing.T) {
+			testKit.MustExec(`set @@tidb_opt_bounded_limit_index_lookup_threshold = default`)
+			testKit.MustQuery(`select @@tidb_opt_bounded_limit_index_lookup_threshold`).Check(testkit.Rows("500"))
+			testKit.MustQuery(`select /*+ set_var(tidb_opt_bounded_limit_index_lookup_threshold=123) */ @@tidb_opt_bounded_limit_index_lookup_threshold`).Check(testkit.Rows("123"))
+			testKit.MustQuery(`select @@tidb_opt_bounded_limit_index_lookup_threshold`).Check(testkit.Rows("500"))
+		})
 	})
 }

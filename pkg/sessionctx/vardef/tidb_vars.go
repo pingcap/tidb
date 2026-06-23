@@ -349,6 +349,9 @@ const (
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
+	// TiDBOptBoundedLimitIndexLookupThreshold controls the maximum LIMIT+OFFSET for preferring bounded ordered IndexLookUp under TopN.
+	TiDBOptBoundedLimitIndexLookupThreshold = "tidb_opt_bounded_limit_index_lookup_threshold"
+
 	// TiDBOptCorrelationThreshold is a guard to enable row count estimation using column order correlation.
 	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
 
@@ -1456,6 +1459,7 @@ const (
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
 	DefOptLimitPushDownThreshold            = 5000
+	DefOptBoundedLimitIndexLookupThreshold  = 500
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0

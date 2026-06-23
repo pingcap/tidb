@@ -19,10 +19,17 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,6 +37,7 @@ func TestFindBestTaskSuite(t *testing.T) {
 	t.Run("TestCostOverflow", testCostOverflow)
 	t.Run("TestEnforcedProperty", testEnforcedProperty)
 	t.Run("TestHintCannotFitProperty", testHintCannotFitProperty)
+	t.Run("TestPreferBoundedLimitIndexLookupForTopN", testPreferBoundedLimitIndexLookupForTopN)
 }
 
 func testCostOverflow(t *testing.T) {
@@ -168,4 +176,118 @@ func testHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	topN := logicalop.LogicalTopN{Count: 26}.Init(ctx.GetPlanCtx(), 0)
+	lookupTask := buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 0, 26)
+	tableTask := buildTopNTableReaderTask(ctx.GetPlanCtx())
+
+	curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, tableTask, lookupTask)
+	require.True(t, decided)
+	require.False(t, curIsBetter)
+
+	ctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+	require.Contains(t, ctx.GetSessionVars().RelevantOptVars, vardef.TiDBOptBoundedLimitIndexLookupThreshold)
+	require.Contains(t, ctx.GetSessionVars().RelevantOptVars, vardef.TiDBOptIndexLookupCostFactor)
+	require.Contains(t, ctx.GetSessionVars().RelevantOptVars, vardef.TiDBOptLimitCostFactor)
+	require.Contains(t, ctx.GetSessionVars().RelevantOptFixes, fixcontrol.Fix69405)
+	ctx.GetSessionVars().ResetRelevantOptVarsAndFixes(false)
+
+	topN.Offset = 474
+	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 474, 26)
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+
+	topN.Offset = 475
+	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 475, 26)
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+
+	topN.Offset = 0
+	ctx.GetSessionVars().BoundedLimitIndexLookupThreshold = 0
+	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 0, 26)
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+	ctx.GetSessionVars().BoundedLimitIndexLookupThreshold = vardef.DefOptBoundedLimitIndexLookupThreshold
+
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "off"}
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+	ctx.GetSessionVars().OptimizerFixControl = nil
+
+	ctx.GetSessionVars().IndexLookupCostFactor = vardef.DefOptIndexLookupCostFactor + 1
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+	ctx.GetSessionVars().IndexLookupCostFactor = vardef.DefOptIndexLookupCostFactor
+
+	unsafeLookupTask := buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 0, 26)
+	reader := unsafeLookupTask.Plan().(*physicalop.PhysicalIndexLookUpReader)
+	reader.TablePlan.(*physicalop.PhysicalTableScan).FilterCondition = []expression.Expression{expression.NewOne()}
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, unsafeLookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+
+	unorderedLookupTask := buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 0, 26)
+	unorderedReader := unorderedLookupTask.Plan().(*physicalop.PhysicalIndexLookUpReader)
+	unorderedReader.IndexPlan.Children()[0].(*physicalop.PhysicalIndexScan).KeepOrder = false
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, unorderedLookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+}
+
+func buildBoundedLimitIndexLookupTask(ctx base.PlanContext, offset, count uint64) *physicalop.RootTask {
+	stats := &property.StatsInfo{RowCount: float64(offset + count)}
+	schema := expression.NewSchema(&expression.Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)})
+	indexScan := physicalop.PhysicalIndexScan{
+		KeepOrder: true,
+		Prop:      &property.PhysicalProperty{},
+	}.Init(ctx, 0)
+	indexScan.SetSchema(schema.Clone())
+	indexScan.SetStats(stats)
+
+	indexLimit := physicalop.PhysicalLimit{Count: offset + count}.Init(ctx, stats, 0)
+	indexLimit.SetChildren(indexScan)
+	indexLimit.SetSchema(schema.Clone())
+
+	tableScan := physicalop.PhysicalTableScan{StoreType: kv.TiKV}.Init(ctx, 0)
+	tableScan.SetSchema(schema.Clone())
+	tableScan.SetStats(stats)
+
+	reader := physicalop.PhysicalIndexLookUpReader{
+		IndexPlan:   indexLimit,
+		TablePlan:   tableScan,
+		PushedLimit: &physicalop.PushedDownLimit{Offset: offset, Count: count},
+	}.Init(ctx, 0, plannerutil.IndexLookUpPushDownNone)
+
+	task := &physicalop.RootTask{}
+	task.SetPlan(reader)
+	return task
+}
+
+func buildTopNTableReaderTask(ctx base.PlanContext) *physicalop.RootTask {
+	stats := &property.StatsInfo{RowCount: 100}
+	tableReader := physicalop.PhysicalTableReader{}.Init(ctx, 0)
+	topN := physicalop.PhysicalTopN{Count: 26}.Init(ctx, stats, 0)
+	topN.SetChildren(tableReader)
+	task := &physicalop.RootTask{}
+	task.SetPlan(topN)
+	return task
 }

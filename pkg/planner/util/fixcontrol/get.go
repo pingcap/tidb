@@ -75,6 +75,8 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
+	// Fix69405 controls whether to prefer bounded ordered IndexLookUp under TopN.
+	Fix69405 uint64 = 69405
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

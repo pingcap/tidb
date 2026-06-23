@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -139,6 +140,10 @@ func enumeratePhysicalPlans4Task(
 		} else {
 			if normalTask.Invalid() {
 				normalTask = curTask
+			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalTask); decided {
+				if curIsBetter {
+					normalTask = curTask
+				}
 			} else if curIsBetter, err := compareTaskCost(curTask, normalTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
@@ -150,6 +155,138 @@ func enumeratePhysicalPlans4Task(
 		return hintTask, true, nil
 	}
 	return normalTask, false, nil
+}
+
+func preferBoundedLimitIndexLookupForTopN(super base.LogicalPlan, curTask, bestTask base.Task) (curIsBetter bool, decided bool) {
+	topN, ok := super.(*logicalop.LogicalTopN)
+	if !ok || topN == nil || bestTask == nil || bestTask.Invalid() {
+		return false, false
+	}
+
+	curIsLookup := isPureOrderedLimitIndexLookupForTopN(curTask, topN)
+	bestIsLookup := isPureOrderedLimitIndexLookupForTopN(bestTask, topN)
+	if curIsLookup == bestIsLookup {
+		return false, false
+	}
+	if !boundedLimitIndexLookupPreferenceEnabled(topN) {
+		return false, false
+	}
+	if curIsLookup && isBoundedLimitIndexLookupCompetitor(bestTask) {
+		return true, true
+	}
+	if bestIsLookup && isBoundedLimitIndexLookupCompetitor(curTask) {
+		return false, true
+	}
+	return false, false
+}
+
+func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool {
+	sessionVars := topN.SCtx().GetSessionVars()
+	sessionVars.RecordRelevantOptVar(vardef.TiDBOptBoundedLimitIndexLookupThreshold)
+	sessionVars.RecordRelevantOptVar(vardef.TiDBOptIndexLookupCostFactor)
+	sessionVars.RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
+	sessionVars.RecordRelevantOptFix(fixcontrol.Fix69405)
+
+	if !fixcontrol.GetBoolWithDefault(sessionVars.GetOptimizerFixControlMap(), fixcontrol.Fix69405, true) {
+		return false
+	}
+	if sessionVars.IndexLookupCostFactor != vardef.DefOptIndexLookupCostFactor ||
+		sessionVars.LimitCostFactor != vardef.DefOptLimitCostFactor {
+		return false
+	}
+	threshold := sessionVars.BoundedLimitIndexLookupThreshold
+	limitWindow := topN.Count + topN.Offset
+	return threshold > 0 && limitWindow >= topN.Count && limitWindow <= threshold
+}
+
+func isPureOrderedLimitIndexLookupForTopN(t base.Task, topN *logicalop.LogicalTopN) bool {
+	if len(topN.PartitionBy) != 0 {
+		return false
+	}
+	root, ok := t.(*physicalop.RootTask)
+	if !ok {
+		return false
+	}
+	plan := root.GetPlan()
+	for {
+		proj, ok := plan.(*physicalop.PhysicalProjection)
+		if !ok {
+			break
+		}
+		children := proj.Children()
+		if len(children) != 1 {
+			return false
+		}
+		plan = children[0]
+	}
+
+	reader, ok := plan.(*physicalop.PhysicalIndexLookUpReader)
+	if !ok || reader.PushedLimit == nil || reader.IndexLookUpPushDown {
+		return false
+	}
+	if reader.PushedLimit.Offset != topN.Offset || reader.PushedLimit.Count != topN.Count {
+		return false
+	}
+	limitWindow := topN.Count + topN.Offset
+	if limitWindow < topN.Count {
+		return false
+	}
+
+	tableScan, ok := reader.TablePlan.(*physicalop.PhysicalTableScan)
+	if !ok || tableScan.StoreType != kv.TiKV || len(tableScan.FilterCondition) != 0 ||
+		len(tableScan.LateMaterializationFilterCondition) != 0 {
+		return false
+	}
+	if len(reader.TablePlans) != 1 {
+		return false
+	}
+	if _, ok := reader.TablePlans[0].(*physicalop.PhysicalTableScan); !ok {
+		return false
+	}
+
+	indexLimit, ok := reader.IndexPlan.(*physicalop.PhysicalLimit)
+	if !ok || indexLimit.Offset != 0 || indexLimit.Count != limitWindow ||
+		len(indexLimit.PartitionBy) != 0 || indexLimit.PrefixCol != nil || indexLimit.PrefixLen != 0 {
+		return false
+	}
+	indexChildren := indexLimit.Children()
+	if len(indexChildren) != 1 {
+		return false
+	}
+	indexScan, ok := indexChildren[0].(*physicalop.PhysicalIndexScan)
+	if !ok || !indexScan.KeepOrder || indexScan.IsPartition || len(indexScan.ByItems) != 0 ||
+		len(indexScan.GroupedRanges) != 0 || len(indexScan.GroupByColIdxs) != 0 {
+		return false
+	}
+	return indexScan.Prop == nil || indexScan.Prop.PartialOrderInfo == nil
+}
+
+func isBoundedLimitIndexLookupCompetitor(t base.Task) bool {
+	root, ok := t.(*physicalop.RootTask)
+	if !ok {
+		return false
+	}
+	var hasTableReaderOrRootOrder bool
+	var hasCoveringOrPointOrLookup bool
+	walkPhysicalPlan(root.GetPlan(), func(p base.PhysicalPlan) {
+		switch p.(type) {
+		case *physicalop.PhysicalTableReader, *physicalop.PhysicalTopN, *physicalop.PhysicalSort:
+			hasTableReaderOrRootOrder = true
+		case *physicalop.PhysicalIndexReader, *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan, *physicalop.PhysicalIndexLookUpReader:
+			hasCoveringOrPointOrLookup = true
+		}
+	})
+	return hasTableReaderOrRootOrder && !hasCoveringOrPointOrLookup
+}
+
+func walkPhysicalPlan(p base.PhysicalPlan, fn func(base.PhysicalPlan)) {
+	if p == nil {
+		return
+	}
+	fn(p)
+	for _, child := range p.Children() {
+		walkPhysicalPlan(child, fn)
+	}
 }
 
 func enumeratePhysicalPlans4TaskHelper(
@@ -224,6 +361,10 @@ func enumeratePhysicalPlans4TaskHelper(
 		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
 			if normalPreferTask.Invalid() {
 				normalPreferTask = curTask
+			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalPreferTask); decided {
+				if curIsBetter {
+					normalPreferTask = curTask
+				}
 			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
@@ -234,6 +375,10 @@ func enumeratePhysicalPlans4TaskHelper(
 		if hintTask.Invalid() && normalPreferTask.Invalid() {
 			if normalIterTask.Invalid() {
 				normalIterTask = curTask
+			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalIterTask); decided {
+				if curIsBetter {
+					normalIterTask = curTask
+				}
 			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {

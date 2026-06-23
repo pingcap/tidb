@@ -2278,6 +2278,10 @@ var defaultSysVars = []*SysVar{
 		s.LimitPushDownThreshold = TidbOptInt64(val, vardef.DefOptLimitPushDownThreshold)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptBoundedLimitIndexLookupThreshold, Value: strconv.Itoa(vardef.DefOptBoundedLimitIndexLookupThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
+		s.BoundedLimitIndexLookupThreshold = TidbOptUint64(val, vardef.DefOptBoundedLimitIndexLookupThreshold)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCorrelationThreshold, Value: strconv.FormatFloat(vardef.DefOptCorrelationThreshold, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.CorrelationThreshold = tidbOptFloat64(val, vardef.DefOptCorrelationThreshold)
 		return nil
