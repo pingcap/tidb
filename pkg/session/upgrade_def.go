@@ -2145,6 +2145,6 @@ func upgradeToVer261(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer262(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, metadef.CreateAutoAnalyzeTasks)
-	doReentrantDDL(s, metadef.CreateAutoAnalyzeTasksHistory)
+	doReentrantDDL(s, metadef.CreateAutoAnalyzeTasksTable)
+	doReentrantDDL(s, metadef.CreateAutoAnalyzeTasksHistoryTable)
 }

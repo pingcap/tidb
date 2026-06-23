@@ -36,6 +36,7 @@ import (
 // autoAnalyzeRegInterval is the minimum interval between two auto analyze registrations.
 const (
 	autoAnalyzeRegInterval = 15 * time.Minute
+	autoAnalyzeMgrTimeout  = 10 * time.Second
 	insertAutoAnalyzeTask  = "INSERT INTO mysql.auto_analyze_tasks(table_id, start_time) VALUES(%?, %?)"
 	getAutoAnalyzeJobID    = "SELECT LAST_INSERT_ID()"
 	getAutoAnalyzeJob      = "SELECT id, table_id, start_time FROM mysql.auto_analyze_tasks ORDER BY RAND() LIMIT 1"
@@ -47,12 +48,11 @@ const (
 
 // statAutoAnalyzeWorker manages auto-analyze tasks for external auto-analyze workers.
 type statAutoAnalyzeWorker struct {
-	sync.Mutex
-	statsHandle statstypes.StatsHandle
-
+	statsHandle                 statstypes.StatsHandle
 	autoAnalyzeTaskRegistration sync.Map
 	lastExecutedAutoAnalyzeSQL  string
-	lastAutoAnalyzeSuccessful   bool
+	sync.Mutex
+	lastAutoAnalyzeSuccessful bool
 }
 
 // NewStatAutoAnalyzeWorker creates a new StatsAutoAnalyzeWorker.
@@ -99,7 +99,9 @@ func (sa *statAutoAnalyzeWorker) RegisterAutoAnalyzeTask(tableID int64, reason s
 		if mgr == nil {
 			return errors.New("external workload manager is not installed")
 		}
-		err = mgr.RegisterAutoAnalyze(context.Background(), taskID)
+		ctx, cancel := context.WithTimeout(context.Background(), autoAnalyzeMgrTimeout)
+		defer cancel()
+		err = mgr.RegisterAutoAnalyze(ctx, taskID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -144,7 +146,9 @@ func recycleAutoAnalyzeTask(taskID uint64) error {
 	if mgr == nil {
 		return errors.New("external workload manager is not installed")
 	}
-	return mgr.RecycleAutoAnalyze(context.Background(), taskID)
+	ctx, cancel := context.WithTimeout(context.Background(), autoAnalyzeMgrTimeout)
+	defer cancel()
+	return mgr.RecycleAutoAnalyze(ctx, taskID)
 }
 
 func getAutoAnalyzeTaskWithTableID(sctx sessionctx.Context, tableID int64) (*statistics.AutoAnalyzeTask, error) {
@@ -212,7 +216,7 @@ func (sa *statAutoAnalyzeWorker) FinishAutoAnalyzeTask(task *statistics.AutoAnal
 	}
 	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return finishAutoAnalyzeTask(sctx, task)
-	}); err != nil {
+	}, statsutil.FlagWrapTxn); err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("finished an auto analyze task",

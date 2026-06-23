@@ -467,6 +467,26 @@ func TestExternalWorkloadAutoAnalyzeWorkerFinishesMissingTableTask(t *testing.T)
 	)
 }
 
+func TestFinishAutoAnalyzeTaskKeepsTaskWhenHistoryInsertFails(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("insert into mysql.auto_analyze_tasks(id, table_id, start_time) values (200, 888, 10)")
+	tk.MustExec("insert into mysql.auto_analyze_tasks_history(id, table_id, analyzed, statement, err, start_time, end_time) " +
+		"values (200, 888, true, '', '', 10, 11)")
+
+	mgr := &fakeExternalWorkloadManager{role: config.RoleAutoAnalyzeWorker}
+	installExternalWorkloadManagerForTest(t, mgr)
+
+	err := dom.StatsHandle().FinishAutoAnalyzeTask(&statistics.AutoAnalyzeTask{
+		ID:        200,
+		TableID:   888,
+		StartTime: 10,
+	})
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from mysql.auto_analyze_tasks where id = 200").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.auto_analyze_tasks_history where id = 200").Check(testkit.Rows("1"))
+}
+
 func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

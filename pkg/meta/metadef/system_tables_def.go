@@ -463,15 +463,16 @@ const (
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id) CLUSTERED);`
 
-	// CreateAutoAnalyzeTasks stores auto analyze tasks scheduled for external workers.
-	CreateAutoAnalyzeTasks = `CREATE TABLE IF NOT EXISTS mysql.auto_analyze_tasks (
+	// CreateAutoAnalyzeTasksTable stores auto analyze tasks scheduled for external workers.
+	CreateAutoAnalyzeTasksTable = `CREATE TABLE IF NOT EXISTS mysql.auto_analyze_tasks (
 		id BIGINT(64) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 		table_id BIGINT(64) NOT NULL,
-		start_time BIGINT(64)
+		start_time BIGINT(64),
+		KEY idx_auto_analyze_tasks_table_id (table_id)
 	);`
 
-	// CreateAutoAnalyzeTasksHistory stores finished auto analyze tasks.
-	CreateAutoAnalyzeTasksHistory = `CREATE TABLE IF NOT EXISTS mysql.auto_analyze_tasks_history (
+	// CreateAutoAnalyzeTasksHistoryTable stores finished auto analyze tasks.
+	CreateAutoAnalyzeTasksHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.auto_analyze_tasks_history (
 		id BIGINT(64) UNSIGNED PRIMARY KEY,
 		table_id BIGINT(64) NOT NULL,
 		analyzed BOOLEAN NOT NULL DEFAULT FALSE,

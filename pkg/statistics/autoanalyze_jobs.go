@@ -16,11 +16,11 @@ package statistics
 
 // AutoAnalyzeTask represents one auto analyze task stored in mysql.auto_analyze_tasks.
 type AutoAnalyzeTask struct {
-	ID        uint64
-	TableID   int64
-	Analyzed  bool
 	Statement string
 	Err       string
+	ID        uint64
+	TableID   int64
 	StartTime int64
 	EndTime   int64
+	Analyzed  bool
 }

@@ -2326,12 +2326,21 @@ func (do *Domain) autoAnalyzeWorker() {
 		statslogutil.StatsLogger().Info("autoAnalyzeWorker exited.")
 	}()
 
+	closeAutoAnalyzeWorkerOwner := func() {
+		if autoAnalyzeWorkerOwner != nil {
+			autoAnalyzeWorkerOwner.Close()
+			autoAnalyzeWorkerOwner = nil
+		}
+	}
+
 	getAutoAnalyzeOwner := func() owner.Manager {
 		mgr := extworkload.GetManager()
 		if extworkload.IsEnabled(mgr) && !extworkload.IsMaster(mgr) && !extworkload.IsAutoAnalyzeWorker(mgr) {
+			closeAutoAnalyzeWorkerOwner()
 			return nil
 		}
 		if !extworkload.IsAutoAnalyzeWorker(mgr) {
+			closeAutoAnalyzeWorkerOwner()
 			return do.statsOwner
 		}
 		if autoAnalyzeWorkerOwner != nil {

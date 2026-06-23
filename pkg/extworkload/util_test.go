@@ -61,7 +61,12 @@ func TestRolePredicatesDedicated(t *testing.T) {
 }
 
 func TestGlobalManager(t *testing.T) {
-	ClearManager(GetManager())
+	initial := GetManager()
+	t.Cleanup(func() {
+		InstallManager(initial)
+	})
+
+	InstallManager(nil)
 	require.Nil(t, GetManager())
 
 	master := &stubManager{role: config.RoleMaster}
