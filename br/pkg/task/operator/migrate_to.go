@@ -7,7 +7,11 @@ import (
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/storage"
+=======
+	"github.com/pingcap/tidb/br/pkg/operation"
+>>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
 	"github.com/pingcap/tidb/br/pkg/stream"
 )
 
@@ -48,16 +52,24 @@ func (cx migrateToCtx) askForContinue(ctx context.Context, targetMig *backup.Mig
 	return cx.console.PromptBool("Continue? ")
 }
 
-func (cx migrateToCtx) dryRun(ctx context.Context, f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
+func (cx migrateToCtx) dryRun(ctx context.Context, f func(stream.MigrationExt) (stream.MergeAndMigratedTo, error)) error {
 	var (
 		est     = cx.est
 		console = cx.console
 		estBase stream.MergeAndMigratedTo
+<<<<<<< HEAD
 		effects []storage.Effect
+=======
+		effects []objstore.Effect
+		runErr  error
+>>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
 	)
 	effects = est.DryRun(func(me stream.MigrationExt) {
-		estBase = f(me)
+		estBase, runErr = f(me)
 	})
+	if runErr != nil {
+		return errors.Trace(runErr)
+	}
 
 	tbl := console.CreateTable()
 	cx.est.AddMigrationToTable(ctx, estBase.NewBase, tbl)
@@ -79,7 +91,16 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return err
 	}
 
+<<<<<<< HEAD
 	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
+=======
+	operationContext, err := operation.NewContext("operator migrate-to")
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	backend, err := objstore.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
+>>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
 	if err != nil {
 		return err
 	}
@@ -90,7 +111,7 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 
 	console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
 
-	est := stream.MigrationExtension(st)
+	est := stream.MigrationExtension(st).WithOperationContext(operationContext)
 	est.Hooks = stream.NewProgressBarHooks(console)
 	migs, err := est.Load(ctx)
 	if err != nil {
@@ -109,8 +130,11 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return nil
 	}
 
-	run := func(f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
-		result := f(est)
+	run := func(f func(stream.MigrationExt) (stream.MergeAndMigratedTo, error)) error {
+		result, err := f(est)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if len(result.Warnings) > 0 {
 			console.Printf("The following errors happened, you may re-execute to retry: ")
 			for _, w := range result.Warnings {
@@ -120,12 +144,12 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return nil
 	}
 	if cfg.DryRun {
-		run = func(f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
+		run = func(f func(stream.MigrationExt) (stream.MergeAndMigratedTo, error)) error {
 			return cx.dryRun(ctx, f)
 		}
 	}
 
-	return run(func(est stream.MigrationExt) stream.MergeAndMigratedTo {
+	return run(func(est stream.MigrationExt) (stream.MergeAndMigratedTo, error) {
 		return est.MergeAndMigrateTo(ctx, targetVersion, stream.MMOptInteractiveCheck(func(ctx context.Context, m *backup.Migration) bool {
 			return cfg.Yes || cx.askForContinue(ctx, m)
 		}))

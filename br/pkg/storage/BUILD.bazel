@@ -127,6 +127,10 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_sync//errgroup",
+<<<<<<< HEAD:br/pkg/storage/BUILD.bazel
         "@org_uber_go_mock//gomock",
+=======
+        "@org_uber_go_zap//:zap",
+>>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/BUILD.bazel
     ],
 )

@@ -33,6 +33,7 @@ go_library(
         "//br/pkg/httputil",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/operation",
         "//br/pkg/pdutil",
         "//br/pkg/registry",
         "//br/pkg/restore",
@@ -131,6 +132,11 @@ go_test(
         "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",
         "//br/pkg/mock",
+<<<<<<< HEAD
+=======
+        "//br/pkg/operation",
+        "//br/pkg/restore/log_client",
+>>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
         "//br/pkg/restore/snap_client",
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",

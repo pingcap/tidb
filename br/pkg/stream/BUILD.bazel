@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/httputil",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/operation",
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
@@ -82,7 +83,11 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+<<<<<<< HEAD
         "//br/pkg/storage",
+=======
+        "//br/pkg/operation",
+>>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
         "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
