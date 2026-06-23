@@ -17,6 +17,7 @@ package crossks
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,20 +27,44 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type runtimeHandleTestStore struct {
 	kv.Storage
-	ks         string
-	closeCount int
+	ks           string
+	closeCount   int
+	beginStarted chan struct{}
+	beginDone    chan struct{}
+	beginErr     error
+	beginOnce    sync.Once
 }
 
 func (s *runtimeHandleTestStore) GetKeyspace() string {
 	return s.ks
+}
+
+func (s *runtimeHandleTestStore) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
+	s.beginOnce.Do(func() {
+		if s.beginStarted != nil {
+			close(s.beginStarted)
+		}
+	})
+	if s.beginDone != nil {
+		<-s.beginDone
+	}
+	if s.beginErr != nil {
+		return nil, s.beginErr
+	}
+	if s.Storage == nil {
+		return nil, fmt.Errorf("runtimeHandleTestStore Begin called without backing storage")
+	}
+	return s.Storage.Begin(opts...)
 }
 
 func (s *runtimeHandleTestStore) Close() error {
@@ -82,6 +107,7 @@ func newRuntimeHandleTestSessionManager(targetStore *runtimeHandleTestStore, ses
 		etcdCli:         clientv3.NewCtxClient(context.Background()),
 		schemaVerSyncer: schemaver.NewMemSyncer(),
 		sessPool:        sessPool,
+		ddlClient:       &ddlClient{},
 	}
 }
 
@@ -344,6 +370,55 @@ func TestEvictRuntime(t *testing.T) {
 	})
 }
 
+func TestRuntimeHandleAlterTableModeUsesHolderLifecycle(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+
+	targetKS := "ks-submit-only-holder"
+	mgr, entry, targetStore, sessPool := newRuntimeHandleTestManager(targetKS)
+	targetStore.beginStarted = make(chan struct{})
+	targetStore.beginDone = make(chan struct{})
+	targetStore.beginErr = fmt.Errorf("injected begin error")
+	entry.sessMgr.ddlClient = &ddlClient{store: targetStore}
+	factoryGetter := unusedRuntimeHandleFactoryGetter(t)
+	req := model.AlterTableModeRequest{
+		SchemaID:  100,
+		TableID:   200,
+		TableMode: model.TableModeImport,
+	}
+
+	handle, err := mgr.Acquire(targetKS, "test/submit-only-holder", factoryGetter)
+	require.NoError(t, err)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- handle.AlterTableMode(context.Background(), req)
+	}()
+
+	<-targetStore.beginStarted
+	require.Contains(t, entry.activeHolders, "test/submit-only-holder")
+	entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+	mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+	_, ok := mgr.Get(targetKS)
+	require.True(t, ok)
+	require.Zero(t, sessPool.closeCount)
+
+	close(targetStore.beginDone)
+	require.ErrorContains(t, <-errCh, "injected begin error")
+	require.Contains(t, entry.activeHolders, "test/submit-only-holder")
+
+	handle.Release()
+	require.NotContains(t, entry.activeHolders, "test/submit-only-holder")
+	require.False(t, entry.lastReleaseAt.IsZero())
+
+	entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
+	mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+	_, ok = mgr.Get(targetKS)
+	require.False(t, ok)
+	require.Equal(t, 1, sessPool.closeCount)
+}
+
 func TestRuntimeHandleManagerCloseClosesAllEntriesRegardlessOfIdleTimeout(t *testing.T) {
 	firstKS := "ks-close-runtime-1"
 	secondKS := "ks-close-runtime-2"
@@ -363,6 +438,17 @@ func TestRuntimeHandleManagerCloseClosesAllEntriesRegardlessOfIdleTimeout(t *tes
 	require.Equal(t, 1, firstStore.closeCount)
 	require.Equal(t, 1, secondSessPool.closeCount)
 	require.Equal(t, 1, secondStore.closeCount)
+}
+
+func TestCloseKSClosesRuntime(t *testing.T) {
+	targetKS := "ks-close-runtime"
+	mgr, _, targetStore, sessPool := newRuntimeHandleTestManager(targetKS)
+
+	mgr.CloseKS(targetKS)
+
+	require.Equal(t, 1, sessPool.closeCount)
+	require.Equal(t, 1, targetStore.closeCount)
+	require.Empty(t, mgr.GetAllKeyspace())
 }
 
 func TestGCLoopExitsWhenContextCancelled(t *testing.T) {

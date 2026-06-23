@@ -15,7 +15,10 @@
 package sqlsvrapi
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -24,6 +27,7 @@ import (
 type Runtime interface {
 	Store() kv.Storage
 	SysSessionPool() util.DestroyableSessionPool
+	AlterTableMode(ctx context.Context, req model.AlterTableModeRequest) error
 }
 
 // KSRuntimeHandle is an acquired runtime handle for a target keyspace.
