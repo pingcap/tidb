@@ -265,6 +265,14 @@ func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
 	require.True(t, decided)
 	require.True(t, curIsBetter)
 
+	parsedFixControl, warnings, err := fixcontrol.ParseToMap("69405:26")
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	ctx.GetSessionVars().OptimizerFixControl = parsedFixControl
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+
 	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "27"}
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
 	require.True(t, decided)
