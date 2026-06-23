@@ -173,7 +173,7 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 	restoreStorage := tmp(t)
 	opCtx, err := operation.NewContext("test pitr collector")
 	require.NoError(t, err)
-	opCtx.SetRestoreID(789)
+	opCtx.SetHintField("restore_id", "789")
 
 	coll := &pitrCollector{
 		enabled:          true,

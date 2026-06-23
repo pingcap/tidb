@@ -32,9 +32,15 @@ import (
 // Initialize and update a Context at the command boundary before copying it into
 // lock-capable workers. Copies carry value snapshots of operation fields.
 type Context struct {
-	OperationID string    `json:"operation_id"`
-	StartedAt   time.Time `json:"operation_started_at"`
-	RestoreID   uint64    `json:"restore_id,omitempty"`
+	OperationID string      `json:"operation_id"`
+	StartedAt   time.Time   `json:"operation_started_at"`
+	HintFields  []HintField `json:"hint_fields,omitempty"`
+}
+
+// HintField is additional caller-owned metadata rendered into lock hints.
+type HintField struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // LockResourceType identifies the coarse resource protected by a lock file.
@@ -73,38 +79,60 @@ func NewContext(command string) (Context, error) {
 	return ctx, nil
 }
 
-// SetRestoreID records the restore lineage for the operation.
-func (c *Context) SetRestoreID(restoreID uint64) {
-	if restoreID != 0 && !c.isInitialized() {
+// SetHintField records additional caller-owned metadata for lock hints.
+func (c *Context) SetHintField(key, value string) {
+	if key == "" {
 		return
 	}
-	if c.RestoreID == restoreID {
-		if restoreID == 0 {
-			return
+	if value != "" && !c.isInitialized() {
+		return
+	}
+
+	fieldIdx := c.hintFieldIndex(key)
+	if value == "" {
+		if fieldIdx >= 0 {
+			c.HintFields = append([]HintField(nil), c.HintFields...)
+			c.HintFields = append(c.HintFields[:fieldIdx], c.HintFields[fieldIdx+1:]...)
 		}
-	} else if c.RestoreID != 0 && restoreID != 0 {
-		log.Warn("BR operation restore ID changed",
-			zap.String("operation_id", c.OperationID),
-			zap.Time("operation_started_at", c.StartedAt),
-			zap.Uint64("old_restore_id", c.RestoreID),
-			zap.Uint64("new_restore_id", restoreID),
-		)
-	}
-
-	c.RestoreID = restoreID
-	if restoreID == 0 {
 		return
 	}
 
-	log.Info("BR operation restore ID resolved",
+	c.HintFields = append([]HintField(nil), c.HintFields...)
+	if fieldIdx >= 0 {
+		oldValue := c.HintFields[fieldIdx].Value
+		if oldValue != value {
+			log.Warn("BR operation hint field changed",
+				zap.String("operation_id", c.OperationID),
+				zap.Time("operation_started_at", c.StartedAt),
+				zap.String("hint_key", key),
+				zap.String("old_value", oldValue),
+				zap.String("new_value", value),
+			)
+		}
+		c.HintFields[fieldIdx].Value = value
+	} else {
+		c.HintFields = append(c.HintFields, HintField{Key: key, Value: value})
+	}
+
+	log.Info("BR operation hint field resolved",
 		zap.String("operation_id", c.OperationID),
 		zap.Time("operation_started_at", c.StartedAt),
-		zap.Uint64("restore_id", restoreID),
+		zap.String("hint_key", key),
+		zap.String("hint_value", value),
 	)
 }
 
 func (c Context) isInitialized() bool {
 	return c.OperationID != "" && !c.StartedAt.IsZero()
+}
+
+func (c Context) hintFieldIndex(key string) int {
+	for i, field := range c.HintFields {
+		if field.Key == key {
+			return i
+		}
+	}
+	return -1
 }
 
 // LockMeta builds object-storage lock metadata from the BR operation context.
@@ -130,8 +158,10 @@ func (c Context) lockHint(detail string) string {
 	fields := []string{
 		"operation_started_at=" + c.StartedAt.Format(time.RFC3339),
 	}
-	if c.RestoreID != 0 {
-		fields = append(fields, "restore_id="+strconv.FormatUint(c.RestoreID, 10))
+	for _, field := range c.HintFields {
+		if field.Key != "" && field.Value != "" {
+			fields = append(fields, field.Key+"="+field.Value)
+		}
 	}
 	if detail != "" {
 		fields = append(fields, "detail="+strconv.Quote(detail))

@@ -189,7 +189,10 @@ func (cx VerifyWriteContext) assertOnlyMyIntent() error {
 
 // LockMetaInput is the caller-provided metadata for a lock.
 type LockMetaInput struct {
-	OwnerID  string
+	OwnerID string
+	// LockType is a caller-defined resource or scope label used only for diagnostics.
+	// It does not control lock compatibility; conflict behavior is determined by
+	// the lock path layout and the lock helper used by the caller.
 	LockType string
 	Hint     string
 }
@@ -201,8 +204,11 @@ type LockMeta struct {
 	LockerPID  int       `json:"locker_pid"`
 	TxnID      []byte    `json:"txn_id"`
 	OwnerID    string    `json:"owner_id,omitempty"`
-	LockType   string    `json:"lock_type,omitempty"`
-	Hint       string    `json:"hint"`
+	// LockType is a caller-defined resource or scope label used only for diagnostics.
+	// It does not control lock compatibility; conflict behavior is determined by
+	// the lock path layout and the lock helper used by the caller.
+	LockType string `json:"lock_type,omitempty"`
+	Hint     string `json:"hint"`
 }
 
 // String implements fmt.Stringer interface.

@@ -45,7 +45,7 @@ func testOperationContext(t *testing.T) operation.Context {
 	t.Helper()
 	ctx, err := operation.NewContext("test")
 	require.NoError(t, err)
-	ctx.SetRestoreID(123)
+	ctx.SetHintField("restore_id", "123")
 	return ctx
 }
 
@@ -2699,7 +2699,7 @@ func testMigrationLockOperationMetadata(t *testing.T) {
 
 		est.DryRun(func(me MigrationExt) {
 			require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
-			require.Equal(t, opCtx.RestoreID, me.operationContext.RestoreID)
+			require.Equal(t, opCtx.HintFields, me.operationContext.HintFields)
 			require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
 		})
 	})

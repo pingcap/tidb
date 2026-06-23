@@ -2877,7 +2877,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// update config with restore ID to clean up checkpoint
 	cfg.RestoreID = deletedRestoreID
-	cfg.OperationContext.SetRestoreID(deletedRestoreID)
+	setOperationContextRestoreID(&cfg.OperationContext, deletedRestoreID)
 
 	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
 	if len(cfg.CheckpointStorage) > 0 {

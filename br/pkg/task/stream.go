@@ -2462,7 +2462,7 @@ func hasAnyWriteCFLogFile(ctx context.Context, fileIter logclient.LogIter) (*log
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
 	// already registered previously
 	if cfg.RestoreID != 0 {
-		cfg.OperationContext.SetRestoreID(cfg.RestoreID)
+		setOperationContextRestoreID(&cfg.OperationContext, cfg.RestoreID)
 		log.Info("restore task already registered, skipping re-registration",
 			zap.Uint64("restoreID", cfg.RestoreID),
 			zap.String("cmdName", cmdName))
@@ -2492,7 +2492,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
-	cfg.OperationContext.SetRestoreID(restoreID)
+	setOperationContextRestoreID(&cfg.OperationContext, restoreID)
 
 	// the registry may have resolved a different RestoreTS from existing tasks
 	// if so, we need to apply it to the config for consistency

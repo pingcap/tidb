@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -312,6 +313,16 @@ func (cfg *Config) EnsureOperationContext(command string) error {
 	}
 	cfg.OperationContext = operationContext
 	return nil
+}
+
+const operationHintRestoreID = "restore_id"
+
+func setOperationContextRestoreID(operationContext *operation.Context, restoreID uint64) {
+	if restoreID == 0 {
+		operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.

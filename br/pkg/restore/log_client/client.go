@@ -204,13 +204,23 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
-	rc.operationContext.SetRestoreID(restoreID)
+	rc.setOperationContextRestoreID(restoreID)
 }
 
 // SetOperationContext sets command-scoped metadata used for storage locks.
 func (rc *LogClient) SetOperationContext(operationContext operation.Context) {
 	rc.operationContext = operationContext
-	rc.operationContext.SetRestoreID(rc.restoreID)
+	rc.setOperationContextRestoreID(rc.restoreID)
+}
+
+const operationHintRestoreID = "restore_id"
+
+func (rc *LogClient) setOperationContextRestoreID(restoreID uint64) {
+	if restoreID == 0 {
+		rc.operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	rc.operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {

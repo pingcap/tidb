@@ -32,73 +32,86 @@ func TestNewContextGeneratesOperationID(t *testing.T) {
 	require.False(t, ctx.StartedAt.IsZero())
 }
 
-func TestSetRestoreIDBehavior(t *testing.T) {
-	t.Run("initialized context records restore ID each time", func(t *testing.T) {
+func TestSetHintFieldBehavior(t *testing.T) {
+	t.Run("initialized context records hint field each time", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		ctx, err := NewContext("log-restore")
 		require.NoError(t, err)
 
-		ctx.SetRestoreID(123)
-		ctx.SetRestoreID(123)
+		ctx.SetHintField("lineage_id", "123")
+		ctx.SetHintField("lineage_id", "123")
 
-		require.Equal(t, uint64(123), ctx.RestoreID)
-		require.Equal(t, 2, logs.FilterMessage("BR operation restore ID resolved").Len())
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields)
+		require.Equal(t, 2, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
-	t.Run("zero context ignores restore ID", func(t *testing.T) {
+	t.Run("zero context ignores hint field", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		var ctx Context
 
-		ctx.SetRestoreID(123)
+		ctx.SetHintField("lineage_id", "123")
 
-		require.Equal(t, uint64(0), ctx.RestoreID)
-		require.Equal(t, 0, logs.FilterMessage("BR operation restore ID resolved").Len())
+		require.Empty(t, ctx.HintFields)
+		require.Equal(t, 0, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
-	t.Run("ignored restore ID before context creation can be recorded later", func(t *testing.T) {
+	t.Run("ignored hint field before context creation can be recorded later", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		var ctx Context
 
-		ctx.SetRestoreID(123)
-		require.Equal(t, uint64(0), ctx.RestoreID)
+		ctx.SetHintField("lineage_id", "123")
+		require.Empty(t, ctx.HintFields)
 
 		var err error
 		ctx, err = NewContext("log-restore")
 		require.NoError(t, err)
-		ctx.SetRestoreID(123)
+		ctx.SetHintField("lineage_id", "123")
 
-		require.Equal(t, uint64(123), ctx.RestoreID)
-		require.Equal(t, 1, logs.FilterMessage("BR operation restore ID resolved").Len())
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields)
+		require.Equal(t, 1, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
-	t.Run("copied initialized context records restore ID independently", func(t *testing.T) {
+	t.Run("copied initialized context records hint field independently", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		ctx, err := NewContext("log-restore")
 		require.NoError(t, err)
+
+		ctx.SetHintField("lineage_id", "123")
 		copiedCtx := ctx
+		copiedCtx.SetHintField("lineage_id", "456")
 
-		ctx.SetRestoreID(123)
-		copiedCtx.SetRestoreID(123)
-
-		require.Equal(t, uint64(123), ctx.RestoreID)
-		require.Equal(t, uint64(123), copiedCtx.RestoreID)
-		require.Equal(t, 2, logs.FilterMessage("BR operation restore ID resolved").Len())
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields)
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "456"}}, copiedCtx.HintFields)
+		require.Equal(t, 2, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
-	t.Run("changed restore ID logs warning and updates value", func(t *testing.T) {
+	t.Run("changed hint field logs warning and updates value", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		ctx, err := NewContext("log-restore")
 		require.NoError(t, err)
 
-		ctx.SetRestoreID(123)
-		ctx.SetRestoreID(456)
+		ctx.SetHintField("lineage_id", "123")
+		ctx.SetHintField("lineage_id", "456")
 
-		require.Equal(t, uint64(456), ctx.RestoreID)
-		require.Equal(t, 2, logs.FilterMessage("BR operation restore ID resolved").Len())
-		warnLogs := logs.FilterMessage("BR operation restore ID changed")
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "456"}}, ctx.HintFields)
+		require.Equal(t, 2, logs.FilterMessage("BR operation hint field resolved").Len())
+		warnLogs := logs.FilterMessage("BR operation hint field changed")
 		require.Equal(t, 1, warnLogs.Len())
-		require.Equal(t, uint64(123), loggedUint64Field(t, warnLogs.All()[0], "old_restore_id"))
-		require.Equal(t, uint64(456), loggedUint64Field(t, warnLogs.All()[0], "new_restore_id"))
+		require.Equal(t, "lineage_id", loggedStringField(t, warnLogs.All()[0], "hint_key"))
+		require.Equal(t, "123", loggedStringField(t, warnLogs.All()[0], "old_value"))
+		require.Equal(t, "456", loggedStringField(t, warnLogs.All()[0], "new_value"))
+	})
+
+	t.Run("empty value removes hint field", func(t *testing.T) {
+		_, logs := withObservedLogs(t)
+		ctx, err := NewContext("log-restore")
+		require.NoError(t, err)
+
+		ctx.SetHintField("lineage_id", "123")
+		ctx.SetHintField("lineage_id", "")
+
+		require.Empty(t, ctx.HintFields)
+		require.Equal(t, 1, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 }
 
@@ -107,7 +120,7 @@ func TestLockMeta(t *testing.T) {
 	ctx := Context{
 		OperationID: "operation-id",
 		StartedAt:   startedAt,
-		RestoreID:   123,
+		HintFields:  []HintField{{Key: "lineage_id", Value: "123"}},
 	}
 
 	meta, err := ctx.LockMeta(LockResourceMigrationRead, "test hint")
@@ -116,7 +129,7 @@ func TestLockMeta(t *testing.T) {
 	require.Equal(t, "operation-id", meta.OwnerID)
 	require.Equal(t, string(LockResourceMigrationRead), meta.LockType)
 	require.Contains(t, meta.Hint, "operation_started_at=2026-06-15T12:00:00Z")
-	require.Contains(t, meta.Hint, "restore_id=123")
+	require.Contains(t, meta.Hint, "lineage_id=123")
 	require.Contains(t, meta.Hint, `detail="test hint"`)
 }
 
@@ -173,14 +186,14 @@ func withObservedLogs(t *testing.T) (*zap.Logger, *observer.ObservedLogs) {
 	return logger, logs
 }
 
-func loggedUint64Field(t *testing.T, entry observer.LoggedEntry, key string) uint64 {
+func loggedStringField(t *testing.T, entry observer.LoggedEntry, key string) string {
 	t.Helper()
 
 	for _, field := range entry.Context {
 		if field.Key == key {
-			return uint64(field.Integer)
+			return field.String
 		}
 	}
 	require.Failf(t, "missing log field", "field %s not found", key)
-	return 0
+	return ""
 }
