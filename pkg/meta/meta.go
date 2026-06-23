@@ -189,6 +189,9 @@ const (
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
 	// MaskingPolicyNextGenBootTableVersion adds mysql.tidb_masking_policy.
 	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
+	// AutoAnalyzeTasksNextGenBootTableVersion adds mysql.auto_analyze_tasks and
+	// mysql.auto_analyze_tasks_history.
+	AutoAnalyzeTasksNextGenBootTableVersion NextGenBootTableVersion = 3
 )
 
 // DDLTableVersion is to display ddl related table versions

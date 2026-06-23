@@ -329,13 +329,17 @@ var (
 		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
-		{ID: metadef.AutoAnalyzeTasksTableID, Name: "auto_analyze_tasks", SQL: metadef.CreateAutoAnalyzeTasksTable},
-		{ID: metadef.AutoAnalyzeTasksHistoryTableID, Name: "auto_analyze_tasks_history", SQL: metadef.CreateAutoAnalyzeTasksHistoryTable},
 	}
 	// systemTablesOfMaskingPolicyNextGenVersion contains system tables introduced in
 	// the masking-policy bootstrap version.
 	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
+	}
+	// systemTablesOfAutoAnalyzeTasksNextGenVersion contains system tables introduced
+	// in the auto-analyze-tasks bootstrap version.
+	systemTablesOfAutoAnalyzeTasksNextGenVersion = []TableBasicInfo{
+		{ID: metadef.AutoAnalyzeTasksTableID, Name: "auto_analyze_tasks", SQL: metadef.CreateAutoAnalyzeTasksTable},
+		{ID: metadef.AutoAnalyzeTasksHistoryTableID, Name: "auto_analyze_tasks_history", SQL: metadef.CreateAutoAnalyzeTasksHistoryTable},
 	}
 )
 
@@ -356,6 +360,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
+	}},
+	{ver: meta.AutoAnalyzeTasksNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfAutoAnalyzeTasksNextGenVersion},
 	}},
 }
 
