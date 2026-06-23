@@ -101,6 +101,39 @@ func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
 }
 
+func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol == nil || newCol == nil || oldCol.Comment == newCol.Comment {
+		return false
+	}
+	return oldCol.ID == newCol.ID &&
+		oldCol.Name == newCol.Name &&
+		oldCol.Offset == newCol.Offset &&
+		oldCol.State == newCol.State &&
+		oldCol.Version == newCol.Version &&
+		oldCol.Hidden == newCol.Hidden &&
+		oldCol.GeneratedExprString == newCol.GeneratedExprString &&
+		oldCol.GeneratedStored == newCol.GeneratedStored &&
+		oldCol.DefaultIsExpr == newCol.DefaultIsExpr &&
+		oldCol.ChangingFieldType == nil &&
+		newCol.ChangingFieldType == nil &&
+		oldCol.ChangeStateInfo == nil &&
+		newCol.ChangeStateInfo == nil &&
+		oldCol.FieldType.Equals(&newCol.FieldType) &&
+		columnDependencesEqual(oldCol.Dependences, newCol.Dependences)
+}
+
+func columnDependencesEqual(a, b map[string]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // getModifyColumnType gets the modify column type.
 //  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
 //  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
@@ -546,6 +579,9 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 ) ([]schemaIDAndTableInfo, error) {
 	baseInfo := baseTblInfo.MaterializedViewBase
 	if baseInfo == nil {
+		return nil, nil
+	}
+	if isColumnCommentOnlyChange(oldCol, newCol) {
 		return nil, nil
 	}
 
@@ -2064,6 +2100,9 @@ func validateMaterializedViewBaseModifyColumn(
 	hasDependentMV := len(baseInfo.MViewIDs) > 0
 	hasMLog := baseInfo.MLogID != 0
 	if !hasDependentMV && !hasMLog {
+		return nil
+	}
+	if isColumnCommentOnlyChange(oldCol, newCol) {
 		return nil
 	}
 

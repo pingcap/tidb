@@ -366,6 +366,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	// Reorg-required or MV-dependent modifying should still be rejected.
 	err = tk.ExecToErr("alter table t modify column b bigint")
 	require.ErrorContains(t, err, "does not support modifying columns used in non-direct SELECT expressions")
+	tk.MustExec("alter table t modify column b int not null comment 'comment-only change'")
+	tk.MustQuery("select column_comment from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'b'").Check(testkit.Rows("comment-only change"))
 
 	// MV LOG must contain all referenced columns.
 	tk.MustExec("create table t_mlog_missing (a int not null, b int not null)")
