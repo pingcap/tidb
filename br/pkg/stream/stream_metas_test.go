@@ -3216,8 +3216,9 @@ func TestMergeAndMigrateToBoundsIngestedSstPathsOverTruncates(t *testing.T) {
 		ingMetaPath := pef(t, ingMeta, i, s)
 		pmig(s, uint64(i), mig(mExtFullBackup(ingMetaPath), mTruncatedTo(ts)))
 
-		res := est.MergeAndMigrateTo(ctx, math.MaxInt,
+		res, err := est.MergeAndMigrateTo(ctx, math.MaxInt,
 			MMOptSkipLockingInTest(), MMOptAlwaysRunTruncate())
+		require.NoError(t, err)
 		require.NoError(t, multierr.Combine(res.Warnings...),
 			"round %d warnings: %v", i, res.Warnings)
 
