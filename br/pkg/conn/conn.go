@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -306,12 +304,7 @@ func (mgr *Mgr) Close() {
 
 // GetCurrentTsFromPD gets current ts from PD.
 func (mgr *Mgr) GetCurrentTsFromPD(ctx context.Context) (uint64, error) {
-	p, l, err := mgr.GetPDClient().GetTS(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	return oracle.ComposeTS(p, l), nil
+	return util.GetCurrentTsFromPD(ctx, mgr.GetPDClient())
 }
 
 // ProcessTiKVConfigs handle the tikv config for region split size, region split keys, and import goroutines in place.
@@ -385,18 +378,31 @@ func (mgr *Mgr) IsLogBackupEnabled(ctx context.Context, client *http.Client) (bo
 	return logbackupEnable, errors.Trace(err)
 }
 
-// GetConfigFromTiKV get configs from all alive tikv stores.
-func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
-	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
+// GetConfigFromTiKV gets configs from all alive TiKV stores.
+func GetConfigFromTiKV(
+	ctx context.Context,
+	pdClient util.StoreMeta,
+	cli *http.Client,
+	httpPrefix string,
+	fn func(*http.Response) error,
+) error {
+	allStores, err := GetAllTiKVStoresWithRetry(ctx, pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	return util.GetConfigFromTiKVStores(ctx, allStores, cli, httpPrefix, fn)
+}
 
+// GetConfigFromTiKV get configs from all alive tikv stores.
+func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
 	httpPrefix := "http://"
 	if mgr.GetTLSConfig() != nil {
 		httpPrefix = "https://"
 	}
+	return GetConfigFromTiKV(ctx, mgr.GetPDClient(), cli, httpPrefix, fn)
+}
 
+<<<<<<< HEAD
 	for _, store := range allStores {
 		if store.State != metapb.StoreState_Up {
 			continue
@@ -425,41 +431,21 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 			// if one store failed, break and return error
 			return err
 		}
+=======
+// GetConfigBytesFromTiKV gets config response bodies from all alive tikv stores.
+func (mgr *Mgr) GetConfigBytesFromTiKV(ctx context.Context, cli *http.Client, collect func([]byte) error) error {
+	httpPrefix := "http://"
+	if mgr.GetTLSConfig() != nil {
+		httpPrefix = "https://"
+>>>>>>> 21e43a87e43 (br: optimize resolve lock for tidb advancer (#69301))
 	}
-	return nil
+	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return util.GetConfigBytesFromTiKVStores(ctx, allStores, cli, httpPrefix, collect)
 }
 
 func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error) {
-	statusAddr := store.GetStatusAddress()
-	nodeAddr := store.GetAddress()
-	if !strings.HasPrefix(statusAddr, "http") {
-		statusAddr = httpPrefix + statusAddr
-	}
-	if !strings.HasPrefix(nodeAddr, "http") {
-		nodeAddr = httpPrefix + nodeAddr
-	}
-
-	statusUrl, err := url.Parse(statusAddr)
-	if err != nil {
-		return nil, err
-	}
-	nodeUrl, err := url.Parse(nodeAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	// we try status address as default
-	addr := statusUrl
-	// but in sometimes we may not get the correct status address from PD.
-	if statusUrl.Hostname() != nodeUrl.Hostname() {
-		// if not matched, we use the address as default, but change the port
-		addr.Host = net.JoinHostPort(nodeUrl.Hostname(), statusUrl.Port())
-		log.Warn("store address and status address mismatch the host, we will use the store address as hostname",
-			zap.Uint64("store", store.Id),
-			zap.String("status address", statusAddr),
-			zap.String("node address", nodeAddr),
-			zap.Any("request address", statusUrl),
-		)
-	}
-	return addr, nil
+	return util.HandleTiKVAddress(store, httpPrefix)
 }
