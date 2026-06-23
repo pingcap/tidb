@@ -6486,6 +6486,9 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	if stmt.OrReplace && stmt.IfNotExists {
 		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
 	}
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+		return err
+	}
 
 	tableIdent := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	if tableIdent.Schema.L == "" {
@@ -6498,6 +6501,21 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	schema, tbl, err := e.getSchemaAndTableByIdent(tableIdent)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// Creating a masking policy on a table effectively modifies the table's schema behavior,
+	// so it requires ALTER privilege on the table in addition to the dynamic privilege.
+	if checker := privilege.GetPrivilegeManager(ctx); checker != nil {
+		if !checker.RequestVerification(
+			ctx.GetSessionVars().ActiveRoles,
+			schema.Name.L,
+			tbl.Meta().Name.L,
+			"",
+			mysql.AlterPriv,
+		) {
+			user := ctx.GetSessionVars().User
+			return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, tbl.Meta().Name.L)
+		}
 	}
 
 	policyInfo, err := buildMaskingPolicyInfo(
@@ -6527,6 +6545,9 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 }
 
 func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+		return err
+	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6559,6 +6580,9 @@ func (e *executor) getMaskingPolicyByNameForTable(tableID int64, cols []*model.C
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
 	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6566,7 +6590,7 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 	policyName := spec.MaskingPolicyName
 	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
-		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 
 	status := model.MaskingPolicyStatusEnable
@@ -6605,6 +6629,9 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 }
 
 func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "DROP MASKING POLICY"); err != nil {
+		return err
+	}
 	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6612,7 +6639,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 	policyName := spec.MaskingPolicyName
 	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
-		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 
 	job := &model.Job{
@@ -6644,6 +6671,9 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 // ModifyMaskingPolicyExpression modifies the expression of an existing masking policy.
 func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6651,7 +6681,7 @@ func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident a
 	policyName := spec.MaskingPolicyName
 	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
-		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 
 	// Validate and restore the new expression.
@@ -6697,6 +6727,9 @@ func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident a
 
 // ModifyMaskingPolicyRestrictOn modifies the restrict-on settings of an existing masking policy.
 func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
 	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6704,7 +6737,7 @@ func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident a
 	policyName := spec.MaskingPolicyName
 	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
-		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 
 	newPolicy := policy.Clone()
@@ -6738,6 +6771,18 @@ func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident a
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 
+func requireMaskingPolicyDynamicPrivilege(ctx sessionctx.Context, dynamicPriv string) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		// Keep behavior for internal/bootstrap sessions without privilege manager.
+		return nil
+	}
+	if checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, dynamicPriv, false) {
+		return nil
+	}
+	return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or " + dynamicPriv)
+}
+
 func (e *executor) createMaskingPolicyWithInfo(
 	ctx sessionctx.Context,
 	tableID int64,
@@ -6748,9 +6793,9 @@ func (e *executor) createMaskingPolicyWithInfo(
 	is := e.infoCache.GetLatest()
 	if existPolicy, ok := e.getMaskingPolicyByNameForTable(tableID, cols, policy.Name); ok {
 		if existPolicy.ColumnID != policy.ColumnID {
-			return errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
+			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
-		err := errors.Errorf("masking policy %s already exists", policy.Name.O)
+		err := dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(policy.Name.O)
 		switch onExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -6760,7 +6805,7 @@ func (e *executor) createMaskingPolicyWithInfo(
 		}
 	}
 	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
-		return errors.Errorf("masking policy already exists on column %s", existPolicy.ColumnName.O)
+		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 	}
 
 	job := &model.Job{
