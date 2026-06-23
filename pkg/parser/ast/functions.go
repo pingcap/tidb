@@ -371,6 +371,15 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// embedding functions (tidb extension)
+	EmbedText = "embed_text"
+	// The following functions are rewritten to the corresponding VEC_*_DISTANCE
+	// function by reading embedding metadata from a generated vector column.
+	VecEmbedL1Distance           = "vec_embed_l1_distance"
+	VecEmbedL2Distance           = "vec_embed_l2_distance"
+	VecEmbedNegativeInnerProduct = "vec_embed_negative_inner_product"
+	VecEmbedCosineDistance       = "vec_embed_cosine_distance"
+
 	// FTS functions (tidb extension)
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"

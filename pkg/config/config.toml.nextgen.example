@@ -441,6 +441,13 @@ pessimistic-auto-commit = true
 # enable creating expression index.
 allow-expression-index = false
 
+# Enables the TiDB Cloud hosted embedding provider tidbcloud_free.
+# Only valid when deploy-mode is starter.
+# [hosted-embedding]
+# enabled = false
+# api-endpoint = ""
+# api-key-path = ""
+
 # server level isolation read by engines and labels
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".

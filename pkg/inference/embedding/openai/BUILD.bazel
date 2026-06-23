@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "openai",
+    srcs = [
+        "openai.go",
+        "protocol.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/inference/embedding/openai",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/inference/embedding/base",
+        "//pkg/util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "openai_test",
+    timeout = "short",
+    srcs = ["openai_test.go"],
+    embed = [":openai"],
+    flaky = True,
+    shard_count = 7,
+    deps = ["@com_github_stretchr_testify//require"],
+)

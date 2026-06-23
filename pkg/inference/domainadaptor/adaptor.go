@@ -1,0 +1,48 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package domainadaptor provides access to Domain-owned inference resources
+// without importing the domain package and creating dependency cycles.
+package domainadaptor
+
+import (
+	"github.com/pingcap/tidb/pkg/inference"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+)
+
+type domainProxy interface {
+	GetEmbedFn() *inference.EmbedFn
+}
+
+type domainGetter interface {
+	GetDomain() any
+}
+
+// GetEmbedFn returns the embedding function bridge associated with the session's domain.
+// It falls back to the process-global default when no domain-owned bridge is available,
+// which keeps expression tests and non-session call paths usable without a Domain.
+func GetEmbedFn(sctx sessionctx.Context) *inference.EmbedFn {
+	if sctx == nil {
+		return inference.DefaultEmbedFn()
+	}
+	domainProvider, ok := any(sctx).(domainGetter)
+	if !ok {
+		return inference.DefaultEmbedFn()
+	}
+	domain := domainProvider.GetDomain()
+	if proxy, ok := domain.(domainProxy); ok && proxy.GetEmbedFn() != nil {
+		return proxy.GetEmbedFn()
+	}
+	return inference.DefaultEmbedFn()
+}

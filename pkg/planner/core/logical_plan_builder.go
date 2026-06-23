@@ -5203,11 +5203,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
-			UniqueID: sessionVars.AllocPlanColumnID(),
-			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
-			OrigName: names[i].String(),
-			IsHidden: col.Hidden,
+			UniqueID:            sessionVars.AllocPlanColumnID(),
+			ID:                  col.ID,
+			RetType:             col.FieldType.Clone(),
+			OrigName:            names[i].String(),
+			IsHidden:            col.Hidden,
+			GeneratedExprString: col.GeneratedExprString,
 		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)

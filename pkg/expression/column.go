@@ -294,6 +294,9 @@ type Column struct {
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
+	// GeneratedExprString stores generated-expression SQL text for later parse-and-rewrite flows.
+	GeneratedExprString string
+
 	OrigName string
 	IsHidden bool
 

@@ -978,6 +978,13 @@ var funcs = map[string]functionClass{
 	ast.VecL2Norm:               &vecL2NormFunctionClass{baseFunctionClass{ast.VecL2Norm, 1, 1}},
 	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
 	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
+	ast.EmbedText:               &embedTextFunctionClass{baseFunctionClass{ast.EmbedText, 2, 3}},
+	ast.VecEmbedL1Distance:      &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecEmbedL1Distance, 2, 2}},
+	ast.VecEmbedL2Distance:      &vecL2DistanceFunctionClass{baseFunctionClass{ast.VecEmbedL2Distance, 2, 2}},
+	ast.VecEmbedNegativeInnerProduct: &vecNegativeInnerProductFunctionClass{baseFunctionClass{
+		ast.VecEmbedNegativeInnerProduct, 2, 2,
+	}},
+	ast.VecEmbedCosineDistance: &vecCosineDistanceFunctionClass{baseFunctionClass{ast.VecEmbedCosineDistance, 2, 2}},
 
 	// fts functions
 	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass: baseFunctionClass{ast.FTSMatchWord, 2, 2}},

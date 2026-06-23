@@ -333,6 +333,9 @@ type Config struct {
 	// StarterParams contains Starter-only extension parameters.
 	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
+	// HostedEmbedding controls the TiDB Cloud hosted embedding provider.
+	HostedEmbedding HostedEmbedding `toml:"hosted-embedding" json:"hosted-embedding"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1067,6 +1070,30 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
+// HostedEmbedding is the config for TiDB Cloud hosted embedding provider (tidbcloud_free/ prefix in EMBED_TEXT).
+type HostedEmbedding struct {
+	// Enabled indicates whether the hosted embedding service is enabled.
+	// It is only valid for Starter deploy mode and only takes effect for nextgen kernels.
+	Enabled bool `toml:"enabled" json:"enabled,omitempty"`
+
+	// APIEndpoint is the endpoint for the hosted embedding service.
+	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint,omitempty"`
+
+	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
+	APIKeyPath string `toml:"api-key-path" json:"api-key-path,omitempty"`
+}
+
+func (c HostedEmbedding) configured() bool {
+	return c.Enabled || c.APIEndpoint != "" || c.APIKeyPath != ""
+}
+
+func isHostedEmbeddingDefined(metaData toml.MetaData) bool {
+	return metaData.IsDefined("hosted-embedding") ||
+		metaData.IsDefined("hosted-embedding", "enabled") ||
+		metaData.IsDefined("hosted-embedding", "api-endpoint") ||
+		metaData.IsDefined("hosted-embedding", "api-key-path")
+}
+
 // Standby is the config for standby mode.
 type Standby struct {
 	// StandByMode indicates whether to enable the standby mode.
@@ -1258,6 +1285,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental:               Experimental{},
+	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
@@ -1574,6 +1602,9 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
+	if isHostedEmbeddingDefined(metaData) && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1708,6 +1739,9 @@ func (c *Config) Valid() error {
 	}
 	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
+	}
+	if c.HostedEmbedding.configured() && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")

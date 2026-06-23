@@ -31,6 +31,7 @@ func write(path string, f *build.File) error {
 func skipFlaky(path string) bool {
 	var pmap = set.NewStringSet()
 	pmap.Insert("tests/realtikvtest/addindextest/BUILD.bazel")
+	pmap.Insert("pkg/inference/embedding/mock/BUILD.bazel")
 	return pmap.Exist(path)
 }
 
@@ -41,6 +42,9 @@ func skipTazel(path string) bool {
 }
 
 func skipShardCount(path string) bool {
+	if path == "pkg/inference/embedding/mock/BUILD.bazel" {
+		return true
+	}
 	return strings.HasPrefix(path, "tests/readonlytest") ||
 		(strings.HasPrefix(path, "pkg/util") &&
 			!strings.HasPrefix(path, "pkg/util/admin") &&

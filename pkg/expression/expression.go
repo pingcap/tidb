@@ -1107,12 +1107,13 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  col.FieldType.Clone(),
-			ID:       col.ID,
-			UniqueID: ctx.AllocPlanColumnID(),
-			Index:    col.Offset,
-			OrigName: names[i].String(),
-			IsHidden: col.Hidden,
+			RetType:             col.FieldType.Clone(),
+			ID:                  col.ID,
+			UniqueID:            ctx.AllocPlanColumnID(),
+			Index:               col.Offset,
+			GeneratedExprString: col.GeneratedExprString,
+			OrigName:            names[i].String(),
+			IsHidden:            col.Hidden,
 		}
 		columns = append(columns, newCol)
 	}
