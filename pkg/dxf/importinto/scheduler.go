@@ -29,13 +29,13 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/tablemode"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -555,7 +555,7 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 		return errors.Trace(err)
 	}
 	// Reset table mode earlier than scheduler cleanup. Cleanup routine remains a fallback.
-	sch.switchTableMode2NormalMode(ctx, taskMeta, logger)
+	sch.switchTableMode2NormalMode(ctx, task, taskMeta, logger)
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
@@ -569,21 +569,20 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	return sch.finishJob(ctx, logger, task, taskMeta)
 }
 
-func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *TaskMeta, logger *zap.Logger) {
-	if !kerneltype.IsClassic() {
-		return
-	}
-	if taskMeta == nil || taskMeta.Plan.DBID == 0 || taskMeta.Plan.TableInfo == nil || taskMeta.Plan.TableInfo.ID == 0 {
-		return
-	}
-	err := sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se,
-			model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-	})
+func (sch *importScheduler) switchTableMode2NormalMode(
+	ctx context.Context,
+	task *proto.Task,
+	taskMeta *TaskMeta,
+	logger *zap.Logger,
+) {
+	targetKS := task.Keyspace
+	plan := &taskMeta.Plan
+	err := sch.TaskRuntime.AlterTableMode(ctx, tablemode.BuildRequest(plan, model.TableModeNormal))
 	if err != nil {
-		logger.Warn(
-			"alter table mode to normal failure",
+		// ok to fail here, we will try to reset the table mode in cleanup.
+		logger.Warn("alter table mode to normal failure",
 			zap.Error(err),
+			zap.String("target-keyspace", targetKS),
 			zap.Int64("dbID", taskMeta.Plan.DBID),
 			zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
 		)

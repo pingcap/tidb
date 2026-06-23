@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -126,7 +127,15 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
 	var taskMgr scheduler.TaskManager = manager
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	runtime := newImportTestRuntime(ctrl, store, pool)
+	runtime.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeRequest{
+		SchemaID:           0,
+		TableID:            0,
+		ExpectedSchemaName: "test",
+		ExpectedTableName:  "t",
+		TableMode:          model.TableModeNormal,
+	}).Return(nil).Times(4)
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, runtime))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -365,9 +374,6 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 }
 
 func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
 	if !kerneltype.IsClassic() {
 		t.Skip("table mode is only set in classic kernel")
 	}
@@ -436,12 +442,69 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 	}
 
 	var taskMgr scheduler.TaskManager = mgr
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, dom.GetRuntime()))
 	require.NoError(t, ext.OnDone(ctx, nil, task))
 
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+}
+
+func TestSchedulerOnDoneRoutesTableModeResetByTaskKeyspace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace table-mode routing is only for nextgen")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+
+	conn := tk.Session().GetSQLExecutor()
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 202,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+
+	plan := newTableModeRoutingPlan("ks-plan-fallback")
+	logicalPlan := &importinto.LogicalPlan{
+		JobID: jobID,
+		Plan:  *plan,
+		Stmt:  `IMPORT INTO test.t FROM '/path/to/file'`,
+	}
+	bs, err := logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:       321,
+			Type:     proto.ImportInto,
+			Step:     proto.StepInit,
+			State:    proto.TaskStateReverting,
+			Keyspace: "ks-scheduler-route",
+		},
+		Meta:  bs,
+		Error: errors.New("cancelled by user"),
+	}
+
+	var taskMgr scheduler.TaskManager = mgr
+	runtime := newImportTestRuntime(ctrl, store, pool)
+	runtime.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeRequest{
+		SchemaID:           101,
+		TableID:            202,
+		ExpectedSchemaName: "test",
+		ExpectedTableName:  "t",
+		TableMode:          model.TableModeNormal,
+	}).Return(nil)
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, runtime))
+	require.NoError(t, ext.OnDone(ctx, nil, task))
 }
 
 func TestSchedulerExtGlobalSort(t *testing.T) {

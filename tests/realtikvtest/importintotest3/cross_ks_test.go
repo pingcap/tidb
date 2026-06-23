@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/objstore"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -71,13 +74,89 @@ func TestOnUserKeyspace(t *testing.T) {
 	}
 	require.NoError(t, objStore.WriteFile(ctx, "a.csv", []byte(contentSB.String())))
 	importSQL := fmt.Sprintf(`import into t FROM 's3://next-gen-test/data/a.csv?%s'`, s3Args)
-	result := userTK.MustQuery(importSQL).Rows()
-	require.Len(t, result, 1)
-	jobID, err := strconv.Atoi(result[0][0].(string))
+	modeTK := testkit.NewTestKit(t, userStore)
+	postProcessStarted := make(chan int64, 1)
+	resumePostProcess := make(chan struct{})
+	var releasePostProcess sync.Once
+	releasePostProcessFn := func() {
+		releasePostProcess.Do(func() {
+			close(resumePostProcess)
+		})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforePostProcess",
+		func(jobID int64) {
+			select {
+			case postProcessStarted <- jobID:
+			default:
+			}
+			<-resumePostProcess
+		},
+	)
+	importCtx, cancelImport := context.WithCancel(context.Background())
+	importResultCh := make(chan importQueryResult, 1)
+	go func() {
+		defer close(importResultCh)
+		importResultCh <- runImportIntoQuery(importCtx, userTK, importSQL)
+	}()
+	importResultRead := false
+	defer func() {
+		releasePostProcessFn()
+		if importResultRead {
+			cancelImport()
+			return
+		}
+		select {
+		case result, ok := <-importResultCh:
+			cancelImport()
+			if ok && result.err != nil {
+				t.Logf("import finished during test cleanup with error: %v", result.err)
+			}
+			return
+		case <-time.After(30 * time.Second):
+		}
+		cancelImport()
+		select {
+		case result, ok := <-importResultCh:
+			if ok && result.err != nil {
+				t.Logf("import finished after cancellation during test cleanup with error: %v", result.err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Errorf("import did not finish during test cleanup after cancellation")
+		}
+	}()
+	var postProcessJobID int64
+	select {
+	case postProcessJobID = <-postProcessStarted:
+	case result, ok := <-importResultCh:
+		importResultRead = true
+		releasePostProcessFn()
+		require.True(t, ok, "import failed before table mode could be observed")
+		require.NoError(t, result.err)
+		require.FailNowf(t, "import finished before table mode could be observed",
+			"result: %v", result.rows)
+	case <-time.After(60 * time.Second):
+		releasePostProcessFn()
+		require.FailNow(t, "import did not reach post-process before timeout")
+	}
+	require.NotZero(t, postProcessJobID)
+	requireTableModeEventually(t, modeTK, "cross_ks", "t", "Import")
+	releasePostProcessFn()
+	var result importQueryResult
+	select {
+	case result = <-importResultCh:
+		importResultRead = true
+		require.NoError(t, result.err)
+	case <-time.After(120 * time.Second):
+		require.FailNow(t, "import did not finish after table mode reset was released")
+	}
+	require.Len(t, result.rows, 1)
+	jobID, err := strconv.Atoi(result.rows[0][0])
 	require.NoError(t, err)
+	require.EqualValues(t, postProcessJobID, jobID)
+	requireTableModeEventually(t, modeTK, "cross_ks", "t", "Normal")
 	userTK.MustQuery("select * from t").Check(testkit.Rows(resultSlice...))
 	taskKey := importinto.TaskKey(int64(jobID))
-	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
+	tableID, err := strconv.Atoi(result.rows[0][fmap["TableID"]])
 	require.NoError(t, err)
 	// job to user keyspace, task to system keyspace
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
@@ -127,4 +206,40 @@ func TestOnUserKeyspace(t *testing.T) {
 	summary := &importer.Summary{}
 	require.NoError(t, json.Unmarshal([]byte(rs[0][0].(string)), summary))
 	require.EqualValues(t, rowCount, summary.ImportedRows)
+}
+
+type importQueryResult struct {
+	rows [][]string
+	err  error
+}
+
+func runImportIntoQuery(ctx context.Context, tk *testkit.TestKit, sql string) importQueryResult {
+	rs, err := tk.ExecWithContext(ctx, sql)
+	if err != nil {
+		if rs != nil {
+			_ = rs.Close()
+		}
+		return importQueryResult{err: err}
+	}
+	if rs == nil {
+		return importQueryResult{err: fmt.Errorf("import into returned no result set")}
+	}
+	rows, err := session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	if err != nil {
+		_ = rs.Close()
+	}
+	return importQueryResult{
+		rows: rows,
+		err:  err,
+	}
+}
+
+func requireTableModeEventually(t *testing.T, tk *testkit.TestKit, dbName, tableName, mode string) {
+	t.Helper()
+	query := fmt.Sprintf(`select tidb_table_mode from information_schema.tables
+		where table_schema = '%s' and table_name = '%s'`, dbName, tableName)
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(query).Rows()
+		return len(rows) == 1 && fmt.Sprint(rows[0][0]) == mode
+	}, 10*time.Second, 100*time.Millisecond, "table %s.%s did not reach %s mode", dbName, tableName, mode)
 }

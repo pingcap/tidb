@@ -23,18 +23,22 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -57,6 +61,42 @@ func switchTaskStep(
 	task, err := manager.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, step, nil))
+}
+
+func newTableModeRoutingPlanForTable(t *testing.T, targetKS string, tk *testkit.TestKit, tableName string) *importer.Plan {
+	t.Helper()
+
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists " + tableName)
+	tk.MustExec("create table " + tableName + "(id int)")
+
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+
+	plan := newTableModeRoutingPlan(targetKS)
+	plan.DBID = dbInfo.ID
+	plan.TableInfo = tbl.Meta().Clone()
+	return plan
+}
+
+func newTableModeRoutingPlan(targetKS string) *importer.Plan {
+	return &importer.Plan{
+		DBName:                "test",
+		DBID:                  101,
+		Keyspace:              targetKS,
+		DisableTiKVImportMode: true,
+		TableInfo: &model.TableInfo{
+			ID:    202,
+			Name:  ast.NewCIStr("t"),
+			State: model.StatePublic,
+		},
+		Parameters: &importer.ImportParameters{},
+	}
 }
 
 func TestSubmitTaskNextgen(t *testing.T) {
@@ -105,6 +145,13 @@ func TestSubmitTaskNextgen(t *testing.T) {
 	userKSTK := testkit.NewTestKit(t, userKSStore)
 
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	restoreDXFPool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return testkit.NewTestKit(t, sysKSStore).Session(), nil
+	}, 1, 1, time.Second)
+	t.Cleanup(func() {
+		restoreDXFPool.Close()
+	})
+	restoreDXFTaskMgr := storage.NewTaskManager(restoreDXFPool)
 
 	manuallyInitFn := func(t *testing.T, currKSStore, sysKSStore kv.Storage) {
 		t.Helper()
@@ -134,10 +181,9 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			conf.KeyspaceName = keyspace.System
 		})
 		manuallyInitFn(t, sysKSStore, sysKSStore)
-		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
-			TableInfo:  &model.TableInfo{},
-			Parameters: &importer.ImportParameters{},
-		}, "import into t from '/path/to/file'")
+		plan := newTableModeRoutingPlanForTable(t, keyspace.System, sysKSTK, "t_system_submit")
+		jobID, task, err := importinto.SubmitTask(ctx, plan,
+			"import into test.t_system_submit from '/path/to/file'")
 		require.NoError(t, err)
 		// both inside system keyspace
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
@@ -154,10 +200,9 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			conf.KeyspaceName = "ks"
 		})
 		manuallyInitFn(t, userKSStore, sysKSStore)
-		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
-			TableInfo:  &model.TableInfo{},
-			Parameters: &importer.ImportParameters{},
-		}, "import into t from '/path/to/file'")
+		plan := newTableModeRoutingPlanForTable(t, "ks", userKSTK, "t_user_submit")
+		jobID, task, err := importinto.SubmitTask(ctx, plan,
+			"import into test.t_user_submit from '/path/to/file'")
 		require.NoError(t, err)
 		// job created in user keyspace, task created in system keyspace
 		userKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
@@ -175,13 +220,12 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		})
 		manuallyInitFn(t, sysKSStore, sysKSStore)
 
-		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
-			TableInfo:       &model.TableInfo{},
-			Parameters:      &importer.ImportParameters{},
-			ThreadCnt:       16,
-			MaxNodeCnt:      8,
-			CloudStorageURI: "local:///tmp/prepare-mode-sort",
-		}, "import into t from 's3://bucket/test.csv'")
+		plan := newTableModeRoutingPlanForTable(t, keyspace.System, sysKSTK, "t_prepare_submit")
+		plan.ThreadCnt = 16
+		plan.MaxNodeCnt = 8
+		plan.CloudStorageURI = "local:///tmp/prepare-mode-sort"
+		jobID, task, err := importinto.SubmitTask(ctx, plan,
+			"import into test.t_prepare_submit from 's3://bucket/test.csv'")
 		require.NoError(t, err)
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
 		sysKSTK.MustQuery(
@@ -190,6 +234,83 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			task.ID,
 		).Check(testkit.Rows("1 1 1"))
 	})
+
+	t.Run("initial submit failure resets table mode", func(t *testing.T) {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspace.System
+		})
+		manuallyInitFn(t, sysKSStore, sysKSStore)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/failImportIntoSubmitTask2DXF", "return(true)")
+
+		plan := newTableModeRoutingPlanForTable(t, keyspace.System, sysKSTK, "t_submit_failure")
+		_, _, err := importinto.SubmitTask(ctx, plan,
+			"import into test.t_submit_failure from '/path/to/file'")
+		require.ErrorContains(t, err, "injected import into submit task failure")
+
+		tbl, err := domain.GetDomain(sysKSTK.Session()).InfoSchema().TableByName(
+			context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_submit_failure"))
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+	})
+
+	t.Run("dxf service submit failure resets table mode", func(t *testing.T) {
+		previousKeyspaceName := config.GetGlobalKeyspaceName()
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = previousKeyspaceName
+			})
+			storage.SetDXFSvcTaskMgr(restoreDXFTaskMgr)
+		})
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "ks"
+		})
+		manuallyInitFn(t, userKSStore, sysKSStore)
+
+		badDXFPool := pools.NewResourcePool(func() (pools.Resource, error) {
+			return nil, errors.New("injected dxf submit failure")
+		}, 1, 1, time.Second)
+		defer badDXFPool.Close()
+		storage.SetDXFSvcTaskMgr(storage.NewTaskManager(badDXFPool))
+
+		plan := newTableModeRoutingPlanForTable(t, "ks", userKSTK, "t_dxf_failure")
+		_, _, err := importinto.SubmitTask(ctx, plan,
+			"import into test.t_dxf_failure from '/path/to/file'")
+		require.ErrorContains(t, err, "injected dxf submit failure")
+
+		tbl, err := domain.GetDomain(userKSTK.Session()).InfoSchema().TableByName(
+			context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_dxf_failure"))
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+	})
+}
+
+func TestSubmitTaskSwitchesTableModeThroughCurrentRuntime(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace table-mode routing is only for nextgen")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	plan := newTableModeRoutingPlanForTable(t, keyspace.System, tk, "t_submit_mode")
+	jobID, task, err := importinto.SubmitTask(ctx, plan, "import into test.t_submit_mode from '/path/to/file'")
+	require.NoError(t, err)
+
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_submit_mode"))
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
+	require.Equal(t, taskkey.ForJobInKeyspace(keyspace.System, jobID), task.Key)
 }
 
 func TestGetTaskImportedRows(t *testing.T) {
