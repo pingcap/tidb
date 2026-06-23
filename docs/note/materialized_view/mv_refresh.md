@@ -92,9 +92,7 @@ This create-time rule set is intentionally different from runtime internal-refre
 Supported syntax (current implemented modes):
 
 ```sql
-REFRESH MATERIALIZED VIEW db.mv COMPLETE;
-REFRESH MATERIALIZED VIEW mv COMPLETE; -- uses current DB
-REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE; -- parsed, but rejected: async refresh is not supported yet
+REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE;
 REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE;
 REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY;
 
@@ -281,7 +279,7 @@ Core execution semantics:
 - For `COMPLETE IN PLACE` / `COMPLETE DELTA APPLY` / `FAST` success path, updates `LAST_SUCCESS_READ_TSO` with CAS condition (`LAST_SUCCESS_READ_TSO <=> <locked_tso>`) and verifies readback equals `TxnCtx.GetForUpdateTS()`.
 - For `COMPLETE IN PLACE` / `COMPLETE DELTA APPLY` / `FAST` execution failure, rolls back the whole refresh transaction to guarantee all-or-nothing MV data replacement.
 - `COMPLETE IN PLACE` rebuilds data with `DELETE FROM mv` + `INSERT INTO mv SELECT ...`.
-- `COMPLETE DELTA APPLY` uses internal-only statement `RefreshMaterializedViewImplementStmt`, a `FULL OUTER JOIN` diff-source plan, and a dedicated `MVCompleteDeltaApply` sink plan.
+- `COMPLETE DELTA APPLY` uses internal-only statement `RefreshMaterializedViewImplementStmt`, a `FULL OUTER JOIN` diff-source plan, and a dedicated `MViewCompleteDeltaApply` sink plan.
 - `COMPLETE OUT OF PLACE` uses a dedicated execution path (not the above refresh transaction):
   - build stage runs in independent internal session(s) outside explicit refresh transaction;
   - cutover and `mysql.tidb_mview_refresh_info` migration/update are done atomically in DDL worker transaction.
@@ -297,7 +295,7 @@ Core execution semantics:
 
 ### COMPLETE OUT OF PLACE (implemented)
 
-#### Current execution model
+Current execution model:
 
 1. Outer refresh path acquires the MV advisory lock and inserts a `running` history row before heavy work.
 2. Build stage runs in a dedicated internal autocommit session:
@@ -440,8 +438,8 @@ With this feature, one `FAST` refresh must distinguish three timestamps:
 Required invariants:
 
 1. `targetTSO >= fromTS`
-   - if `targetTSO < fromTS`, refresh should fail
-   - if `targetTSO == fromTS`, implementation may treat refresh as a no-op success
+   - if `targetTSO < fromTS`, refresh should return an error directly
+   - if `targetTSO == fromTS`, refresh should return no-op success
 2. `targetTSO <= writeTxnTSO`
    - refresh must not claim to apply beyond the current transaction read horizon
 3. `targetTSO` must pass normal snapshot/gc-safe-point validation before execution starts
@@ -509,6 +507,24 @@ The cleanest execution model is:
 3. this snapshot override should happen below SQL syntax level, inside planner/executor wiring,
    rather than by injecting generic SQL `AS OF TIMESTAMP`
 
+For `MIN/MAX` full-update lookup, changing only the read ts is not sufficient.
+
+That lookup path must use the schema snapshot at `targetTSO` as well:
+
+1. build the full-update lookup template AST as usual
+2. preprocess / resolve / optimize that template with the snapshot InfoSchema at `targetTSO`
+3. build the full-update inner reader executor with the same snapshot InfoSchema
+4. execute that inner reader at `targetTSO`
+
+Reason:
+
+1. base tables with MV dependencies already block many incompatible DDL operations
+2. but index / physical-layout changes may still happen after `targetTSO`
+3. planning the full-update lookup with current InfoSchema and only forcing read-ts to `targetTSO`
+   may let the optimizer depend on indexes or physical layout that did not exist at `targetTSO`
+4. therefore the full-update lookup path must keep schema snapshot and data snapshot aligned at
+   `targetTSO`
+
 Implementation notes:
 
 1. planner/executor contract should carry `targetTSO` explicitly for `FAST` refresh
@@ -518,6 +534,11 @@ Implementation notes:
 4. full-update/min-max recompute readers should get a dedicated read-ts override equal to `targetTSO`
 5. that inner reader should also be treated as stale read at request level, even if the outer refresh
    statement itself is not a generic stale-read statement
+6. full-update/min-max lookup planning should use `targetTSO` snapshot InfoSchema rather than current
+   InfoSchema
+7. full-update/min-max executor build should also use the same `targetTSO` snapshot InfoSchema
+8. if full-update/min-max lookup cannot be planned/extracted under the `targetTSO` snapshot schema,
+   refresh should fail rather than silently fall back to current-schema planning
 
 #### Metadata and schema assumptions
 
@@ -526,72 +547,203 @@ This design relies on two existing MV constraints:
 1. refresh execution for one MV is serialized by the existing mutex path
 2. base tables with MV dependencies already block relevant DDL operations
 
-Because of these constraints, planning base-table recompute with the current InfoSchema and reading
-data at `targetTSO` is acceptable for this feature.
+However, those DDL constraints are not sufficient to justify planning `MIN/MAX` full-update lookup
+with the current InfoSchema.
+
+Therefore the intended assumption split is:
+
+1. MV table / MV log planning can continue to use current InfoSchema inside the current refresh
+   framework
+2. base-table `MIN/MAX` full-update lookup must use the snapshot InfoSchema at `targetTSO`
+3. this is required even if many incompatible base-table DDLs are already blocked, because later
+   index / physical-layout changes can still affect lookup planning correctness
 
 #### GC-safe-point protection
 
-If users want to refresh an old backlog in many small windows, ordinary snapshot validation alone is
-not sufficient. GC may already have advanced beyond the desired historical target, or may advance
-during a long-running refresh.
+This feature should not introduce any persistent MV-level GC blocking policy.
 
-The recommended protection model has two layers.
+In particular:
 
-##### 1. Persistent backlog protection (opt-in per MV)
+1. do not add an MV option such as `block gc`
+2. do not keep cluster GC pinned to `MIN(LAST_SUCCESS_READ_TSO)` across MVs
+3. if users leave a backlog unrefreshed for too long and GC advances past the desired historical
+   target, later bounded refresh should fail and require a newer target timestamp
 
-Introduce one MV-level option, for example a `block gc` style flag.
+What is still required is defining per-execution semantics for one bounded fast refresh.
 
-Semantics:
+##### Per-refresh execution semantics
 
-1. default should be disabled
-2. only MVs with this option enabled participate in GC blocking
-3. the owner/service side periodically computes:
-   `MIN(LAST_SUCCESS_READ_TSO)` across opted-in MVs
-4. TiDB then publishes that value through PD service safe point
-
-Rationale:
-
-1. if an MV falls far behind and the user still wants to recover by repeated bounded fast refresh,
-   GC must not pass below that MV's current watermark
-2. making this behavior opt-in avoids pinning cluster GC unexpectedly for all MVs
-
-Operational notes:
-
-1. if no MV opts in, the MV service safe point should be removed
-2. documentation should make the trade-off explicit: a stalled opted-in MV can hold back cluster GC
-
-##### 2. Per-refresh execution protection
-
-A second, temporary protection is still needed for each bounded fast refresh execution.
+Bounded `FAST ... AS OF TIMESTAMP ...` should follow ordinary stale-read GC semantics rather than
+introducing MV-specific GC blocking.
 
 Semantics:
 
-1. before running one `FAST ... AS OF TIMESTAMP ...` refresh, publish a temporary service safe point
-   at `targetTSO`
-2. keep it for the whole refresh execution
-3. remove it after the refresh finishes (success or failure)
+1. every bounded fast refresh must still validate that `targetTSO` itself is a legal stale-read
+   timestamp
+2. if this refresh path needs `targetTSO` to read base-table snapshot schema/data, and current GC
+   safe point is already newer than `targetTSO`, refresh must fail
+3. refresh must not acquire a temporary service safe point or otherwise block GC advancement
+4. if GC advances beyond `targetTSO` during execution, refresh may fail and roll back
+5. users can retry with a newer `targetTSO`
+
+Recommended ordering:
+
+1. parse/evaluate `AS OF TIMESTAMP` into `targetTSO`
+2. if `targetTSO < fromTS`, return an error directly
+3. if `targetTSO == fromTS`, return no-op success directly
+4. run normal stale-read timestamp legality validation before execution
+5. only paths that need `targetTSO` base-table snapshot reads perform GC-safe-point validation
+6. execute bounded fast refresh without blocking GC
+7. rely on the normal snapshot read path to fail if `targetTSO` becomes invalid during execution
 
 Rationale:
 
-1. even if `targetTSO` is valid when refresh starts, GC may advance during a long refresh
-2. the outer refresh transaction's own `startTS` / `for_update_tso` does not protect this older
-   historical snapshot automatically
+1. this matches TiDB's existing stale-read behavior better
+2. correctness is preserved because refresh is transactional and can roll back on mid-execution
+   stale-read failure
+3. long-term backlog retention remains an operational concern and should not be encoded as MV-level
+   GC blocking behavior
 
 #### Recommended implementation shape
 
 1. Extend parser/AST for `FAST` refresh to carry an optional `AS OF TIMESTAMP` expression.
 2. Parse/evaluate that expression into `targetTSO` during refresh preparation.
-3. Keep current outer refresh transaction framework unchanged.
-4. Carry both `fromTS` and `targetTSO` into `mvmerge` build/execution.
-5. Read MV at `writeTxnTSO`.
-6. Read MV log at `writeTxnTSO`, but explicitly filter `_tidb_commit_ts` into `(fromTS, targetTSO]`.
-7. Read base-table recompute paths at `targetTSO` through dedicated inner reader wiring.
-8. Persist `LAST_SUCCESS_READ_TSO = targetTSO` on success.
-9. If enabled for the MV, maintain persistent GC protection from the minimum opted-in watermark.
-10. For every bounded fast refresh execution, hold one temporary service safe point at `targetTSO`.
+3. If `targetTSO == fromTS`, return no-op success without entering `mvmerge`.
+4. Keep current outer refresh transaction framework unchanged.
+5. For every bounded fast refresh execution, validate `targetTSO` as a legal stale-read
+   timestamp, but only paths that need `targetTSO` base-table snapshot reads should enforce the
+   GC-safe-point check.
+6. Carry both `fromTS` and `targetTSO` into `mvmerge` build/execution.
+7. Read MV at `writeTxnTSO`.
+8. Read MV log at `writeTxnTSO`, but explicitly filter `_tidb_commit_ts` into `(fromTS, targetTSO]`.
+9. For `MIN/MAX` full-update lookup, preprocess / optimize the lookup template with the snapshot
+   InfoSchema at `targetTSO`.
+10. Build the `MIN/MAX` full-update inner reader with the same snapshot InfoSchema and execute it at
+    `targetTSO` as a stale-read request.
+11. If that `MIN/MAX` full-update lookup cannot be planned/extracted under the snapshot schema at
+    `targetTSO`, fail refresh directly.
+12. Persist `LAST_SUCCESS_READ_TSO = targetTSO` on success.
 
 This feature should be implemented as an MV-refresh-specific extension of `FAST` refresh,
 not as generic in-transaction stale-read SQL.
+
+#### Recommended development stages
+
+To keep implementation debuggable, the recommended development order is:
+
+##### Stage 1: parser and outer refresh semantics
+
+Goal: add the user-visible `FAST ... AS OF TIMESTAMP ...` entry and finalize outer refresh
+statement semantics before touching `mvmerge`.
+
+Scope:
+
+1. extend parser/AST so `REFRESH MATERIALIZED VIEW ... FAST AS OF TIMESTAMP <expr>` is accepted
+2. store the optional `AS OF TIMESTAMP` clause on `RefreshMaterializedViewStmt`
+3. reject `AS OF TIMESTAMP` for non-`FAST` refresh modes
+4. evaluate `AS OF TIMESTAMP` into `targetTSO` during outer refresh preparation
+5. define the three outer semantic branches:
+   - `targetTSO < fromTS` => return error directly
+   - `targetTSO == fromTS` => return no-op success directly
+   - `targetTSO > fromTS` => continue bounded fast refresh
+6. pass numeric `targetTSO` into the internal refresh-implement statement rather than re-evaluating
+   the expression later
+
+Completion criteria:
+
+1. parser/AST tests cover the new syntax
+2. outer executor semantics for `<`, `==`, `>` against `fromTS` are fixed
+3. no bounded merge logic is required yet
+
+##### Stage 2: bounded-path GC validation semantics
+
+Goal: align bounded fast refresh with ordinary stale-read GC semantics before implementing the
+bounded merge window.
+
+Scope:
+
+1. reuse normal stale-read style timestamp legality validation for `targetTSO`
+2. keep no-op path (`targetTSO == fromTS`) outside this validation flow
+3. only bounded paths that need `targetTSO` base-table snapshot reads should enforce the
+   GC-safe-point check
+4. do not acquire a temporary service safe point or otherwise block GC
+5. document that bounded refresh may fail and roll back if GC advances beyond `targetTSO` during
+   execution
+
+Completion criteria:
+
+1. `gcSafePoint > targetTSO` fails refresh only for bounded paths that need `targetTSO`
+   base-table snapshot reads
+2. bounded paths that only need MV log windowing remain executable without GC-safe-point gating
+3. no temporary or persistent MV-level GC blocking behavior is introduced
+4. bounded execution semantics are explicitly documented as best-effort with rollback on stale-read
+   failure
+
+##### Stage 3: bounded FAST merge window
+
+Goal: make the incremental merge logic respect `(fromTS, targetTSO]`.
+
+Scope:
+
+1. extend internal refresh-implement statement to carry `targetTSO`
+2. extend `mvmerge.BuildOptions` from `FromTS` to `FromTS + ToTS`
+3. generate MV log delta predicates using both bounds:
+   `_tidb_commit_ts > fromTS AND _tidb_commit_ts <= targetTSO`
+4. keep MV reads at `writeTxnTSO`
+5. after successful bounded fast refresh, persist `LAST_SUCCESS_READ_TSO = targetTSO`
+6. assert bounded refresh does not persist a watermark newer than the actual statement read horizon
+
+Completion criteria:
+
+1. bounded fast refresh without `MIN/MAX` can advance watermark in smaller windows
+2. repeated bounded runs do not skip any interval
+
+##### Stage 4: `MIN/MAX` full-update lookup with snapshot schema + snapshot data
+
+Goal: make `MIN/MAX` recomputation correct even when current schema/index layout differs from the
+schema at `targetTSO`.
+
+Scope:
+
+1. obtain snapshot InfoSchema at `targetTSO`
+2. preprocess / resolve / optimize full-update lookup template under that snapshot InfoSchema
+3. extract full-update lookup metadata from the snapshot-schema physical plan
+4. extend `MVDeltaMerge` plan metadata so executor build can see `targetTSO` for the full-update
+   path
+5. build the full-update inner reader with:
+   - snapshot InfoSchema at `targetTSO`
+   - read ts = `targetTSO`
+   - stale-read request flag enabled
+6. if full-update lookup cannot be planned/extracted under snapshot schema at `targetTSO`, fail
+   refresh directly instead of falling back to current-schema planning
+
+Completion criteria:
+
+1. `MIN/MAX` recomputation reads both schema and data at `targetTSO`
+2. later index / physical-layout changes do not affect bounded fast refresh correctness
+
+##### Stage 5: end-to-end validation
+
+Goal: add focused regression coverage for the new bounded fast refresh behavior.
+
+Minimum validation scope:
+
+1. parser tests for `FAST ... AS OF TIMESTAMP ...`
+2. executor tests for:
+   - `targetTSO < fromTS`
+   - `targetTSO == fromTS`
+   - successful bounded watermark advance
+3. GC-related tests for start-time rejection when `targetTSO` is older than GC safe point
+4. `MIN/MAX` tests proving recomputation uses `targetTSO`
+5. schema/index change tests proving snapshot-schema planning is honored for full-update lookup
+
+Recommended execution order:
+
+1. Stage 1
+2. Stage 2
+3. Stage 3
+4. Stage 4
+5. Stage 5
 
 ### COMPLETE DELTA APPLY (implemented)
 
@@ -602,7 +754,7 @@ changed rows to the target MV inside the existing refresh transaction framework.
 
 Refresh mode matrix is:
 
-- `REFRESH MATERIALIZED VIEW ... COMPLETE`
+- `REFRESH MATERIALIZED VIEW ... COMPLETE IN PLACE`
 - `REFRESH MATERIALIZED VIEW ... COMPLETE OUT OF PLACE`
 - `REFRESH MATERIALIZED VIEW ... COMPLETE DELTA APPLY`
 - `REFRESH MATERIALIZED VIEW ... FAST`
@@ -653,12 +805,12 @@ Use one `FULL OUTER JOIN`-based diff source query, then let one dedicated sink o
 
 High-level algorithm:
 
-1. Build query-side full result (`Q`) from MV definition SQL.
-2. Full-outer-join `Q` with current MV table (`M`) by the `GROUP BY` key
+1. Build recomputed full result from MV definition SQL.
+2. Full-outer-join the recomputed result with the current MV table by the `GROUP BY` key
    (which is the logical row identity in this refresh mode).
 3. Keep only changed rows:
-   - `Q-only` => `INSERT`
-   - `M-only` => `DELETE`
+   - recomputed-only => `INSERT`
+   - current-only => `DELETE`
    - both exist but payload differs => `UPDATE`
 4. Output one diff stream (`FOJ + Selection`) and feed it directly into a dedicated MV-apply sink operator.
    - this operator executes per-row `INSERT` / `UPDATE` / `DELETE` on target MV table in the same transaction.
@@ -668,40 +820,40 @@ High-level algorithm:
 Example diff-shaping SQL (simplified):
 
 ```sql
-WITH q AS (
-    -- Full MV definition result; map selected marker column to q_marker
-    SELECT k1, k2, <mv_marker_col> AS q_marker, v1, v2
-    FROM (<mv_definition_sql>) q0
+WITH recomputed AS (
+    -- Full MV definition result; map selected marker column to recomputed_marker
+    SELECT k1, k2, <mv_marker_col> AS recomputed_marker, v1, v2
+    FROM (<mv_definition_sql>) recomputed0
 ),
-m AS (
-    -- Current MV data; map same marker column to m_marker
-    SELECT k1, k2, <mv_marker_col> AS m_marker, v1, v2
+current AS (
+    -- Current MV data; map same marker column to current_marker
+    SELECT k1, k2, <mv_marker_col> AS current_marker, v1, v2
     FROM <mv_table>
 )
 SELECT
     CASE
-        WHEN m.m_marker IS NULL THEN 'I'
-        WHEN q.q_marker IS NULL THEN 'D'
+        WHEN current.current_marker IS NULL THEN 'I'
+        WHEN recomputed.recomputed_marker IS NULL THEN 'D'
         ELSE 'U'
     END AS diff_op,
-    COALESCE(q.k1, m.k1) AS k1,
-    COALESCE(q.k2, m.k2) AS k2,
-    q.v1 AS new_v1, q.v2 AS new_v2,
-    m.v1 AS old_v1, m.v2 AS old_v2
-FROM q
-FULL OUTER JOIN m
-  ON q.k1 = m.k1
- AND q.k2 = m.k2
+    COALESCE(recomputed.k1, current.k1) AS k1,
+    COALESCE(recomputed.k2, current.k2) AS k2,
+    recomputed.v1 AS new_v1, recomputed.v2 AS new_v2,
+    current.v1 AS old_v1, current.v2 AS old_v2
+FROM recomputed
+FULL OUTER JOIN current
+  ON recomputed.k1 = current.k1
+ AND recomputed.k2 = current.k2
 WHERE
-      q.q_marker IS NULL
-   OR m.m_marker IS NULL
-   OR NOT (q.v1 <=> m.v1 AND q.v2 <=> m.v2);
+      recomputed.recomputed_marker IS NULL
+   OR current.current_marker IS NULL
+   OR NOT (recomputed.v1 <=> current.v1 AND recomputed.v2 <=> current.v2);
 ```
 
-In the SQL sketch above, `q_marker` / `m_marker` are logical aliases used to express
+In the SQL sketch above, `recomputed_marker` / `current_marker` are logical aliases used to express
 side-missing detection and `diff_op` derivation. They do not have to remain as standalone
 output columns in the final planner-executor layout; the chosen marker can be read from
-the `Q` / `M` row image via explicit metadata.
+the recomputed / current row image via explicit metadata.
 
 #### Join and diff rules
 
@@ -713,9 +865,9 @@ the `Q` / `M` row image via explicit metadata.
 2. Payload equality check should use null-safe comparison (`<=>`) per column.
 3. Side-missing detection should use one deterministic marker column from MV schema:
    - pick the first visible `NOT NULL` column from MV `TableInfo.Columns` (stable column order);
-   - map this column as logical aliases `q_marker` / `m_marker` in diff SQL;
-   - `q_marker IS NULL` => row missing on query side (`DELETE`);
-   - `m_marker IS NULL` => row missing on MV side (`INSERT`).
+   - map this column as logical aliases `recomputed_marker` / `current_marker` in diff SQL;
+   - `recomputed_marker IS NULL` => row missing on recomputed side (`DELETE`);
+   - `current_marker IS NULL` => row missing on current MV side (`INSERT`).
 
 This avoids relying on key-column `IS NULL` checks and does not bind design
 to any specific aggregate output column.
@@ -726,7 +878,7 @@ to any specific aggregate output column.
 
 1. Use an internal implementation statement path, not ad-hoc SQL text concatenation for write phase.
 2. Let optimizer build one physical diff-source plan (`FOJ + Selection`) first.
-3. Add one dedicated sink physical operator on top (similar role to `MVDeltaMerge` in FAST path).
+3. Add one dedicated sink physical operator on top (similar role to `MViewDeltaMerge` in FAST path).
 4. Executor reads diff rows chunk-by-chunk and applies row operations to MV table directly.
 
 Expected end-to-end shape:
@@ -737,7 +889,7 @@ RefreshMaterializedViewExec
     -> ExecuteInternalStmt(RefreshMaterializedViewImplementStmt for COMPLETE DELTA APPLY)
       -> PlanBuilder.buildRefreshMaterializedViewImplement(...)
         -> optimize diff-source SELECT (FOJ + Selection)
-        -> wrap by new sink plan node (for example MVCompleteDiffApply)
+        -> wrap by new sink plan node (for example MViewCompleteDiffApply)
       -> executorBuilder.build<NewSink>(...)
         -> new sink exec consumes child rows and writes target table (insert/update/delete)
 ```
@@ -752,22 +904,22 @@ For operator input layout, keep it explicit and stable (planner-executor contrac
 
 1. row-op column (`diff_op`);
 2. optional extra handle column (`_tidb_rowid`) only when MV uses extra row-id handle;
-3. old row image (`M`) columns for delete/update old values;
-4. new row image (`Q`) columns for insert/update new values.
+3. current row image columns for delete/update old values;
+4. recomputed row image columns for insert/update new values.
 
 Additional layout metadata stays explicit even when columns are reused:
 
 1. marker selection is tracked by MV-column offset, so side-missing diagnostics can read the chosen
-   marker from the `M` / `Q` row image instead of projecting `q_marker` / `m_marker` twice;
-2. `MHandleCols` may either point to old-row-image columns (for PK/common handle) or to the optional
+   marker from the current / recomputed row image instead of projecting `recomputed_marker` / `current_marker` twice;
+2. `CurrentHandleCols` may either point to old-row-image columns (for PK/common handle) or to the optional
    extra `_tidb_rowid` column.
 
 `diff_op` should be generated in diff-source projection (instead of re-evaluating marker logic in sink):
 
 ```sql
 CASE
-  WHEN m_marker IS NULL THEN 1  -- INSERT
-  WHEN q_marker IS NULL THEN 2  -- DELETE
+  WHEN current_marker IS NULL THEN 1  -- INSERT
+  WHEN recomputed_marker IS NULL THEN 2  -- DELETE
   ELSE 3                        -- UPDATE
 END AS diff_op
 ```
@@ -782,31 +934,31 @@ Use integer op code (for example `TINYINT`) instead of string op code to keep ex
 
 Note on diff filtering:
 
-1. Keep existing diff filter (`q_marker IS NULL OR m_marker IS NULL OR payload_changed`) in `WHERE`.
+1. Keep existing diff filter (`recomputed_marker IS NULL OR current_marker IS NULL OR payload_changed`) in `WHERE`.
 2. Do not rely on select-field alias visibility in the same query block `WHERE`.
 3. If filtering by `diff_op` is needed, wrap one extra projection/query layer.
 
 Write mapping contract for sink executor should be explicit:
 
-Recommended root sink-plan contract (`MVCompleteDeltaApply` style):
+Recommended root sink-plan contract (`MViewCompleteDeltaApply` style):
 
 1. `OpColID`: child column index of `diff_op`.
 2. `MarkerMVOffset`: which MV column is used as the side-missing marker.
 3. `GroupKeyMVOffsets`: GROUP BY key offsets in MV column order; sink uses them to skip
    redundant update comparisons on join-equal key columns.
-4. `MHandleCols`: physical locator columns built from `M` side (used by `DELETE` and `UPDATE`,
+4. `CurrentHandleCols`: physical locator columns built from current side (used by `DELETE` and `UPDATE`,
    and intentionally separate from the diff-join key).
-5. `MRowInputColIDs` / `QRowInputColIDs`: full old/new row-image mappings in MV column order.
+5. `CurrentRowInputColIDs` / `RecomputedRowInputColIDs`: full old/new row-image mappings in MV column order.
 
 Writable input mappings should be derived in executor from `TargetTable.WritableCols()` plus
-`MRowInputColIDs` / `QRowInputColIDs`, instead of being persisted in planner contract. This keeps
+`CurrentRowInputColIDs` / `RecomputedRowInputColIDs`, instead of being persisted in planner contract. This keeps
 complete delta apply aligned with fast-refresh writer ownership.
 
 Per-row operation behavior in sink executor:
 
-1. `diff_op = 1` (`INSERT`): write `Q` row image via `AddRecord`.
-2. `diff_op = 2` (`DELETE`): build handle from `MHandleCols`, remove `M` old row via `RemoveRecord`.
-3. `diff_op = 3` (`UPDATE`): build handle from `MHandleCols`, update from `M` old row to `Q` new row via `UpdateRecord`.
+1. `diff_op = 1` (`INSERT`): write recomputed row image via `AddRecord`.
+2. `diff_op = 2` (`DELETE`): build handle from `CurrentHandleCols`, remove current old row via `RemoveRecord`.
+3. `diff_op = 3` (`UPDATE`): build handle from `CurrentHandleCols`, update from current old row to recomputed new row via `UpdateRecord`.
 
 Current write strategy:
 
@@ -819,7 +971,7 @@ Current write strategy:
 Implemented today:
 
 1. Parser/AST support for `COMPLETE DELTA APPLY`, including reject cases for invalid mode combinations.
-2. Planner diff-source build with `FULL OUTER JOIN`, diff filter, stable output layout, and explicit sink metadata (`MVCompleteDeltaApply`).
+2. Planner diff-source build with `FULL OUTER JOIN`, diff filter, stable output layout, and explicit sink metadata (`MViewCompleteDeltaApply`).
 3. Executor builder/runtime that derives writable mappings from target table metadata and applies diff rows via `AddRecord` / `RemoveRecord` / `UpdateRecord`.
 4. Refresh framework integration, including advisory lock, history lifecycle, CAS watermark update, rollback-on-error semantics, and observability for `DRY RUN` / `WITH PROFILE`.
 
@@ -840,7 +992,6 @@ Still future work:
 
 Current targeted coverage lives mainly in `pkg/executor/test/executor/`, `pkg/planner/core/casetest/mview/`,
 and `pkg/planner/mview/`, including:
-
 1. Parser/AST acceptance and rejection for `COMPLETE OUT OF PLACE` / `COMPLETE DELTA APPLY`.
 2. Planner contract tests for:
    - `FULL OUTER JOIN` diff-source layout;

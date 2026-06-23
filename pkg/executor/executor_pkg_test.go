@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -24,16 +25,25 @@ import (
 	"unsafe"
 
 	"github.com/hashicorp/go-version"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/join"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -82,6 +92,247 @@ func TestShouldUseImportIntoForMVRefreshOutOfPlace(t *testing.T) {
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("tikv"))
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace(kv.TiDB.Name()))
 	require.False(t, shouldUseImportIntoForMVRefreshOutOfPlace("mock-storage"))
+}
+
+func TestHistTimeUsesLocation(t *testing.T) {
+	input := time.Date(2026, 6, 14, 12, 0, 0, 123456789, time.UTC)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+
+	require.Equal(t, "2026-06-14 20:00:00.123456 +0800", histTime(input, loc).Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, "2026-06-14 12:00:00.123456 +0000", histTime(input, time.UTC).Format("2006-01-02 15:04:05.000000 -0700"))
+}
+
+func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
+	return tables.MockTableFromMeta(&model.TableInfo{
+		ID:    1,
+		Name:  pmodel.NewCIStr("mv"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      pmodel.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *tp,
+				State:     model.StatePublic,
+			},
+		},
+	}).(*tables.TableCommon)
+}
+
+func TestValidateMViewCompleteDeltaWritableInputColTypesAllowsNullableInput(t *testing.T) {
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTp.AddFlag(mysql.NotNullFlag)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
+
+	inputTp := targetTp.Clone()
+	inputTp.DelFlag(mysql.NotNullFlag)
+	require.NoError(t, validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{inputTp}, []int{0}))
+
+	unsignedInputTp := inputTp.Clone()
+	unsignedInputTp.AddFlag(mysql.UnsignedFlag)
+	err := validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
+	require.ErrorContains(t, err, "type mismatch")
+}
+
+type mviewCompleteDeltaApplyOpenProbeChild struct {
+	exec.BaseExecutor
+	opened bool
+}
+
+func (e *mviewCompleteDeltaApplyOpenProbeChild) Open(context.Context) error {
+	e.opened = true
+	return nil
+}
+
+func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.T) {
+	sctx := mock.NewContext()
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
+	childSchema := expression.NewSchema(&expression.Column{
+		Index:   0,
+		RetType: targetTp,
+	})
+	child := &mviewCompleteDeltaApplyOpenProbeChild{
+		BaseExecutor: exec.NewBaseExecutor(sctx, childSchema, 0),
+	}
+	applyExec := &MViewCompleteDeltaApplyExec{
+		BaseExecutor:                  exec.NewBaseExecutor(sctx, nil, 0, child),
+		TargetTable:                   targetTbl,
+		TargetHandleCols:              plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
+		CurrentWritableInputColIDs:    []int{1},
+		RecomputedWritableInputColIDs: []int{0},
+	}
+
+	err := applyExec.Open(context.Background())
+	require.ErrorContains(t, err, "writable input col id 1")
+	require.False(t, child.opened)
+}
+
+func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+
+	sql, err := buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, "TiKV", 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`__mv_shadow_1` FROM (")
+	require.Contains(t, sql, "WITH "+strings.Join(ddl.BuildMViewImportIntoOptions(12, "64gib"), ", "))
+
+	sql, err = buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, kv.TiDB.Name(), 12, "64gib")
+	require.NoError(t, err)
+	require.Equal(t, "INSERT INTO `test`.`__mv_shadow_1` select a, count(1) from t group by a", sql)
+}
+
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {
+	testCases := []struct {
+		name      string
+		collation string
+		oldVal    string
+		newVal    string
+		touched   bool
+	}{
+		{
+			name:      "case-insensitive collation still compares bytes",
+			collation: "utf8mb4_general_ci",
+			oldVal:    "a",
+			newVal:    "A",
+			touched:   true,
+		},
+		{
+			name:      "binary collation keeps byte-sensitive change",
+			collation: "utf8mb4_bin",
+			oldVal:    "a",
+			newVal:    "A",
+			touched:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := types.NewFieldTypeWithCollation(mysql.TypeVarString, tc.collation, types.UnspecifiedLength)
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1)
+			input.AppendString(0, tc.oldVal)
+			input.AppendString(1, tc.newVal)
+
+			updateTouchedBitmap := make([]uint8, 1)
+			err := executil.MarkTouchedRowsByColumn(
+				[]int{0},
+				updateTouchedBitmap,
+				1,
+				0,
+				input.Column(0),
+				input.Column(1),
+				ft,
+				true,
+				"test",
+			)
+			require.NoError(t, err)
+			require.Equal(t, tc.touched, updateTouchedBitmap[0] != 0)
+		})
+	}
+}
+
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
+	enumFT := types.NewFieldType(mysql.TypeEnum)
+	enumFT.SetCharset("utf8mb4")
+	enumFT.SetCollate("utf8mb4_general_ci")
+	enumChk := chunk.NewChunkWithCapacity([]*types.FieldType{enumFT, enumFT}, 1)
+	enumChk.AppendEnum(0, types.Enum{Name: "x", Value: 1})
+	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
+
+	enumBitmap := make([]uint8, 1)
+	err := executil.MarkTouchedRowsByColumn(
+		[]int{0},
+		enumBitmap,
+		1,
+		0,
+		enumChk.Column(0),
+		enumChk.Column(1),
+		enumFT,
+		true,
+		"test",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0}, enumBitmap)
+
+	setFT := types.NewFieldType(mysql.TypeSet)
+	setFT.SetCharset("utf8mb4")
+	setFT.SetCollate("utf8mb4_general_ci")
+	setChk := chunk.NewChunkWithCapacity([]*types.FieldType{setFT, setFT}, 1)
+	setChk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
+	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
+
+	setBitmap := make([]uint8, 1)
+	err = executil.MarkTouchedRowsByColumn(
+		[]int{0},
+		setBitmap,
+		1,
+		0,
+		setChk.Column(0),
+		setChk.Column(1),
+		setFT,
+		true,
+		"test",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0}, setBitmap)
+}
+
+func TestMViewCompleteDeltaApplyRuntimeStatsString(t *testing.T) {
+	stats := &mviewCompleteDeltaApplyRuntimeStats{
+		writerTime: 12 * time.Millisecond,
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
+			chunks:     2,
+			rowOps:     7,
+			insertRows: 1,
+			updateRows: 3,
+			deleteRows: 2,
+		},
+	}
+	s := stats.String()
+	require.Contains(t, s, "mview_complete_delta_apply")
+	require.Contains(t, s, "writer:{time:12ms")
+	require.Contains(t, s, "chunks:2")
+	require.Contains(t, s, "row_ops:7")
+	require.Contains(t, s, "rows:{insert:1, update:3, delete:2}")
+}
+
+func TestMViewCompleteDeltaApplyRuntimeStatsMergeAndClone(t *testing.T) {
+	left := &mviewCompleteDeltaApplyRuntimeStats{
+		writerTime: 5 * time.Millisecond,
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
+			chunks:     1,
+			rowOps:     4,
+			insertRows: 1,
+			updateRows: 2,
+			deleteRows: 1,
+		},
+	}
+	right := &mviewCompleteDeltaApplyRuntimeStats{
+		writerTime: 7 * time.Millisecond,
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
+			chunks:     2,
+			rowOps:     5,
+			updateRows: 1,
+			deleteRows: 1,
+		},
+	}
+
+	left.Merge(right)
+	require.Equal(t, 12*time.Millisecond, left.writerTime)
+	require.Equal(t, int64(3), left.writerDetail.chunks)
+	require.Equal(t, int64(9), left.writerDetail.rowOps)
+	require.Equal(t, int64(1), left.writerDetail.insertRows)
+	require.Equal(t, int64(3), left.writerDetail.updateRows)
+	require.Equal(t, int64(2), left.writerDetail.deleteRows)
+
+	cloned, ok := left.Clone().(*mviewCompleteDeltaApplyRuntimeStats)
+	require.True(t, ok)
+	require.Equal(t, left.writerTime, cloned.writerTime)
+	require.Equal(t, left.writerDetail, cloned.writerDetail)
 }
 
 func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {

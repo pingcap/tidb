@@ -1086,9 +1086,10 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-
-	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	if baseTable.Meta().GetPartitionInfo() != nil {
+		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW LOG")
+	}
+	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	if err := checkTooLongTable(mlogNameCIStr); err != nil {
 		return err
 	}
@@ -1105,8 +1106,13 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		colMap[col.Name.L] = col
 	}
 
+	seenCols := make(map[string]struct{}, len(s.Cols))
 	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
 	for _, c := range s.Cols {
+		if _, exists := seenCols[c.L]; exists {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		seenCols[c.L] = struct{}{}
 		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
 			c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
@@ -1114,6 +1120,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		baseCol := colMap[c.L]
 		if baseCol == nil {
 			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
+		}
+		if err := CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
+			return err
 		}
 		ft := baseCol.FieldType
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
@@ -1161,6 +1170,10 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	var purgeMethod string
 	var purgeStartWith string
 	var purgeNext string
+	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(s.AccumulationAlert)
+	if err != nil {
+		return err
+	}
 	if s.Purge != nil {
 		if s.Purge.Immediate {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
@@ -1182,12 +1195,13 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:       baseTableID,
-		Columns:           s.Cols,
-		PurgeMethod:       purgeMethod,
-		PurgeStartWith:    purgeStartWith,
-		PurgeNext:         purgeNext,
-		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		BaseTableID:              baseTableID,
+		Columns:                  s.Cols,
+		PurgeMethod:              purgeMethod,
+		PurgeStartWith:           purgeStartWith,
+		PurgeNext:                purgeNext,
+		LogAccumulationAlertRows: logAccumulationAlertRows,
+		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	involvingSchemas := []model.InvolvingSchemaInfo{
@@ -1217,6 +1231,30 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, mlogTableInfo, jobW.SchemaID, scatterScope))
+}
+
+// CheckMaterializedViewLogColumnSupported validates whether a base table column
+// can be copied into a materialized view log table.
+func CheckMaterializedViewLogColumnSupported(col *model.ColumnInfo) error {
+	return checkMaterializedViewLogColumnSupportedForOp("CREATE MATERIALIZED VIEW LOG", col)
+}
+
+func checkMaterializedViewLogColumnSupportedForOp(operation string, col *model.ColumnInfo) error {
+	if col.GetType() == mysql.TypeJSON {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
+			"%s does not support JSON column %s",
+			operation,
+			col.Name.O,
+		)
+	}
+	if types.IsTypeBlob(col.GetType()) && col.GetCharset() == charset.CharsetBin {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
+			"%s does not support BLOB column %s",
+			operation,
+			col.Name.O,
+		)
+	}
+	return nil
 }
 
 func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
@@ -1889,13 +1927,32 @@ func isAlterTiFlashReplica(specs []*ast.AlterTableSpec) bool {
 	return len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
 }
 
+func isAlterTableOnlyExchangePartition(specs []*ast.AlterTableSpec) bool {
+	return len(specs) == 1 && specs[0].Tp == ast.AlterTableExchangePartition
+}
+
+func isAlterTableOnlyAddColumnsAtEnd(specs []*ast.AlterTableSpec) bool {
+	if len(specs) == 0 {
+		return false
+	}
+	for _, spec := range specs {
+		if spec.Tp != ast.AlterTableAddColumns {
+			return false
+		}
+		if spec.Position != nil && spec.Position.Tp != ast.ColumnPositionNone {
+			return false
+		}
+	}
+	return true
+}
+
 func isAlterTableOnlyIndexOperations(specs []*ast.AlterTableSpec) bool {
 	if len(specs) == 0 {
 		return false
 	}
 	for _, spec := range specs {
 		switch spec.Tp {
-		case ast.AlterTableDropIndex, ast.AlterTableRenameIndex, ast.AlterTableIndexInvisible:
+		case ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey, ast.AlterTableRenameIndex, ast.AlterTableIndexInvisible:
 		case ast.AlterTableAddConstraint:
 			if spec.Constraint == nil {
 				return false
@@ -1910,6 +1967,45 @@ func isAlterTableOnlyIndexOperations(specs []*ast.AlterTableSpec) bool {
 		}
 	}
 	return true
+}
+
+func checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs []*ast.AlterTableSpec, op string) error {
+	if len(specs) == 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
+		)
+	}
+	for _, spec := range specs {
+		switch spec.Tp {
+		case ast.AlterTableModifyColumn:
+		case ast.AlterTableChangeColumn:
+			if len(spec.NewColumns) != 1 || spec.OldColumnName == nil || spec.NewColumns[0] == nil ||
+				spec.NewColumns[0].Name == nil || spec.OldColumnName.Name.L != spec.NewColumns[0].Name.Name.L {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					"CHANGE COLUMN on base table with materialized view dependencies does not support renaming",
+				)
+			}
+		default:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
+			)
+		}
+	}
+	return nil
+}
+func hasAlterTableAddUniqueIndexOperation(specs []*ast.AlterTableSpec) (string, bool) {
+	for _, spec := range specs {
+		if spec.Tp != ast.AlterTableAddConstraint || spec.Constraint == nil {
+			continue
+		}
+		switch spec.Constraint.Tp {
+		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			return "ALTER TABLE ADD UNIQUE INDEX", true
+		case ast.ConstraintPrimaryKey:
+			return "ALTER TABLE ADD PRIMARY KEY", true
+		}
+	}
+	return "", false
 }
 
 func collectAlterTableSpecAffectedColumns(spec *ast.AlterTableSpec) []string {
@@ -1972,6 +2068,11 @@ func checkAlterTableBaseTableMLogColumnConstraints(
 				fmt.Sprintf("%s on base table columns referenced by materialized view log", op),
 			)
 		}
+		// Tracked MLog columns may be modified via MODIFY/CHANGE COLUMN; detailed validation and
+		// related table schema updates are handled in GetModifiableColumnJob.
+		if spec.Tp == ast.AlterTableModifyColumn || spec.Tp == ast.AlterTableChangeColumn {
+			continue
+		}
 		for _, colName := range collectAlterTableSpecAffectedColumns(spec) {
 			if _, ok := mlogCols[colName]; !ok {
 				continue
@@ -2010,6 +2111,11 @@ func checkAlterTableMaterializedViewConstraints(
 	specs []*ast.AlterTableSpec,
 	op string,
 ) error {
+	if isAlterTableOnlyExchangePartition(specs) {
+		// EXCHANGE PARTITION needs both table roles for precise materialized-view checks.
+		return nil
+	}
+
 	if tblInfo.MaterializedViewLog != nil {
 		// MATERIALIZED VIEW LOG table only allows ALTER TABLE ... SET TIFLASH REPLICA for now.
 		if isAlterTiFlashReplica(specs) {
@@ -2020,6 +2126,9 @@ func checkAlterTableMaterializedViewConstraints(
 
 	if tblInfo.MaterializedView != nil {
 		// MATERIALIZED VIEW table allows TiFlash replica and index-related ALTER TABLE operations.
+		if op, ok := hasAlterTableAddUniqueIndexOperation(specs); ok {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
+		}
 		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) {
 			return nil
 		}
@@ -2030,16 +2139,30 @@ func checkAlterTableMaterializedViewConstraints(
 		return err
 	}
 
+	// Base table with dependent MV:
+	// allow safe ADD COLUMN at end, index operations, and TiFlash replica.
+	// For MODIFY/CHANGE COLUMN, detailed MV/MLog validation (including no-reorg compatibility) is done in GetModifiableColumnJob.
+	if tblInfo.MaterializedViewBase != nil && len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) || isAlterTableOnlyAddColumnsAtEnd(specs) {
+			return nil
+		}
+		if err := checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs, op); err != nil {
+			return err
+		}
+	}
+
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
 }
 
-func checkIndexOperationMaterializedViewConstraints(
-	sv *variable.SessionVars,
-	tblInfo *model.TableInfo,
-	op string,
-) error {
+// CheckIndexOperationMaterializedViewConstraints checks whether a CREATE, ALTER, or DROP
+// index operation is disallowed on a materialized view log table, a materialized view
+// table (for unique indexes), or a materialized view shadow table.
+func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *model.TableInfo, op string, unique bool) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
+	}
+	if unique && tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
 }
@@ -2123,6 +2246,18 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
 		)
 	}
 	return nil
+}
+
+func checkMaterializedViewIndexWritableColumnConstraints(
+	tblInfo *model.TableInfo,
+	hiddenCols []*model.ColumnInfo,
+) error {
+	if tblInfo == nil || tblInfo.MaterializedView == nil || len(hiddenCols) == 0 {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		"ADD INDEX on materialized view table that changes writable columns",
+	)
 }
 
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
@@ -2427,11 +2562,14 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 
-	var involvingSchemaInfo []model.InvolvingSchemaInfo
+	involvingSchemaInfo := appendInvolvingSchemaInfo(nil, info.InvolvingSchemaInfo...)
+	if mlogInvolving := buildMaterializedViewLogBaseInvolvingSchemaInfo(e.ctx, e.infoCache.GetLatest(), schema.Name.L, t.Meta()); len(mlogInvolving) > 0 {
+		involvingSchemaInfo = appendInvolvingSchemaInfo(involvingSchemaInfo, mlogInvolving...)
+	}
 	for _, j := range subJobs {
 		if j.Type == model.ActionAddForeignKey {
 			ref := j.JobArgs.(*model.AddForeignKeyArgs).FkInfo
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+			involvingSchemaInfo = appendInvolvingSchemaInfo(involvingSchemaInfo, model.InvolvingSchemaInfo{
 				Database: ref.RefSchema.L,
 				Table:    ref.RefTable.L,
 				Mode:     model.SharedInvolving,
@@ -2440,7 +2578,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 
 	if len(involvingSchemaInfo) > 0 {
-		involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+		involvingSchemaInfo = appendInvolvingSchemaInfo(involvingSchemaInfo, model.InvolvingSchemaInfo{
 			Database: schema.Name.L,
 			Table:    t.Meta().Name.L,
 		})
@@ -2649,6 +2787,9 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	if involving := buildMaterializedViewLogInvolvingSchemaInfo(e.ctx, e.infoCache.GetLatest(), schema.Name.L, tbInfo); len(involving) > 0 {
+		job.InvolvingSchemaInfo = involving
+	}
 
 	args := &model.TableColumnArgs{
 		Col:                col.ColumnInfo,
@@ -2851,6 +2992,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
+	if err = checkBaseTableMaterializedViewDependencyConstraints(t.Meta(), "ALTER TABLE ... PARTITION BY"); err != nil {
+		return err
+	}
 
 	meta := t.Meta().Clone()
 	piOld := meta.GetPartitionInfo()
@@ -2986,6 +3130,9 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+	if err = checkBaseTableMaterializedViewDependencyConstraints(t.Meta(), "ALTER TABLE ... REMOVE PARTITIONING"); err != nil {
+		return err
 	}
 
 	meta := t.Meta().Clone()
@@ -3506,7 +3653,45 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
+	if err := checkExchangePartitionMaterializedViewConstraints(pt, "partitioned table"); err != nil {
+		return err
+	}
+	return checkExchangePartitionMaterializedViewConstraints(nt, "non-partitioned table")
+}
 
+func checkExchangePartitionMaterializedViewConstraints(tblInfo *model.TableInfo, tableRole string) error {
+	if tblInfo.MaterializedViewLog != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s with materialized view log", tableRole),
+		)
+	}
+	if tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s materialized view table", tableRole),
+		)
+	}
+	if tblInfo.MaterializedViewShadow != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s materialized view shadow table", tableRole),
+		)
+	}
+	return checkBaseTableMaterializedViewDependencyConstraints(tblInfo, fmt.Sprintf("EXCHANGE PARTITION on %s", tableRole))
+}
+
+func checkBaseTableMaterializedViewDependencyConstraints(tblInfo *model.TableInfo, op string) error {
+	if tblInfo.MaterializedViewBase == nil {
+		return nil
+	}
+	if len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s with materialized view dependencies", op),
+		)
+	}
+	if tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s with materialized view log", op),
+		)
+	}
 	return nil
 }
 
@@ -4740,6 +4925,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view log table")
 	}
+	if tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on base table with materialized view log")
+	}
 	if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
@@ -4789,16 +4977,15 @@ func checkTableMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *mo
 	return checkTableMaterializedViewConstraintsWithOptions(sv, tblInfo, op, false)
 }
 
-func checkTableMaterializedViewConstraintsAllowMVTable(sv *variable.SessionVars, tblInfo *model.TableInfo, op string) error {
-	return checkTableMaterializedViewConstraintsWithOptions(sv, tblInfo, op, true)
-}
-
 func checkTableMaterializedViewConstraintsWithOptions(
 	sv *variable.SessionVars,
 	tblInfo *model.TableInfo,
 	op string,
 	allowMVTable bool,
 ) error {
+	if tblInfo.MaterializedViewLog != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
+	}
 	if !allowMVTable && tblInfo.MaterializedView != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
@@ -4808,6 +4995,10 @@ func checkTableMaterializedViewConstraintsWithOptions(
 	if tblInfo.MaterializedViewBase != nil &&
 		len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view dependencies", op))
+	}
+	if tblInfo.MaterializedViewBase != nil &&
+		tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view log", op))
 	}
 	return nil
 }
@@ -5087,6 +5278,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "ALTER TABLE ADD PRIMARY KEY", true); err != nil {
+		return err
+	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mysql.PrimaryKeyName)
@@ -5245,6 +5439,9 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "CREATE INDEX", false); err != nil {
+		return errors.Trace(err)
+	}
 	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -5359,7 +5556,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
+		if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX", false); err != nil {
 			return errors.Trace(err)
 		}
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
@@ -5369,7 +5566,11 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "CREATE INDEX"); err != nil {
+	op := "CREATE INDEX"
+	if unique {
+		op = "CREATE UNIQUE INDEX"
+	}
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), op, unique); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -5384,6 +5585,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if len(indexName.L) == 0 {
 		// It means that there is already an index exists with same name
 		return nil
+	}
+	isHypo := indexOption != nil && indexOption.Tp == pmodel.IndexTypeHypo
+	if !isHypo {
+		if err := checkMaterializedViewIndexWritableColumnConstraints(t.Meta(), hiddenCols); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	tblInfo := t.Meta()
@@ -5413,8 +5620,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		}
 	}
 
-	if indexOption != nil && indexOption.Tp == pmodel.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, false,
+	if isHypo { // for hypo-index
+		hypoTblInfo := tblInfo
+		if len(hiddenCols) > 0 {
+			hypoTblInfo = tblInfo.Clone()
+			hypoTblInfo.Columns = finalColumns
+		}
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, hypoTblInfo, indexName, false, unique, false,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -5821,7 +6033,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
-	if err := checkIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "DROP INDEX"); err != nil {
+	if err := CheckIndexOperationMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "DROP INDEX", false); err != nil {
 		return errors.Trace(err)
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -7337,15 +7549,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
-}
-
-func getRenameTableUniqueIDs(jobW *JobWrapper, schema bool) []int64 {
-	if !schema {
-		return []int64{jobW.TableID}
-	}
-
-	oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
-	return []int64{oldSchemaID, jobW.SchemaID}
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted

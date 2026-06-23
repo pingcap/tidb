@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -73,6 +74,24 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+}
+
+func TestShouldSkipAutoAnalyzeTableNotReadyMV(t *testing.T) {
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&metamodel.TableInfo{
+		Name: model.NewCIStr("mv_not_ready"),
+		MaterializedView: &metamodel.MaterializedViewInfo{
+			InitBuildState: metamodel.MVInitBuildBuilding,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&metamodel.TableInfo{
+		Name: model.NewCIStr("mv_ready"),
+		MaterializedView: &metamodel.MaterializedViewInfo{
+			InitBuildState: metamodel.MVInitBuildReady,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&metamodel.TableInfo{
+		Name: model.NewCIStr("normal_table"),
+	}))
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {

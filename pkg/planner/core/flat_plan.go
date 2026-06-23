@@ -395,7 +395,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-	case *MVDeltaMerge:
+	case *MViewDeltaMerge:
 		hasFullUpdate := plan.FullUpdateInnerSource != nil
 		if plan.Source != nil {
 			childCtx.isRoot = true
@@ -410,6 +410,14 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 			childCtx.label = Empty
 			childCtx.isLastChild = true
 			target, childIdx = f.flattenRecursively(plan.FullUpdateInnerSource, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
+	case *MViewCompleteDeltaApply:
+		if plan.Source != nil {
+			childCtx.isRoot = true
+			childCtx.label = Empty
+			childCtx.isLastChild = true
+			target, childIdx = f.flattenRecursively(plan.Source, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
 	case *Update:

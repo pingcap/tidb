@@ -39,12 +39,15 @@ This document describes two refresh-level observability modes:
 
 ```sql
 REFRESH MATERIALIZED VIEW mv FAST DRY RUN;
-REFRESH MATERIALIZED VIEW mv COMPLETE DRY RUN;
+REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE DRY RUN;
+REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DRY RUN;
+REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY DRY RUN;
 REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST DRY RUN; -- currently rejected because async refresh is unsupported
 
 REFRESH MATERIALIZED VIEW mv FAST WITH PROFILE;
-REFRESH MATERIALIZED VIEW mv COMPLETE WITH PROFILE;
-REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE WITH PROFILE; -- currently rejected because async refresh is unsupported
+REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE WITH PROFILE;
+REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE WITH PROFILE;
+REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY WITH PROFILE;
 ```
 
 ### Semantics
@@ -75,7 +78,7 @@ refresh steps
 [S02 LOCK_REFRESH_INFO] status:success, time:788.718µs
 [S03 INSERT_HIST_RUNNING] status:success, time:1.330434ms
 [S04 DATA_CHANGE_FAST_MERGE] status:success, time:4.665379ms
-  MVDeltaMerge | estRows:N/A | actRows:0 | task:root | time:1.82ms, loops:2 | agg_deps:[...]
+  MViewDeltaMerge | estRows:N/A | actRows:0 | task:root | time:1.82ms, loops:2 | agg_deps:[...]
   └─HashJoin | estRows:8000.00 | actRows:1 | task:root | time:1.33ms, loops:2 | left outer join, equal:[...]
 [S05 PERSIST_REFRESH_INFO] status:success, time:1.901706ms
 [S06 TXN_COMMIT] status:success, time:868.568µs
@@ -142,7 +145,7 @@ a single header row.
 
 Data-change step uses existing internal statement:
 
-- `RefreshMaterializedViewImplementStmt` -> planner builds `MVDeltaMerge` plan
+- `RefreshMaterializedViewImplementStmt` -> planner builds `MViewDeltaMerge` plan
 
 Dry run builds the internal statement and renders its plan rows without execution.
 Profile mode executes the refresh and captures the actual runtime rows.
@@ -227,7 +230,7 @@ Main files:
 
 Acceptance criteria:
 
-1. FAST dry run shows step headers and `MVDeltaMerge` subtree lines.
+1. FAST dry run shows step headers and `MViewDeltaMerge` subtree lines.
 2. COMPLETE dry run shows delete and insert as separate steps.
 
 ### Patch 4: executor profile

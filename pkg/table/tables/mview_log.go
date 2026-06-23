@@ -61,7 +61,12 @@ const (
 )
 
 func validateMLogMetaColumn(mlogMeta *model.TableInfo) error {
-	cols := mlogMeta.Columns
+	cols := make([]*model.ColumnInfo, 0, len(mlogMeta.Columns))
+	for _, col := range mlogMeta.Columns {
+		if col.State == model.StatePublic {
+			cols = append(cols, col)
+		}
+	}
 	trackedCols := mlogMeta.MaterializedViewLog.Columns
 	expectedLen := len(trackedCols) + 2
 	if len(cols) != expectedLen {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -76,6 +78,16 @@ func CreatePlannerSuite(sctx sessionctx.Context, is infoschema.InfoSchema) (s *p
 	s.sctx = sctx
 	s.ctx = sctx.GetPlanCtx()
 	return s
+}
+
+func TestGetHashOrKeyPartitionColumnNameUsesProvidedTable(t *testing.T) {
+	tblInfo := MockHashPartitionTable()
+	snapshotTbl, err := table.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	require.NoError(t, err)
+
+	hashPartColName := getHashOrKeyPartitionColumnName(snapshotTbl)
+	require.NotNil(t, hashPartColName)
+	require.Equal(t, "ptn", hashPartColName.L)
 }
 
 func createPlannerSuite() (s *plannerSuite) {
@@ -1271,6 +1283,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
@@ -1295,6 +1308,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},
@@ -1346,6 +1360,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
@@ -1384,6 +1399,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},

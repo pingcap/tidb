@@ -17,7 +17,10 @@ package priorityqueue_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -204,4 +207,70 @@ func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 30m0s", failReason)
+}
+
+func TestNonPartitionedTableValidateAndPrepareRetriesNotReadyMV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+
+	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
+	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+		}
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_not_ready (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+	}()
+
+	require.Eventually(t, func() bool {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("mv_not_ready"))
+		if err != nil {
+			return false
+		}
+		return mvTable.Meta().MaterializedView != nil &&
+			mvTable.Meta().MaterializedView.GetInitBuildState() == metamodel.MVInitBuildBuilding
+	}, 30*time.Second, 100*time.Millisecond)
+
+	mvTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("mv_not_ready"))
+	require.NoError(t, err)
+	job := &priorityqueue.NonPartitionedTableAnalysisJob{
+		TableID: mvTable.Meta().ID,
+		Weight:  1,
+	}
+	var (
+		failureHookCalled bool
+		needRetry         bool
+	)
+	job.RegisterFailureHook(func(_ priorityqueue.AnalysisJob, boolRetry bool) {
+		failureHookCalled = true
+		needRetry = boolRetry
+	})
+
+	valid, failReason := job.ValidateAndPrepare(tk.Session().(sessionctx.Context))
+	require.False(t, valid)
+	require.True(t, failureHookCalled)
+	require.True(t, needRetry)
+	require.Contains(t, failReason, "initial build is in progress")
+
+	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+	enabled = false
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(60 * time.Second):
+		t.Fatal("timed out waiting CREATE MATERIALIZED VIEW to finish")
+	}
 }

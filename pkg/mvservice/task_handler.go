@@ -17,6 +17,7 @@ package mvservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	basic "github.com/pingcap/tidb/pkg/util"
@@ -27,14 +28,27 @@ var (
 	ErrMVRefreshHandlerNotRegistered = errors.New("mv refresh handler is not registered")
 	// ErrMVLogPurgeHandlerNotRegistered means purge logic has not been wired in yet.
 	ErrMVLogPurgeHandlerNotRegistered = errors.New("mvlog purge handler is not registered")
+	errMVTaskCanceledManually         = errors.New("materialized view task canceled manually")
 )
+
+type mvLogAccumulationTask struct {
+	schemaName string
+	mlogName   string
+	alertRows  uint64
+}
 
 // MVTaskHandler defines all task operations needed by MVService.
 type MVTaskHandler interface {
 	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error)
 	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error)
-	loadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
-	loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
+	TryBackoffRefreshManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64, nextRefresh time.Time) (applied bool, appliedNext time.Time, err error)
+	TryBackoffPurgeManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64, nextPurge time.Time) (applied bool, appliedNext time.Time, err error)
+	SyncMVRefreshAlertStates(ctx context.Context, sysSessionPool basic.SessionPool, updatedAt time.Time, states []refreshAlertTask) error
+	CleanupStaleMVRefreshAlerts(ctx context.Context, sysSessionPool basic.SessionPool) error
+	LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
+	LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAccumulationTask, error)
+	LoadTiDBMVLogAccumulationRowCounts(ctx context.Context, sysSessionPool basic.SessionPool, tasks map[int64]*mvLogAccumulationTask) (map[int64]uint64, error)
+	LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
 	GetCurrentTSO(ctx context.Context, sysSessionPool basic.SessionPool) (uint64, error)
 	PurgeMVHistoryBeforeTSO(
 		ctx context.Context,
@@ -43,4 +57,8 @@ type MVTaskHandler interface {
 		mviewRefreshRetention time.Duration,
 		mlogPurgeRetention time.Duration,
 	) error
+}
+
+func isMVTaskCanceledManually(err error) bool {
+	return err != nil && (errors.Is(err, errMVTaskCanceledManually) || strings.Contains(err.Error(), errMVTaskCanceledManually.Error()))
 }

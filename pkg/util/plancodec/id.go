@@ -83,8 +83,10 @@ const (
 	TypeUpdate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
-	// TypeMVDeltaMerge is the type of MVDeltaMerge.
-	TypeMVDeltaMerge = "MVDeltaMerge"
+	// TypeMViewDeltaMerge is the type of MViewDeltaMerge.
+	TypeMViewDeltaMerge = "MViewDeltaMerge"
+	// TypeMViewCompleteDeltaApply is the type of complete delta MV apply sink.
+	TypeMViewCompleteDeltaApply = "MViewCompleteDeltaApply"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
 	// TypeTableReader is the type of TableReader.
@@ -146,67 +148,68 @@ const (
 // plan id.
 // Attention: for compatibility of encode/decode plan, The plan id shouldn't be changed.
 const (
-	typeSelID                 int = 1
-	typeSetID                 int = 2
-	typeProjID                int = 3
-	typeAggID                 int = 4
-	typeStreamAggID           int = 5
-	typeHashAggID             int = 6
-	typeShowID                int = 7
-	typeJoinID                int = 8
-	typeUnionID               int = 9
-	typeTableScanID           int = 10
-	typeMemTableScanID        int = 11
-	typeUnionScanID           int = 12
-	typeIdxScanID             int = 13
-	typeSortID                int = 14
-	typeTopNID                int = 15
-	typeLimitID               int = 16
-	typeHashJoinID            int = 17
-	typeMergeJoinID           int = 18
-	typeIndexJoinID           int = 19
-	typeIndexMergeJoinID      int = 20
-	typeIndexHashJoinID       int = 21
-	typeApplyID               int = 22
-	typeMaxOneRowID           int = 23
-	typeExistsID              int = 24
-	typeDualID                int = 25
-	typeLockID                int = 26
-	typeInsertID              int = 27
-	typeUpdateID              int = 28
-	typeDeleteID              int = 29
-	typeIndexLookUpID         int = 30
-	typeTableReaderID         int = 31
-	typeIndexReaderID         int = 32
-	typeWindowID              int = 33
-	typeTiKVSingleGatherID    int = 34
-	typeIndexMergeID          int = 35
-	typePointGet              int = 36
-	typeShowDDLJobs           int = 37
-	typeBatchPointGet         int = 38
-	typeClusterMemTableReader int = 39
-	typeDataSourceID          int = 40
-	typeLoadDataID            int = 41
-	typeTableSampleID         int = 42
-	typeTableFullScanID       int = 43
-	typeTableRangeScanID      int = 44
-	typeTableRowIDScanID      int = 45
-	typeIndexFullScanID       int = 46
-	typeIndexRangeScanID      int = 47
-	typeExchangeReceiverID    int = 48
-	typeExchangeSenderID      int = 49
-	typeCTEID                 int = 50
-	typeCTEDefinitionID       int = 51
-	typeCTETableID            int = 52
-	typePartitionUnionID      int = 53
-	typeShuffleID             int = 54
-	typeShuffleReceiverID     int = 55
-	typeForeignKeyCheck       int = 56
-	typeForeignKeyCascade     int = 57
-	typeExpandID              int = 58
-	typeImportIntoID          int = 59
-	TypeScalarSubQueryID      int = 60
-	typeMVDeltaMergeID        int = 61
+	typeSelID                   int = 1
+	typeSetID                   int = 2
+	typeProjID                  int = 3
+	typeAggID                   int = 4
+	typeStreamAggID             int = 5
+	typeHashAggID               int = 6
+	typeShowID                  int = 7
+	typeJoinID                  int = 8
+	typeUnionID                 int = 9
+	typeTableScanID             int = 10
+	typeMemTableScanID          int = 11
+	typeUnionScanID             int = 12
+	typeIdxScanID               int = 13
+	typeSortID                  int = 14
+	typeTopNID                  int = 15
+	typeLimitID                 int = 16
+	typeHashJoinID              int = 17
+	typeMergeJoinID             int = 18
+	typeIndexJoinID             int = 19
+	typeIndexMergeJoinID        int = 20
+	typeIndexHashJoinID         int = 21
+	typeApplyID                 int = 22
+	typeMaxOneRowID             int = 23
+	typeExistsID                int = 24
+	typeDualID                  int = 25
+	typeLockID                  int = 26
+	typeInsertID                int = 27
+	typeUpdateID                int = 28
+	typeDeleteID                int = 29
+	typeIndexLookUpID           int = 30
+	typeTableReaderID           int = 31
+	typeIndexReaderID           int = 32
+	typeWindowID                int = 33
+	typeTiKVSingleGatherID      int = 34
+	typeIndexMergeID            int = 35
+	typePointGet                int = 36
+	typeShowDDLJobs             int = 37
+	typeBatchPointGet           int = 38
+	typeClusterMemTableReader   int = 39
+	typeDataSourceID            int = 40
+	typeLoadDataID              int = 41
+	typeTableSampleID           int = 42
+	typeTableFullScanID         int = 43
+	typeTableRangeScanID        int = 44
+	typeTableRowIDScanID        int = 45
+	typeIndexFullScanID         int = 46
+	typeIndexRangeScanID        int = 47
+	typeExchangeReceiverID      int = 48
+	typeExchangeSenderID        int = 49
+	typeCTEID                   int = 50
+	typeCTEDefinitionID         int = 51
+	typeCTETableID              int = 52
+	typePartitionUnionID        int = 53
+	typeShuffleID               int = 54
+	typeShuffleReceiverID       int = 55
+	typeForeignKeyCheck         int = 56
+	typeForeignKeyCascade       int = 57
+	typeExpandID                int = 58
+	typeImportIntoID            int = 59
+	TypeScalarSubQueryID        int = 60
+	typeMViewDeltaMergeID       int = 61
+	typeMViewCompleteIncApplyID int = 62
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -272,8 +275,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeUpdateID
 	case TypeDelete:
 		return typeDeleteID
-	case TypeMVDeltaMerge:
-		return typeMVDeltaMergeID
+	case TypeMViewDeltaMerge:
+		return typeMViewDeltaMergeID
+	case TypeMViewCompleteDeltaApply:
+		return typeMViewCompleteIncApplyID
 	case TypeIndexLookUp:
 		return typeIndexLookUpID
 	case TypeTableReader:
@@ -402,8 +407,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeUpdate
 	case typeDeleteID:
 		return TypeDelete
-	case typeMVDeltaMergeID:
-		return TypeMVDeltaMerge
+	case typeMViewDeltaMergeID:
+		return TypeMViewDeltaMerge
+	case typeMViewCompleteIncApplyID:
+		return TypeMViewCompleteDeltaApply
 	case typeIndexLookUpID:
 		return TypeIndexLookUp
 	case typeTableReaderID:

@@ -167,6 +167,23 @@ func TestCreateTableArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
 		}
 	})
+	t.Run("create materialized view", func(t *testing.T) {
+		inArgs := &CreateMaterializedViewArgs{
+			TableInfo: &TableInfo{
+				ID:               102,
+				MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}},
+			},
+			MLogTableIDs: []int64{99},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedView)))
+			args, err := GetCreateMaterializedViewArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.MLogTableIDs, args.MLogTableIDs)
+		}
+	})
 	t.Run("create view", func(t *testing.T) {
 		inArgs := &CreateTableArgs{
 			TableInfo:      &TableInfo{ID: 122},
@@ -596,8 +613,9 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewAttributesArgs{
-		AlertWarningSec: 10,
-		AlertOverdueSec: 20,
+		AlertWarningSec:    10,
+		AlertOverdueSec:    20,
+		AlertRefreshFailed: true,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
@@ -606,6 +624,23 @@ func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
+
+	legacy := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec: 10,
+		AlertOverdueSec: 20,
+	}
+	legacyRawArgs, err := marshalArgs(JobVersion1, []any{legacy.AlertWarningSec, legacy.AlertOverdueSec})
+	require.NoError(t, err)
+	j := &Job{
+		Version: JobVersion1,
+		Type:    ActionAlterMaterializedViewAttributes,
+		RawArgs: legacyRawArgs,
+	}
+	args, err := GetAlterMaterializedViewAttributesArgs(j)
+	require.NoError(t, err)
+	require.Equal(t, legacy.AlertWarningSec, args.AlertWarningSec)
+	require.Equal(t, legacy.AlertOverdueSec, args.AlertOverdueSec)
+	require.False(t, args.AlertRefreshFailed)
 }
 
 func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
