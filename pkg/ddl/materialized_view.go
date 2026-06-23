@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -53,7 +52,6 @@ const (
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
 	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
-	maxMaterializedViewCommentLength                      = 128
 )
 
 func errUnsupportedMaterializedViewOnPartitionTable(op string) error {
@@ -216,8 +214,9 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
-	if err := validateMaterializedViewCommentLength(s.ViewName.Name, s.Comment); err != nil {
-		return err
+	sessionVars := ctx.GetSessionVars()
+	if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &s.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
 	}
 
 	// Stage-1 only supports a single-table SELECT as MV definition input.
@@ -493,11 +492,12 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
 	}
 
+	sessionVars := ctx.GetSessionVars()
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewActionComment:
-			if err := validateMaterializedViewCommentLength(s.ViewName.Name, action.Comment); err != nil {
-				return err
+			if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &action.Comment, dbterror.ErrTooLongTableComment); err != nil {
+				return errors.Trace(err)
 			}
 		case ast.AlterMaterializedViewActionRefresh:
 			if _, _, _, err := buildMViewRefreshMeta(ctx, action.Refresh); err != nil {
@@ -555,13 +555,6 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 		}
 	}
 	return nil
-}
-
-func validateMaterializedViewCommentLength(viewName pmodel.CIStr, comment string) error {
-	if utf8.RuneCountInString(comment) <= maxMaterializedViewCommentLength {
-		return nil
-	}
-	return dbterror.ErrTooLongTableComment.GenWithStackByArgs(viewName.L, maxMaterializedViewCommentLength)
 }
 
 func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.AlterMaterializedViewLogStmt) error {
