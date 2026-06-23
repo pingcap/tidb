@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -66,27 +67,13 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 // Because BR will NOT use this function to set a table into ModeRestore,
 // instead BR will use (batch)CreateTableWithInfo.
 func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) error {
-	ok := validateTableMode(tbInfo.Mode, args.TableMode)
+	ok := jobsubmit.ValidateTableMode(tbInfo.Mode, args.TableMode)
 	if !ok {
 		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.Mode, args.TableMode, tbInfo.Name.O)
 	}
 
 	tbInfo.Mode = args.TableMode
 	return nil
-}
-
-// validateTableMode validate whether table mode convert is legal.
-// Now only block import/restore to convert to each other.
-// TODO: Now allow switching between the same table modes, but additional validation will be added later
-// to verify that only the same modification source can perform ALTER same table mode.
-func validateTableMode(origin, target model.TableMode) bool {
-	if origin == model.TableModeImport && target == model.TableModeRestore {
-		return false
-	}
-	if origin == model.TableModeRestore && target == model.TableModeImport {
-		return false
-	}
-	return true
 }
 
 // AlterTableMode creates a DDL job for alter table mode.

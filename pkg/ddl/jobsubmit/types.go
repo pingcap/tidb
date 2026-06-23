@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // Package jobsubmit contains synchronous DDL job construction and durable
-// enqueue primitives shared by DDL submitters.
+// enqueue primitives shared by same-keyspace DDL and narrow cross-keyspace
+// submit-only clients.
 package jobsubmit
 
 import (
