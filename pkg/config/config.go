@@ -893,12 +893,14 @@ type Performance struct {
 	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
 	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// RunAutoAnalyze disables auto analyze when explicitly set to false. When true,
+	// auto analyze follows the tidb_enable_auto_analyze system variable.
+	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
-	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
-	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
-	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	// CommitterConcurrency unused since bootstrap v90.
+	CommitterConcurrency int `toml:"committer-concurrency" json:"committer-concurrency"`
 
 	// ForcePriority, MemoryUsageAlarmRatio are deprecated.
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
@@ -1373,7 +1375,6 @@ var removedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},

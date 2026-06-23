@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -2316,10 +2317,35 @@ func (do *Domain) autoAnalyzeWorker() {
 	defer util.Recover(metrics.LabelDomain, "autoAnalyzeWorker", nil, false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
+	var autoAnalyzeWorkerOwner owner.Manager
 	defer func() {
 		analyzeTicker.Stop()
+		if autoAnalyzeWorkerOwner != nil {
+			autoAnalyzeWorkerOwner.Close()
+		}
 		statslogutil.StatsLogger().Info("autoAnalyzeWorker exited.")
 	}()
+
+	getAutoAnalyzeOwner := func() owner.Manager {
+		mgr := extworkload.GetManager()
+		if extworkload.IsEnabled(mgr) && !extworkload.IsMaster(mgr) && !extworkload.IsAutoAnalyzeWorker(mgr) {
+			return nil
+		}
+		if !extworkload.IsAutoAnalyzeWorker(mgr) {
+			return do.statsOwner
+		}
+		if autoAnalyzeWorkerOwner != nil {
+			return autoAnalyzeWorkerOwner
+		}
+		autoAnalyzeWorkerOwner = do.NewOwnerManager(handle.AutoAnalyzeExecutorPrompt, handle.AutoAnalyzeExecutorOwnerKey)
+		if err := autoAnalyzeWorkerOwner.CampaignOwner(10); err != nil {
+			logutil.BgLogger().Warn("campaign auto analyze worker owner failed", zap.Error(err))
+			autoAnalyzeWorkerOwner.Close()
+			autoAnalyzeWorkerOwner = nil
+		}
+		return autoAnalyzeWorkerOwner
+	}
+
 	for {
 		select {
 		case <-analyzeTicker.C:
@@ -2339,9 +2365,10 @@ func (do *Domain) autoAnalyzeWorker() {
 			// the probability of this happening is very high that the ticker condition and exist condition will be met
 			// at the same time.
 			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
-			if vardef.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
+			autoAnalyzeOwner := getAutoAnalyzeOwner()
+			if shouldRunAutoAnalyze() && !do.stopAutoAnalyze.Load() && autoAnalyzeOwner != nil && autoAnalyzeOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
-			} else if !vardef.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
+			} else if !shouldRunAutoAnalyze() || autoAnalyzeOwner == nil || !autoAnalyzeOwner.IsOwner() {
 				// Once the auto analyze is disabled or this instance is not the owner,
 				// we close the priority queue to release resources.
 				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
@@ -2352,6 +2379,10 @@ func (do *Domain) autoAnalyzeWorker() {
 			return
 		}
 	}
+}
+
+func shouldRunAutoAnalyze() bool {
+	return config.GetGlobalConfig().Performance.RunAutoAnalyze && vardef.RunAutoAnalyze.Load()
 }
 
 // analyzeJobsCleanupWorker is a background worker that periodically performs two main tasks:

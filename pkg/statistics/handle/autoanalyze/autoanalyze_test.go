@@ -18,14 +18,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -54,6 +58,55 @@ func WrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
 	sctx := mockexec.NewContext()
 	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
 	return sctx
+}
+
+type fakeExternalWorkloadManager struct {
+	role       config.ExternalWorkloadRole
+	registered []uint64
+	recycled   []uint64
+}
+
+func (m *fakeExternalWorkloadManager) Close() error { return nil }
+
+func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole { return m.role }
+
+func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
+
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context) error { return nil }
+
+func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
+
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, int64) error { return nil }
+
+func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error { return nil }
+
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, int64) error { return nil }
+
+func (*fakeExternalWorkloadManager) RegisterTTLTask(context.Context, int64, bool) error { return nil }
+
+func (*fakeExternalWorkloadManager) DeleteTTLTableInfo(context.Context, int64) error { return nil }
+
+func (*fakeExternalWorkloadManager) RecycleTTLTask(context.Context, uint64) error { return nil }
+
+func (*fakeExternalWorkloadManager) UpdateTTLJobEnable(context.Context, bool) error { return nil }
+
+func (m *fakeExternalWorkloadManager) RegisterAutoAnalyze(_ context.Context, taskID uint64) error {
+	m.registered = append(m.registered, taskID)
+	return nil
+}
+
+func (m *fakeExternalWorkloadManager) RecycleAutoAnalyze(_ context.Context, taskID uint64) error {
+	m.recycled = append(m.recycled, taskID)
+	return nil
+}
+
+func installExternalWorkloadManagerForTest(t *testing.T, mgr extworkload.Manager) {
+	t.Helper()
+	extworkload.ClearManager(extworkload.GetManager())
+	extworkload.InstallManager(mgr)
+	t.Cleanup(func() {
+		extworkload.ClearManager(mgr)
+	})
 }
 
 func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
@@ -281,6 +334,27 @@ func TestNeedAnalyzeTable(t *testing.T) {
 	}
 }
 
+func TestAutoAnalyzeWorkerTrustsRegisteredTask(t *testing.T) {
+	statsTbl := &statistics.Table{
+		HistColl:           *statistics.NewHistCollWithColsAndIdxs(0, 100, 1, nil, nil),
+		LastAnalyzeVersion: 1,
+	}
+	needAnalyze, reason := autoanalyze.NeedAnalyzeTable(statsTbl, 0.8)
+	require.False(t, needAnalyze)
+	require.Empty(t, reason)
+
+	mgr := &fakeExternalWorkloadManager{role: config.RoleAutoAnalyzeWorker}
+	installExternalWorkloadManagerForTest(t, mgr)
+
+	needAnalyze, reason = autoanalyze.NeedAnalyzeTable(statsTbl, 0.8)
+	require.True(t, needAnalyze)
+	require.Equal(t, "auto-analyze worker", reason)
+
+	needAnalyze, reason = autoanalyze.NeedAnalyzeTable(statsTbl, 0)
+	require.False(t, needAnalyze)
+	require.Empty(t, reason)
+}
+
 func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -337,6 +411,60 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+}
+
+func TestExternalWorkloadMasterRegistersAutoAnalyzeTask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+
+	h := dom.StatsHandle()
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	originMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = originMinCnt
+	}()
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+
+	mgr := &fakeExternalWorkloadManager{role: config.RoleMaster}
+	installExternalWorkloadManagerForTest(t, mgr)
+
+	require.True(t, h.HandleAutoAnalyze())
+	rows := tk.MustQuery("select id from mysql.auto_analyze_tasks").Rows()
+	require.Len(t, rows, 1)
+	taskID, err := strconv.ParseUint(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{taskID}, mgr.registered)
+}
+
+func TestExternalWorkloadAutoAnalyzeWorkerFinishesMissingTableTask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("insert into mysql.auto_analyze_tasks(id, table_id, start_time) values (100, 123456789, 10)")
+
+	mgr := &fakeExternalWorkloadManager{role: config.RoleAutoAnalyzeWorker}
+	installExternalWorkloadManagerForTest(t, mgr)
+
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.Equal(t, []uint64{uint64(100)}, mgr.recycled)
+	tk.MustQuery("select count(*) from mysql.auto_analyze_tasks").Check(testkit.Rows("0"))
+	tk.MustQuery("select table_id, analyzed, err from mysql.auto_analyze_tasks_history where id = 100").Check(
+		testkit.Rows("123456789 0 table not found"),
+	)
 }
 
 func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {

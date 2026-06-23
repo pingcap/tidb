@@ -2,12 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "autoanalyze",
-    srcs = ["autoanalyze.go"],
+    srcs = [
+        "autoanalyze.go",
+        "autoanalyze_worker.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/notifier",
         "//pkg/domain/infosync",
+        "//pkg/extworkload",
         "//pkg/infoschema",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
@@ -40,12 +44,14 @@ go_test(
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 17,
     deps = [
         ":autoanalyze",
+        "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/extworkload",
         "//pkg/keyspace",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
@@ -64,6 +70,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sqlexec/mock",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_mock//gomock",

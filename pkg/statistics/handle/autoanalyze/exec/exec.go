@@ -68,11 +68,11 @@ func AutoAnalyze(
 	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
+	escaped, err1 := sqlescape.EscapeSQL(sql, params...)
+	if err1 != nil {
+		escaped = ""
+	}
 	if err != nil {
-		escaped, err1 := sqlescape.EscapeSQL(sql, params...)
-		if err1 != nil {
-			escaped = ""
-		}
 		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
@@ -80,9 +80,11 @@ func AutoAnalyze(
 			zap.Error(err),
 		)
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
+		statsHandle.UpdateLastExecution(false, escaped)
 		return false
 	}
 	metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+	statsHandle.UpdateLastExecution(true, escaped)
 	return true
 }
 

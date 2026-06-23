@@ -59,3 +59,23 @@ func TestRolePredicatesDedicated(t *testing.T) {
 		})
 	}
 }
+
+func TestGlobalManager(t *testing.T) {
+	ClearManager(GetManager())
+	require.Nil(t, GetManager())
+
+	master := &stubManager{role: config.RoleMaster}
+	worker := &stubManager{role: config.RoleAutoAnalyzeWorker}
+
+	InstallManager(master)
+	require.Same(t, master, GetManager())
+
+	ClearManager(worker)
+	require.Same(t, master, GetManager())
+
+	InstallManager(worker)
+	require.Same(t, worker, GetManager())
+
+	ClearManager(worker)
+	require.Nil(t, GetManager())
+}
