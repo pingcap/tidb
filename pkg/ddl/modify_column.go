@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -102,36 +103,13 @@ func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 }
 
 func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
-	if oldCol == nil || newCol == nil || oldCol.Comment == newCol.Comment {
+	if oldCol == nil || newCol == nil {
 		return false
 	}
-	return oldCol.ID == newCol.ID &&
-		oldCol.Name == newCol.Name &&
-		oldCol.Offset == newCol.Offset &&
-		oldCol.State == newCol.State &&
-		oldCol.Version == newCol.Version &&
-		oldCol.Hidden == newCol.Hidden &&
-		oldCol.GeneratedExprString == newCol.GeneratedExprString &&
-		oldCol.GeneratedStored == newCol.GeneratedStored &&
-		oldCol.DefaultIsExpr == newCol.DefaultIsExpr &&
-		oldCol.ChangingFieldType == nil &&
-		newCol.ChangingFieldType == nil &&
-		oldCol.ChangeStateInfo == nil &&
-		newCol.ChangeStateInfo == nil &&
-		oldCol.FieldType.Equals(&newCol.FieldType) &&
-		columnDependencesEqual(oldCol.Dependences, newCol.Dependences)
-}
-
-func columnDependencesEqual(a, b map[string]struct{}) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k := range a {
-		if _, ok := b[k]; !ok {
-			return false
-		}
-	}
-	return true
+	oldClone := oldCol.Clone()
+	newClone := newCol.Clone()
+	newClone.Comment = oldClone.Comment
+	return reflect.DeepEqual(oldClone, newClone)
 }
 
 // getModifyColumnType gets the modify column type.
