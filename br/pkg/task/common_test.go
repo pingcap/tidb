@@ -9,6 +9,7 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -334,6 +335,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:    16000000000,
 		DdlBatchSize:          0x80,
 		RegionScanConcurrency: 256,
+		SplitRegionIndexStep:  restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:   "STRICT",
 		UseCheckpoint:         true,
 	}
