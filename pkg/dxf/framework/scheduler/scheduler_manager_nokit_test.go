@@ -72,8 +72,10 @@ func expectRuntimeFromNewSession(ctrl *gomock.Controller, taskMgr *mock.MockTask
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	server.EXPECT().GetRuntime().Return(runtime).AnyTimes()
 	taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
+		se := utilmock.NewContext()
+		se.Store = runtime.Store()
 		return fn(&sessionWithSQLServer{
-			Context: utilmock.NewContext(),
+			Context: se,
 			server:  server,
 		})
 	}).AnyTimes()
@@ -265,7 +267,9 @@ func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *cros
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
+		se := utilmock.NewContext()
+		se.Store = manager.store
+		return fn(&sessionWithSQLServer{Context: se, server: server})
 	})
 
 	return &crossKeyspaceStartCase{

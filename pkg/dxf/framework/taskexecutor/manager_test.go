@@ -68,8 +68,10 @@ func expectRuntimeFromNewSession(ctrl *gomock.Controller, taskTable *mock.MockTa
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	server.EXPECT().GetRuntime().Return(runtime).AnyTimes()
 	taskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
+		se := utilmock.NewContext()
+		se.Store = runtime.Store()
 		return fn(&sessionWithSQLServer{
-			Context: utilmock.NewContext(),
+			Context: se,
 			server:  server,
 		})
 	}).AnyTimes()
@@ -224,7 +226,9 @@ func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *cros
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	taskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	taskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
+		se := utilmock.NewContext()
+		se.Store = m.store
+		return fn(&sessionWithSQLServer{Context: se, server: server})
 	})
 
 	return &crossKeyspaceStartCase{
@@ -685,7 +689,9 @@ func TestStartTaskExecutorResolveTaskRuntimeFromTaskKeyspace(t *testing.T) {
 	})
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
+		se := utilmock.NewContext()
+		se.Store = m.store
+		return fn(&sessionWithSQLServer{Context: se, server: server})
 	})
 	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	runCh := make(chan struct{})
@@ -736,7 +742,9 @@ func TestStartTaskExecutorResolveTaskRuntimeError(t *testing.T) {
 
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(&sessionWithSQLServer{Context: utilmock.NewContext(), server: server})
+		se := utilmock.NewContext()
+		se.Store = m.store
+		return fn(&sessionWithSQLServer{Context: se, server: server})
 	})
 
 	require.False(t, m.startTaskExecutor(&task.TaskBase))

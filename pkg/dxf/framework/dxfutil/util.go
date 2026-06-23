@@ -32,12 +32,12 @@ type sessionProvider interface {
 // Callers must call the release function when the returned runtime is no longer used.
 func AcquireTaskRuntime(
 	sessionProvider sessionProvider,
-	currentKS string,
 	taskKS string,
 	holderID string,
 ) (sqlsvrapi.Runtime, func(), error) {
 	var taskRuntime sqlsvrapi.Runtime
 	if err := sessionProvider.WithNewSession(func(se sessionctx.Context) error {
+		currentKS := se.GetStore().GetKeyspace()
 		sqlServer := se.GetSQLServer()
 		if taskKS != currentKS {
 			var err2 error
@@ -82,4 +82,9 @@ func CheckTaskRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 		return err
 	}
 	return nil
+}
+
+// GenHolderID generate holder ID for a task.
+func GenHolderID(component string, taskID int64) string {
+	return fmt.Sprintf("DXF/%s/%d", component, taskID)
 }
