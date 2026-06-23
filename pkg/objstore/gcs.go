@@ -410,8 +410,13 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 // PresignFile implements storeapi.Storage interface.
 func (s *GCSStorage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
 	object := s.objectName(fileName)
+	// Use V4 signing explicitly. The default (V2) can only sign with an in-process
+	// RSA private key, so it fails under ADC/workload-identity where signing must go
+	// through the IAM SignBlob API. V4 supports that flow. V4 caps expiry at 7 days,
+	// which is well above the current callers' needs.
 	opts := &storage.SignedURLOptions{
 		Method:  "GET",
+		Scheme:  storage.SigningSchemeV4,
 		Expires: time.Now().Add(expire),
 	}
 	url, err := s.GetBucketHandle().SignedURL(object, opts)

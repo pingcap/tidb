@@ -18,6 +18,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	goerrors "errors"
 	"flag"
 	"fmt"
@@ -73,6 +76,45 @@ func prepareGCSStore(t *testing.T, bucketName string, accessRec *recording.Acces
 	})
 	require.NoError(t, err)
 	return server, stg
+}
+
+// TestGCSPresignFileUsesV4Signing is a regression test for PresignFile: it must
+// use V4 signing. The default (V2) scheme can only sign with an in-process RSA
+// private key, so it fails under ADC/workload-identity where signing must go
+// through the IAM SignBlob API. Only V4 supports that flow. The presence of the
+// V4 algorithm marker in the generated URL pins the scheme down.
+func TestGCSPresignFileUsesV4Signing(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	bucketName := "presign-bucket"
+	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{NoListener: true})
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
+
+	// SignedURL signs locally with a private key, so feed a minimal service
+	// account credential carrying a freshly generated RSA key. This keeps the
+	// test offline and independent of any real Google credentials.
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	saJSON := fmt.Sprintf(`{"type":"service_account","client_email":"signer@example.iam.gserviceaccount.com","private_key":%q,"token_uri":"https://oauth2.googleapis.com/token"}`, string(keyPEM))
+
+	gcs := &backuppb.GCS{
+		Bucket:          bucketName,
+		Prefix:          "a/b/",
+		CredentialsBlob: saJSON,
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
+		HTTPClient: server.HTTPClient(),
+	})
+	require.NoError(t, err)
+
+	signed, err := stg.PresignFile(ctx, "file.txt", time.Hour)
+	require.NoError(t, err)
+	require.Contains(t, signed, "X-Goog-Algorithm=GOOG4-RSA-SHA256")
 }
 
 func TestGCS(t *testing.T) {
