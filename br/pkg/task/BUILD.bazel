@@ -41,6 +41,7 @@ go_library(
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/log_client",
         "//br/pkg/restore/snap_client",
+        "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
@@ -124,7 +125,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 49,
+    shard_count = 50,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
