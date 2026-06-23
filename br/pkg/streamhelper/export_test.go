@@ -90,6 +90,14 @@ func (c *CheckpointAdvancer) TESTResolveLockInterval() time.Duration {
 	return c.getResolveLockInterval()
 }
 
+func (c *CheckpointAdvancer) TESTDefaultStartPollThreshold() time.Duration {
+	return c.getDefaultStartPollThreshold()
+}
+
+func (c *CheckpointAdvancer) TESTSubscriberErrorStartPollThreshold() time.Duration {
+	return c.getSubscriberErrorStartPollThreshold()
+}
+
 func TESTResolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval time.Duration, now time.Time) uint64 {
 	return resolveLockTargetUpperBound(checkpointTS, resolveLockInterval, oracle.GoTimeToTS(now))
 }

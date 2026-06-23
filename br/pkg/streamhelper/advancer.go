@@ -82,6 +82,7 @@ type CheckpointAdvancer struct {
 	cfg config.Config
 
 	resolveLockInterval atomic.Int64
+	tryAdvanceThreshold atomic.Int64
 
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
@@ -209,6 +210,20 @@ func (c *CheckpointAdvancer) getResolveLockInterval() time.Duration {
 	return c.Config().GetResolveLockInterval()
 }
 
+func (c *CheckpointAdvancer) getDefaultStartPollThreshold() time.Duration {
+	if threshold := time.Duration(c.tryAdvanceThreshold.Load()); threshold > 0 {
+		return threshold
+	}
+	return c.Config().GetDefaultStartPollThreshold()
+}
+
+func (c *CheckpointAdvancer) getSubscriberErrorStartPollThreshold() time.Duration {
+	if threshold := time.Duration(c.tryAdvanceThreshold.Load()); threshold > 0 {
+		return threshold * 9 / 20
+	}
+	return c.Config().GetSubscriberErrorStartPollThreshold()
+}
+
 // UpdateLastCheckpoint modify the checkpoint in ticking.
 func (c *CheckpointAdvancer) UpdateLastCheckpoint(p *checkpoint) {
 	c.lastCheckpointMu.Lock()
@@ -253,23 +268,30 @@ func (c *CheckpointAdvancer) refreshLogBackupFlushInterval(ctx context.Context) 
 	defer cancel()
 	flushInterval, err := c.env.GetLogBackupFlushInterval(fetchCtx)
 	if err != nil {
-		log.Warn("failed to refresh TiKV log-backup.flush-interval; keep previous resolve lock interval",
+		log.Warn("failed to refresh TiKV log-backup.flush-interval; keep previous advancer intervals",
 			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),
+			zap.Duration("current-try-advance-threshold", c.getDefaultStartPollThreshold()),
 			logutil.ShortError(err))
 		return
 	}
 	if flushInterval <= 0 {
-		log.Warn("ignore invalid TiKV log-backup.flush-interval; keep previous resolve lock interval",
+		log.Warn("ignore invalid TiKV log-backup.flush-interval; keep previous advancer intervals",
 			zap.Duration("flush-interval", flushInterval),
-			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()))
+			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),
+			zap.Duration("current-try-advance-threshold", c.getDefaultStartPollThreshold()))
 		return
 	}
 	previous := c.getResolveLockInterval()
+	previousTryAdvanceThreshold := c.getDefaultStartPollThreshold()
 	c.resolveLockInterval.Store(int64(flushInterval))
-	if previous != flushInterval {
-		log.Info("refreshed TiKV log-backup.flush-interval for resolve lock",
+	tryAdvanceThreshold := flushInterval * 4 / 3
+	c.tryAdvanceThreshold.Store(int64(tryAdvanceThreshold))
+	if previous != flushInterval || previousTryAdvanceThreshold != tryAdvanceThreshold {
+		log.Info("refreshed TiKV log-backup.flush-interval for advancer intervals",
 			zap.Duration("previous-resolve-lock-interval", previous),
-			zap.Duration("resolve-lock-interval", flushInterval))
+			zap.Duration("resolve-lock-interval", flushInterval),
+			zap.Duration("previous-try-advance-threshold", previousTryAdvanceThreshold),
+			zap.Duration("try-advance-threshold", tryAdvanceThreshold))
 	}
 }
 
@@ -810,11 +832,11 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	c.tryResolveLocksForCheckpoint(cx)
 
-	threshold := c.Config().GetDefaultStartPollThreshold()
+	threshold := c.getDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("Subscriber meet error, would polling the checkpoint.", zap.String("category", "log backup advancer"),
 			logutil.ShortError(err))
-		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
+		threshold = c.getSubscriberErrorStartPollThreshold()
 	}
 
 	return c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
