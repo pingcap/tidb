@@ -2961,12 +2961,17 @@ func TestMaterializedViewRefreshCompleteDeltaApplyRollbackOnError(t *testing.T) 
 	require.NoError(t, err)
 	require.NotZero(t, oldTS)
 
-	tk.MustExec("create unique index idx_unique_s on mv (s)")
 	tk.MustExec("insert into t values (2, 8)")
+
+	const refreshFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges"
+	require.NoError(t, failpoint.Enable(refreshFailpoint, `return("mock refresh data change failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(refreshFailpoint))
+	}()
 
 	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "Duplicate")
+	require.ErrorContains(t, err, "mock refresh data change failure")
 
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
@@ -2977,7 +2982,7 @@ func TestMaterializedViewRefreshCompleteDeltaApplyRollbackOnError(t *testing.T) 
 		Check(testkit.Rows("0"))
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
 	require.Len(t, reasonRow, 1)
-	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "Duplicate")
+	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "mock refresh data change failure")
 }
 
 func TestMaterializedViewRefreshEarlyFailureWritesHist(t *testing.T) {
@@ -3234,12 +3239,17 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceBuildFailureCleansShadow(t *te
 	require.Len(t, mviewIDRows, 1)
 	mviewID, err := strconv.ParseInt(fmt.Sprintf("%v", mviewIDRows[0][0]), 10, 64)
 	require.NoError(t, err)
-	tk.MustExec("create unique index idx_unique_s on mv (s)")
 	tk.MustExec("insert into t values (2, 8)")
+
+	const buildFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow"
+	require.NoError(t, failpoint.Enable(buildFailpoint, `return("mock out-of-place shadow load failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(buildFailpoint))
+	}()
 
 	err = tk.ExecToErr("refresh materialized view mv complete out of place")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "Duplicate")
+	require.ErrorContains(t, err, "mock out-of-place shadow load failure")
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
@@ -3474,11 +3484,13 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	require.NoError(t, err)
 	require.NotZero(t, oldTS)
 
-	// Create a unique index that will be violated after refresh.
-	tk.MustExec("create unique index idx_unique_s on mv (s)")
-
-	// Make the refreshed MV contain duplicate `s` values: sum(b) for a=2 becomes 15.
 	tk.MustExec("insert into t values (2, 8)")
+
+	const refreshFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges"
+	require.NoError(t, failpoint.Enable(refreshFailpoint, `return("mock refresh data change failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(refreshFailpoint))
+	}()
 
 	const finalizeFailpoint = "github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError"
 	require.NoError(t, failpoint.Enable(finalizeFailpoint, "1*return(true)"))
@@ -3488,7 +3500,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 
 	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "Duplicate")
+	require.ErrorContains(t, err, "mock refresh data change failure")
 
 	// MV data should remain unchanged due to transactional refresh.
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
@@ -3501,7 +3513,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 		Check(testkit.Rows("0"))
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
 	require.Len(t, reasonRow, 1)
-	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "Duplicate")
+	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "mock refresh data change failure")
 }
 
 func TestMaterializedViewRefreshFailureReportsAlertBeforeFinalizeHistFailure(t *testing.T) {
@@ -3518,8 +3530,13 @@ func TestMaterializedViewRefreshFailureReportsAlertBeforeFinalizeHistFailure(t *
 	require.NoError(t, err)
 	mviewID := mvTable.Meta().ID
 
-	tk.MustExec("create unique index idx_unique_s on mv (s)")
 	tk.MustExec("insert into t values (2, 8)")
+
+	const refreshFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges"
+	require.NoError(t, failpoint.Enable(refreshFailpoint, `return("mock refresh data change failure")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(refreshFailpoint))
+	}()
 
 	const finalizeFailpoint = "github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError"
 	require.NoError(t, failpoint.Enable(finalizeFailpoint, "return(true)"))
@@ -3530,7 +3547,7 @@ func TestMaterializedViewRefreshFailureReportsAlertBeforeFinalizeHistFailure(t *
 	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "failed to finalize refresh history after error")
-	require.ErrorContains(t, err, "Duplicate")
+	require.ErrorContains(t, err, "mock refresh data change failure")
 
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_FAILED, ALERT_LEVEL is null from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d",

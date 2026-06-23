@@ -54,6 +54,10 @@ const (
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 )
 
+func errUnsupportedMaterializedViewOnPartitionTable(op string) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(op + " on partition table")
+}
+
 // ApplyMViewExecutionSessionVars applies MV execution vars onto a session and returns a restore closure.
 func ApplyMViewExecutionSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
 	return applyMViewExecutionSessionVars(sessVars, target, false)
@@ -233,6 +237,9 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTableName.Name, "BASE TABLE")
+	}
+	if baseTable.Meta().GetPartitionInfo() != nil {
+		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
 	}
 	baseTableID := baseTable.Meta().ID
 
@@ -608,6 +615,9 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 				}
 				if baseColMap[col.L] == nil {
 					return infoschema.ErrColumnNotExists.GenWithStackByArgs(col.O, s.Table.Name.O)
+				}
+				if err := checkMaterializedViewLogColumnSupportedForOp("ALTER MATERIALIZED VIEW LOG", baseColMap[col.L]); err != nil {
+					return err
 				}
 				mlogColSet[col.L] = struct{}{}
 			}

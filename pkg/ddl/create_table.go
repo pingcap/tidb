@@ -291,6 +291,10 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, baseTblInfo.Name, "BASE TABLE")
 	}
+	if baseTblInfo.GetPartitionInfo() != nil {
+		job.State = model.JobStateCancelled
+		return ver, errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW LOG")
+	}
 	if baseTblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", baseTblInfo.Name, baseTblInfo.State)
@@ -347,6 +351,9 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID int64, ba
 	if baseTblInfo.IsView() || baseTblInfo.IsSequence() || baseTblInfo.TempTableType != model.TempTableNone {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTblInfo.Name, "BASE TABLE")
 	}
+	if baseTblInfo.GetPartitionInfo() != nil {
+		return nil, errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
+	}
 	intest.Assert(baseTblInfo.State == model.StatePublic)
 	if baseTblInfo.MaterializedViewBase == nil || baseTblInfo.MaterializedViewBase.MLogID == 0 {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: base table has no materialized view log")
@@ -360,6 +367,15 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID int64, ba
 	}
 	intest.Assert(mlogTblInfo.State == model.StatePublic)
 	return baseTblInfo, nil
+}
+
+func isCreateMaterializedViewBaseCheckCancelledErr(err error) bool {
+	return infoschema.ErrDatabaseNotExists.Equal(err) ||
+		infoschema.ErrTableNotExists.Equal(err) ||
+		dbterror.ErrInvalidDDLJob.Equal(err) ||
+		dbterror.ErrWrongObject.Equal(err) ||
+		dbterror.ErrInvalidDDLState.Equal(err) ||
+		dbterror.ErrGeneralUnsupportedDDL.Equal(err)
 }
 
 func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -406,10 +422,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		// Phase-1: create MV physical table and atomically wire base<->mv metadata.
 		for _, baseTableID := range baseTableIDs {
 			if _, err := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, baseTableID, job.SchemaName); err != nil {
-				if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-					job.State = model.JobStateCancelled
-				}
-				if dbterror.ErrInvalidDDLJob.Equal(err) || dbterror.ErrWrongObject.Equal(err) || dbterror.ErrInvalidDDLState.Equal(err) {
+				if isCreateMaterializedViewBaseCheckCancelledErr(err) {
 					job.State = model.JobStateCancelled
 				}
 				return ver, errors.Trace(err)

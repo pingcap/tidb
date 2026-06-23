@@ -41,10 +41,10 @@ import (
 )
 
 const (
-	deltaTableAlias = "delta"
-	mvTableAlias    = "mv"
-	diffQAlias      = "__mvd_q"
-	diffMAlias      = "__mvd_m"
+	deltaTableAlias     = "delta"
+	mvTableAlias        = "mv"
+	diffRecomputedAlias = "__mvd_recomputed"
+	diffCurrentAlias    = "__mvd_current"
 
 	deltaCntStarName = "__mview_delta_cnt_star"
 )
@@ -1197,12 +1197,12 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 	require.Equal(t, hint.HintReadFromStorage, storageHint.HintName.L)
 	require.Equal(t, hint.HintTiFlash, storageHint.HintData.(pmodel.CIStr).L)
 	require.Len(t, storageHint.Tables, 1)
-	require.Equal(t, diffMAlias, storageHint.Tables[0].TableName.L)
+	require.Equal(t, diffCurrentAlias, storageHint.Tables[0].TableName.L)
 	require.Equal(t, item.DBName.L, storageHint.Tables[0].DBName.L)
 	probeHint := res.DiffSourceSelect.TableHints[1]
 	require.Equal(t, hint.HintHashJoinProbe, probeHint.HintName.L)
 	require.Len(t, probeHint.Tables, 1)
-	require.Equal(t, diffMAlias, probeHint.Tables[0].TableName.L)
+	require.Equal(t, diffCurrentAlias, probeHint.Tables[0].TableName.L)
 	require.Equal(t, item.DBName.L, probeHint.Tables[0].DBName.L)
 	sctx.GetSessionVars().EnableFullOuterJoin = true
 	plan, _, err := optimizeForTest(sctx, is)(context.Background(), res.DiffSourceSelect)
@@ -1215,12 +1215,12 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 	require.Equal(t, len(mv.Columns), res.MVColumnCount)
 	require.Equal(t, 0, res.OpColOffset)
 	require.Equal(t, 0, res.MarkerMVOffset)
-	require.Equal(t, 1, res.MHandleCols.NumCols())
-	require.Len(t, res.MRowOffsets, len(mv.Columns))
-	require.Len(t, res.QRowOffsets, len(mv.Columns))
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.Len(t, res.CurrentRowOffsets, len(mv.Columns))
+	require.Len(t, res.RecomputedRowOffsets, len(mv.Columns))
 	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
 	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
-	require.Equal(t, res.MRowOffsets[0], res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, res.CurrentRowOffsets[0], res.CurrentHandleCols.GetCol(0).Index)
 
 	join := res.DiffSourceSelect.From.TableRefs
 	require.NotNil(t, join)
@@ -1230,8 +1230,8 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 	require.Len(t, joinPredicates, 1)
 	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
 	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
-	require.Equal(t, diffQAlias, leftTable)
-	require.Equal(t, diffMAlias, rightTable)
+	require.Equal(t, diffRecomputedAlias, leftTable)
+	require.Equal(t, diffCurrentAlias, rightTable)
 	require.Equal(t, leftCol, rightCol)
 	require.Equal(t, "a", rightCol)
 	require.Equal(t, opcode.EQ, joinPredicates[0].Op)
@@ -1281,8 +1281,8 @@ func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 1, res.MarkerMVOffset)
-	require.Equal(t, 1, res.MHandleCols.NumCols())
-	require.Equal(t, 1, res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.Equal(t, 1, res.CurrentHandleCols.GetCol(0).Index)
 	require.Equal(t, 1+1+2*len(mv.Columns), res.SourceColumnCount)
 	require.NotNil(t, res.DiffSourceSelect.From)
 	require.NotNil(t, res.DiffSourceSelect.From.TableRefs)
@@ -1291,8 +1291,8 @@ func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
 	require.Len(t, joinPredicates, 1)
 	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
 	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
-	require.Equal(t, diffQAlias, leftTable)
-	require.Equal(t, diffMAlias, rightTable)
+	require.Equal(t, diffRecomputedAlias, leftTable)
+	require.Equal(t, diffCurrentAlias, rightTable)
 	require.Equal(t, leftCol, rightCol)
 	require.Equal(t, "a", rightCol)
 	require.Equal(t, opcode.NullEQ, joinPredicates[0].Op)
@@ -1355,10 +1355,10 @@ func TestBuildCompleteDiffSourceCommonHandleReusesOldRowImage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
-	require.Equal(t, 2, res.MHandleCols.NumCols())
+	require.Equal(t, 2, res.CurrentHandleCols.NumCols())
 	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
-	require.Equal(t, res.MRowOffsets[1], res.MHandleCols.GetCol(0).Index)
-	require.Equal(t, res.MRowOffsets[0], res.MHandleCols.GetCol(1).Index)
+	require.Equal(t, res.CurrentRowOffsets[1], res.CurrentHandleCols.GetCol(0).Index)
+	require.Equal(t, res.CurrentRowOffsets[0], res.CurrentHandleCols.GetCol(1).Index)
 }
 
 func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
@@ -1401,11 +1401,11 @@ func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 2+2*len(mv.Columns), res.SourceColumnCount)
-	require.Equal(t, 1, res.MHandleCols.NumCols())
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
 	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
-	require.Equal(t, int64(model.ExtraHandleID), res.MHandleCols.GetCol(0).ID)
-	require.Equal(t, 1, res.MHandleCols.GetCol(0).Index)
-	require.NotContains(t, res.MRowOffsets, res.MHandleCols.GetCol(0).Index)
+	require.Equal(t, int64(model.ExtraHandleID), res.CurrentHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, res.CurrentHandleCols.GetCol(0).Index)
+	require.NotContains(t, res.CurrentRowOffsets, res.CurrentHandleCols.GetCol(0).Index)
 }
 
 func findIndexJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalIndexJoin {
@@ -1555,8 +1555,8 @@ func collectPayloadComparisonOps(t *testing.T, expr ast.ExprNode) map[string]opc
 			if x.Op == opcode.NullEQ || x.Op == opcode.EQ {
 				leftTable, leftCol := columnNameRef(t, x.L)
 				rightTable, rightCol := columnNameRef(t, x.R)
-				require.Equal(t, diffQAlias, leftTable)
-				require.Equal(t, diffMAlias, rightTable)
+				require.Equal(t, diffRecomputedAlias, leftTable)
+				require.Equal(t, diffCurrentAlias, rightTable)
 				require.Equal(t, leftCol, rightCol)
 				ops[rightCol] = x.Op
 			}

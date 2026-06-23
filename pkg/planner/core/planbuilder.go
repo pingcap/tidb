@@ -4144,15 +4144,15 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			return nil, err
 		}
 		return MViewCompleteDeltaApply{
-			Source:            sourcePlan,
-			MVTableID:         mvInfo.ID,
-			MVColumnCount:     diffRes.MVColumnCount,
-			OpColID:           diffRes.OpColOffset,
-			MarkerMVOffset:    diffRes.MarkerMVOffset,
-			GroupKeyMVOffsets: append([]int(nil), diffRes.GroupKeyMVOffsets...),
-			MHandleCols:       diffRes.MHandleCols,
-			MRowInputColIDs:   append([]int(nil), diffRes.MRowOffsets...),
-			QRowInputColIDs:   append([]int(nil), diffRes.QRowOffsets...),
+			Source:                   sourcePlan,
+			MVTableID:                mvInfo.ID,
+			MVColumnCount:            diffRes.MVColumnCount,
+			OpColID:                  diffRes.OpColOffset,
+			MarkerMVOffset:           diffRes.MarkerMVOffset,
+			GroupKeyMVOffsets:        append([]int(nil), diffRes.GroupKeyMVOffsets...),
+			CurrentHandleCols:        diffRes.CurrentHandleCols,
+			CurrentRowInputColIDs:    append([]int(nil), diffRes.CurrentRowOffsets...),
+			RecomputedRowInputColIDs: append([]int(nil), diffRes.RecomputedRowOffsets...),
 		}.Init(b.ctx), nil
 	default:
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: unsupported mode %s", mode.String())
