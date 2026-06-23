@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
@@ -186,6 +187,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	operationContext  operation.Context
 	checkRequirements bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
@@ -202,6 +204,23 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+	rc.setOperationContextRestoreID(restoreID)
+}
+
+// SetOperationContext sets command-scoped metadata used for storage locks.
+func (rc *LogClient) SetOperationContext(operationContext operation.Context) {
+	rc.operationContext = operationContext
+	rc.setOperationContextRestoreID(rc.restoreID)
+}
+
+const operationHintRestoreID = "restore_id"
+
+func (rc *LogClient) setOperationContextRestoreID(restoreID uint64) {
+	if restoreID == 0 {
+		rc.operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	rc.operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
@@ -699,7 +718,7 @@ type LockedMigrations struct {
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
-	ext := stream.MigrationExtension(rc.storage)
+	ext := stream.MigrationExtension(rc.storage).WithOperationContext(rc.operationContext)
 	readLock, err := ext.GetReadLock(ctx, "restore stream")
 	if err != nil {
 		return nil, err
