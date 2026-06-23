@@ -254,6 +254,17 @@ func (h subscriber) handle(
 		miniDBInfo := change.GetDropSchemaInfo()
 		intest.Assert(miniDBInfo != nil)
 		for _, table := range miniDBInfo.Tables {
+			// Partition stats are keyed by partition physical IDs, so update them separately for stats GC.
+			for _, partition := range table.Partitions {
+				if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, partition.ID); err != nil {
+					logutil.StatsLogger().Error(
+						"Failed to update stats meta version for gc",
+						zap.Int64("partitionID", partition.ID),
+						zap.Int64("tableID", table.ID),
+						zap.Error(err),
+					)
+				}
+			}
 			// Try best effort to update the stats meta version for gc.
 			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, table.ID); err != nil {
 				logutil.StatsLogger().Error(
