@@ -214,6 +214,10 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
+	sessionVars := ctx.GetSessionVars()
+	if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &s.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
 
 	// Stage-1 only supports a single-table SELECT as MV definition input.
 	sel, ok := s.Select.(*ast.SelectStmt)
@@ -506,9 +510,13 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
 	}
 
+	sessionVars := ctx.GetSessionVars()
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewActionComment:
+			if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &action.Comment, dbterror.ErrTooLongTableComment); err != nil {
+				return errors.Trace(err)
+			}
 		case ast.AlterMaterializedViewActionRefresh:
 			if _, _, _, err := buildMViewRefreshMeta(ctx, action.Refresh); err != nil {
 				return err

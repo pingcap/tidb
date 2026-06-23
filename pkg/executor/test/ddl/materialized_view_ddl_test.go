@@ -1154,6 +1154,52 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	require.NotContains(t, attrPartialShowCreate, "mview_alert_warning=0")
 }
 
+func TestMaterializedViewCommentLength(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_comment_len (id bigint not null primary key, g1 int not null, v1 bigint not null, key idx_g1(g1))")
+	tk.MustExec("create materialized view log on t_mv_comment_len (id, g1, v1)")
+
+	maxTableCommentLength := ddl.MaxCommentLength * 2
+	commentMaxLen := strings.Repeat("y", maxTableCommentLength)
+	commentTooLong := strings.Repeat("y", maxTableCommentLength+1)
+	createMVSQL := func(name string, comment string) string {
+		return fmt.Sprintf("create materialized view %s (g1, cnt) comment = '%s' refresh fast as select g1, count(1) from t_mv_comment_len group by g1", name, comment)
+	}
+	errTooLongComment := func(name string) string {
+		return fmt.Sprintf("Comment for table '%s' is too long (max = %d)", name, maxTableCommentLength)
+	}
+	warnTooLongComment := func(name string) string {
+		return fmt.Sprintf("Warning|1628|%s", errTooLongComment(name))
+	}
+	truncatedCommentLen := fmt.Sprintf("%d", maxTableCommentLength)
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES'")
+	tk.MustExec(createMVSQL("mv_comment_max", commentMaxLen))
+	err := tk.ExecToErr(createMVSQL("mv_comment_too_long", commentTooLong))
+	require.ErrorContains(t, err, errTooLongComment("mv_comment_too_long"))
+
+	tk.MustExec("create materialized view mv_alter_comment (g1, cnt) refresh fast as select g1, count(1) from t_mv_comment_len group by g1")
+	tk.MustExec(fmt.Sprintf("alter materialized view mv_alter_comment comment = '%s'", commentMaxLen))
+	err = tk.ExecToErr(fmt.Sprintf("alter materialized view mv_alter_comment comment = '%s'", commentTooLong))
+	require.ErrorContains(t, err, errTooLongComment("mv_alter_comment"))
+
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec(createMVSQL("mv_comment_truncated", commentTooLong))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
+		warnTooLongComment("mv_comment_truncated"),
+	))
+	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_comment_truncated'").Check(testkit.Rows(truncatedCommentLen))
+
+	tk.MustExec("create materialized view mv_alter_comment_truncated (g1, cnt) refresh fast as select g1, count(1) from t_mv_comment_len group by g1")
+	tk.MustExec(fmt.Sprintf("alter materialized view mv_alter_comment_truncated comment = '%s'", commentTooLong))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
+		warnTooLongComment("mv_alter_comment_truncated"),
+	))
+	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_alter_comment_truncated'").Check(testkit.Rows(truncatedCommentLen))
+}
+
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
