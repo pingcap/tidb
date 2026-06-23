@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	streamconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -267,6 +268,12 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	}
 	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
+}
+
+func (f *fakeCluster) SetCurrentTS(ts uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.currentTS = ts
 }
 
 // Updates the service GC safe point for the cluster.
@@ -659,6 +666,9 @@ type testEnv struct {
 	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+	scanLocks    func(key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error)
+
+	getLogBackupFlushInterval func(context.Context) (time.Duration, error)
 
 	mu sync.Mutex
 	pd.Client
@@ -689,6 +699,13 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 	ch <- t.task
 	t.taskCh = ch
 	return nil
+}
+
+func (t *testEnv) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
+	if t.getLogBackupFlushInterval != nil {
+		return t.getLogBackupFlushInterval(ctx)
+	}
+	return streamconfig.DefaultCommandConfig().GetResolveLockInterval(), nil
 }
 
 func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string, checkpoint uint64) error {
@@ -790,10 +807,13 @@ func (t *testEnv) putTask() {
 	t.taskCh <- tsk
 }
 
-func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (t *testEnv) ScanLocksInOneRegion(_ *tikv.Backoffer, key []byte, maxVersion uint64, _ uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.maxTs != maxVersion {
+	if t.scanLocks != nil {
+		return t.scanLocks(key, maxVersion)
+	}
+	if t.maxTs != 0 && t.maxTs != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.maxTs, maxVersion)
 	}
 	for _, r := range t.regions {
