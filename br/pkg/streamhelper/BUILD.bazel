@@ -17,7 +17,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
+        "//br/pkg/httputil",
         "//br/pkg/logutil",
         "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
@@ -27,6 +29,7 @@ go_library(
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/owner",
+        "//pkg/store/pdtypes",
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/engine",
@@ -72,7 +75,7 @@ go_test(
     embed = [":streamhelper"],
     flaky = True,
     race = "on",
-    shard_count = 42,
+    shard_count = 48,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",

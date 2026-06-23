@@ -20,7 +20,64 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
+	"github.com/tikv/client-go/v2/oracle"
 )
+
+func (c *CheckpointAdvancer) TESTResolveLockTargetCount() int {
+	c.lastCheckpointMu.Lock()
+	checkpointToResolve := c.lastCheckpoint
+	c.lastCheckpointMu.Unlock()
+	if checkpointToResolve == nil {
+		return 0
+	}
+	currentTS, err := c.env.FetchCurrentTS(context.Background())
+	if err != nil {
+		return 0
+	}
+	upperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, c.getResolveLockInterval(), currentTS)
+	return len(c.resolveLockTargetsForCheckpoint(checkpointToResolve, upperBound))
+}
+
+func (c *CheckpointAdvancer) TESTSetLastCheckpointToCurrentMin() {
+	var p *checkpoint
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		p = NewCheckpointWithSpan(vsf.Min())
+	})
+	c.UpdateLastCheckpoint(p)
+}
+
+func (c *CheckpointAdvancer) TESTTryResolveLocksForCheckpoint() {
+	c.tryResolveLocksForCheckpoint(context.Background())
+}
+
+func (c *CheckpointAdvancer) TESTRefreshLogBackupFlushInterval(ctx context.Context) {
+	c.refreshLogBackupFlushInterval(ctx)
+}
+
+func (c *CheckpointAdvancer) TESTResolveLockInterval() time.Duration {
+	return c.getResolveLockInterval()
+}
+
+func (c *CheckpointAdvancer) TESTDefaultStartPollThreshold() time.Duration {
+	return c.getDefaultStartPollThreshold()
+}
+
+func (c *CheckpointAdvancer) TESTSubscriberErrorStartPollThreshold() time.Duration {
+	return c.getSubscriberErrorStartPollThreshold()
+}
+
+func TESTResolveLockTargetUpperBound(checkpointTS uint64, resolveLockInterval time.Duration, now time.Time) uint64 {
+	return resolveLockTargetUpperBound(checkpointTS, resolveLockInterval, oracle.GoTimeToTS(now))
+}
+
+func TESTResolveLockRetryLowerBound(checkpointTS uint64, maxVersion uint64) (uint64, bool) {
+	return resolveLockRetryLowerBound(checkpointTS, maxVersion)
+}
+
+func TESTLowerResolveLockMaxVersion(maxVersion uint64, lowerBound uint64) (uint64, bool) {
+	return lowerResolveLockMaxVersion(maxVersion, lowerBound)
+}
 
 func SetGlobalCheckpointStorageFactoryForTest(
 	factory func(context.Context, *backuppb.StorageBackend, *storage.ExternalStorageOptions) (storage.ExternalStorage, error),
