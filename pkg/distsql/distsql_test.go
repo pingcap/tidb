@@ -103,6 +103,69 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 	require.NoError(t, response.Close())
 }
 
+func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().QueryCopStoreLimit = 3
+	dctx := sctx.GetDistSQLCtx()
+	require.NotNil(t, dctx.QueryCopStoreLimiter)
+	require.Equal(t, 3, dctx.QueryCopStoreLimiter.Capacity())
+
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	buildRequest := func(storeType kv.StoreType) *kv.Request {
+		request, err := (&RequestBuilder{}).SetKeyRanges(nil).
+			SetDAGRequest(&tipb.DAGRequest{}).
+			SetStoreType(storeType).
+			SetFromSessionVars(DefaultDistSQLContext).
+			SetMemTracker(memory.NewTracker(-1, -1)).
+			Build()
+		require.NoError(t, err)
+		return request
+	}
+	checkRequest := func(check func(*kv.Request)) context.Context {
+		return context.WithValue(context.TODO(), "CheckSelectRequestHook", func(req *kv.Request) {
+			check(req)
+		})
+	}
+
+	request := buildRequest(kv.TiKV)
+	response, err := Select(checkRequest(func(req *kv.Request) {
+		require.Nil(t, req.CoprRequestRateLimit)
+		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+
+	request = buildRequest(kv.TiFlash)
+	response, err = Select(checkRequest(func(req *kv.Request) {
+		require.Nil(t, req.CoprRequestRateLimit)
+		require.Nil(t, req.QueryCopStoreLimiter)
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+
+	request = buildRequest(kv.TiKV)
+	explicitRateLimit := kv.NewCoprRequestRateLimit(7)
+	request.CoprRequestRateLimit = explicitRateLimit
+	response, err = Select(checkRequest(func(req *kv.Request) {
+		require.Same(t, explicitRateLimit, req.CoprRequestRateLimit)
+		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
+		require.False(t, req.CoprRequestRateLimit.Acquire(make(chan struct{})))
+		req.CoprRequestRateLimit.Release()
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+
+	dctx.QueryCopStoreLimiter = nil
+	request = buildRequest(kv.TiKV)
+	request.CoprRequestRateLimit = explicitRateLimit
+	response, err = Select(checkRequest(func(req *kv.Request) {
+		require.Same(t, explicitRateLimit, req.CoprRequestRateLimit)
+		require.Nil(t, req.QueryCopStoreLimiter)
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+}
+
 func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats := execdetails.NewRuntimeStatsColl(nil)
 	basic := stmtStats.GetBasicRuntimeStats(1, true)

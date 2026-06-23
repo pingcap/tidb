@@ -317,6 +317,10 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBQueryCopStoreLimit is used to limit TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	TiDBQueryCopStoreLimit = "tidb_query_cop_store_limit"
+
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
 	// This variable was introduced in v7.6.0 to separate the scan concurrency of ANALYZE operations from normal queries. See: https://github.com/pingcap/tidb/pull/48829
@@ -1438,6 +1442,7 @@ const (
 	DefIndexJoinBatchSize                   = 25000
 	DefIndexLookupSize                      = 20000
 	DefDistSQLScanConcurrency               = 15
+	DefTiDBQueryCopStoreLimit               = 0
 	DefAnalyzeDistSQLScanConcurrency        = 4
 	DefBuildStatsConcurrency                = 2
 	DefBuildSamplingStatsConcurrency        = 2

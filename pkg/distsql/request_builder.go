@@ -391,7 +391,7 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 }
 
 // SetCoprRequestRateLimit sets a shared in-flight cop request limiter for this request.
-func (builder *RequestBuilder) SetCoprRequestRateLimit(rateLimit *util.RateLimit) *RequestBuilder {
+func (builder *RequestBuilder) SetCoprRequestRateLimit(rateLimit kv.CoprRequestLimiter) *RequestBuilder {
 	builder.Request.CoprRequestRateLimit = rateLimit
 	return builder
 }

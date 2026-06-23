@@ -65,7 +65,6 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
-	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -1022,7 +1021,7 @@ func getSelectResultInFlightCost(result distsql.SelectResult) int {
 	return inFlightCost
 }
 
-func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency int) *tikvutil.RateLimit {
+func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency int) kv.CoprRequestLimiter {
 	if !needMerge {
 		return nil
 	}
@@ -1032,7 +1031,7 @@ func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency i
 	if capacity < 1 {
 		capacity = 1
 	}
-	return tikvutil.NewRateLimit(2 * capacity)
+	return kv.NewCoprRequestRateLimit(2 * capacity)
 }
 
 func getMergeSortIndexScanConcurrency(needMerge bool, kvRangesCount int, distSQLConcurrency int) int {
@@ -1067,7 +1066,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	totalRanges int,
 	batchSize int,
 	indexScanConcurrency int,
-	sharedCoprRequestRateLimit *tikvutil.RateLimit,
+	sharedCoprRequestRateLimit kv.CoprRequestLimiter,
 ) (distsql.SelectResult, error) {
 	if tblScanIdxForRewritePartitionID >= 0 {
 		// We should set the TblScan's TableID to the partition physical ID to make sure
