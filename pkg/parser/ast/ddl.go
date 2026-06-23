@@ -2166,12 +2166,16 @@ func (n *AlterMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
 type DropMaterializedViewStmt struct {
 	ddlNode
 
+	IfExists bool
 	ViewName *TableName
 }
 
 // Restore implements Node interface.
 func (n *DropMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP MATERIALIZED VIEW ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
 	return n.ViewName.Restore(ctx)
 }
 
@@ -2196,12 +2200,17 @@ func (n *DropMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 type DropMaterializedViewLogStmt struct {
 	ddlNode
 
-	Table *TableName
+	IfExists bool
+	Table    *TableName
 }
 
 // Restore implements Node interface.
 func (n *DropMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("DROP MATERIALIZED VIEW LOG ON ")
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW LOG ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteKeyWord("ON ")
 	return n.Table.Restore(ctx)
 }
 

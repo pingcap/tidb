@@ -77,6 +77,39 @@ func TestCreateMaterializedViewLogRejectsDuplicateColumns(t *testing.T) {
 	require.ErrorContains(t, err, "Duplicate column name")
 }
 
+func TestDropMaterializedViewIfExists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop materialized view if exists missing_mv")
+	tk.MustExec("drop materialized view if exists missing_schema.missing_mv")
+
+	err := tk.ExecToErr("drop materialized view log if exists on missing_base")
+	require.ErrorContains(t, err, "Table 'test.missing_base' doesn't exist")
+	err = tk.ExecToErr("drop materialized view log if exists on missing_schema.missing_base")
+	require.ErrorContains(t, err, "Table 'missing_schema.missing_base' doesn't exist")
+
+	tk.MustExec("create table t_drop_if_exists (a int not null)")
+	tk.MustExec("create table t_no_mlog_drop_if_exists (a int not null)")
+	tk.MustExec("create materialized view log on t_drop_if_exists (a)")
+	tk.MustExec("create materialized view mv_drop_if_exists (a, cnt) as select a, count(1) from t_drop_if_exists group by a")
+
+	err = tk.ExecToErr("drop materialized view if exists t_drop_if_exists")
+	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
+
+	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
+	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
+
+	tk.MustExec("create view v_drop_if_exists as select * from t_drop_if_exists")
+	err = tk.ExecToErr("drop materialized view log if exists on v_drop_if_exists")
+	require.ErrorContains(t, err, "is not BASE TABLE")
+
+	tk.MustExec("drop materialized view log if exists on t_no_mlog_drop_if_exists")
+	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
+	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
+}
+
 func involvingSchemaInfoSet(involving []model.InvolvingSchemaInfo) map[string]struct{} {
 	got := make(map[string]struct{}, len(involving))
 	for _, info := range involving {

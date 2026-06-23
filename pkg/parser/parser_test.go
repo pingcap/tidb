@@ -5501,9 +5501,19 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"DROP MATERIALIZED VIEW `mv`",
 		},
 		{
+			"DROP MATERIALIZED VIEW IF EXISTS mv",
+			true,
+			"DROP MATERIALIZED VIEW IF EXISTS `mv`",
+		},
+		{
 			"DROP MATERIALIZED VIEW LOG ON t",
 			true,
 			"DROP MATERIALIZED VIEW LOG ON `t`",
+		},
+		{
+			"DROP MATERIALIZED VIEW LOG IF EXISTS ON t",
+			true,
+			"DROP MATERIALIZED VIEW LOG IF EXISTS ON `t`",
 		},
 		{
 			"PURGE MATERIALIZED VIEW LOG ON t",
