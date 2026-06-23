@@ -129,7 +129,10 @@ func TestLogConfig(t *testing.T) {
 		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
 		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
 		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
-		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp,
+			func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose },
+			func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+		), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
 		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
@@ -168,6 +171,24 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
+}
+
+func TestLogTimeoutAction(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.TimeoutAction)
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = "DISCARD"
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.TimeoutAction)
+
+	conf.Log.TimeoutAction = "invalid"
+	require.EqualError(t, conf.Valid(), "log.timeout-action should be one of [panic, discard]")
 }
 
 func TestErrorMessageExtensionConfig(t *testing.T) {
@@ -1220,7 +1241,10 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false,
+		func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+	), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
