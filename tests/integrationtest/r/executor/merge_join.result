@@ -10,7 +10,7 @@ Selection	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.
 └─MergeJoin	root		left outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
   ├─Sort(Build)	root		executor__merge_join.t1.c1
   │ └─TableReader	root		data:Selection
-  │   └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+  │   └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1))
   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Sort(Probe)	root		executor__merge_join.t.c1
     └─TableReader	root		data:TableFullScan
@@ -24,7 +24,7 @@ Selection	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.
 └─MergeJoin	root		right outer join, left side:Sort, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
   ├─Sort(Build)	root		executor__merge_join.t1.c1
   │ └─TableReader	root		data:Selection
-  │   └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+  │   └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1))
   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Sort(Probe)	root		executor__merge_join.t.c1
     └─TableReader	root		data:TableFullScan
@@ -276,7 +276,7 @@ Selection	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.
     ├─Sort(Build)	root		executor__merge_join.t1.c1
     │ └─ShuffleReceiver	root		
     │   └─TableReader	root		data:Selection
-    │     └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+    │     └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1))
     │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─Sort(Probe)	root		executor__merge_join.t.c1
       └─ShuffleReceiver	root		
@@ -293,7 +293,7 @@ Selection	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.
     ├─Sort(Build)	root		executor__merge_join.t1.c1
     │ └─ShuffleReceiver	root		
     │   └─TableReader	root		data:Selection
-    │     └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+    │     └─Selection	cop[tikv]		not(isnull(executor__merge_join.t1.c1))
     │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─Sort(Probe)	root		executor__merge_join.t.c1
       └─ShuffleReceiver	root		

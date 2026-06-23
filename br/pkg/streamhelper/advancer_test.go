@@ -3,9 +3,11 @@
 package streamhelper_test
 
 import (
-	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +22,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -73,6 +79,278 @@ func TestTick(t *testing.T) {
 	}
 }
 
+type countingStorage struct {
+	storeapi.Storage
+	closeCount *atomic.Int32
+}
+
+func (s *countingStorage) Close() {
+	s.closeCount.Inc()
+	s.Storage.Close()
+}
+
+type writeFailStorage struct {
+	storeapi.Storage
+	onWrite func()
+}
+
+func (s writeFailStorage) WriteFile(context.Context, string, []byte) error {
+	if s.onWrite != nil {
+		s.onWrite()
+	}
+	return errors.New("injected external storage error")
+}
+
+type writeBlockStorage struct {
+	storeapi.Storage
+	onWriteDone func(error)
+}
+
+func (s writeBlockStorage) WriteFile(ctx context.Context, _ string, _ []byte) error {
+	<-ctx.Done()
+	err := ctx.Err()
+	if s.onWriteDone != nil {
+		s.onWriteDone(err)
+	}
+	return err
+}
+
+type writeRecordStorage struct {
+	storeapi.Storage
+	writeCount *atomic.Int32
+	onWrite    func()
+}
+
+func (s writeRecordStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if s.onWrite != nil {
+		s.onWrite()
+	}
+	s.writeCount.Inc()
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+type blockGCRecordEnv struct {
+	*testEnv
+	blockAttempted atomic.Bool
+}
+
+func (e *blockGCRecordEnv) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	e.blockAttempted.Store(true)
+	return e.testEnv.BlockGCUntil(ctx, at)
+}
+
+func TestTickWritesGlobalCheckpointToStorage(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	createCount := atomic.NewInt32(0)
+	closeCount := atomic.NewInt32(0)
+	writeCount := atomic.NewInt32(0)
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
+			createCount.Inc()
+			storage, err := objstore.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeRecordStorage{
+				Storage:    &countingStorage{Storage: storage, closeCount: closeCount},
+				writeCount: writeCount,
+			}, nil
+		})
+	defer restoreFactory()
+
+	env := newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(0), createCount.Load())
+	require.Equal(t, int32(0), writeCount.Load())
+
+	_ = c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(1), createCount.Load())
+
+	checkpoint := c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, int32(1), createCount.Load())
+
+	writesAfterCheckpoint := writeCount.Load()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, writesAfterCheckpoint, writeCount.Load())
+	require.Equal(t, int32(1), createCount.Load())
+
+	data, err := os.ReadFile(filepath.Join(storageDir, "v1", "global_checkpoint", "central_global.ts"))
+	require.NoError(t, err)
+	require.Len(t, data, 8)
+	require.Equal(t, checkpoint, binary.LittleEndian.Uint64(data))
+	require.Equal(t, float64(checkpoint), promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+
+	adv.OnStop()
+	require.Equal(t, int32(1), closeCount.Load())
+}
+
+func TestTickIgnoresGlobalCheckpointStorageFailure(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	gcBlockedBeforeWrite := atomic.NewBool(false)
+	var env *testEnv
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
+			storage, err := objstore.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeFailStorage{
+				Storage: storage,
+				onWrite: func() {
+					gcBlockedBeforeWrite.Store(env.ServiceGCSafePointSet)
+				},
+			}, nil
+		})
+	defer restoreFactory()
+
+	env = newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+
+	checkpoint := c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, checkpoint, env.getCheckpoint())
+	require.True(t, env.ServiceGCSafePointSet)
+	require.Equal(t, checkpoint-1, env.ServiceGCSafePoint)
+	require.True(t, gcBlockedBeforeWrite.Load())
+	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+}
+
+func TestTickWritesGlobalCheckpointToStorageAfterBlockGCAttemptFailed(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	writeCount := atomic.NewInt32(0)
+	blockAttemptedBeforeWrite := atomic.NewBool(false)
+	var env *blockGCRecordEnv
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
+			storage, err := objstore.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeRecordStorage{
+				Storage:    storage,
+				writeCount: writeCount,
+				onWrite: func() {
+					blockAttemptedBeforeWrite.Store(env.blockAttempted.Load())
+				},
+			}, nil
+		})
+	defer restoreFactory()
+
+	env = &blockGCRecordEnv{testEnv: newTestEnv(c, t)}
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+
+	checkpoint := c.advanceCheckpoints()
+	env.ServiceGCSafePoint = checkpoint
+	require.ErrorContains(t, adv.OnTick(ctx), "failed to update service GC safe point")
+	require.Equal(t, int32(1), writeCount.Load())
+	require.True(t, blockAttemptedBeforeWrite.Load())
+	require.Equal(t, float64(checkpoint), promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+
+	data, err := os.ReadFile(filepath.Join(storageDir, "v1", "global_checkpoint", "central_global.ts"))
+	require.NoError(t, err)
+	require.Len(t, data, 8)
+	require.Equal(t, checkpoint, binary.LittleEndian.Uint64(data))
+}
+
+func TestTickTimesOutGlobalCheckpointStorageWrite(t *testing.T) {
+	metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+	defer metrics.ExternalStorageCheckpoint.DeleteLabelValues("whole")
+
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storageDir := t.TempDir()
+	writeErrCh := make(chan error, 1)
+	restoreFactory := streamhelper.SetGlobalCheckpointStorageFactoryForTest(
+		func(ctx context.Context, backend *backup.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
+			storage, err := objstore.Create(ctx, backend, sendCreds)
+			if err != nil {
+				return nil, err
+			}
+			return writeBlockStorage{
+				Storage: storage,
+				onWriteDone: func(err error) {
+					writeErrCh <- err
+				},
+			}, nil
+		})
+	defer restoreFactory()
+
+	env := newTestEnv(c, t)
+	env.task.Info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Local{
+			Local: &backup.Local{Path: storageDir},
+		},
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(cfg *config.CommandConfig) {
+		cfg.TickDuration = 200 * time.Millisecond
+	})
+	adv.StartTaskListener(ctx)
+
+	checkpoint := c.advanceCheckpoints()
+	start := time.Now()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Less(t, time.Since(start), time.Second)
+	require.Equal(t, checkpoint, env.getCheckpoint())
+	require.True(t, env.ServiceGCSafePointSet)
+	require.Equal(t, checkpoint-1, env.ServiceGCSafePoint)
+	select {
+	case err := <-writeErrCh:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		require.Fail(t, "timed out waiting for external storage write timeout")
+	}
+	require.Equal(t, 0.0, promtest.ToFloat64(metrics.ExternalStorageCheckpoint.WithLabelValues("whole")))
+}
+
 func TestWithFailure(t *testing.T) {
 	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
@@ -90,15 +368,15 @@ func TestWithFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 
 	cp := c.advanceCheckpoints()
-	for _, v := range c.stores {
-		v.flush()
+	for _, v := range c.storeList() {
+		v.Flush()
 		break
 	}
 	require.NoError(t, adv.OnTick(ctx))
 	require.Less(t, env.getCheckpoint(), cp, "%d %d", env.getCheckpoint(), cp)
 
-	for _, v := range c.stores {
-		v.flush()
+	for _, v := range c.storeList() {
+		v.Flush()
 	}
 
 	require.NoError(t, adv.OnTick(ctx))
@@ -121,13 +399,13 @@ func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
 func TestCollectorFailure(t *testing.T) {
 	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
-	c.onGetClient = func(u uint64) error {
+	c.SetOnGetClient(func(u uint64) error {
 		return status.Error(codes.DataLoss,
 			"Exiled requests from the client, please slow down and listen a story: "+
 				"the server has been dropped, we are longing for new nodes, however the goddess(k8s) never allocates new resource. "+
 				"May you take the sword named `vim`, refactoring the definition of the nature, in the yaml file hidden at somewhere of the cluster, "+
 				"to save all of us and gain the response you desiring?")
-	}
+	})
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 10000)
 	for i := range 10000 {
@@ -180,7 +458,7 @@ func TestOneStoreFailure(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	c.onGetClient = oneStoreFailure()
+	c.SetOnGetClient(oneStoreFailure())
 
 	for range 100 {
 		c.advanceCheckpoints()
@@ -188,7 +466,7 @@ func TestOneStoreFailure(t *testing.T) {
 		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
 	}
 
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	cp := c.advanceCheckpoints()
 	c.flushAll()
 	require.NoError(t, adv.OnTick(ctx))
@@ -208,13 +486,16 @@ func TestGCServiceSafePoint(t *testing.T) {
 	c.flushAll()
 
 	req.NoError(adv.OnTick(ctx))
-	req.Equal(env.serviceGCSafePoint, cp-1)
+	req.Equal(env.ServiceGCSafePoint, cp-1)
+	env.Cluster.Mu.Lock()
+	req.True(env.ServiceGCSafePointSet)
+	env.Cluster.Mu.Unlock()
 
 	env.unregisterTask()
 	req.Eventually(func() bool {
-		env.fakeCluster.mu.Lock()
-		defer env.fakeCluster.mu.Unlock()
-		return env.serviceGCSafePoint != 0 && env.serviceGCSafePointDeleted
+		env.Cluster.Mu.Lock()
+		defer env.Cluster.Mu.Unlock()
+		return env.ServiceGCSafePointDeleted
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
@@ -269,17 +550,16 @@ func TestClearCache(t *testing.T) {
 	c.splitAndScatter("0012", "0034", "0048")
 
 	clearedCache := make(map[uint64]bool)
-	c.onClearCache = func(u uint64) error {
+	c.SetOnClearCache(func(u uint64) error {
 		// make store u cache cleared
 		clearedCache[u] = true
 		return nil
-	}
+	})
 	failedStoreID := uint64(0)
 	hasFailed := atomic.NewBool(false)
-	for _, s := range c.stores {
-		s.clientMu.Lock()
+	for _, s := range c.storeList() {
 		sid := s.GetID()
-		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+		s.SetGetRegionCheckpointHook(func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
 			// mark one store failed is enough
 			if hasFailed.CompareAndSwap(false, true) {
 				// mark this store cache cleared
@@ -287,8 +567,7 @@ func TestClearCache(t *testing.T) {
 				return errors.New("failed to get checkpoint")
 			}
 			return nil
-		}
-		s.clientMu.Unlock()
+		})
 	}
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
@@ -308,16 +587,21 @@ func TestBlocked(t *testing.T) {
 	ctx := context.Background()
 	req := require.New(t)
 	c.splitAndScatter("0012", "0034", "0048")
+	blockReq := make(chan struct{})
+	defer close(blockReq)
+	firstBlocked := make(chan struct{}, 1)
+	firstBlockedOnce := sync.Once{}
 	marked := false
-	for _, s := range c.stores {
-		s.clientMu.Lock()
-		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+	for _, s := range c.storeList() {
+		s.SetGetRegionCheckpointHook(func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+			firstBlockedOnce.Do(func() {
+				firstBlocked <- struct{}{}
+			})
 			// blocking the thread.
 			// this may happen when TiKV goes down or too busy.
-			<-(chan struct{})(nil)
+			<-blockReq
 			return nil
-		}
-		s.clientMu.Unlock()
+		})
 		marked = true
 	}
 	req.True(marked, "failed to mark the cluster: ")
@@ -325,14 +609,21 @@ func TestBlocked(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	adv.UpdateConfigWith(func(c *config.CommandConfig) {
-		// ... So the tick timeout would be 100ms
-		c.TickDuration = 10 * time.Millisecond
+		// keep enough headroom so the blocked rpc request is observed before timeout.
+		c.TickDuration = 100 * time.Millisecond
+	})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- adv.OnTick(ctx)
+	}()
+	shouldFinishInTime(t, 5*time.Second, "wait until blocked request observed", func() {
+		<-firstBlocked
 	})
 	var err error
-	shouldFinishInTime(t, time.Second, "ticking", func() {
-		err = adv.OnTick(ctx)
+	shouldFinishInTime(t, 5*time.Second, "ticking", func() {
+		err = <-errCh
 	})
-	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
+	req.ErrorIs(err, context.DeadlineExceeded)
 }
 
 func TestResolveLock(t *testing.T) {
@@ -342,19 +633,14 @@ func TestResolveLock(t *testing.T) {
 			fmt.Println(c)
 		}
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
-	// make sure asyncResolveLocks stuck in optionalTick later.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks", `pause`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
-	}()
 
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
-	minCheckpoint := c.advanceCheckpoints()
+	minCheckpoint := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
+	c.SetCurrentTS(oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(10 * time.Second)))
 	env := newTestEnv(c, t)
 
-	lockRegion := c.findRegionByKey([]byte("01"))
+	lockRegion := c.FindRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
 			Key: []byte("011"),
@@ -378,47 +664,283 @@ func TestResolveLock(t *testing.T) {
 	resolveLockRef := atomic.NewBool(false)
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 		resolveLockRef.Store(true)
-		// The third lock has skipped, because it's less than max version.
+		// Locks close to the current checkpoint should be scanned in one round.
 		require.ElementsMatch(t, locks, allLocks[:2])
 		return loc, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
 	adv.StartTaskListener(ctx)
 
-	maxTargetTs := uint64(0)
-	coll := streamhelper.NewClusterCollector(ctx, env)
-	coll.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
-		adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
-			for _, lock := range allLocks {
-				// if there is any lock key in the range
-				if bytes.Compare(kr.StartKey, lock.Key) <= 0 && (bytes.Compare(lock.Key, kr.EndKey) < 0 || len(kr.EndKey) == 0) {
-					// mock lock behavior, do not update checkpoint
-					s.Merge(spans.Valued{Key: kr, Value: minCheckpoint})
-					return
-				}
-			}
-			s.Merge(spans.Valued{Key: kr, Value: u})
-			maxTargetTs = max(maxTargetTs, u)
-		})
+	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
 	})
-	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
-	require.NoError(t, err)
-	r, err := coll.Finish(ctx)
-	require.NoError(t, err)
-	require.Len(t, r.FailureSubRanges, 0)
-	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 
-	env.maxTs = maxTargetTs + 1
-	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
-		time.Second, 50*time.Millisecond)
-	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
-	require.True(t, adv.GetInResolvingLock())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks"))
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+	adv.TESTTryResolveLocksForCheckpoint()
 	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)
 	// state must set to false after tick
 	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
 		8*time.Second, 50*time.Microsecond)
+}
+
+func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx := context.Background()
+	checkpointTime := time.Now().Add(-30 * time.Second)
+	minCheckpoint := oracle.GoTimeToTS(checkpointTime)
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second)))
+	env := newTestEnv(c, t)
+
+	lockRegion := c.FindRegionByKey([]byte("01"))
+	allLocks := []*txnlock.Lock{
+		{
+			Key:   []byte("011"),
+			TxnID: oracle.GoTimeToTS(checkpointTime.Add(time.Millisecond)),
+		},
+	}
+	c.LockRegion(lockRegion, allLocks)
+
+	scanLockCount := atomic.NewInt32(0)
+	firstMaxVersion := atomic.NewUint64(0)
+	secondMaxVersion := atomic.NewUint64(0)
+	thirdMaxVersion := atomic.NewUint64(0)
+	env.scanLocks = func(_ []byte, _ []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+		switch scanLockCount.Inc() {
+		case 1:
+			firstMaxVersion.Store(maxVersion)
+			return nil, nil, errors.New("unexpected scanlock error: error:<locked:<primary_lock:\"011\" lock_version:1>>")
+		case 2:
+			secondMaxVersion.Store(maxVersion)
+			return nil, nil, errors.New("unexpected scanlock error: error:<locked:<primary_lock:\"011\" lock_version:1>>")
+		case 3:
+			thirdMaxVersion.Store(maxVersion)
+			return allLocks, &tikv.KeyLocation{Region: tikv.NewRegionVerID(lockRegion.ID, 0, 0)}, nil
+		default:
+			return nil, nil, errors.Errorf("unexpected scan lock retry count %d", scanLockCount.Load())
+		}
+	}
+
+	resolveLockCount := atomic.NewInt32(0)
+	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+		resolveLockCount.Inc()
+		require.ElementsMatch(t, locks, allLocks)
+		return loc, nil
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
+	adv.StartTaskListener(ctx)
+
+	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(2 * time.Minute))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+	})
+
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+	adv.TESTTryResolveLocksForCheckpoint()
+	require.Eventually(t, func() bool { return resolveLockCount.Load() >= 1 },
+		8*time.Second, 50*time.Microsecond)
+	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
+		8*time.Second, 50*time.Microsecond)
+	require.Equal(t, int32(3), scanLockCount.Load())
+
+	expectedUpperBound := streamhelper.TESTResolveLockTargetUpperBound(
+		minCheckpoint, adv.Config().GetResolveLockInterval(), checkpointTime.Add(30*time.Second))
+	require.Equal(t, expectedUpperBound, firstMaxVersion.Load())
+	retryLowerBound, ok := streamhelper.TESTResolveLockRetryLowerBound(minCheckpoint, expectedUpperBound)
+	require.True(t, ok)
+	require.Equal(t, oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)), retryLowerBound)
+	expectedSecondMaxVersion, ok := streamhelper.TESTLowerResolveLockMaxVersion(expectedUpperBound, retryLowerBound)
+	require.True(t, ok)
+	require.Equal(t, expectedSecondMaxVersion, secondMaxVersion.Load())
+	expectedThirdMaxVersion, ok := streamhelper.TESTLowerResolveLockMaxVersion(expectedSecondMaxVersion, retryLowerBound)
+	require.True(t, ok)
+	require.Equal(t, expectedThirdMaxVersion, thirdMaxVersion.Load())
+}
+
+func TestResolveLockMaxVersion(t *testing.T) {
+	checkpointTime := time.Unix(100, 0)
+	checkpointTS := oracle.GoTimeToTS(checkpointTime)
+	resolveLockInterval := 30 * time.Second
+
+	require.Equal(t,
+		checkpointTS,
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(time.Minute)))
+	require.Equal(t,
+		oracle.GoTimeToTS(checkpointTime.Add(5*time.Second)),
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, resolveLockInterval, checkpointTime.Add(65*time.Second)))
+	require.Equal(t,
+		oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)),
+		streamhelper.TESTResolveLockTargetUpperBound(checkpointTS, 0, checkpointTime.Add(time.Minute)))
+
+	maxVersion := oracle.GoTimeToTS(checkpointTime.Add(30 * time.Second))
+	retryLowerBound, ok := streamhelper.TESTResolveLockRetryLowerBound(checkpointTS, maxVersion)
+	require.True(t, ok)
+	require.Equal(t, oracle.GoTimeToTS(checkpointTime.Add(10*time.Second)), retryLowerBound)
+	nextMaxVersion, ok := streamhelper.TESTLowerResolveLockMaxVersion(maxVersion, retryLowerBound)
+	require.True(t, ok)
+	require.Equal(t, retryLowerBound+(maxVersion-retryLowerBound)/2, nextMaxVersion)
+	_, ok = streamhelper.TESTResolveLockRetryLowerBound(checkpointTS, oracle.GoTimeToTS(checkpointTime.Add(5*time.Second)))
+	require.False(t, ok)
+}
+
+func TestResolveLockIntervalUsesTiKVFlushInterval(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	env := newTestEnv(c, t)
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
+	require.Equal(t, 100*time.Millisecond, adv.TESTResolveLockInterval())
+	require.Equal(t, config.DefaultTryAdvanceThreshold, adv.TESTDefaultStartPollThreshold())
+
+	env.getLogBackupFlushInterval = func(context.Context) (time.Duration, error) {
+		return 180 * time.Millisecond, nil
+	}
+	adv.TESTRefreshLogBackupFlushInterval(context.Background())
+	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
+	require.Equal(t, 240*time.Millisecond, adv.TESTDefaultStartPollThreshold())
+	require.Equal(t, 108*time.Millisecond, adv.TESTSubscriberErrorStartPollThreshold())
+
+	env.getLogBackupFlushInterval = func(context.Context) (time.Duration, error) {
+		return 0, errors.New("tikv config is temporarily unavailable")
+	}
+	adv.TESTRefreshLogBackupFlushInterval(context.Background())
+	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
+	require.Equal(t, 240*time.Millisecond, adv.TESTDefaultStartPollThreshold())
+}
+
+func TestGetLogBackupFlushIntervalFromTiKVConfig(t *testing.T) {
+	flushInterval, err := streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
+		context.Background(),
+		func(_ context.Context, collect func([]byte) error) error {
+			if err := collect([]byte(`{"log-backup":{"flush-interval":"20s"}}`)); err != nil {
+				return err
+			}
+			return collect([]byte(`{"log-backup":{"flush-interval":"30s"}}`))
+		})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, flushInterval)
+
+	_, err = streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
+		context.Background(),
+		func(_ context.Context, collect func([]byte) error) error {
+			return collect([]byte(`{"log-backup":{"enable":true}}`))
+		})
+	require.ErrorContains(t, err, "log-backup.flush-interval is not found")
+
+	_, err = streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
+		context.Background(),
+		func(context.Context, func([]byte) error) error {
+			return nil
+		})
+	require.ErrorContains(t, err, "no TiKV config found")
+}
+
+func TestResolveLockTargetsUseUpperBound(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	ctx := context.Background()
+	env := newTestEnv(c, t)
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 10 * time.Second
+	})
+	adv.StartTaskListener(ctx)
+
+	checkpointTime := time.Now().Add(-50 * time.Second)
+	checkpointTS := oracle.GoTimeToTS(checkpointTime)
+	withinUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(6 * time.Second))
+	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(8 * time.Second))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: checkpointTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}, Value: withinUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: []byte("b")}, Value: outsideUpperBoundTS})
+	})
+
+	adv.TESTSetLastCheckpointToCurrentMin()
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(40 * time.Second)))
+	require.Equal(t, 0, adv.TESTResolveLockTargetCount())
+	c.SetCurrentTS(oracle.GoTimeToTS(checkpointTime.Add(47 * time.Second)))
+	require.Equal(t, 2, adv.TESTResolveLockTargetCount())
+}
+
+func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		if t.Failed() {
+			fmt.Println(c)
+		}
+	}()
+
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx := context.Background()
+	minCheckpoint := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
+	c.SetCurrentTS(oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(10 * time.Second)))
+	env := newTestEnv(c, t)
+
+	lockRegion := c.FindRegionByKey([]byte("01"))
+	allLocks := []*txnlock.Lock{
+		{
+			Key:   []byte("011"),
+			TxnID: minCheckpoint,
+		},
+	}
+	c.LockRegion(lockRegion, allLocks)
+
+	resolveLockCount := atomic.NewInt32(0)
+	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+		require.ElementsMatch(t, locks, allLocks)
+		resolveLockCount.Inc()
+		return loc, nil
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		c.TickDuration = 50 * time.Millisecond
+	})
+	adv.StartTaskListener(ctx)
+
+	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
+	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
+		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
+		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
+	})
+	adv.TESTSetLastCheckpointToCurrentMin()
+	require.Equal(t, 1, adv.TESTResolveLockTargetCount())
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+
+	adv.TESTTryResolveLocksForCheckpoint()
+	require.Eventually(t, func() bool {
+		return resolveLockCount.Load() == 1 && !adv.GetInResolvingLock()
+	}, time.Second, time.Millisecond)
+
+	lockRegion.Locks = allLocks
+	adv.TESTTryResolveLocksForCheckpoint()
+	time.Sleep(adv.Config().GetResolveLockInterval() / 2)
+	require.Equal(t, int32(1), resolveLockCount.Load())
+
+	time.Sleep(adv.Config().GetResolveLockInterval() + 10*time.Millisecond)
+	adv.TESTTryResolveLocksForCheckpoint()
+	require.Eventually(t, func() bool {
+		return resolveLockCount.Load() == 2 && !adv.GetInResolvingLock()
+	}, time.Second, time.Millisecond)
 }
 
 func TestOwnerDropped(t *testing.T) {
@@ -552,7 +1074,6 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	adv2 := streamhelper.NewCheckpointAdvancer(env)
 	adv2.UpdateCheckPointLagLimit(time.Minute)
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	adv2.OnStart(ctx2)
 
 	for range 5 {
 		c.advanceClusterTimeBy(2 * time.Minute)
@@ -569,6 +1090,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	// stop advancer1, and advancer2 should take over
 	cancel1()
 	log.Info("advancer1 owner canceled, and advancer2 become owner")
+	adv2.OnStart(ctx2)
 	adv2.OnBecomeOwner(ctx2)
 	require.NoError(t, adv2.OnTick(ctx2))
 
@@ -625,8 +1147,8 @@ func TestCheckPointLagged(t *testing.T) {
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	// after some times, the isPaused will be set and ticks are skipped
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 }
 
@@ -649,18 +1171,20 @@ func TestCheckPointResume(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//now the checkpoint issue is fixed and resumed
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.ResumeTask(ctx)
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//with time passed, the checkpoint will exceed the limit again
 	c.advanceClusterTimeBy(2 * time.Minute)
-	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestUnregisterAfterPause(t *testing.T) {
@@ -687,8 +1211,13 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	env.putTask()
 
 	// wait for the task to be added
@@ -696,7 +1225,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 
 	env.unregisterTask()
 	// wait for the task to be deleted
@@ -709,14 +1240,22 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	env.putTask()
 	// wait for the task to be add
 	require.Eventually(t, func() bool {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 // If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.
@@ -970,12 +1509,20 @@ func TestGCCheckpoint(t *testing.T) {
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
+	require.Eventually(t, func() bool {
+		return adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.PauseTask(ctx, "whole")
-	c.serviceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	c.ServiceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.ResumeTask(ctx)
-	require.ErrorContains(t, adv.OnTick(ctx), "greater than the target")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "greater than the target")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestRedactBackend(t *testing.T) {

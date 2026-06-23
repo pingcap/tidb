@@ -35,24 +35,37 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	// writerMemBudgetRatio reserves per-thread memory for KV writer buffers in
+	// getWriterMemorySizeLimit.
+	// This is an empirically chosen value and may not be optimal.
+	writerMemBudgetRatio = 0.5
+	// readerMemBudgetRatio reserves total task memory for parquet reader and
+	// decode overhead when estimating concurrency.
+	// This is an empirically chosen value and may not be optimal.
+	readerMemBudgetRatio = 0.3
 )
 
 // importStepExecutor is a executor for import step.
@@ -72,6 +85,10 @@ type importStepExecutor struct {
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
 	dataBlockSize           int
+	// concurrency is the number of workers to use for encode and sort.
+	// For parquet format, this is capped by memory to avoid OOM.
+	concurrency      int
+	estimateConcOnce sync.Once
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -143,8 +160,9 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
-	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
+	s.dataBlockSize = simplesst.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
+	s.indexBlockSize = simplesst.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, simplesst.DefaultBlockSize)
+	s.concurrency = int(s.GetResource().CPU.Capacity())
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
@@ -153,9 +171,52 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	return nil
 }
 
+// estimateAndSetConcurrency estimates the memory usage for the data reader
+// and adjusts concurrency if needed. For parquet format, it reads the first
+// row group with a tracking allocator to measure peak memory. This should only
+// be called once.
+func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chunks []importer.Chunk) {
+	if len(chunks) == 0 || chunks[0].Type != mydump.SourceTypeParquet {
+		return
+	}
+
+	targetChunk := chunks[0]
+	for _, chunk := range chunks[1:] {
+		if chunk.FileSize > targetChunk.FileSize {
+			targetChunk = chunk
+		}
+	}
+
+	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path)
+	if err != nil {
+		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
+			zap.Error(err))
+		return
+	}
+	if peakMem <= 0 {
+		return
+	}
+
+	totalMem := s.GetResource().Mem.Capacity()
+	// Use a fixed fraction of total memory for parquet reader-side budget.
+	readerMemBudget := int64(float64(totalMem) * readerMemBudgetRatio)
+	memBasedConcurrency := max(1, int(readerMemBudget/peakMem))
+
+	if memBasedConcurrency < s.concurrency {
+		s.logger.Warn("adjusting concurrency based on parquet memory estimation; consider reducing parquet data page size or row group size to lower reader memory usage",
+			zap.Int("cpu-concurrency", s.concurrency),
+			zap.Int("mem-concurrency", memBasedConcurrency),
+			zap.String("total-mem", units.BytesSize(float64(totalMem))),
+			zap.String("reader-mem-budget", units.BytesSize(float64(readerMemBudget))),
+			zap.String("peak-mem-per-reader", units.BytesSize(float64(peakMem))),
+		)
+		s.concurrency = memBasedConcurrency
+	}
+}
+
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
-	s.summary.Bytes.Add(bytes)
+	s.summary.Processed.Add(bytes)
 }
 
 // Processed implements Collector.Processed interface.
@@ -164,6 +225,10 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
 	var (
@@ -172,7 +237,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		objStore                  storeapi.Storage
 	)
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
+		task.End2(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
 			zap.Int64("index-kv-files", indexKVFiles.Load()),
 			zap.Stringer("obj-store-access", accessRec))
 	}()
@@ -204,6 +269,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
+	defer func() {
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		s.tableImporter.Backend().CleanupAllLocalEngines(context.Background())
+	}()
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 		if err != nil {
@@ -226,8 +297,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
 		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
-		SortedDataMeta:   &external.SortedKVMeta{},
-		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
+		SortedDataMeta:   &globalsort.SortedKVMeta{},
+		SortedIndexMetas: make(map[int64]*globalsort.SortedKVMeta),
 		globalSortStore:  objStore,
 		dataKVFileCount:  &dataKVFiles,
 		indexKVFileCount: &indexKVFiles,
@@ -235,13 +306,11 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 	defer func() {
 		s.sharedVars.Delete(subtaskMeta.ID)
-		if err == nil || !s.tableImporter.IsLocalSort() {
-			return
-		}
-		if cleanupErr := s.tableImporter.Backend().CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
-			logger.Warn("cleanup engines failed", zap.Error(cleanupErr))
-		}
 	}()
+
+	s.estimateConcOnce.Do(func() {
+		s.estimateAndSetConcurrency(ctx, subtaskMeta.Chunks)
+	})
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
@@ -255,7 +324,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
-	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, s.concurrency)
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
@@ -336,7 +405,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	subtaskMeta.RecordedConflictKVCount = sharedVars.RecordedConflictKVCount
 	// if using global sort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
-		subtaskMeta.ExternalPath = external.SubtaskMetaPath(s.taskID, subtask.ID)
+		subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(s.taskID, subtask.ID)
 		if err := subtaskMeta.WriteJSONToExternalStorage(ctx, extStore, subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
@@ -364,7 +433,7 @@ type mergeSortStepExecutor struct {
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
-	subtaskSortedKVMeta *external.SortedKVMeta
+	subtaskSortedKVMeta *globalsort.SortedKVMeta
 	// part-size for uploading merged files, it's calculated by:
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
@@ -379,8 +448,8 @@ var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(context.Context) error {
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
-	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
-	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
+	m.dataKVPartSize = max(simplesst.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
+	m.indexKVPartSize = max(simplesst.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
 
 	m.logger.Info("merge sort partSize",
 		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
@@ -390,6 +459,10 @@ func (m *mergeSortStepExecutor) Init(context.Context) error {
 }
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	sm := &MergeSortStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -414,12 +487,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	var mu sync.Mutex
-	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onWriterClose := func(summary *external.WriterSummary) {
+	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
+	onWriterClose := func(summary *simplesst.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
@@ -428,29 +501,33 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	prefix := subtaskPrefix(m.task.ID, subtask.ID)
 
 	partSize := m.dataKVPartSize
-	if sm.KVGroup != external.DataKVGroup {
+	if sm.KVGroup != globalsort.DataKVGroup {
 		partSize = m.indexKVPartSize
 	}
-	onDup, err := getOnDupForKVGroup(m.indicesGenKV, sm.KVGroup)
+	onDup, err := getOnDupForKVGroup(
+		m.indicesGenKV,
+		sm.KVGroup,
+		m.taskMeta.Plan.GetOnDupKeyMode(),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	wctx := workerpool.NewContext(ctx)
-	op := external.NewMergeOperator(
+	op := globalsort.NewMergeOperator(
 		wctx,
 		objStore,
 		partSize,
 		prefix,
-		external.DefaultOneWriterBlockSize,
+		simplesst.DefaultOneWriterBlockSize,
 		onWriterClose,
-		external.NewMergeCollector(ctx, &m.summary),
+		globalsort.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
 		false,
 		onDup,
 	)
 
-	if err = external.MergeOverlappingFiles(
+	if err = globalsort.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
 		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
@@ -477,7 +554,7 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
 	subtaskMeta.RecordedConflictKVCount = subtaskMeta.SortedKVMeta.ConflictInfo.Count
-	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.task.ID, subtask.ID)
+	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(m.task.ID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, sortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
@@ -506,27 +583,56 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 	m.summary.Reset()
 }
 
-func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup string) (engineapi.OnDuplicateKey, error) {
-	if kvGroup == external.DataKVGroup {
-		return engineapi.OnDuplicateKeyRecord, nil
+func getOnDupForConflictedKV(onDupKeyMode importer.OnDupKeyMode) engineapi.OnDuplicateKey {
+	if onDupKeyMode == importer.OnDupKeyModeCapture {
+		return engineapi.OnDuplicateKeyRecord
+	}
+	return engineapi.OnDuplicateKeyError
+}
+
+func normalizeSubtaskErr(err error) error {
+	if err == nil {
+		return err
+	}
+	if !common.ErrFoundDuplicateKeys.Equal(err) {
+		return err
+	}
+	return exeerrors.ErrLoadDataDuplicateKeyConflict.FastGenByArgs()
+}
+
+func getOnDupForKVGroup(
+	indicesGenKV map[int64]importer.GenKVIndex,
+	kvGroup string,
+	onDupKeyMode importer.OnDupKeyMode,
+) (engineapi.OnDuplicateKey, error) {
+	if kvGroup == globalsort.DataKVGroup {
+		return getOnDupForConflictedKV(onDupKeyMode), nil
 	}
 
-	indexID, err2 := external.KVGroup2IndexID(kvGroup)
+	indexID, err2 := globalsort.KVGroup2IndexID(kvGroup)
 	if err2 != nil {
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
-	return getOnDupForIndex(indicesGenKV, indexID)
+	return getOnDupForIndex(indicesGenKV, indexID, onDupKeyMode)
 }
 
-func getOnDupForIndex(indicesGenKV map[int64]importer.GenKVIndex, indexID int64) (engineapi.OnDuplicateKey, error) {
+func getOnDupForIndex(
+	indicesGenKV map[int64]importer.GenKVIndex,
+	indexID int64,
+	onDupKeyMode importer.OnDupKeyMode,
+) (engineapi.OnDuplicateKey, error) {
 	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Errorf("unknown index %d", indexID)
 	}
+	if onDupKeyMode == importer.OnDupKeyModeError {
+		return engineapi.OnDuplicateKeyError, nil
+	}
+
 	if info.Unique {
-		return engineapi.OnDuplicateKeyRecord, nil
+		return getOnDupForConflictedKV(onDupKeyMode), nil
 	}
 	return engineapi.OnDuplicateKeyRemove, nil
 }
@@ -539,8 +645,8 @@ type ingestCollector struct {
 }
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
-	c.summary.Bytes.Add(bytes)
-	if c.kvGroup == external.DataKVGroup {
+	c.summary.Processed.Add(bytes)
+	if c.kvGroup == globalsort.DataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
 	}
 	// since the region job might be retried, this value might be larger than
@@ -574,6 +680,10 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 }
 
 func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		err = normalizeSubtaskErr(err)
+	}()
+
 	sm := &WriteIngestStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -601,7 +711,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
@@ -611,7 +721,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	onDup, err := getOnDupForKVGroup(e.indicesGenKV, sm.KVGroup)
+	onDup, err := getOnDupForKVGroup(
+		e.indicesGenKV,
+		sm.KVGroup,
+		e.taskMeta.Plan.GetOnDupKeyMode(),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -669,13 +783,21 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 	// only data kv group has loaded row count
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
-	subtaskMeta.RecordedConflictKVCount = subtaskMeta.ConflictInfo.Count
+	conflictInfo := localBackend.GetExternalEngineConflictInfo(engineUUID)
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
-	subtaskMeta.ExternalPath = external.SubtaskMetaPath(e.taskID, subtask.ID)
+
+	// If no conflict KV is recorded, we skip rewriting the external subtask meta
+	// file to avoid unnecessary PUT requests.
+	if conflictInfo.Count == 0 {
+		return nil
+	}
+
+	subtaskMeta.ConflictInfo = conflictInfo
+	subtaskMeta.RecordedConflictKVCount = conflictInfo.Count
+	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(e.taskID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, objStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
@@ -742,7 +864,6 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	store        tidbkv.Storage
 	indicesGenKV map[int64]importer.GenKVIndex
 }
 
@@ -757,7 +878,6 @@ func NewImportExecutor(
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
-		store:            param.Store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -781,7 +901,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger := logutil.BgLogger().With(
+	logger := logutil.ErrVerboseLogger().With(
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
@@ -789,18 +909,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	indicesGenKV := importer.GetIndicesGenKV(taskMeta.Plan.TableInfo)
 	logger.Info("got indices that generate kv", zap.Any("indices", indicesGenKV))
 
-	store := e.store
-	if e.store.GetKeyspace() != task.Keyspace {
-		var err error
-		err = e.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
-			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	store := e.TaskRuntime.Store()
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{

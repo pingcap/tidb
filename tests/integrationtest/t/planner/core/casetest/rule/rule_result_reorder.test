@@ -1,5 +1,4 @@
 # TestOrderedResultMode
-set tidb_cost_model_version=2;
 set tidb_opt_limit_push_down_threshold=0;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t;
@@ -33,7 +32,6 @@ explain format='plan_tree' update t set a=a+1;
 explain format='plan_tree' update t set a=a+1 where a>1;
 
 # TestOrderedResultModeOnSubQuery
-set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;
 drop table if exists t2;
@@ -50,7 +48,6 @@ explain format='plan_tree' select * from t1 where not exists (select 1 from t2 w
 explain format='plan_tree' select t1.* from t1, (select b from t2) tb where t1.b=tb.b;
 
 # TestOrderedResultModeOnJoin
-set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;
 drop table if exists t2;
@@ -63,7 +60,6 @@ explain format='plan_tree' select t1.* from t1 left outer join t2 on t1.a=t2.a;
 explain format='plan_tree' select t1.* from t1 join t2 on t1.a!=t2.a;
 
 # TestOrderedResultModeOnOtherOperators
-set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;
 drop table if exists t2;

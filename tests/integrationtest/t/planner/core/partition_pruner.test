@@ -1,5 +1,4 @@
 # TestRangeColumnPartitionPruningForIn
-set tidb_cost_model_version=2;
 drop database if exists test_range_col_in;
 create database test_range_col_in;
 use test_range_col_in;

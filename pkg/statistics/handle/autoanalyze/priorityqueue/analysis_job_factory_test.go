@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -179,6 +180,40 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestCreateNonPartitionedTableAnalysisJobUsesRequestedStatsVersion(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().AnalyzeVersion = statistics.Version2
+
+	tblInfo := &model.TableInfo{
+		ID: 1,
+		Columns: []*model.ColumnInfo{
+			{ID: 1},
+		},
+	}
+	tblStats := &statistics.Table{
+		HistColl: *statistics.NewHistCollWithColsAndIdxs(
+			tblInfo.ID,
+			statistics.AutoAnalyzeMinCnt+1,
+			statistics.AutoAnalyzeMinCnt,
+			nil,
+			nil,
+		),
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 0),
+		LastAnalyzeVersion:    1,
+	}
+	tblStats.StatsVer = statistics.Version1
+	tblStats.ColAndIdxExistenceMap.InsertCol(1, true)
+
+	factory := priorityqueue.NewAnalysisJobFactory(sctx, 0.5, 0)
+	job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, tblStats)
+	require.NotNil(t, job)
+
+	nonPartitionedJob, ok := job.(*priorityqueue.NonPartitionedTableAnalysisJob)
+	require.True(t, ok)
+	require.Equal(t, statistics.Version2, nonPartitionedJob.TableStatsVer)
+	require.True(t, nonPartitionedJob.NeedVersionRewriteWarn)
 }
 
 func TestCalculateIndicatorsForPartitions(t *testing.T) {

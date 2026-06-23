@@ -139,10 +139,11 @@ type tableScanExec struct {
 	ndvs          []int64
 	rowCnt        int64
 
-	chk    *chunk.Chunk
-	result chan scanResult
-	done   chan struct{}
-	wg     util.WaitGroupWrapper
+	chk      *chunk.Chunk
+	result   chan scanResult
+	done     chan struct{}
+	wg       util.WaitGroupWrapper
+	stopOnce sync.Once
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
@@ -264,11 +265,14 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 }
 
 func (e *tableScanExec) stop() error {
-	// just in case the channel is not initialized
-	if e.done != nil {
-		close(e.done)
-	}
-	e.wg.Wait()
+	e.stopOnce.Do(func() {
+		// stop() can be called from multiple teardown paths.
+		// Make close/wait idempotent to avoid closing an already-closed channel.
+		if e.done != nil {
+			close(e.done)
+		}
+		e.wg.Wait()
+	})
 	return nil
 }
 
@@ -949,9 +953,20 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 }
 
 func (e *exchSenderExec) next() (*chunk.Chunk, error) {
+	var mppCtx context.Context
+	if e.mppCtx != nil {
+		mppCtx = e.mppCtx.Ctx
+	}
 	defer func() {
 		for _, tunnel := range e.tunnels {
-			<-tunnel.connectedCh
+			if mppCtx == nil {
+				<-tunnel.connectedCh
+			} else {
+				select {
+				case <-tunnel.connectedCh:
+				case <-mppCtx.Done():
+				}
+			}
 			close(tunnel.ErrCh)
 			close(tunnel.DataCh)
 		}

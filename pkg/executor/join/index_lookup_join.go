@@ -469,7 +469,6 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-
 		task.outerResult.Add(chk)
 	}
 	if task.outerResult.Len() == 0 {
@@ -533,7 +532,6 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		}
-
 		err := iw.handleTask(ctx, task)
 		task.doneCh <- err
 	}
@@ -628,7 +626,12 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
 				// So we don't need to do it here.
 			}
-			lookUpContents = append(lookUpContents, &IndexJoinLookUpContent{Keys: dLookUpKey, Row: chk.GetRow(rowIdx), keyCols: iw.KeyCols, KeyColIDs: iw.KeyColIDs})
+			lookUpContents = append(lookUpContents, &IndexJoinLookUpContent{
+				Keys:      dLookUpKey,
+				Row:       chk.GetRow(rowIdx),
+				keyCols:   iw.KeyCols,
+				KeyColIDs: iw.KeyColIDs,
+			})
 		}
 	}
 

@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -54,7 +56,11 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
-	Logger            *zap.Logger
+	PrepareMode       proto.PrepareMode
+	// PreparedChunkMapExternalPath points to externally persisted chunk
+	// metadata produced during framework prepare stage.
+	PreparedChunkMapExternalPath string
+	Logger                       *zap.Logger
 
 	// summary for next step
 	summary importer.StepSummary
@@ -64,17 +70,19 @@ type LogicalPlan struct {
 func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 	return proto.ExtraParams{
 		ManualRecovery: p.Plan.ManualRecovery,
+		PrepareMode:    p.PrepareMode,
 	}
 }
 
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 	taskMeta := TaskMeta{
-		JobID:             p.JobID,
-		Plan:              p.Plan,
-		Stmt:              p.Stmt,
-		EligibleInstances: p.EligibleInstances,
-		ChunkMap:          p.ChunkMap,
+		JobID:                    p.JobID,
+		Plan:                     p.Plan,
+		Stmt:                     p.Stmt,
+		EligibleInstances:        p.EligibleInstances,
+		ChunkMap:                 p.ChunkMap,
+		PreparedMetaExternalPath: p.PreparedChunkMapExternalPath,
 	}
 	return json.Marshal(taskMeta)
 }
@@ -90,6 +98,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	p.Stmt = taskMeta.Stmt
 	p.EligibleInstances = taskMeta.EligibleInstances
 	p.ChunkMap = taskMeta.ChunkMap
+	p.PreparedChunkMapExternalPath = taskMeta.PreparedMetaExternalPath
 	return nil
 }
 
@@ -105,7 +114,7 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 	defer store.Close()
 
 	for i, spec := range specs {
-		externalPath := external.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
+		externalPath := globalsort.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
 		switch sp := spec.(type) {
 		case *ImportSpec:
 			sp.ImportStepMeta.ExternalPath = externalPath
@@ -360,7 +369,13 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 
 func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	var chunkMap map[int32][]importer.Chunk
-	if len(p.ChunkMap) > 0 {
+	if p.PreparedChunkMapExternalPath != "" {
+		var err error
+		chunkMap, err = readPreparedChunkMap(pCtx.Ctx, &p.Plan, p.PreparedChunkMapExternalPath)
+		if err != nil {
+			return nil, err
+		}
+	} else if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
 	} else {
 		controller, err2 := buildControllerForPlan(p)
@@ -400,14 +415,33 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat, concurrency int) bool {
+func readPreparedChunkMap(
+	ctx context.Context,
+	plan *importer.Plan,
+	externalPath string,
+) (map[int32][]importer.Chunk, error) {
+	store, err := importer.GetSortStore(ctx, plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	preparedChunkMapMeta := PreparedMeta{
+		BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+	}
+	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &preparedChunkMapMeta); err != nil {
+		return nil, err
+	}
+	return preparedChunkMapMeta.ChunkMap, nil
+}
+
+func skipMergeSort(kvGroup string, stats []simplesst.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
 		in := val.(string)
 		if in == kvGroup || in == "*" {
 			failpoint.Return(false)
 		}
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
+	return simplesst.GetMaxOverlappingTotal(stats) <= simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
@@ -437,12 +471,12 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		p.summary.Bytes += int64(kvMeta.TotalKVSize)
-		if kvGroup == external.DataKVGroup {
+		if kvGroup == globalsort.DataKVGroup {
 			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
-		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, planCtx.ThreadCnt)
+		dataFilesGroup, err := globalsort.DivideMergeSortDataFiles(dataFiles, nodeCnt, planCtx.ThreadCnt)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -476,7 +510,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		failpoint.Return([]planner.PipelineSpec{
 			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
-					KVGroup: external.DataKVGroup,
+					KVGroup: globalsort.DataKVGroup,
 				},
 			},
 			&WriteIngestSpec{
@@ -500,7 +534,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			continue
 		}
 		p.summary.Bytes += int64(kvMeta.TotalKVSize)
-		if kvGroup == external.DataKVGroup {
+		if kvGroup == globalsort.DataKVGroup {
 			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
@@ -516,7 +550,7 @@ func splitForOneSubtask(
 	ctx context.Context,
 	extStorage storeapi.Storage,
 	kvGroup string,
-	kvMeta *external.SortedKVMeta,
+	kvMeta *globalsort.SortedKVMeta,
 	ts uint64,
 ) ([]planner.PipelineSpec, error) {
 	splitter, err := getRangeSplitter(ctx, extStorage, kvMeta)
@@ -531,6 +565,12 @@ func splitForOneSubtask(
 	}()
 
 	ret := make([]planner.PipelineSpec, 0, 16)
+	var (
+		subtaskCount      int
+		totalDataFiles    int
+		totalRangeJobKeys int
+		totalRegionKeyCnt int
+	)
 
 	startKey := tidbkv.Key(kvMeta.StartKey)
 	var endKey tidbkv.Key
@@ -544,7 +584,7 @@ func splitForOneSubtask(
 		} else {
 			endKey = tidbkv.Key(endKeyOfGroup).Clone()
 		}
-		logutil.Logger(ctx).Info("kv range as subtask",
+		logutil.Logger(ctx).Debug("kv range as subtask",
 			zap.String("kvGroup", kvGroup),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
@@ -568,7 +608,7 @@ func splitForOneSubtask(
 		// each subtask will write and ingest one range group
 		m := &WriteIngestStepMeta{
 			KVGroup: kvGroup,
-			SortedKVMeta: external.SortedKVMeta{
+			SortedKVMeta: globalsort.SortedKVMeta{
 				StartKey: startKey,
 				EndKey:   endKey,
 				// this is actually an estimate, we don't know the exact size of the data
@@ -581,6 +621,10 @@ func splitForOneSubtask(
 			TS:             ts,
 		}
 		ret = append(ret, &WriteIngestSpec{m})
+		subtaskCount++
+		totalDataFiles += len(dataFiles)
+		totalRangeJobKeys += len(interiorRangeJobKeys)
+		totalRegionKeyCnt += len(interiorRegionSplitKeys)
 
 		startKey = endKey
 		if len(endKeyOfGroup) == 0 {
@@ -588,12 +632,20 @@ func splitForOneSubtask(
 		}
 	}
 
+	logutil.Logger(ctx).Info("kv range split summary",
+		zap.String("kvGroup", kvGroup),
+		zap.Int("subtasks", subtaskCount),
+		zap.Int("dataFiles", totalDataFiles),
+		zap.Int("rangeJobKeys", totalRangeJobKeys),
+		zap.Int("regionSplitKeys", totalRegionKeyCnt),
+	)
+
 	return ret, nil
 }
 
-func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, store storeapi.Storage) (map[string]*external.SortedKVMeta, error) {
-	dataKVMeta := &external.SortedKVMeta{}
-	indexKVMetas := make(map[int64]*external.SortedKVMeta)
+func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, store storeapi.Storage) (map[string]*globalsort.SortedKVMeta, error) {
+	dataKVMeta := &globalsort.SortedKVMeta{}
+	indexKVMetas := make(map[int64]*globalsort.SortedKVMeta)
 	for _, subTaskMeta := range subTaskMetas {
 		var stepMeta ImportStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
@@ -614,16 +666,16 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 			}
 		}
 	}
-	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
-	res[external.DataKVGroup] = dataKVMeta
+	res := make(map[string]*globalsort.SortedKVMeta, 1+len(indexKVMetas))
+	res[globalsort.DataKVGroup] = dataKVMeta
 	for indexID, item := range indexKVMetas {
-		res[external.IndexID2KVGroup(indexID)] = item
+		res[globalsort.IndexID2KVGroup(indexID)] = item
 	}
 	return res, nil
 }
 
-func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, store storeapi.Storage) (map[string]*external.SortedKVMeta, error) {
-	result := make(map[string]*external.SortedKVMeta, len(subTaskMetas))
+func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, store storeapi.Storage) (map[string]*globalsort.SortedKVMeta, error) {
+	result := make(map[string]*globalsort.SortedKVMeta, len(subTaskMetas))
 	for _, subTaskMeta := range subTaskMetas {
 		var stepMeta MergeSortStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
@@ -645,7 +697,7 @@ func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, sto
 	return result, nil
 }
 
-func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store storeapi.Storage) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store storeapi.Storage) (map[string]*globalsort.SortedKVMeta, error) {
 	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort], store)
 	if err != nil {
 		return nil, err
@@ -673,8 +725,8 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store st
 func getRangeSplitter(
 	ctx context.Context,
 	store storeapi.Storage,
-	kvMeta *external.SortedKVMeta,
-) (*external.RangeSplitter, error) {
+	kvMeta *globalsort.SortedKVMeta,
+) (*globalsort.RangeSplitter, error) {
 	regionSplitSize, regionSplitKeys, err := importer.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split size and keys", zap.Error(err))
@@ -682,8 +734,8 @@ func getRangeSplitter(
 	defRegionSplitSize, defRegionSplitKeys := handle.GetDefaultRegionSplitConfig()
 	regionSplitSize = max(regionSplitSize, defRegionSplitSize)
 	regionSplitKeys = max(regionSplitKeys, defRegionSplitKeys)
-	nodeRc := handle.GetNodeResource()
-	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
+	nodeRc := storage.GetNodeResource()
+	rangeSize, rangeKeys := globalsort.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),
 		zap.Int64("region-split-keys", regionSplitKeys),
@@ -691,8 +743,7 @@ func getRangeSplitter(
 		zap.Int64("range-keys", rangeKeys),
 	)
 
-	// no matter region split size and keys, we always split range jobs by 96MB
-	return external.NewRangeSplitter(
+	return globalsort.NewRangeSplitter(
 		ctx,
 		kvMeta.MultipleFilesStats,
 		store,
@@ -715,12 +766,14 @@ func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]p
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
 	}
 	var recordedDataKVConflicts int64
-	if info, ok := groupConflictInfos.ConflictInfos[external.DataKVGroup]; ok {
+	if info, ok := groupConflictInfos.ConflictInfos[globalsort.DataKVGroup]; ok {
 		recordedDataKVConflicts = int64(info.Count)
 	}
 	return []planner.PipelineSpec{
@@ -743,6 +796,8 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
@@ -812,4 +867,21 @@ func collectConflictInfos(ctx context.Context, store storeapi.Storage, planCtx p
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}
 	return m, nil
+}
+
+func totalConflicts(groupConflictInfos *KVGroupConflictInfos) int64 {
+	if groupConflictInfos == nil {
+		return 0
+	}
+	var total int64
+	for _, conflictInfo := range groupConflictInfos.ConflictInfos {
+		if conflictInfo == nil {
+			continue
+		}
+		if conflictInfo.Count > uint64(math.MaxInt64-total) {
+			return math.MaxInt64
+		}
+		total += int64(conflictInfo.Count)
+	}
+	return total
 }

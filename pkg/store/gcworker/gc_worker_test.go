@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	kv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -366,6 +368,14 @@ func TestPrepareGC(t *testing.T) {
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
+	lastRunBefore, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, lastRunBefore)
+	safePointBefore, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.NotNil(t, safePointBefore)
+	timeEqual(t, safePointBefore.Add(gcDefaultLifeTime), now, 2*time.Second)
+
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
@@ -375,7 +385,9 @@ func TestPrepareGC(t *testing.T) {
 	require.NotNil(t, lastRun)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
+	require.Equal(t, *lastRunBefore, *lastRun)
+	require.Equal(t, *safePointBefore, *safePoint)
+	timeEqual(t, safePoint.Add(gcDefaultLifeTime), *lastRun, 2*time.Second)
 
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
@@ -397,14 +409,15 @@ func TestPrepareGC(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 	s.oracle.AddOffset(time.Minute * 40)
-	now, err = s.gcWorker.getOracleTime()
-	require.NoError(t, err)
 	ok, _, err = s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
 	require.True(t, ok)
+	lastRun, err = s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, lastRun)
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
 	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(time.Minute*30), now, 2*time.Second)
+	timeEqual(t, safePoint.Add(time.Minute*30), *lastRun, 2*time.Second)
 
 	// Change GC concurrency.
 	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
@@ -992,6 +1005,15 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
+	// Disable the background txn safe-point cache updater (10 s poll) so it
+	// does not race with snapshot reads in checkCollected/mustGetNone.
+	// Without this, the updater may cache the advanced safe point before the
+	// test reads old probe timestamps, causing [tikv:9006] errors.
+	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
+	})
+
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(time.Hour))
@@ -1038,6 +1060,12 @@ func TestLeaderTick(t *testing.T) {
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
 	require.NoError(t, err)
+	// The "skip gcWaitTime" leaderTick above ran prepare() which advanced the
+	// PD txn safe point as a side effect. Bump the oracle so the next
+	// prepare() computes a strictly higher target (GoTimeToTS truncates to ms,
+	// so without this bump both calls can land in the same millisecond and
+	// AdvanceTxnSafePoint returns NewSafePoint == OldSafePoint → GC skipped).
+	s.oracle.AddOffset(time.Second)
 
 	// Continue GC if all those checks passed.
 	err = s.gcWorker.leaderTick(gcContext())
@@ -1082,6 +1110,72 @@ func TestLeaderTick(t *testing.T) {
 		break
 	}
 	require.NoError(t, err)
+}
+
+func TestUnifiedGCNeedsToWait(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("starter deploy mode is only available in nextgen kernel")
+	}
+
+	originInTest := intest.InTest
+	originDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		intest.InTest = originInTest
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+
+	// Starter unified GC skips the initial gcWaitTime only in production and
+	// only before the first GC job has completed. Other modes, and intest by
+	// default, keep the normal cooldown semantics.
+	testCases := []struct {
+		name                  string
+		deployMode            deploymode.Mode
+		inTest                bool
+		hasFinishedFirstGCJob bool
+		expected              bool
+	}{
+		{
+			name:                  "starter still waits in intest",
+			deployMode:            deploymode.Starter,
+			inTest:                true,
+			hasFinishedFirstGCJob: false,
+			expected:              true,
+		},
+		{
+			name:                  "starter skips initial wait in production",
+			deployMode:            deploymode.Starter,
+			inTest:                false,
+			hasFinishedFirstGCJob: false,
+			expected:              false,
+		},
+		{
+			name:                  "starter waits after first gc job in production",
+			deployMode:            deploymode.Starter,
+			inTest:                false,
+			hasFinishedFirstGCJob: true,
+			expected:              true,
+		},
+		{
+			name:                  "premium still waits in production",
+			deployMode:            deploymode.Premium,
+			inTest:                false,
+			hasFinishedFirstGCJob: false,
+			expected:              true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			intest.InTest = tc.inTest
+			require.NoError(t, deploymode.Set(tc.deployMode))
+
+			worker := &GCWorker{
+				lastFinish:            time.Now(),
+				hasFinishedFirstGCJob: tc.hasFinishedFirstGCJob,
+			}
+			require.Equal(t, tc.expected, worker.needsToWait())
+		})
+	}
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {
@@ -1726,9 +1820,18 @@ func TestResolveLocksNearTxnSafePoint(t *testing.T) {
 }
 
 func TestRunGCJob(t *testing.T) {
+	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
+	})
+
 	s := createGCWorkerSuite(t)
 
+	originalTxnSafePointSyncWaitTime := txnSafePointSyncWaitTime
 	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() {
+		txnSafePointSyncWaitTime = originalTxnSafePointSyncWaitTime
+	})
 
 	// Test distributed mode
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()

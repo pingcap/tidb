@@ -46,8 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -947,7 +947,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	backup := importer.NewTiKVModeSwitcher
-	importer.NewTiKVModeSwitcher = func(*tls.Config, pdhttp.Client, *zap.Logger) local.TiKVModeSwitcher {
+	importer.NewTiKVModeSwitcher = func(*tls.Config, pdhttp.Client, *zap.Logger) ingestctrl.TiKVModeSwitcher {
 		return switcher
 	}
 	s.T().Cleanup(func() {
@@ -1480,14 +1480,12 @@ func (s *mockGCSSuite) TestTableMode() {
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 	query := "SELECT * FROM table_mode"
 
-	// Test import into clean up can alter table mode to Normal finally.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/skipPostProcessAlterTableMode", `return`)
+	// Table mode should be reset to Normal when the task is done.
 	s.tk.MustQuery(loadDataSQL)
 	s.checkMode(s.tk, query, "table_mode", true)
 	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/skipPostProcessAlterTableMode")
 
-	// Test import into post process will alter table mode to Normal.
+	// Table mode should still be Import during post process.
 	s.tk.MustExec("truncate table table_mode")
 	wg := sync.WaitGroup{}
 	wg.Add(2)

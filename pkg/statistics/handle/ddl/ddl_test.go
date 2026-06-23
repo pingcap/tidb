@@ -386,6 +386,28 @@ func TestDDLHistogram(t *testing.T) {
 	rs.Check(testkit.Rows("0"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_top_n where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)
 	rs.Check(testkit.Rows("2"))
+
+	// Isolate the virtual-column regression from earlier buffered DDL events.
+	for len(h.DDLEventCh()) > 0 {
+		<-h.DDLEventCh()
+	}
+	testKit.MustExec("alter table t add column c_vir int generated always as (c1 + c2) virtual")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	is = do.InfoSchema()
+	require.Nil(t, h.Update(context.Background(), is))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	virtualCol := tableInfo.FindPublicColumnByName("c_vir")
+	require.NotNil(t, virtualCol)
+	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(virtualCol.ID, false))
+	if colStats := statsTbl.GetCol(virtualCol.ID); colStats != nil {
+		require.False(t, colStats.IsStatsInitialized())
+	}
+	testKit.MustQuery("select distinct_count, null_count, stats_ver from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tableInfo.ID, virtualCol.ID).
+		Check(testkit.Rows("0 0 0"))
 }
 
 func TestDDLPartition(t *testing.T) {
@@ -1103,7 +1125,7 @@ func TestExchangeAPartition(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -1122,7 +1144,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
 	// Insert some data which meets the condition of the partition p0.
 	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
@@ -1174,7 +1196,7 @@ func TestExchangeAPartition(t *testing.T) {
 
 	// Insert some data to partition p1 before exchange partition.
 	testKit.MustExec("insert into t values (7,2),(8,2),(9,2),(10,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
@@ -1253,7 +1275,7 @@ func TestExchangeAPartitionAndDropTableImmediately(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -1272,7 +1294,7 @@ func TestExchangeAPartitionAndDropTableImmediately(t *testing.T) {
 	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
 	// Insert some data which meets the condition of the partition p0.
 	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
@@ -1332,7 +1354,7 @@ func TestRemovePartitioning(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -1411,7 +1433,7 @@ func TestAddPartitioning(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
@@ -1455,7 +1477,7 @@ func TestDropSchema(t *testing.T) {
 	tk.MustExec("create table t (c1 int)")
 	h := dom.StatsHandle()
 	tk.MustExec("insert into t values (1)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1519,7 +1541,7 @@ func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
 	// Insert some data.
 	tk.MustExec("insert into t values (1), (2), (3)")
 	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	// Also manually insert a histogram record.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1540,15 +1562,40 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	// Insert some data.
 	testKit.MustExec("insert into t values (1, 2), (2, 3), (3, 4)")
 	testKit.MustExec("analyze table t predicate columns")
-	// Add column.
-	testKit.MustExec("alter table t add column c10 int")
+	// Add null column.
+	testKit.MustExec("alter table t add column c3 int")
 	// Insert some data.
 	testKit.MustExec("insert into t values (4, 5, 6)")
-	// Analyze table to force create the histogram meta record.
-	// FIXME: When analyzing all columns, it will error out due to a duplicate key.
-	testKit.MustExec("analyze table t predicate columns")
-	// Find the add column event.
-	event := statstestutil.FindEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
-	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
-	require.NoError(t, err)
+	// Add not-null column.
+	testKit.MustExec("alter table t add column c4 int not null default 0")
+	// Insert by explicit column list to keep new columns on default values.
+	testKit.MustExec("insert into t(c1, c2) values (6, 7)")
+	// Analyze all columns to force creating stats for the newly added column before the DDL event is consumed.
+	testKit.MustExec("analyze table t all columns")
+	metaBefore := testKit.MustQuery(`
+		select version, last_stats_histograms_version
+		from mysql.stats_meta
+		where table_id = (
+			select tidb_table_id
+			from information_schema.tables
+			where table_schema = 'test' and table_name = 't'
+		)
+	`).Rows()
+	require.Len(t, metaBefore, 1)
+	// Handle two add-column events in order: c3 then c4.
+	for i := 0; i < 2; i++ {
+		event := statstestutil.FindEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
+		err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
+		require.NoError(t, err)
+	}
+	metaAfter := testKit.MustQuery(`
+		select version, last_stats_histograms_version
+		from mysql.stats_meta
+		where table_id = (
+			select tidb_table_id
+			from information_schema.tables
+			where table_schema = 'test' and table_name = 't'
+		)
+	`).Rows()
+	require.Equal(t, metaBefore, metaAfter)
 }

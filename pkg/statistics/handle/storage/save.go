@@ -416,20 +416,6 @@ func InsertColStats2KV(
 		return 0, errors.Trace(err)
 	}
 
-	// First of all, we update the version.
-	_, err = util.ExecWithCtx(
-		ctx, sctx,
-		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
-		startTS, startTS, physicalID,
-	)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-	if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-		return startTS, nil
-	}
-
 	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
@@ -446,8 +432,34 @@ func InsertColStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	// If no row is returned, it means the stats of this table does not exist.
+	if req.NumRows() == 0 {
+		return startTS, nil
+	}
 	count := req.GetRow(0).GetInt64(0)
+	hasStatsUpdate := false
 	for _, colInfo := range colInfos {
+		if colInfo.IsVirtualGenerated() {
+			// Virtual generated columns do not have column stats. Keep the
+			// same zero placeholder shape as the create-table stats path.
+			// Analyze-skipped columns are real stored columns, so their
+			// default/null handling needs a separate decision.
+			// TODO: define add-column stats behavior for analyze-skipped columns.
+			if _, err = util.ExecWithCtx(
+				ctx, sctx,
+				`insert ignore into mysql.stats_histograms
+					(version, table_id, is_index, hist_id, distinct_count, null_count)
+				values (%?, %?, 0, %?, 0, 0)`,
+				startTS, physicalID, colInfo.ID,
+			); err != nil {
+				return 0, errors.Trace(err)
+			}
+			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+				hasStatsUpdate = true
+			}
+			continue
+		}
+
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -456,12 +468,15 @@ func InsertColStats2KV(
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
 			if _, err = util.ExecWithCtx(
 				ctx, sctx,
-				`insert into mysql.stats_histograms
+				`insert ignore into mysql.stats_histograms
 					(version, table_id, is_index, hist_id, distinct_count, null_count)
 				values (%?, %?, 0, %?, 0, %?)`,
 				startTS, physicalID, colInfo.ID, count,
 			); err != nil {
 				return 0, errors.Trace(err)
+			}
+			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+				hasStatsUpdate = true
 			}
 			continue
 		}
@@ -469,13 +484,19 @@ func InsertColStats2KV(
 		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(version, table_id, is_index, hist_id, distinct_count, tot_col_size)
 			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
 			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
 		); err != nil {
 			return 0, errors.Trace(err)
 		}
+		// The histogram may have been created by ANALYZE TABLE ... ALL COLUMNS before the add-column DDL event is handled.
+		// Skip inserting the default-value bucket in that case.
+		if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			continue
+		}
+		hasStatsUpdate = true
 		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -483,13 +504,24 @@ func InsertColStats2KV(
 		// There must be only one bucket for this new column and the value is the default value.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_buckets
+			`insert ignore into mysql.stats_buckets
 				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
 			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
 			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
 		); err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+	if !hasStatsUpdate {
+		return startTS, nil
+	}
+	_, err = util.ExecWithCtx(
+		ctx, sctx,
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+		startTS, startTS, physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 	return startTS, nil
 }

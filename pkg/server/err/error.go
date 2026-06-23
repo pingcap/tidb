@@ -36,6 +36,8 @@ var (
 	ErrTooManyUserConnections = dbterror.ClassServer.NewStd(errno.ErrTooManyUserConnections)
 	// ErrSecureTransportRequired is returned when the user tries to connect without SSL.
 	ErrSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
+	// ErrUserPrefixMismatch is returned when prefixed username does not match the assigned keyspace.
+	ErrUserPrefixMismatch = dbterror.ClassServer.NewStd(errno.ErrUserPrefixMismatch)
 	// ErrMultiStatementDisabled is returned when the user tries to send multiple statements in one statement.
 	ErrMultiStatementDisabled = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	// ErrNewAbortingConnection is returned when the user tries to connect with an aborting connection.

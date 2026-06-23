@@ -50,7 +50,7 @@ for i in $(seq "$CHUNK_COUNT"); do
 done
 
 PKG="github.com/pingcap/tidb/lightning/pkg"
-export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/orphanWriterGoRoutine=return();$PKG/importer/orphanWriterGoRoutine=return();$PKG/server/orphanWriterGoRoutine=return()"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/ingestor/ingestctrl/orphanWriterGoRoutine=return();$PKG/importer/orphanWriterGoRoutine=return();$PKG/server/orphanWriterGoRoutine=return()"
 # test won't panic
 do_run_lightning config
 

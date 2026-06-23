@@ -1,5 +1,5 @@
 # TestSkipLockALotOfTables
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 drop table if exists t, a, x, y, z;
 create table t(a int, b varchar(10), index idx_b (b));
 create table a(a int, b varchar(10), index idx_b (b));
@@ -14,7 +14,7 @@ unlock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, sta
 set @@tidb_analyze_version = default;
 
 # TestShowStatsLockedTablePrivilege
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 drop table if exists t;
 create table t(a int, b varchar(10), index idx_b (b));
 analyze table t;
@@ -40,7 +40,7 @@ unlock stats t;
 connection default;
 
 # TestLockAndUnlockTablePrivilege
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 drop table if exists t;
 create table t(a int, b varchar(10), index idx_b (b));
 analyze table t;

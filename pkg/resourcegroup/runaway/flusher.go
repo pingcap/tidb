@@ -110,6 +110,11 @@ func (f *batchFlusher[K, V]) flush() {
 	})
 	batchSize := len(f.buffer)
 	if batchSize == 0 {
+		// Reset lastFlushTime so the next real flush after an idle period
+		// does not record the idle gap as flush interval.
+		if !f.lastFlushTime.IsZero() {
+			f.lastFlushTime = time.Time{}
+		}
 		return
 	}
 

@@ -489,6 +489,16 @@ func (e *InfoSchemaPartitionsExtractor) HasPartitionPred() bool {
 	return len(e.ColPredicates[PartitionName]) > 0
 }
 
+// HasPartitionID returns true if partition ID matches the one in predicates.
+func (e *InfoSchemaPartitionsExtractor) HasPartitionID(partID int64) bool {
+	return !e.filter(TidbPartitionID, strconv.FormatInt(partID, 10))
+}
+
+// HasPartitionIDPred returns true if partition ID is specified in predicates.
+func (e *InfoSchemaPartitionsExtractor) HasPartitionIDPred() bool {
+	return len(e.ColPredicates[TidbPartitionID]) > 0
+}
+
 // InfoSchemaStatisticsExtractor is the predicate extractor for  information_schema.statistics.
 type InfoSchemaStatisticsExtractor struct {
 	InfoSchemaBaseExtractor

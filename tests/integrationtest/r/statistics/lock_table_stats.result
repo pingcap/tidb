@@ -1,4 +1,4 @@
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 drop table if exists t, a, x, y, z;
 create table t(a int, b varchar(10), index idx_b (b));
 create table a(a int, b varchar(10), index idx_b (b));
@@ -11,7 +11,7 @@ Level	Code	Message
 Warning	1105	skip locking locked tables: statistics__lock_table_stats.a, statistics__lock_table_stats.t, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z
 unlock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
 set @@tidb_analyze_version = default;
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 drop table if exists t;
 create table t(a int, b varchar(10), index idx_b (b));
 analyze table t;
@@ -30,7 +30,7 @@ show stats_locked;
 Db_name	Table_name	Partition_name	Status
 statistics__lock_table_stats	t		locked
 unlock stats t;
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 drop table if exists t;
 create table t(a int, b varchar(10), index idx_b (b));
 analyze table t;

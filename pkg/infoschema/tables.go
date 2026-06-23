@@ -979,10 +979,13 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogTikvCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogStorageFromKV, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogStorageFromMPP, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogRequestUnitV2, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogRequestUnitV2Detail, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: variable.SlowLogSessionConnectAttrs, tp: mysql.TypeJSON, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
@@ -1424,6 +1427,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgRequestUnitWriteStr, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Average write request-unit cost of these statements"},
 	{name: stmtsummary.MaxQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of waiting for available request-units"},
+	{name: stmtsummary.MaxRequestUnitV2Str, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Max request-unit v2 cost of these statements"},
+	{name: stmtsummary.AvgRequestUnitV2Str, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Average request-unit v2 cost of these statements"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
@@ -2763,17 +2768,18 @@ func GetTiFlashServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	return serversInfo, nil
 }
 
+// ServerInfoResult contains server info results
+type ServerInfoResult struct {
+	Idx  int
+	Rows [][]types.Datum
+	Err  error
+}
+
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) []ServerInfoResult {
 	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
+	ch := make(chan ServerInfoResult, len(serversInfo))
 	infoTp := serverInfoType
-	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
 		remote := address
@@ -2786,34 +2792,31 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *vari
 				defer wg.Done()
 				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
-					ch <- result{idx: index, err: err}
+					ch <- ServerInfoResult{Idx: index, Err: err}
 					return
 				}
 				partRows := serverInfoItemToRows(items, serverTP, address)
-				ch <- result{idx: index, rows: partRows}
+				ch <- ServerInfoResult{Idx: index, Rows: partRows}
 			}, nil)
 		}(i, remote, address, srv.ServerType)
 	}
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result //nolint: prealloc
+	var results []ServerInfoResult //nolint: prealloc
 	for result := range ch {
-		if result.err != nil {
+		if result.Err != nil {
 			if recordWarningInStmtCtx {
-				vars.StmtCtx.AppendWarning(result.err)
+				vars.StmtCtx.AppendWarning(result.Err)
 			} else {
-				log.Warn(result.err.Error())
+				log.Warn(result.Err.Error())
 			}
 			continue
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
+	slices.SortFunc(results, func(i, j ServerInfoResult) int { return cmp.Compare(i.Idx, j.Idx) })
+	return results
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {

@@ -81,6 +81,12 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
 				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
+					// Replacing a literal with a generated column that is itself a pure constant is not
+					// semantically neutral across outer joins, because null-augmentation can turn the
+					// generated column into NULL while the original literal stays constant.
+					if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
+						continue
+					}
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}
