@@ -408,17 +408,25 @@ func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMater
 		s.ViewName.Schema = schemaName
 	}
 	if _, ok := is.SchemaByName(schemaName); !ok {
+		if s.IfExists {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.ViewName.Name)
+			return nil
+		}
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 	tbl, err := is.TableByName(e.ctx, schemaName, s.ViewName.Name)
 	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.ViewName.Name)
+			return nil
+		}
 		return err
 	}
 	if tbl.Meta().MaterializedView == nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
 	}
 
-	dropStmt := &ast.DropTableStmt{Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
+	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
 }
 
@@ -447,6 +455,10 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
 	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, mlogName)
+			return nil
+		}
 		return err
 	}
 	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
@@ -462,8 +474,14 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	// validation rejects stale executor pre-check under concurrent CREATE MATERIALIZED VIEW.
 	failpoint.Inject("pauseDropMaterializedViewLogAfterCheck", func() {})
 
-	dropStmt := &ast.DropTableStmt{Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
+	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
+}
+
+func appendDropMaterializedViewNotExistsNote(ctx sessionctx.Context, schemaName, tableName pmodel.CIStr) {
+	ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.FastGenByArgs(
+		ast.Ident{Schema: schemaName, Name: tableName}.String(),
+	))
 }
 
 func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMaterializedViewStmt) error {

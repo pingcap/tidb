@@ -970,6 +970,7 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create view v as select a from t")
 	tk.MustExec("create sequence s")
+	tk.MustExec("create global temporary table gt (a int) on commit delete rows")
 	tk.MustExec("create materialized view log on t (a)")
 	tk.MustExec("create table t_mv_base (a int not null, b int not null)")
 	tk.MustExec("create materialized view log on t_mv_base (a, b) purge next date_add(now(), interval 1 hour)")
@@ -983,10 +984,27 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "s", "BASE TABLE").Error(), err.Error())
 
+	err = tk.ExecToErr("create materialized view log on gt (a)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "gt", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on mysql.user (User)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("mysql", "user", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on information_schema.tables (TABLE_SCHEMA)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("information_schema", "tables", "BASE TABLE").Error(), err.Error())
+
+	tk.MustExec("drop materialized view log on t")
+	tk.MustExec("drop table t")
+	tk.MustExec("create temporary table t (a int)")
+	err = tk.ExecToErr("create materialized view log on t (a)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "t", "BASE TABLE").Error(), err.Error())
 	err = tk.ExecToErr("create materialized view log on mv (a, cnt)")
 	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
 
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
 	err = tk.ExecToErr("create materialized view log on `$mlog$t` (a)")
 	require.Error(t, err)
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
@@ -2463,4 +2481,27 @@ func TestPurgeMaterializedViewLogInternalSQLNoScheduleSetsNextTimeNull(t *testin
 		"select PURGE_METHOD from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("auto"))
+}
+
+func TestCreateMaterializedViewLogAllowsGeneratedColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t_gen (" +
+		"id BIGINT NOT NULL PRIMARY KEY," +
+		"base BIGINT NOT NULL," +
+		"gv BIGINT AS (base + 1) VIRTUAL," +
+		"gs BIGINT AS (base + 2) STORED" +
+		")")
+	tk.MustExec("CREATE MATERIALIZED VIEW LOG ON t_gen (id, gv, gs)")
+
+	tk.MustQuery("select column_name from information_schema.columns where table_schema='test' and table_name='$mlog$t_gen' order by ordinal_position").
+		Check(testkit.Rows("id", "gv", "gs", "_MLOG$_DML_TYPE", "_MLOG$_OLD_NEW"))
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_gen"))
+	require.NoError(t, err)
+	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+	require.Equal(t, []pmodel.CIStr{pmodel.NewCIStr("id"), pmodel.NewCIStr("gv"), pmodel.NewCIStr("gs")}, mlogTable.Meta().MaterializedViewLog.Columns)
 }

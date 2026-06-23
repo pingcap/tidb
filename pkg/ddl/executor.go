@@ -1078,24 +1078,19 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 
-	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	baseTableInfo, err := ctx.GetDomainInfoSchema().TableInfoByName(schemaName, s.Table.Name)
 	if err != nil {
 		return err
 	}
-	baseTableID := baseTable.Meta().ID
-	baseTableInfo := baseTable.Meta()
-	if baseTableInfo.IsView() ||
-		baseTableInfo.IsSequence() ||
-		baseTableInfo.TempTableType != model.TempTableNone ||
-		baseTableInfo.MaterializedView != nil ||
-		baseTableInfo.MaterializedViewShadow != nil ||
-		baseTableInfo.MaterializedViewLog != nil {
+	baseTableID := baseTableInfo.ID
+	if !isValidMaterializedViewLogBaseTable(schemaName.L, baseTableInfo) {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-	if baseTable.Meta().GetPartitionInfo() != nil {
+
+	if baseTableInfo.GetPartitionInfo() != nil {
 		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW LOG")
 	}
-	mlogNameCIStr := model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	mlogNameCIStr := model.MaterializedViewLogTableName(baseTableInfo.Name)
 	if err := checkTooLongTable(mlogNameCIStr); err != nil {
 		return err
 	}
@@ -1251,6 +1246,17 @@ func normalizeMaterializedViewLogBlobFlen(ft *types.FieldType) {
 	if ft.GetType() == mysql.TypeBlob && ft.GetFlen() == blobMaxLength {
 		ft.SetFlen(types.UnspecifiedLength)
 	}
+}
+
+func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.TableInfo) bool {
+	return tblInfo != nil &&
+		!util.IsMemOrSysDB(schemaLowerName) &&
+		!tblInfo.IsView() &&
+		!tblInfo.IsSequence() &&
+		tblInfo.TempTableType == model.TempTableNone &&
+		tblInfo.MaterializedView == nil &&
+		tblInfo.MaterializedViewShadow == nil &&
+		tblInfo.MaterializedViewLog == nil
 }
 
 // CheckMaterializedViewLogColumnSupported validates whether a base table column
