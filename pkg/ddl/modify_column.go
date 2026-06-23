@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -99,6 +100,16 @@ func hasModifyFlag(col *model.ColumnInfo) bool {
 
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol == nil || newCol == nil {
+		return false
+	}
+	oldClone := oldCol.Clone()
+	newClone := newCol.Clone()
+	newClone.Comment = oldClone.Comment
+	return reflect.DeepEqual(oldClone, newClone)
 }
 
 // getModifyColumnType gets the modify column type.
@@ -546,6 +557,9 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 ) ([]schemaIDAndTableInfo, error) {
 	baseInfo := baseTblInfo.MaterializedViewBase
 	if baseInfo == nil {
+		return nil, nil
+	}
+	if isColumnCommentOnlyChange(oldCol, newCol) {
 		return nil, nil
 	}
 
@@ -2064,6 +2078,9 @@ func validateMaterializedViewBaseModifyColumn(
 	hasDependentMV := len(baseInfo.MViewIDs) > 0
 	hasMLog := baseInfo.MLogID != 0
 	if !hasDependentMV && !hasMLog {
+		return nil
+	}
+	if isColumnCommentOnlyChange(oldCol, newCol) {
 		return nil
 	}
 
