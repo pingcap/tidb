@@ -94,11 +94,11 @@ func TestFixControl(t *testing.T) {
 	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: " 26 "}, 1, 12345))
 }
 
-func TestGetPositiveIntWithDefault(t *testing.T) {
+func TestGetPositiveUintWithDefault(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		input map[uint64]string
-		value int64
+		value uint64
 		ok    bool
 	}{
 		{name: "missing", value: 12345, ok: true},
@@ -114,7 +114,7 @@ func TestGetPositiveIntWithDefault(t *testing.T) {
 		{name: "trimmed positive", input: map[uint64]string{1: " 26 "}, value: 26, ok: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			value, ok := fixcontrol.GetPositiveIntWithDefault(tt.input, 1, 12345)
+			value, ok := fixcontrol.GetPositiveUintWithDefault(tt.input, 1, 12345)
 			require.Equal(t, tt.value, value)
 			require.Equal(t, tt.ok, ok)
 		})

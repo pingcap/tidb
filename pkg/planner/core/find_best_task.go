@@ -197,7 +197,11 @@ func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool 
 	sessionVars.RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
 	sessionVars.RecordRelevantOptFix(fixcontrol.Fix69405)
 
-	threshold, ok := boundedLimitIndexLookupThreshold(sessionVars.GetOptimizerFixControlMap())
+	threshold, ok := fixcontrol.GetPositiveUintWithDefault(
+		sessionVars.GetOptimizerFixControlMap(),
+		fixcontrol.Fix69405,
+		defaultBoundedLimitIndexLookupThreshold,
+	)
 	if !ok {
 		return false
 	}
@@ -207,18 +211,6 @@ func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool 
 	}
 	limitWindow := topN.Count + topN.Offset
 	return limitWindow >= topN.Count && limitWindow <= threshold
-}
-
-func boundedLimitIndexLookupThreshold(fixControlMap map[uint64]string) (uint64, bool) {
-	threshold, ok := fixcontrol.GetPositiveIntWithDefault(
-		fixControlMap,
-		fixcontrol.Fix69405,
-		int64(defaultBoundedLimitIndexLookupThreshold),
-	)
-	if !ok {
-		return 0, false
-	}
-	return uint64(threshold), true
 }
 
 // isPureOrderedLimitIndexLookupForTopN accepts only the simple safe shape:

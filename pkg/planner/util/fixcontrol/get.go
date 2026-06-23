@@ -150,10 +150,10 @@ func GetIntWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal i
 	return value
 }
 
-// GetPositiveIntWithDefault fetches the given key from the fix control map as a positive int64 type.
+// GetPositiveUintWithDefault fetches the given key from the fix control map as a positive uint64 type.
 // Missing, "on", and "true" values use the default. "off", "false", invalid, and non-positive
 // values disable the control and return false.
-func GetPositiveIntWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal int64) (int64, bool) {
+func GetPositiveUintWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal uint64) (uint64, bool) {
 	rawValue, exists := GetStr(fixControlMap, key)
 	if !exists {
 		return defaultVal, defaultVal > 0
@@ -164,11 +164,11 @@ func GetPositiveIntWithDefault(fixControlMap map[uint64]string, key uint64, defa
 	case "off", "false":
 		return 0, false
 	}
-	value, err := strconv.ParseInt(strings.TrimSpace(rawValue), 10, 64)
-	if err != nil || value <= 0 {
+	value := GetIntWithDefault(map[uint64]string{key: strings.TrimSpace(rawValue)}, key, 0)
+	if value <= 0 {
 		return 0, false
 	}
-	return value, true
+	return uint64(value), true
 }
 
 // GetFloat fetches the given key from the fix control map as a float64 type.
