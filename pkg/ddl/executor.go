@@ -1125,8 +1125,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		if err := CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
 			return err
 		}
-		ft := baseCol.FieldType
-		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+		ft := FieldTypeForMaterializedViewLogColumn(baseCol)
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: c},
 			Tp:   &ft,
@@ -1232,6 +1231,21 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, mlogTableInfo, jobW.SchemaID, scatterScope))
+}
+
+// FieldTypeForMaterializedViewLogColumn returns the field type used to copy a
+// base table column into a materialized view log table.
+func FieldTypeForMaterializedViewLogColumn(baseCol *model.ColumnInfo) types.FieldType {
+	ft := *baseCol.FieldType.Clone()
+	ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+	normalizeMaterializedViewLogBlobFlen(&ft)
+	return ft
+}
+
+func normalizeMaterializedViewLogBlobFlen(ft *types.FieldType) {
+	if ft.GetType() == mysql.TypeBlob && ft.GetFlen() == blobMaxLength {
+		ft.SetFlen(types.UnspecifiedLength)
+	}
 }
 
 func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.TableInfo) bool {

@@ -721,8 +721,7 @@ func (e *executor) addMaterializedViewLogColumn(
 	baseCol *model.ColumnInfo,
 	afterCol pmodel.CIStr,
 ) error {
-	ft := *baseCol.FieldType.Clone()
-	ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+	ft := FieldTypeForMaterializedViewLogColumn(baseCol)
 	spec := &ast.AlterTableSpec{
 		Tp: ast.AlterTableAddColumns,
 		NewColumns: []*ast.ColumnDef{{
