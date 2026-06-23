@@ -215,7 +215,8 @@ func boundedLimitIndexLookupThreshold(fixControlMap map[uint64]string) (uint64, 
 	if !exists {
 		return defaultBoundedLimitIndexLookupThreshold, true
 	}
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	raw = strings.TrimSpace(raw)
+	switch strings.ToLower(raw) {
 	case "on", "true":
 		return defaultBoundedLimitIndexLookupThreshold, true
 	case "off", "false", "0":

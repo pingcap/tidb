@@ -240,6 +240,19 @@ func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
 	require.False(t, decided)
 	require.False(t, curIsBetter)
 
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "on"}
+	topN.Offset = 474
+	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 474, 26)
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+
+	topN.Offset = 475
+	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 475, 26)
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+
 	topN.Offset = 0
 	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 0, 26)
 	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "25"}
@@ -252,7 +265,22 @@ func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
 	require.True(t, decided)
 	require.True(t, curIsBetter)
 
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "27"}
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: " 26 "}
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
+
 	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "off"}
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "0"}
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
 	require.False(t, decided)
 	require.False(t, curIsBetter)
