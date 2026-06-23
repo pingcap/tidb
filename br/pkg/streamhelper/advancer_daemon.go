@@ -35,6 +35,7 @@ func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
 func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 	metrics.AdvancerOwner.Set(1.0)
 	c.SpawnSubscriptionHandler(ctx)
+	c.spawnLogBackupConfigUpdater(ctx)
 	go func() {
 		<-ctx.Done()
 		c.OnStop()
