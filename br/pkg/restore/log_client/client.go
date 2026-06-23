@@ -525,6 +525,10 @@ func (rc *LogClient) InitClients(
 		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 			return importer.CheckBatchDownloadLatestMVCCSupport(ctx, stores)
 		})
+	} else {
+		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+			return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+		})
 	}
 
 	opt := snapclient.NewSnapFileImporterOptions(

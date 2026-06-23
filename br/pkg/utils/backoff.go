@@ -144,10 +144,11 @@ func (rs *RetryState) NextBackoff(error) time.Duration {
 }
 
 type importerBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
-	errContext   *ErrorContext
+	attempt           int
+	delayTime         time.Duration
+	maxDelayTime      time.Duration
+	errContext        *ErrorContext
+	retryGRPCCanceled bool
 }
 
 // NewBackoffer creates a new controller regulating a truncated exponential backoff.
@@ -160,6 +161,21 @@ func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration, errContext
 	}
 }
 
+// NewBackoffer creates a new controller regulating a truncated exponential backoff.
+func NewBackofferWithGRPCCanceledRetry(
+	attempt int,
+	delayTime, maxDelayTime time.Duration,
+	errContext *ErrorContext,
+) Backoffer {
+	return &importerBackoffer{
+		attempt:           attempt,
+		delayTime:         delayTime,
+		maxDelayTime:      maxDelayTime,
+		errContext:        errContext,
+		retryGRPCCanceled: true,
+	}
+}
+
 func NewImportSSTBackoffer() Backoffer {
 	errContext := NewErrorContext("import sst", 3)
 	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval, errContext)
@@ -168,6 +184,12 @@ func NewImportSSTBackoffer() Backoffer {
 func NewDownloadSSTBackoffer() Backoffer {
 	errContext := NewErrorContext("download sst", 3)
 	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval, errContext)
+}
+
+func NewDownloadSSTBackofferWithGRPCCanceledRetry() Backoffer {
+	errContext := NewErrorContext("download sst", 3)
+	return NewBackofferWithGRPCCanceledRetry(
+		downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval, errContext)
 }
 
 func NewBackupSSTBackoffer() Backoffer {
@@ -199,7 +221,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(lastErr) {
+				if isGRPCCancel(lastErr) || bo.retryGRPCCanceled {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
