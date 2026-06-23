@@ -192,15 +192,37 @@ func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
 	require.True(t, decided)
 	require.True(t, curIsBetter)
 
+	nonTopN := mockLogicalPlan4Test{}.Init(ctx.GetPlanCtx())
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(nonTopN, lookupTask, tableTask)
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+
+	topN.SetChildren(logicalop.MockDataSource{}.Init(ctx.GetPlanCtx()))
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	enumeratedTask, hintCanWork, err := enumeratePhysicalPlans4Task(topN, [][]base.PhysicalPlan{
+		{fixedTaskPhysicalPlan4Test{}.Init(ctx.GetPlanCtx(), tableTask)},
+		{fixedTaskPhysicalPlan4Test{}.Init(ctx.GetPlanCtx(), lookupTask)},
+	}, prop, false)
+	require.NoError(t, err)
+	require.False(t, hintCanWork)
+	require.IsType(t, &physicalop.PhysicalIndexLookUpReader{}, enumeratedTask.Plan())
+
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, tableTask, lookupTask)
 	require.True(t, decided)
+	require.False(t, curIsBetter)
+
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, buildTopNTiFlashTableReaderTask(ctx.GetPlanCtx()))
+	require.False(t, decided)
+	require.False(t, curIsBetter)
+
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, buildTopNIndexMergeTask(ctx.GetPlanCtx()))
+	require.False(t, decided)
 	require.False(t, curIsBetter)
 
 	ctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
 	require.True(t, decided)
 	require.True(t, curIsBetter)
-	require.Contains(t, ctx.GetSessionVars().RelevantOptVars, vardef.TiDBOptBoundedLimitIndexLookupThreshold)
 	require.Contains(t, ctx.GetSessionVars().RelevantOptVars, vardef.TiDBOptIndexLookupCostFactor)
 	require.Contains(t, ctx.GetSessionVars().RelevantOptVars, vardef.TiDBOptLimitCostFactor)
 	require.Contains(t, ctx.GetSessionVars().RelevantOptFixes, fixcontrol.Fix69405)
@@ -219,12 +241,16 @@ func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
 	require.False(t, curIsBetter)
 
 	topN.Offset = 0
-	ctx.GetSessionVars().BoundedLimitIndexLookupThreshold = 0
 	lookupTask = buildBoundedLimitIndexLookupTask(ctx.GetPlanCtx(), 0, 26)
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "25"}
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
 	require.False(t, decided)
 	require.False(t, curIsBetter)
-	ctx.GetSessionVars().BoundedLimitIndexLookupThreshold = vardef.DefOptBoundedLimitIndexLookupThreshold
+
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "26"}
+	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+	require.True(t, decided)
+	require.True(t, curIsBetter)
 
 	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: "off"}
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
@@ -284,10 +310,54 @@ func buildBoundedLimitIndexLookupTask(ctx base.PlanContext, offset, count uint64
 
 func buildTopNTableReaderTask(ctx base.PlanContext) *physicalop.RootTask {
 	stats := &property.StatsInfo{RowCount: 100}
-	tableReader := physicalop.PhysicalTableReader{}.Init(ctx, 0)
+	tableReader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
 	topN := physicalop.PhysicalTopN{Count: 26}.Init(ctx, stats, 0)
 	topN.SetChildren(tableReader)
 	task := &physicalop.RootTask{}
 	task.SetPlan(topN)
 	return task
+}
+
+func buildTopNTiFlashTableReaderTask(ctx base.PlanContext) *physicalop.RootTask {
+	stats := &property.StatsInfo{RowCount: 100}
+	tableReader := physicalop.PhysicalTableReader{StoreType: kv.TiFlash, ReadReqType: physicalop.MPP}.Init(ctx, 0)
+	topN := physicalop.PhysicalTopN{Count: 26}.Init(ctx, stats, 0)
+	topN.SetChildren(tableReader)
+	task := &physicalop.RootTask{}
+	task.SetPlan(topN)
+	return task
+}
+
+func buildTopNIndexMergeTask(ctx base.PlanContext) *physicalop.RootTask {
+	stats := &property.StatsInfo{RowCount: 100}
+	partialScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+	partialScan.SetStats(stats)
+	indexMerge := physicalop.PhysicalIndexMergeReader{PartialPlansRaw: []base.PhysicalPlan{partialScan}}.Init(ctx, 0)
+	topN := physicalop.PhysicalTopN{Count: 26}.Init(ctx, stats, 0)
+	topN.SetChildren(indexMerge)
+	task := &physicalop.RootTask{}
+	task.SetPlan(topN)
+	return task
+}
+
+type fixedTaskPhysicalPlan4Test struct {
+	physicalop.BasePhysicalPlan
+	task base.Task
+}
+
+func (p fixedTaskPhysicalPlan4Test) Init(ctx base.PlanContext, task base.Task) *fixedTaskPhysicalPlan4Test {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, "fixedTask", &p, 0)
+	p.task = task
+	p.SetStats(task.Plan().StatsInfo())
+	p.SetChildrenReqProps(make([]*property.PhysicalProperty, 1))
+	p.SetXthChildReqProps(0, property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false))
+	return &p
+}
+
+func (p *fixedTaskPhysicalPlan4Test) Attach2Task(...base.Task) base.Task {
+	return p.task.Copy()
+}
+
+func (*fixedTaskPhysicalPlan4Test) MemoryUsage() (sum int64) {
+	return
 }

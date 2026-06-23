@@ -20,6 +20,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,6 +88,8 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
+const defaultBoundedLimitIndexLookupThreshold uint64 = 500
+
 func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {
 	columnNames, err := rule.ReconstructTableColNames(ds)
 	if err != nil {
@@ -141,6 +144,8 @@ func enumeratePhysicalPlans4Task(
 			if normalTask.Invalid() {
 				normalTask = curTask
 			} else if curIsBetter, decided := preferBoundedLimitIndexLookupForTopN(super, curTask, normalTask); decided {
+				// This hook is intentionally scoped to LogicalTopN. It only runs after
+				// Attach2Task, where a sunk Limit can be observed as IndexLookUp.PushedLimit.
 				if curIsBetter {
 					normalTask = curTask
 				}
@@ -157,6 +162,10 @@ func enumeratePhysicalPlans4Task(
 	return normalTask, false, nil
 }
 
+// preferBoundedLimitIndexLookupForTopN lets a strictly bounded ordered IndexLookUp
+// beat a root TableReader+TopN/Sort competitor when statistics underestimates the
+// table-reader range. It is a no-op for non-TopN logical operators and never
+// overrides valid hint tasks, which are selected before normal task comparison.
 func preferBoundedLimitIndexLookupForTopN(super base.LogicalPlan, curTask, bestTask base.Task) (curIsBetter bool, decided bool) {
 	topN, ok := super.(*logicalop.LogicalTopN)
 	if !ok || topN == nil || bestTask == nil || bestTask.Invalid() {
@@ -182,23 +191,48 @@ func preferBoundedLimitIndexLookupForTopN(super base.LogicalPlan, curTask, bestT
 
 func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool {
 	sessionVars := topN.SCtx().GetSessionVars()
-	sessionVars.RecordRelevantOptVar(vardef.TiDBOptBoundedLimitIndexLookupThreshold)
+	// Fix69405 is the single control surface here: unset means the default
+	// threshold, "off"/"0" disables the preference, and a positive integer
+	// customizes the LIMIT+OFFSET risk bound.
 	sessionVars.RecordRelevantOptVar(vardef.TiDBOptIndexLookupCostFactor)
 	sessionVars.RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
 	sessionVars.RecordRelevantOptFix(fixcontrol.Fix69405)
 
-	if !fixcontrol.GetBoolWithDefault(sessionVars.GetOptimizerFixControlMap(), fixcontrol.Fix69405, true) {
+	threshold, ok := boundedLimitIndexLookupThreshold(sessionVars.GetOptimizerFixControlMap())
+	if !ok {
 		return false
 	}
 	if sessionVars.IndexLookupCostFactor != vardef.DefOptIndexLookupCostFactor ||
 		sessionVars.LimitCostFactor != vardef.DefOptLimitCostFactor {
 		return false
 	}
-	threshold := sessionVars.BoundedLimitIndexLookupThreshold
 	limitWindow := topN.Count + topN.Offset
-	return threshold > 0 && limitWindow >= topN.Count && limitWindow <= threshold
+	return limitWindow >= topN.Count && limitWindow <= threshold
 }
 
+func boundedLimitIndexLookupThreshold(fixControlMap map[uint64]string) (uint64, bool) {
+	raw, exists := fixcontrol.GetStr(fixControlMap, fixcontrol.Fix69405)
+	if !exists {
+		return defaultBoundedLimitIndexLookupThreshold, true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "on", "true":
+		return defaultBoundedLimitIndexLookupThreshold, true
+	case "off", "false", "0":
+		return 0, false
+	}
+	threshold, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || threshold == 0 {
+		return 0, false
+	}
+	return threshold, true
+}
+
+// isPureOrderedLimitIndexLookupForTopN accepts only the simple safe shape:
+// IndexLookUp(limit embedded) with Limit -> ordered IndexScan on the build side
+// and a plain TiKV TableScan on the probe side. Residual filters, partial-order
+// limit variants, IndexLookUpPushDown, TiFlash, and partition/range-group merge
+// shapes are deliberately rejected for the first implementation.
 func isPureOrderedLimitIndexLookupForTopN(t base.Task, topN *logicalop.LogicalTopN) bool {
 	if len(topN.PartitionBy) != 0 {
 		return false
@@ -261,22 +295,36 @@ func isPureOrderedLimitIndexLookupForTopN(t base.Task, topN *logicalop.LogicalTo
 	return indexScan.Prop == nil || indexScan.Prop.PartialOrderInfo == nil
 }
 
+// isBoundedLimitIndexLookupCompetitor keeps the preference narrow: it targets
+// root ordering over a TiKV table reader, not IndexMerge, TiFlash/MPP, point
+// gets, covering index readers, or another lookup candidate that should
+// continue to be compared by cost.
 func isBoundedLimitIndexLookupCompetitor(t base.Task) bool {
 	root, ok := t.(*physicalop.RootTask)
 	if !ok {
 		return false
 	}
-	var hasTableReaderOrRootOrder bool
+	var hasRootOrder bool
+	var hasTiKVTableReader bool
+	var hasExcludedReader bool
 	var hasCoveringOrPointOrLookup bool
 	walkPhysicalPlan(root.GetPlan(), func(p base.PhysicalPlan) {
-		switch p.(type) {
-		case *physicalop.PhysicalTableReader, *physicalop.PhysicalTopN, *physicalop.PhysicalSort:
-			hasTableReaderOrRootOrder = true
+		switch x := p.(type) {
+		case *physicalop.PhysicalTableReader:
+			if x.StoreType == kv.TiKV && x.ReadReqType == physicalop.Cop {
+				hasTiKVTableReader = true
+			} else {
+				hasExcludedReader = true
+			}
+		case *physicalop.PhysicalTopN, *physicalop.PhysicalSort:
+			hasRootOrder = true
+		case *physicalop.PhysicalIndexMergeReader:
+			hasExcludedReader = true
 		case *physicalop.PhysicalIndexReader, *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan, *physicalop.PhysicalIndexLookUpReader:
 			hasCoveringOrPointOrLookup = true
 		}
 	})
-	return hasTableReaderOrRootOrder && !hasCoveringOrPointOrLookup
+	return hasRootOrder && hasTiKVTableReader && !hasExcludedReader && !hasCoveringOrPointOrLookup
 }
 
 func walkPhysicalPlan(p base.PhysicalPlan, fn func(base.PhysicalPlan)) {

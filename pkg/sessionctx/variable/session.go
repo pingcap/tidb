@@ -1067,9 +1067,6 @@ type SessionVars struct {
 	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	LimitPushDownThreshold int64
 
-	// BoundedLimitIndexLookupThreshold controls the maximum LIMIT+OFFSET for preferring bounded ordered IndexLookUp under TopN.
-	BoundedLimitIndexLookupThreshold uint64
-
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -2386,7 +2383,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		preferRangeScan:                  vardef.DefOptPreferRangeScan,
 		EnableCorrelationAdjustment:      vardef.DefOptEnableCorrelationAdjustment,
 		LimitPushDownThreshold:           vardef.DefOptLimitPushDownThreshold,
-		BoundedLimitIndexLookupThreshold: vardef.DefOptBoundedLimitIndexLookupThreshold,
 		CorrelationThreshold:             vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:             vardef.DefOptCorrelationExpFactor,
 		RiskEqSkewRatio:                  vardef.DefOptRiskEqSkewRatio,

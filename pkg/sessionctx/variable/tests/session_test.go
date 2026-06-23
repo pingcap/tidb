@@ -885,43 +885,6 @@ func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
 }
 
-func TestTiDBOptBoundedLimitIndexLookupThresholdSessionAndGlobal(t *testing.T) {
-	sv := variable.GetSysVar(vardef.TiDBOptBoundedLimitIndexLookupThreshold)
-	require.NotNil(t, sv)
-	require.True(t, sv.HasSessionScope())
-	require.True(t, sv.HasGlobalScope())
-	require.True(t, sv.IsHintUpdatableVerified)
-	require.Equal(t, vardef.TypeUnsigned, sv.Type)
-	require.Equal(t, "500", sv.Value)
-	require.Equal(t, int64(0), sv.MinValue)
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustQuery("select @@tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("500"))
-	tk.MustQuery("select @@global.tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("500"))
-
-	tk.MustExec("set @@tidb_opt_bounded_limit_index_lookup_threshold = 123")
-	tk.MustQuery("select @@tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("123"))
-	tk.MustQuery("select @@session.tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("123"))
-	tk.MustQuery("select @@global.tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("500"))
-	require.Equal(t, uint64(123), tk.Session().GetSessionVars().BoundedLimitIndexLookupThreshold)
-
-	tk.MustExec("set @@global.tidb_opt_bounded_limit_index_lookup_threshold = 321")
-	tk.MustQuery("select @@global.tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("321"))
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustQuery("select @@tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("321"))
-	require.Equal(t, uint64(321), tk1.Session().GetSessionVars().BoundedLimitIndexLookupThreshold)
-
-	tk.MustExec("set @@tidb_opt_bounded_limit_index_lookup_threshold = 0")
-	tk.MustQuery("select @@tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_opt_bounded_limit_index_lookup_threshold = default")
-	tk.MustQuery("select @@tidb_opt_bounded_limit_index_lookup_threshold").Check(testkit.Rows("321"))
-	tk.MustExec("set @@global.tidb_opt_bounded_limit_index_lookup_threshold = default")
-}
-
 func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	// Test that the variable exists and has correct properties
 	sv := variable.GetSysVar(vardef.TiDBOptPartialOrderedIndexForTopN)

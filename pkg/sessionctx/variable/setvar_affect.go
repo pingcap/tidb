@@ -40,7 +40,6 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_prefer_range_scan":                      {},
 	"tidb_opt_enable_correlation_adjustment":          {},
 	"tidb_opt_limit_push_down_threshold":              {},
-	"tidb_opt_bounded_limit_index_lookup_threshold":   {},
 	"tidb_opt_correlation_threshold":                  {},
 	"tidb_opt_correlation_exp_factor":                 {},
 	"tidb_opt_cpu_factor":                             {},
