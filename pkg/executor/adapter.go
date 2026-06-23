@@ -219,11 +219,10 @@ func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context
 	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
 }
 
-func (a *recordSet) chunkConfig() ([]*types.FieldType, int, int) {
+func (a *recordSet) chunkConfig() (fields []*types.FieldType, initCap int, maxChunkSize int) {
 	if a.executor != nil {
 		return a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize()
 	}
-	var fields []*types.FieldType
 	if a.schema != nil {
 		fields = make([]*types.FieldType, 0, a.schema.Len())
 		for _, col := range a.schema.Columns {
