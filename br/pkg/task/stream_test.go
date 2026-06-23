@@ -27,7 +27,10 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -216,6 +219,58 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ts, err := getGlobalCheckpointFromStorage(ctx, s)
 	require.Nil(t, err)
 	require.Equal(t, ts, uint64(99))
+}
+
+func TestHasAnyWriteCFLogFile(t *testing.T) {
+	makeLogFile := func(cf string) *logclient.LogDataFileInfo {
+		return &logclient.LogDataFileInfo{
+			DataFileInfo: &backuppb.DataFileInfo{
+				Cf: cf,
+			},
+		}
+	}
+	defaultFile := makeLogFile(consts.DefaultCF)
+	writeFile := makeLogFile(consts.WriteCF)
+
+	cases := []struct {
+		name  string
+		files []*logclient.LogDataFileInfo
+		want  *logclient.LogDataFileInfo
+	}{
+		{
+			name: "empty",
+		},
+		{
+			name:  "default only",
+			files: []*logclient.LogDataFileInfo{defaultFile},
+		},
+		{
+			name: "ignore default before write",
+			files: []*logclient.LogDataFileInfo{
+				defaultFile,
+				writeFile,
+			},
+			want: writeFile,
+		},
+		{
+			name: "write only",
+			files: []*logclient.LogDataFileInfo{
+				writeFile,
+			},
+			want: writeFile,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			file, err := hasAnyWriteCFLogFile(context.Background(), iter.FromSlice(c.files))
+			require.NoError(t, err)
+			require.Same(t, c.want, file)
+		})
+	}
+
+	_, err := hasAnyWriteCFLogFile(context.Background(), iter.Fail[*logclient.LogDataFileInfo](errors.New("failed to read log file")))
+	require.Error(t, err)
 }
 
 func TestGetMaxRecoverableCheckpointFromStoragePrefersResumeState(t *testing.T) {

@@ -78,6 +78,7 @@ go_library(
     ],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/bdr",
         "//pkg/ddl/copr",
@@ -313,6 +314,7 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",

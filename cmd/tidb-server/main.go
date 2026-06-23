@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	_ "github.com/pingcap/tidb/pkg/extension/_import"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -319,6 +320,34 @@ func initDeployMode(cfg *config.Config) error {
 	return deploymode.Set(cfg.DeployMode)
 }
 
+func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extworkload.Manager {
+	cfg := config.GetGlobalConfig().ExternalWorkload
+	if !cfg.Enable {
+		return nil
+	}
+	// Manager init is non-fatal; TiDB can continue without external workload coordination.
+	meta := storage.GetCodec().GetKeyspaceMeta()
+	if meta == nil {
+		logutil.BgLogger().Warn("external workload controller enabled but keyspace meta is unavailable; TiDB will continue without external workload coordination")
+		return nil
+	}
+	mgr, err := extworkload.NewManager(ctx, meta, cfg)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to initialize external workload manager; TiDB will continue without external workload coordination", zap.Error(err))
+		return nil
+	}
+	return mgr
+}
+
+func closeExternalWorkloadManager(mgr extworkload.Manager) {
+	if mgr == nil {
+		return
+	}
+	if err := mgr.Close(); err != nil {
+		logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
+	}
+}
+
 func main() {
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
@@ -451,6 +480,10 @@ func main() {
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
 	repository.SetupRepository(dom)
+	if deploymode.IsStarter() {
+		externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
+		defer closeExternalWorkloadManager(externalWorkloadManager)
+	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
 		standbyController.EndStandby(nil)

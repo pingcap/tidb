@@ -120,6 +120,8 @@ const (
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
+	// FlagRetainLatestMVCCVersion controls whether restore keeps only newest MVCC version from compacted SSTs.
+	FlagRetainLatestMVCCVersion = "retain-latest-mvcc-version"
 
 	FlagResetSysUsers = "reset-sys-users"
 
@@ -303,6 +305,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
+	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -414,6 +418,11 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().Bool(
+		FlagRetainLatestMVCCVersion,
+		false,
+		"restore compacted SSTs by retaining only the newest MVCC version, and require no user DML log files",
+	)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -455,6 +464,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -897,6 +909,13 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
+func restoreOperationCommandName(cmdName string) string {
+	if IsStreamRestore(cmdName) {
+		return "log-restore"
+	}
+	return cmdName
+}
+
 func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF func(context.Context) error, err error) {
 	register := utils.NewTaskRegister(etcdCLI, utils.RegisterRestore, fmt.Sprintf("restore-%s", uuid.New()))
 	err = register.RegisterTask(ctx)
@@ -924,6 +943,10 @@ func printRestoreMetrics() {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
+	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
+
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
@@ -1627,9 +1650,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
-		PDCli:   mgr.GetPDClient(),
-		EtcdCli: mgr.GetDomain().GetEtcdClient(),
-		Storage: util.ProtoV1Clone(u),
+		PDCli:            mgr.GetPDClient(),
+		EtcdCli:          mgr.GetDomain().GetEtcdClient(),
+		Storage:          util.ProtoV1Clone(u),
+		OperationContext: cfg.OperationContext,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2752,6 +2776,9 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 // Similar to resumeOrCreate, it first resolves the restoredTS then finds and deletes the matching paused task
 func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
+	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -2850,6 +2877,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// update config with restore ID to clean up checkpoint
 	cfg.RestoreID = deletedRestoreID
+	setOperationContextRestoreID(&cfg.OperationContext, deletedRestoreID)
 
 	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
 	if len(cfg.CheckpointStorage) > 0 {
