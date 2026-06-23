@@ -1936,6 +1936,29 @@ func TestMaxMinEliminate(t *testing.T) {
 	}
 }
 
+func TestSemiJoinRewriteWithCTEAndMultipleExists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (0), (1)")
+	tk.MustQuery(`with c as (select * from t)
+select max(t.a)
+from t
+where exists (
+select /*+ SEMI_JOIN_REWRITE() */ 1
+from c
+where c.a < 1
+)
+and exists (
+select 1
+from c
+where c.a < 2
+)`).Check(testkit.Rows("1"))
+}
+
 func TestINLJHintSmallTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
