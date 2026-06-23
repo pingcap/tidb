@@ -76,7 +76,9 @@ var (
 var TableLogReplStatusGlobalCols = []columnInfo{
 	{name: "REPLICATION_NAME", tp: mysql.TypeVarchar, flag: mysql.PriKeyFlag | mysql.NotNullFlag, size: 64},
 	{name: "REPLICA_CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 21},
+	{name: "REPLICA_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SOURCE_CLUSTER_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "SOURCE_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PROTECTION_MODE", tp: mysql.TypeEnum, enumElems: ProtectionModeStrs, flag: mysql.NotNullFlag, size: 64},
 	{name: "DEGRADE_TIMEOUT", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},
 	{name: "REPLICATION_STATE", tp: mysql.TypeVarchar, flag: mysql.NotNullFlag, size: 64},
@@ -91,7 +93,9 @@ var TableLogReplStatusGlobalCols = []columnInfo{
 // TableLogReplClusterStatusGlobalCols contains column definitions for LR_CLUSTER_STATUS_GLOBAL table.
 var TableLogReplClusterStatusGlobalCols = []columnInfo{
 	{name: "CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag, size: 21},
+	{name: "CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SOURCE_CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},
+	{name: "SOURCE_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "ROLE", tp: mysql.TypeEnum, enumElems: ClusterRoleStrs, flag: mysql.NotNullFlag, size: 32},
 	{name: "SWITCHOVER_READY", tp: mysql.TypeEnum, enumElems: ReadyStatusStrs, size: 16},
 	{name: "FAILOVER_READY", tp: mysql.TypeEnum, enumElems: ReadyStatusStrs, size: 16},
@@ -104,7 +108,9 @@ var TableLogReplWorkflowHistoryGlobalCols = []columnInfo{
 	{name: "WORKFLOW_ID", tp: mysql.TypeLonglong, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag, size: 21},
 	{name: "REPLICATION_NAME", tp: mysql.TypeVarchar, flag: mysql.NotNullFlag, size: 64},
 	{name: "REPLICA_CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 21},
+	{name: "REPLICA_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SOURCE_CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 21},
+	{name: "SOURCE_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "WORKFLOW_TYPE", tp: mysql.TypeVarchar, flag: mysql.NotNullFlag, size: 32},
 	{name: "WORKFLOW_INFO", tp: mysql.TypeVarchar, size: 65535},
 	{name: "START_TIME", tp: mysql.TypeTimestamp, size: 26},
@@ -112,16 +118,19 @@ var TableLogReplWorkflowHistoryGlobalCols = []columnInfo{
 	{name: "WORKFLOW_STATE", tp: mysql.TypeVarchar, flag: mysql.NotNullFlag, size: 32},
 	{name: "WORKFLOW_STATE_INFO", tp: mysql.TypeVarchar, size: 65535},
 	{name: "INITIATOR_CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag | mysql.NotNullFlag, size: 21},
+	{name: "INITIATOR_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 }
 
 // TableLogReplStatusLocalCols contains column definitions for LR_STATUS_LOCAL table.
 var TableLogReplStatusLocalCols = []columnInfo{
 	{name: "CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag, size: 21},
+	{name: "CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "ROLE", tp: mysql.TypeEnum, enumElems: ClusterRoleStrs, flag: mysql.NotNullFlag, size: 32},
 	{name: "HAS_REPLICA", tp: mysql.TypeTiny, flag: mysql.NotNullFlag, size: 1},
 	{name: "LAST_GLOBAL_UPDATE", tp: mysql.TypeTimestamp, size: 26},
 	{name: "REPLICATION_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SOURCE_CLUSTER_ID", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},
+	{name: "SOURCE_CLUSTER_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SOURCE_PD_ADDRS", tp: mysql.TypeVarchar, size: 65535},
 	{name: "PROTECTION_MODE", tp: mysql.TypeEnum, enumElems: ProtectionModeStrs, size: 64},
 	{name: "DEGRADE_TIMEOUT", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},

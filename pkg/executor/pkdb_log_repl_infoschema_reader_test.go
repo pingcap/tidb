@@ -36,33 +36,36 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 	t.Run("primary", func(t *testing.T) {
 		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
 			Status: &pdpb.LogReplicationStatus{
-				ReplicaClusterId: 1001,
+				ReplicaClusterId:   1001,
+				ReplicaClusterName: "prod-east",
 			},
 			HasReplica:         true,
 			LastGlobalUpdateTs: 1710000000,
 		})
 		require.NoError(t, err)
-		require.Len(t, row, 17)
+		require.Len(t, row, 19)
 		require.Equal(t, uint64(1001), row[0].GetUint64()) // CLUSTER_ID
-		requireEnum(t, row, 1, "PRIMARY")                  // ROLE
-		require.Equal(t, int64(1), row[2].GetInt64())      // HAS_REPLICA
+		require.Equal(t, "prod-east", row[1].GetString())  // CLUSTER_NAME
+		requireEnum(t, row, 2, "PRIMARY")                  // ROLE
+		require.Equal(t, int64(1), row[3].GetInt64())      // HAS_REPLICA
 		require.Equal(t,
 			types.NewTime(types.FromGoTime(time.Unix(1710000000, 0)), mysql.TypeTimestamp, types.DefaultFsp),
-			row[3].GetMysqlTime(), // LAST_GLOBAL_UPDATE
+			row[4].GetMysqlTime(), // LAST_GLOBAL_UPDATE
 		)
-		requireNull(t, row, 4)  // REPLICATION_NAME
-		requireNull(t, row, 5)  // SOURCE_CLUSTER_ID
-		requireNull(t, row, 6)  // SOURCE_PD_ADDRS
-		requireNull(t, row, 7)  // PROTECTION_MODE
-		requireNull(t, row, 8)  // DEGRADE_TIMEOUT
-		requireNull(t, row, 9)  // REPLICATION_STATE
-		requireNull(t, row, 10) // REPLICATION_MODE
-		requireNull(t, row, 11) // CHECKPOINT_TS
-		requireNull(t, row, 12) // CHECKPOINT_TIME
-		requireNull(t, row, 13) // CHECKPOINT_LAG
-		requireNull(t, row, 14) // SWITCHOVER_READY
-		requireNull(t, row, 15) // FAILOVER_READY
-		requireNull(t, row, 16) // INITIALIZING_PROGRESS
+		requireNull(t, row, 5)  // REPLICATION_NAME
+		requireNull(t, row, 6)  // SOURCE_CLUSTER_ID
+		requireNull(t, row, 7)  // SOURCE_CLUSTER_NAME
+		requireNull(t, row, 8)  // SOURCE_PD_ADDRS
+		requireNull(t, row, 9)  // PROTECTION_MODE
+		requireNull(t, row, 10) // DEGRADE_TIMEOUT
+		requireNull(t, row, 11) // REPLICATION_STATE
+		requireNull(t, row, 12) // REPLICATION_MODE
+		requireNull(t, row, 13) // CHECKPOINT_TS
+		requireNull(t, row, 14) // CHECKPOINT_TIME
+		requireNull(t, row, 15) // CHECKPOINT_LAG
+		requireNull(t, row, 16) // SWITCHOVER_READY
+		requireNull(t, row, 17) // FAILOVER_READY
+		requireNull(t, row, 18) // INITIALIZING_PROGRESS
 	})
 
 	t.Run("standby full status", func(t *testing.T) {
@@ -71,7 +74,9 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			Status: &pdpb.LogReplicationStatus{
 				Name:                 "dr_east",
 				ReplicaClusterId:     1002,
+				ReplicaClusterName:   "prod-dr",
 				SourceClusterId:      1001,
+				SourceClusterName:    "prod-east",
 				SourcePdAddrs:        []string{"127.0.0.1:2379", "127.0.0.2:2379"},
 				State:                "SYNC_REPLICATING",
 				ReplicationMode:      "SYNC",
@@ -87,25 +92,28 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			LastGlobalUpdateTs: 1710000001,
 		})
 		require.NoError(t, err)
+		require.Len(t, row, 19)
 		require.Equal(t, uint64(1002), row[0].GetUint64()) // CLUSTER_ID
-		requireEnum(t, row, 1, "STANDBY")                  // ROLE
-		require.Equal(t, int64(0), row[2].GetInt64())      // HAS_REPLICA
-		require.Equal(t, "dr_east", row[4].GetString())
-		require.Equal(t, uint64(1001), row[5].GetUint64())
-		require.Equal(t, "127.0.0.1:2379,127.0.0.2:2379", row[6].GetString())
-		requireEnum(t, row, 7, "MAXIMUM_AVAILABILITY")
-		require.Equal(t, uint64(30), row[8].GetUint64())
-		require.Equal(t, "SYNC_REPLICATING", row[9].GetString())
-		requireEnum(t, row, 10, "SYNC")
-		require.Equal(t, checkpointTS, row[11].GetUint64())
+		require.Equal(t, "prod-dr", row[1].GetString())    // CLUSTER_NAME
+		requireEnum(t, row, 2, "STANDBY")                  // ROLE
+		require.Equal(t, int64(0), row[3].GetInt64())      // HAS_REPLICA
+		require.Equal(t, "dr_east", row[5].GetString())
+		require.Equal(t, uint64(1001), row[6].GetUint64())
+		require.Equal(t, "prod-east", row[7].GetString()) // SOURCE_CLUSTER_NAME
+		require.Equal(t, "127.0.0.1:2379,127.0.0.2:2379", row[8].GetString())
+		requireEnum(t, row, 9, "MAXIMUM_AVAILABILITY")
+		require.Equal(t, uint64(30), row[10].GetUint64())
+		require.Equal(t, "SYNC_REPLICATING", row[11].GetString())
+		requireEnum(t, row, 12, "SYNC")
+		require.Equal(t, checkpointTS, row[13].GetUint64())
 		require.Equal(t,
 			types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(checkpointTS)), mysql.TypeTimestamp, types.DefaultFsp),
-			row[12].GetMysqlTime(),
+			row[14].GetMysqlTime(),
 		)
-		require.Equal(t, uint64(3), row[13].GetUint64())
-		requireEnum(t, row, 14, "YES")
-		requireEnum(t, row, 15, "NO")
-		require.Equal(t, float32(88.5), row[16].GetFloat32())
+		require.Equal(t, uint64(3), row[15].GetUint64())
+		requireEnum(t, row, 16, "YES")
+		requireEnum(t, row, 17, "NO")
+		require.Equal(t, float32(88.5), row[18].GetFloat32())
 	})
 
 	t.Run("standby empty ready status", func(t *testing.T) {
@@ -117,11 +125,13 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		requireEnum(t, row, 7, "MAXIMUM_PERFORMANCE")
-		requireNull(t, row, 8) // DEGRADE_TIMEOUT
-		requireEnum(t, row, 10, "UNKNOWN")
-		requireEnum(t, row, 14, "UNKNOWN")
-		requireEnum(t, row, 15, "UNKNOWN")
+		requireEnum(t, row, 9, "MAXIMUM_PERFORMANCE")
+		requireNull(t, row, 10) // DEGRADE_TIMEOUT
+		requireEnum(t, row, 12, "UNKNOWN")
+		requireEnum(t, row, 16, "UNKNOWN")
+		requireEnum(t, row, 17, "UNKNOWN")
+		requireNull(t, row, 1) // CLUSTER_NAME
+		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
 	})
 
 	t.Run("standby no checkpoint", func(t *testing.T) {
@@ -134,11 +144,13 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		requireEnum(t, row, 7, "MAXIMUM_PROTECTION")
-		requireNull(t, row, 8)  // DEGRADE_TIMEOUT
-		requireNull(t, row, 11) // CHECKPOINT_TS
-		requireNull(t, row, 12) // CHECKPOINT_TIME
-		requireNull(t, row, 13) // CHECKPOINT_LAG
+		requireEnum(t, row, 9, "MAXIMUM_PROTECTION")
+		requireNull(t, row, 10) // DEGRADE_TIMEOUT
+		requireNull(t, row, 13) // CHECKPOINT_TS
+		requireNull(t, row, 14) // CHECKPOINT_TIME
+		requireNull(t, row, 15) // CHECKPOINT_LAG
+		requireNull(t, row, 1)  // CLUSTER_NAME
+		requireNull(t, row, 7)  // SOURCE_CLUSTER_NAME
 	})
 
 	t.Run("standby unknown checkpoint lag", func(t *testing.T) {
@@ -152,8 +164,10 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.Equal(t, uint64(449123456789000000), row[11].GetUint64())
-		require.Equal(t, ^uint64(0), row[13].GetUint64())
+		require.Equal(t, uint64(449123456789000000), row[13].GetUint64())
+		require.Equal(t, ^uint64(0), row[15].GetUint64())
+		requireNull(t, row, 1) // CLUSTER_NAME
+		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
 	})
 
 	t.Run("unsupported protection mode", func(t *testing.T) {
@@ -165,6 +179,8 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		requireEnum(t, row, 7, "UNKNOWN")
+		requireEnum(t, row, 9, "UNKNOWN")
+		requireNull(t, row, 1) // CLUSTER_NAME
+		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
 	})
 }
