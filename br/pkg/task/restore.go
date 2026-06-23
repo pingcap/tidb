@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -87,6 +88,10 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagRegionScanConcurrency controls max in-flight region scan requests to PD during restore.
 	FlagRegionScanConcurrency = "region-scan-concurrency"
+	// FlagSplitRegionIndexStep controls the split-key index step used by rough split during snapshot restore.
+	FlagSplitRegionIndexStep = "split-region-index-step"
+	// FlagCoarseScatter controls whether only rough split regions are scattered during snapshot restore.
+	FlagCoarseScatter = "coarse-scatter"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
@@ -273,6 +278,8 @@ type RestoreConfig struct {
 	FastLoadSysTables     bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
 	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	RegionScanConcurrency uint          `json:"region-scan-concurrency" toml:"region-scan-concurrency"`
+	SplitRegionIndexStep  uint          `json:"split-region-index-step" toml:"split-region-index-step"`
+	CoarseScatter         bool          `json:"coarse-scatter" toml:"coarse-scatter"`
 	StatsConcurrency      uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval    time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
@@ -401,6 +408,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
 	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
 		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
+	flags.Uint(FlagSplitRegionIndexStep, restoresplit.DefaultRegionIndexStep,
+		"number of split-key indexes between two rough split keys during snapshot restore.")
+	_ = flags.MarkHidden(FlagSplitRegionIndexStep)
+	flags.Bool(FlagCoarseScatter, false, "only scatter regions from rough split during snapshot restore")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -514,6 +525,17 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.RegionScanConcurrency, err = flags.GetUint(FlagRegionScanConcurrency)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagRegionScanConcurrency)
+	}
+	cfg.SplitRegionIndexStep, err = flags.GetUint(FlagSplitRegionIndexStep)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSplitRegionIndexStep)
+	}
+	if cfg.SplitRegionIndexStep == 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%s must be greater than 0", FlagSplitRegionIndexStep)
+	}
+	cfg.CoarseScatter, err = flags.GetBool(FlagCoarseScatter)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagCoarseScatter)
 	}
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
@@ -661,6 +683,7 @@ func (cfg *RestoreConfig) Adjust() {
 	if cfg.PDConcurrency == 0 {
 		cfg.PDConcurrency = defaultPDConcurrency
 	}
+	cfg.SplitRegionIndexStep = restoresplit.NormalizeRegionIndexStep(cfg.SplitRegionIndexStep)
 	if cfg.StatsConcurrency == 0 {
 		cfg.StatsConcurrency = defaultStatsConcurrency
 	}
@@ -802,6 +825,8 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
+	client.SetSplitRegionIndexStep(cfg.SplitRegionIndexStep)
+	client.SetCoarseScatter(cfg.CoarseScatter)
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}

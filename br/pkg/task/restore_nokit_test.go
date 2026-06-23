@@ -53,3 +53,37 @@ func TestRestorePhaseRequiresCheckpoint(t *testing.T) {
 	require.ErrorContains(t, err, FlagRestorePhase)
 	require.ErrorContains(t, err, flagUseCheckpoint)
 }
+
+func TestSplitRegionIndexStepFlag(t *testing.T) {
+	t.Run("coarse scatter", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set("coarse-scatter", "true"))
+
+		cfg := &RestoreConfig{}
+		require.NoError(t, cfg.ParseFromFlags(flags, true))
+		require.True(t, cfg.CoarseScatter)
+	})
+
+	t.Run("custom", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set(FlagSplitRegionIndexStep, "64"))
+
+		cfg := &RestoreConfig{}
+		require.NoError(t, cfg.ParseFromFlags(flags, true))
+		require.Equal(t, uint(64), cfg.SplitRegionIndexStep)
+	})
+
+	t.Run("zero", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set(FlagSplitRegionIndexStep, "0"))
+
+		cfg := &RestoreConfig{}
+		err := cfg.ParseFromFlags(flags, true)
+		require.Error(t, err)
+		require.ErrorContains(t, err, FlagSplitRegionIndexStep)
+		require.ErrorContains(t, err, "greater than 0")
+	})
+}
