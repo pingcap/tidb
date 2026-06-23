@@ -31,7 +31,9 @@ go_library(
         "//pkg/store/driver/options",
         "//pkg/util",
         "//pkg/util/execdetails",
+        "//pkg/util/hack",
         "//pkg/util/intest",
+        "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
@@ -87,7 +89,11 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 33,
+=======
+    shard_count = 43,
+>>>>>>> 84f3ca52e57 (planner: cache mpp info to avoid frequent grpc calling (#65694))
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",
