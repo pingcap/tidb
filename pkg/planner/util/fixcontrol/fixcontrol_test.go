@@ -102,8 +102,8 @@ func TestGetPositiveUintWithDefault(t *testing.T) {
 		ok    bool
 	}{
 		{name: "missing", value: 12345, ok: true},
-		{name: "on", input: map[uint64]string{1: "on"}, value: 12345, ok: true},
-		{name: "true", input: map[uint64]string{1: "true"}, value: 12345, ok: true},
+		{name: "on", input: map[uint64]string{1: "on"}, ok: false},
+		{name: "true", input: map[uint64]string{1: "true"}, ok: false},
 		{name: "off", input: map[uint64]string{1: "off"}, ok: false},
 		{name: "false", input: map[uint64]string{1: "false"}, ok: false},
 		{name: "zero", input: map[uint64]string{1: "0"}, ok: false},

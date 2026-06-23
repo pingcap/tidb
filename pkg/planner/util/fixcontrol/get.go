@@ -76,7 +76,7 @@ const (
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
 	// Fix69405 controls the LIMIT+OFFSET threshold for preferring bounded ordered IndexLookUp under TopN.
-	// Unset or "on" uses the default threshold; "off" or "0" disables it; a positive integer overrides the threshold.
+	// Unset uses the default threshold, 0 disables it, and a positive integer overrides the threshold.
 	Fix69405 uint64 = 69405
 )
 
@@ -151,18 +151,11 @@ func GetIntWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal i
 }
 
 // GetPositiveUintWithDefault fetches the given key from the fix control map as a positive uint64 type.
-// Missing, "on", and "true" values use the default. "off", "false", invalid, and non-positive
-// values disable the control and return false.
+// Missing values use the default. Invalid and non-positive values disable the control and return false.
 func GetPositiveUintWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal uint64) (uint64, bool) {
 	rawValue, exists := GetStr(fixControlMap, key)
 	if !exists {
 		return defaultVal, defaultVal > 0
-	}
-	switch strings.ToLower(strings.TrimSpace(rawValue)) {
-	case "on", "true":
-		return defaultVal, defaultVal > 0
-	case "off", "false":
-		return 0, false
 	}
 	value := GetIntWithDefault(map[uint64]string{key: strings.TrimSpace(rawValue)}, key, 0)
 	if value <= 0 {
