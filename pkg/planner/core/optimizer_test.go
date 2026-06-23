@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -273,6 +275,38 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
+	t.Run("refresh cached logical cores when tiflash restarts", func(t *testing.T) {
+		const staleAddr = "127.0.0.1:3933"
+		const validAddr = "127.0.0.2:3933"
+		copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+		copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		t.Cleanup(func() {
+			copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+			copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		})
+
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         staleAddr,
+			LogicalCPUCount: 8,
+			StartTimestamp:  100,
+		})
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         validAddr,
+			LogicalCPUCount: 16,
+			StartTimestamp:  200,
+		})
+
+		serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache([]infoschema.ServerInfo{
+			{Address: staleAddr, StartTimestamp: 101},
+			{Address: validAddr, StartTimestamp: 200},
+		})
+
+		require.Equal(t, uint64(16), minLogicalCores)
+		require.Len(t, serversNeedingRefresh, 1)
+		require.Equal(t, staleAddr, serversNeedingRefresh[0].Address)
+		require.Equal(t, int64(101), serversNeedingRefresh[0].StartTimestamp)
+	})
+
 	sortItem := property.SortItem{
 		Col:  nil,
 		Desc: true,
