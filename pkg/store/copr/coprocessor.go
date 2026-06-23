@@ -1038,13 +1038,8 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	// requestRateLimit controls the aggregate number of in-flight cop requests.
-	// The token lifecycle is tied to request send/response receive instead of result consumption.
-	// Today this field carries only request-local limiters. Query-scoped
-	// per-store limiters are resolved per task after the target store is known.
-	requestRateLimit kv.CoprRequestLimiter
-	vars             *tikv.Variables
-	kvclient         *txnsnapshot.ClientHelper
+	vars     *tikv.Variables
+	kvclient *txnsnapshot.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -1244,7 +1239,6 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		req:                     it.req,
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
-		requestRateLimit:        it.req.CoprRequestRateLimit,
 		vars:                    it.vars,
 		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
@@ -1820,7 +1814,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	if exit {
 		return nil, nil
 	}
-	releaseRequestRateLimit, exit := acquireCoprRequestLimiter(worker.requestRateLimit, worker.finishCh)
+	releaseRequestRateLimit, exit := acquireCoprRequestLimiter(worker.req.CoprRequestRateLimit, worker.finishCh)
 	if exit {
 		if releaseQueryCopStoreLimiter != nil {
 			releaseQueryCopStoreLimiter()
