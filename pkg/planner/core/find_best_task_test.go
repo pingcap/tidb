@@ -292,6 +292,13 @@ func testPreferBoundedLimitIndexLookupForTopN(t *testing.T) {
 	curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
 	require.False(t, decided)
 	require.False(t, curIsBetter)
+
+	for _, invalidFixControl := range []string{"false", "bad", "1.5", "9223372036854775808"} {
+		ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{fixcontrol.Fix69405: invalidFixControl}
+		curIsBetter, decided = preferBoundedLimitIndexLookupForTopN(topN, lookupTask, tableTask)
+		require.False(t, decided, invalidFixControl)
+		require.False(t, curIsBetter, invalidFixControl)
+	}
 	ctx.GetSessionVars().OptimizerFixControl = nil
 
 	ctx.GetSessionVars().IndexLookupCostFactor = vardef.DefOptIndexLookupCostFactor + 1

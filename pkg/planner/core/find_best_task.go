@@ -210,12 +210,12 @@ func boundedLimitIndexLookupPreferenceEnabled(topN *logicalop.LogicalTopN) bool 
 }
 
 func boundedLimitIndexLookupThreshold(fixControlMap map[uint64]string) (uint64, bool) {
-	threshold := fixcontrol.GetIntWithDefault(
+	threshold, ok := fixcontrol.GetPositiveIntWithDefault(
 		fixControlMap,
 		fixcontrol.Fix69405,
 		int64(defaultBoundedLimitIndexLookupThreshold),
 	)
-	if threshold <= 0 {
+	if !ok {
 		return 0, false
 	}
 	return uint64(threshold), true
