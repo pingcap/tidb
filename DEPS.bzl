@@ -5528,11 +5528,11 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "ba10afca9d8a6b109d95c27a55d348a453791763cb676aa8396a4769f3f95a99",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260602101655-f8184e7702eb",
+        sha256 = "4895424dfa114121a3cabf8b29e9a61f2e42ad1ac4f124875ad1a52f7718c1b6",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260609033303-412e01458771",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260602101655-f8184e7702eb.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260602101655-f8184e7702eb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260609033303-412e01458771.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260609033303-412e01458771.zip",
         ],
     )
     go_repository(

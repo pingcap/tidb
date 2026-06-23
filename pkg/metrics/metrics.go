@@ -107,6 +107,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	InitExternalWorkloadMetrics()
 	InitStmtSummaryMetrics()
 	dxfmetric.InitDistTaskMetrics()
 	ingestmetric.InitIngestMetrics()
@@ -291,6 +292,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLInsertRowsCount)
 	prometheus.MustRegister(TTLWatermarkDelay)
 	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(ExternalWorkloadTaskCounter)
 
 	prometheus.MustRegister(timermetrics.TimerEventCounter)
 
