@@ -81,8 +81,7 @@ type CheckpointAdvancer struct {
 	// once tick begin, this should not be changed for now.
 	cfg config.Config
 
-	logBackupFlushIntervalGetter LogBackupFlushIntervalGetter
-	resolveLockInterval          atomic.Int64
+	resolveLockInterval atomic.Int64
 
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
@@ -111,8 +110,6 @@ const (
 	logBackupConfigRefreshInterval = time.Minute
 	logBackupConfigFetchTimeout    = 10 * time.Second
 )
-
-type LogBackupFlushIntervalGetter func(context.Context) (time.Duration, error)
 
 // HasTask returns whether the advancer has been bound to a task.
 func (c *CheckpointAdvancer) HasTask() bool {
@@ -205,11 +202,6 @@ func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
 	c.cfg = newConf
 }
 
-// SetLogBackupFlushIntervalGetter sets a getter that periodically refreshes TiKV log-backup.flush-interval.
-func (c *CheckpointAdvancer) SetLogBackupFlushIntervalGetter(getter LogBackupFlushIntervalGetter) {
-	c.logBackupFlushIntervalGetter = getter
-}
-
 func (c *CheckpointAdvancer) getResolveLockInterval() time.Duration {
 	if interval := time.Duration(c.resolveLockInterval.Load()); interval > 0 {
 		return interval
@@ -235,9 +227,6 @@ func (c *CheckpointAdvancer) GetInResolvingLock() bool {
 }
 
 func (c *CheckpointAdvancer) spawnLogBackupConfigUpdater(ctx context.Context) {
-	if c.logBackupFlushIntervalGetter == nil {
-		return
-	}
 	go c.runLogBackupConfigUpdater(ctx)
 }
 
@@ -256,16 +245,13 @@ func (c *CheckpointAdvancer) runLogBackupConfigUpdater(ctx context.Context) {
 }
 
 func (c *CheckpointAdvancer) refreshLogBackupFlushInterval(ctx context.Context) {
-	if c.logBackupFlushIntervalGetter == nil {
-		return
-	}
 	timeout := c.Config().TickTimeout()
 	if timeout < logBackupConfigFetchTimeout {
 		timeout = logBackupConfigFetchTimeout
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	flushInterval, err := c.logBackupFlushIntervalGetter(fetchCtx)
+	flushInterval, err := c.env.GetLogBackupFlushInterval(fetchCtx)
 	if err != nil {
 		log.Warn("failed to refresh TiKV log-backup.flush-interval; keep previous resolve lock interval",
 			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),

@@ -83,6 +83,25 @@ func GetAllTiKVStores(
 	return stores[:j], nil
 }
 
+func GetAllTiKVStoresWithRetry(ctx context.Context,
+	pdClient StoreMeta,
+	storeBehavior StoreBehavior,
+) ([]*metapb.Store, error) {
+	stores := make([]*metapb.Store, 0)
+	var err error
+
+	errRetry := utils.WithRetry(
+		ctx,
+		func() error {
+			stores, err = GetAllTiKVStores(ctx, pdClient, storeBehavior)
+			return errors.Trace(err)
+		},
+		utils.NewAggressivePDBackoffStrategy(),
+	)
+
+	return stores, errors.Trace(errRetry)
+}
+
 // GetCurrentTsFromPD gets current ts from PD.
 func GetCurrentTsFromPD(ctx context.Context, pdClient pd.Client) (uint64, error) {
 	p, l, err := pdClient.GetTS(ctx)

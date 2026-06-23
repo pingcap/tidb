@@ -809,15 +809,15 @@ func TestResolveLockIntervalUsesTiKVFlushInterval(t *testing.T) {
 	})
 	require.Equal(t, 100*time.Millisecond, adv.TESTResolveLockInterval())
 
-	adv.SetLogBackupFlushIntervalGetter(func(context.Context) (time.Duration, error) {
+	env.getLogBackupFlushInterval = func(context.Context) (time.Duration, error) {
 		return 180 * time.Millisecond, nil
-	})
+	}
 	adv.TESTRefreshLogBackupFlushInterval(context.Background())
 	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
 
-	adv.SetLogBackupFlushIntervalGetter(func(context.Context) (time.Duration, error) {
+	env.getLogBackupFlushInterval = func(context.Context) (time.Duration, error) {
 		return 0, errors.New("tikv config is temporarily unavailable")
-	})
+	}
 	adv.TESTRefreshLogBackupFlushInterval(context.Background())
 	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
 }

@@ -982,13 +982,6 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCLI)
 	advancer := streamhelper.NewCommandCheckpointAdvancer(env)
 	advancer.UpdateConfig(&cfg.AdvancerCfg)
-	httpCli := httputil.NewClient(mgr.GetTLSConfig())
-	advancer.SetLogBackupFlushIntervalGetter(func(ctx context.Context) (time.Duration, error) {
-		return streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(ctx,
-			func(ctx context.Context, collect func([]byte) error) error {
-				return mgr.GetConfigBytesFromTiKV(ctx, httpCli, collect)
-			})
-	})
 	ownerMgr := streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI)
 	defer func() {
 		ownerMgr.Close()

@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/configtypes"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -48,6 +49,13 @@ type Env interface {
 	StreamMeta
 	// GCLockResolver try to resolve locks when region checkpoint stopped.
 	tikv.RegionLockResolver
+	// LogBackupFlushIntervalGetter fetches TiKV log-backup.flush-interval for resolving locks.
+	LogBackupFlushIntervalGetter
+}
+
+// LogBackupFlushIntervalGetter fetches TiKV log-backup.flush-interval.
+type LogBackupFlushIntervalGetter interface {
+	GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error)
 }
 
 // PDRegionScanner is a simple wrapper over PD
@@ -122,6 +130,8 @@ type clusterEnv struct {
 	*AdvancerExt
 	PDRegionScanner
 	*AdvancerLockResolver
+
+	fetchTiKVConfigs func(context.Context, func([]byte) error) error
 }
 
 var _ Env = &clusterEnv{}
@@ -143,14 +153,30 @@ func (t clusterEnv) ClearCache(ctx context.Context, storeID uint64) error {
 	return t.clis.RemoveConn(ctx, storeID)
 }
 
+func (t clusterEnv) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
+	return GetLogBackupFlushIntervalFromTiKVConfig(ctx, t.fetchTiKVConfigs)
+}
+
 // CliEnv creates the Env for CLI usage.
 func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.Client) Env {
 	cli.ResetPDClientCallerComponent(caller.Pitr)
+	configHTTPPrefix := "http://"
+	if cli.TLSConfig() != nil {
+		configHTTPPrefix = "https://"
+	}
+	configHTTPClient := httputil.NewClient(cli.TLSConfig())
 	return clusterEnv{
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner:      PDRegionScanner{cli.PDClient()},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
+		fetchTiKVConfigs: func(ctx context.Context, collect func([]byte) error) error {
+			stores, err := connutil.GetAllTiKVStoresWithRetry(ctx, cli.PDClient(), connutil.SkipTiFlash)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return connutil.GetConfigBytesFromTiKVStores(ctx, stores, configHTTPClient, configHTTPPrefix, collect)
+		},
 	}
 }
 
@@ -161,6 +187,8 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 		return nil, err
 	}
 	pitrPDClient := pdCli.WithCallerComponent(caller.Pitr)
+	configHTTPClient := tidbutil.InternalHTTPClient()
+	configHTTPPrefix := tidbutil.InternalHTTPSchema() + "://"
 	env := clusterEnv{
 		clis: utils.NewStoreManager(pitrPDClient, keepalive.ClientParameters{
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
@@ -169,23 +197,17 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner:      PDRegionScanner{Client: pitrPDClient},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
+		fetchTiKVConfigs: func(ctx context.Context, collect func([]byte) error) error {
+			stores, err := connutil.GetAllTiKVStores(ctx, pitrPDClient, connutil.SkipTiFlash)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return connutil.GetConfigBytesFromTiKVStores(ctx, stores, configHTTPClient, configHTTPPrefix, collect)
+		},
 	}
 
 	env.clis.DialTimeout = dialTimeOut
 	return env, nil
-}
-
-func NewTiDBLogBackupFlushIntervalGetter(pdClient pd.Client) LogBackupFlushIntervalGetter {
-	return func(ctx context.Context) (time.Duration, error) {
-		return GetLogBackupFlushIntervalFromTiKVConfig(ctx, func(ctx context.Context, collect func([]byte) error) error {
-			stores, err := connutil.GetAllTiKVStores(ctx, pdClient, connutil.SkipTiFlash)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return connutil.GetConfigBytesFromTiKVStores(ctx, stores, tidbutil.InternalHTTPClient(),
-				tidbutil.InternalHTTPSchema()+"://", collect)
-		})
-	}
 }
 
 func GetLogBackupFlushIntervalFromTiKVConfig(

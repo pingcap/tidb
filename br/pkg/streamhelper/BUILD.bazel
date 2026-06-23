@@ -33,6 +33,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/engine",
+        "//pkg/util/httputil",
         "//pkg/util/redact",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
