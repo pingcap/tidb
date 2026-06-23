@@ -6,6 +6,7 @@ go_library(
         "config.go",
         "config_util.go",
         "const.go",
+        "external_workload.go",
         "keyspace_observability.go",
         "store.go",
         "tiflash.go",
@@ -45,7 +46,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 37,
+    shard_count = 38,
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",

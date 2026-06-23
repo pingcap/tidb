@@ -465,6 +465,14 @@ engines = ["tikv", "tiflash", "tidb"]
 # stmt-log-field = "stmt_log_field"
 # required = false
 
+# Coordinates selected background workloads with an external workload controller.
+# Only valid when deploy-mode is starter.
+# [external-workload]
+# enable = false
+# role = "master"
+# tidb-pool = "vip-tidb-pool"
+# controller-addr = "http://external-workload-controller:9080"
+
 # Starter-only extension parameters.
 [starter-params]
 # The maximum total real source data size allowed for IMPORT INTO. 0B means unlimited.

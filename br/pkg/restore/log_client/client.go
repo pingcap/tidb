@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
@@ -186,6 +187,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	operationContext  operation.Context
 	checkRequirements bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
@@ -202,6 +204,23 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+	rc.setOperationContextRestoreID(restoreID)
+}
+
+// SetOperationContext sets command-scoped metadata used for storage locks.
+func (rc *LogClient) SetOperationContext(operationContext operation.Context) {
+	rc.operationContext = operationContext
+	rc.setOperationContextRestoreID(rc.restoreID)
+}
+
+const operationHintRestoreID = "restore_id"
+
+func (rc *LogClient) setOperationContextRestoreID(restoreID uint64) {
+	if restoreID == 0 {
+		rc.operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	rc.operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
@@ -293,22 +312,20 @@ func (rc *LogClient) rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules)
 	return rules, nil
 }
 
-func (rc *LogClient) RestoreSSTFiles(
+// CollectSSTFileSets collects all items from the iterator in advance to avoid blocking during restoration.
+// This approach ensures that we have all necessary data ready for processing,
+// preventing any potential delays caused by waiting for the iterator to yield more items.
+func (rc *LogClient) CollectSSTFileSets(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
-	importModeSwitcher *restore.ImportModeSwitcher,
-	onProgress func(int64),
-) error {
-	begin := time.Now()
-	backupFileSets := make([]restore.BackupFileSet, 0, 8)
-	// Collect all items from the iterator in advance to avoid blocking during restoration.
-	// This approach ensures that we have all necessary data ready for processing,
-	// preventing any potential delays caused by waiting for the iterator to yield more items.
+) (restore.BatchBackupFileSet, int64, error) {
+	backupFileSets := make(restore.BatchBackupFileSet, 0, 8)
+	totalKVs := int64(0)
 	start := time.Now()
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
-			return r.Err
+			return nil, 0, r.Err
 		}
 		i := r.Item
 
@@ -323,16 +340,35 @@ func (rc *LogClient) RestoreSSTFiles(
 		}
 		newRules, err := rc.rewriteRulesFor(i, rewriteRules)
 		if err != nil {
-			return err
+			return nil, 0, err
 		}
 
+		sstFiles := i.GetSSTs()
+		for _, f := range sstFiles {
+			totalKVs += int64(f.TotalKvs)
+		}
 		set := restore.BackupFileSet{
 			TableID:      i.TableID(),
-			SSTFiles:     i.GetSSTs(),
+			SSTFiles:     sstFiles,
 			RewriteRules: newRules,
 		}
 		backupFileSets = append(backupFileSets, set)
 	}
+	log.Info("[Compacted SST Restore] Collected SST files",
+		zap.Int("sst-file-count", len(backupFileSets)),
+		zap.Int64("total-kvs", totalKVs),
+		zap.Duration("iterate-take", time.Since(start)))
+	return backupFileSets, totalKVs, nil
+}
+
+// RestoreSSTFileSets restores pre-collected SST file sets.
+func (rc *LogClient) RestoreSSTFileSets(
+	ctx context.Context,
+	backupFileSets restore.BatchBackupFileSet,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(int64),
+) error {
+	begin := time.Now()
 	if len(backupFileSets) == 0 {
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
@@ -349,10 +385,9 @@ func (rc *LogClient) RestoreSSTFiles(
 	}()
 
 	log.Info("[Compacted SST Restore] Start to restore SST files",
-		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
-	start = time.Now()
+		zap.Int("sst-file-count", len(backupFileSets)))
 	defer func() {
-		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(begin)))
 	}()
 
 	// To optimize performance and minimize cross-region downloads,
@@ -524,6 +559,7 @@ func (rc *LogClient) InitClients(
 	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	concurrency uint,
 	concurrencyPerStore uint,
+	retainLatestMVCCVersion bool,
 ) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -556,6 +592,11 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
+	if retainLatestMVCCVersion {
+		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+			return importer.CheckBatchDownloadLatestMVCCSupport(ctx, stores)
+		})
+	}
 	if rc.rateLimit != 0 {
 		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, rc.pdClient, sstWorkerPool, rc.rateLimit)
 		createCallBacks = append(createCallBacks, createCallBack)
@@ -564,7 +605,8 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency,
+		retainLatestMVCCVersion, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
@@ -676,7 +718,7 @@ type LockedMigrations struct {
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
-	ext := stream.MigrationExtension(rc.storage)
+	ext := stream.MigrationExtension(rc.storage).WithOperationContext(rc.operationContext)
 	readLock, err := ext.GetReadLock(ctx, "restore stream")
 	if err != nil {
 		return nil, err
