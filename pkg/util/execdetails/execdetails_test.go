@@ -763,8 +763,17 @@ func TestColumnarScanContextStats(t *testing.T) {
 		"tablescan_1",
 	)
 	stats.RecordOneCopTask(1, kv.TiFlash, execSummary)
+	stats.RecordOneCopTask(1, kv.TiFlash, mockExecutorExecutionSummaryForTiFlashColumnar(
+		2, 20, 3, 2,
+		4, 6, 2, 4, 1024,
+		10, 2048, 8,
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11,
+		"tablescan_1",
+	))
 	s := stats.GetCopStats(1)
-	require.Equal(t, "tiflash_task:{time:1ns, loops:2, threads:1}, columnar_scan:{mvcc_input_rows:100, mvcc_input_bytes:4096, mvcc_output_rows:80, regions:2, read_tasks:4, physical_tables:3, columns:5, user_read_bytes:2048, read_block:7ms, serialize_block:8ms, init_reader:9ms, prefetch:10ms, deserialize_block:17ms, rough_check:{total:11, selected:12, skipped:13, unknown:14}, remote_segments:15, total_segments:16}", s.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:5, tasks:2, threads:3}, columnar_scan:{mvcc_input_rows:110, mvcc_input_bytes:6144, mvcc_output_rows:88, regions:6, read_tasks:10, physical_tables:3, columns:5, user_read_bytes:3072, read_block:8ms, serialize_block:10ms, init_reader:12ms, prefetch:14ms, deserialize_block:28ms, rough_check:{total:16, selected:18, skipped:20, unknown:22}, remote_segments:24, total_segments:26}", s.String())
 
 	zeroStats := NewRuntimeStatsColl(nil)
 	zeroExecSummary := mockExecutorExecutionSummaryForTiFlashColumnar(

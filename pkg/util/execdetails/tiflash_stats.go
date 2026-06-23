@@ -629,8 +629,12 @@ func (context *TiFlashColumnarScanContext) Merge(other TiFlashColumnarScanContex
 	context.hasStats = context.hasStats || other.hasStats
 	context.regions += other.regions
 	context.readTasks += other.readTasks
-	context.physicalTables += other.physicalTables
-	context.columns += other.columns
+	if other.physicalTables > context.physicalTables {
+		context.physicalTables = other.physicalTables
+	}
+	if other.columns > context.columns {
+		context.columns = other.columns
+	}
 	context.userReadBytes += other.userReadBytes
 	context.mvccInputRows += other.mvccInputRows
 	context.mvccInputBytes += other.mvccInputBytes
@@ -655,8 +659,12 @@ func (context *TiFlashColumnarScanContext) mergeExecSummary(summary *tipb.Column
 	context.hasStats = true
 	context.regions += summary.GetRegions()
 	context.readTasks += summary.GetReadTasks()
-	context.physicalTables += summary.GetPhysicalTables()
-	context.columns += summary.GetColumns()
+	if summary.GetPhysicalTables() > context.physicalTables {
+		context.physicalTables = summary.GetPhysicalTables()
+	}
+	if summary.GetColumns() > context.columns {
+		context.columns = summary.GetColumns()
+	}
 	context.userReadBytes += summary.GetUserReadBytes()
 	context.mvccInputRows += summary.GetMvccInputRows()
 	context.mvccInputBytes += summary.GetMvccInputBytes()
