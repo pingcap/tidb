@@ -2699,7 +2699,7 @@ func testMigrationLockOperationMetadata(t *testing.T) {
 
 		est.DryRun(func(me MigrationExt) {
 			require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
-			require.Equal(t, opCtx.HintFields, me.operationContext.HintFields)
+			require.Equal(t, opCtx.HintFields(), me.operationContext.HintFields())
 			require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
 		})
 	})

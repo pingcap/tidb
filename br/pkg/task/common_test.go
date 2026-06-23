@@ -163,6 +163,19 @@ func TestEnsureOperationContext(t *testing.T) {
 		require.Error(t, err)
 		require.ErrorContains(t, err, "operation started time")
 	})
+
+	t.Run("rejects started time without operation ID", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				StartedAt: time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+	})
 }
 
 func TestStripingPDURL(t *testing.T) {

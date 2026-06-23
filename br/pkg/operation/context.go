@@ -16,6 +16,7 @@ package operation
 
 import (
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,9 +33,9 @@ import (
 // Initialize and update a Context at the command boundary before copying it into
 // lock-capable workers. Copies carry value snapshots of operation fields.
 type Context struct {
-	OperationID string      `json:"operation_id"`
-	StartedAt   time.Time   `json:"operation_started_at"`
-	HintFields  []HintField `json:"hint_fields,omitempty"`
+	OperationID string    `json:"operation_id"`
+	StartedAt   time.Time `json:"operation_started_at"`
+	hintFields  []HintField
 }
 
 // HintField is additional caller-owned metadata rendered into lock hints.
@@ -79,6 +80,11 @@ func NewContext(command string) (Context, error) {
 	return ctx, nil
 }
 
+// HintFields returns a copy of additional caller-owned metadata for lock hints.
+func (c Context) HintFields() []HintField {
+	return slices.Clone(c.hintFields)
+}
+
 // SetHintField records additional caller-owned metadata for lock hints.
 func (c *Context) SetHintField(key, value string) {
 	if key == "" {
@@ -91,15 +97,15 @@ func (c *Context) SetHintField(key, value string) {
 	fieldIdx := c.hintFieldIndex(key)
 	if value == "" {
 		if fieldIdx >= 0 {
-			c.HintFields = append([]HintField(nil), c.HintFields...)
-			c.HintFields = append(c.HintFields[:fieldIdx], c.HintFields[fieldIdx+1:]...)
+			c.hintFields = slices.Clone(c.hintFields)
+			c.hintFields = append(c.hintFields[:fieldIdx], c.hintFields[fieldIdx+1:]...)
 		}
 		return
 	}
 
-	c.HintFields = append([]HintField(nil), c.HintFields...)
+	c.hintFields = slices.Clone(c.hintFields)
 	if fieldIdx >= 0 {
-		oldValue := c.HintFields[fieldIdx].Value
+		oldValue := c.hintFields[fieldIdx].Value
 		if oldValue != value {
 			log.Warn("BR operation hint field changed",
 				zap.String("operation_id", c.OperationID),
@@ -109,9 +115,9 @@ func (c *Context) SetHintField(key, value string) {
 				zap.String("new_value", value),
 			)
 		}
-		c.HintFields[fieldIdx].Value = value
+		c.hintFields[fieldIdx].Value = value
 	} else {
-		c.HintFields = append(c.HintFields, HintField{Key: key, Value: value})
+		c.hintFields = append(c.hintFields, HintField{Key: key, Value: value})
 	}
 
 	log.Info("BR operation hint field resolved",
@@ -127,7 +133,7 @@ func (c Context) isInitialized() bool {
 }
 
 func (c Context) hintFieldIndex(key string) int {
-	for i, field := range c.HintFields {
+	for i, field := range c.hintFields {
 		if field.Key == key {
 			return i
 		}
@@ -158,7 +164,7 @@ func (c Context) lockHint(detail string) string {
 	fields := []string{
 		"operation_started_at=" + c.StartedAt.Format(time.RFC3339),
 	}
-	for _, field := range c.HintFields {
+	for _, field := range c.hintFields {
 		if field.Key != "" && field.Value != "" {
 			fields = append(fields, field.Key+"="+field.Value)
 		}

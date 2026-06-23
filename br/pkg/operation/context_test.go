@@ -41,7 +41,7 @@ func TestSetHintFieldBehavior(t *testing.T) {
 		ctx.SetHintField("lineage_id", "123")
 		ctx.SetHintField("lineage_id", "123")
 
-		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields)
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields())
 		require.Equal(t, 2, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
@@ -51,7 +51,7 @@ func TestSetHintFieldBehavior(t *testing.T) {
 
 		ctx.SetHintField("lineage_id", "123")
 
-		require.Empty(t, ctx.HintFields)
+		require.Empty(t, ctx.HintFields())
 		require.Equal(t, 0, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
@@ -60,14 +60,14 @@ func TestSetHintFieldBehavior(t *testing.T) {
 		var ctx Context
 
 		ctx.SetHintField("lineage_id", "123")
-		require.Empty(t, ctx.HintFields)
+		require.Empty(t, ctx.HintFields())
 
 		var err error
 		ctx, err = NewContext("log-restore")
 		require.NoError(t, err)
 		ctx.SetHintField("lineage_id", "123")
 
-		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields)
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields())
 		require.Equal(t, 1, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 
@@ -80,9 +80,20 @@ func TestSetHintFieldBehavior(t *testing.T) {
 		copiedCtx := ctx
 		copiedCtx.SetHintField("lineage_id", "456")
 
-		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields)
-		require.Equal(t, []HintField{{Key: "lineage_id", Value: "456"}}, copiedCtx.HintFields)
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields())
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "456"}}, copiedCtx.HintFields())
 		require.Equal(t, 2, logs.FilterMessage("BR operation hint field resolved").Len())
+	})
+
+	t.Run("returned hint fields cannot mutate context", func(t *testing.T) {
+		ctx, err := NewContext("log-restore")
+		require.NoError(t, err)
+
+		ctx.SetHintField("lineage_id", "123")
+		fields := ctx.HintFields()
+		fields[0].Value = "456"
+
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "123"}}, ctx.HintFields())
 	})
 
 	t.Run("changed hint field logs warning and updates value", func(t *testing.T) {
@@ -93,7 +104,7 @@ func TestSetHintFieldBehavior(t *testing.T) {
 		ctx.SetHintField("lineage_id", "123")
 		ctx.SetHintField("lineage_id", "456")
 
-		require.Equal(t, []HintField{{Key: "lineage_id", Value: "456"}}, ctx.HintFields)
+		require.Equal(t, []HintField{{Key: "lineage_id", Value: "456"}}, ctx.HintFields())
 		require.Equal(t, 2, logs.FilterMessage("BR operation hint field resolved").Len())
 		warnLogs := logs.FilterMessage("BR operation hint field changed")
 		require.Equal(t, 1, warnLogs.Len())
@@ -110,7 +121,7 @@ func TestSetHintFieldBehavior(t *testing.T) {
 		ctx.SetHintField("lineage_id", "123")
 		ctx.SetHintField("lineage_id", "")
 
-		require.Empty(t, ctx.HintFields)
+		require.Empty(t, ctx.HintFields())
 		require.Equal(t, 1, logs.FilterMessage("BR operation hint field resolved").Len())
 	})
 }
@@ -120,8 +131,8 @@ func TestLockMeta(t *testing.T) {
 	ctx := Context{
 		OperationID: "operation-id",
 		StartedAt:   startedAt,
-		HintFields:  []HintField{{Key: "lineage_id", Value: "123"}},
 	}
+	ctx.SetHintField("lineage_id", "123")
 
 	meta, err := ctx.LockMeta(LockResourceMigrationRead, "test hint")
 
