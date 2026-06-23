@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tputil "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -262,6 +263,16 @@ func (h subscriber) handle(
 					zap.Error(err),
 				)
 			}
+			for _, partition := range table.Partitions {
+				if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, partition.ID); err != nil {
+					logutil.StatsLogger().Error(
+						"Failed to update stats meta version for gc",
+						zap.Int64("tableID", table.ID),
+						zap.Int64("partitionID", partition.ID),
+						zap.Error(err),
+					)
+				}
+			}
 		}
 	default:
 		intest.Assert(false)
@@ -333,11 +344,34 @@ func (h subscriber) insertStats4Col(
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
 ) error {
+	colInfos = filterSkipColumnTypes(sctx, colInfos)
+	if len(colInfos) == 0 {
+		return nil
+	}
 	startTS, err := storage.InsertColStats2KV(ctx, sctx, physicalID, colInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, physicalID, startTS))
+}
+
+func filterSkipColumnTypes(sctx sessionctx.Context, colInfos []*model.ColumnInfo) []*model.ColumnInfo {
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
+	if err != nil {
+		return colInfos
+	}
+	skipTypes := variable.ParseAnalyzeSkipColumnTypes(val)
+	if len(skipTypes) == 0 {
+		return colInfos
+	}
+	filtered := make([]*model.ColumnInfo, 0, len(colInfos))
+	for _, col := range colInfos {
+		colTypeStr := tputil.TypeToStr(col.FieldType.GetType(), col.FieldType.GetCharset())
+		if _, skip := skipTypes[colTypeStr]; !skip {
+			filtered = append(filtered, col)
+		}
+	}
+	return filtered
 }
 
 func getPhysicalIDs(

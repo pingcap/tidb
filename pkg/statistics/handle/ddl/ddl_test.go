@@ -1599,3 +1599,54 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	`).Rows()
 	require.Equal(t, metaBefore, metaAfter)
 }
+
+func TestAddColumnSkipColumnTypes(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	h := do.StatsHandle()
+
+	// Wait/drain the create table DDL event from channel
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	// Set @@global.tidb_analyze_skip_column_types to skip json
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json'")
+
+	// Add an int column and a json column
+	tk.MustExec("alter table t add column c_int int")
+	tk.MustExec("alter table t add column c_json json")
+
+	// Consume the two DDL events
+	for i := 0; i < 2; i++ {
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
+	}
+
+	// Update stats cache
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	require.NoError(t, h.Update(context.Background(), is))
+
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.False(t, statsTbl.Pseudo)
+
+	// Verify c_int has stats, and c_json does not.
+	var cIntID, cJsonID int64
+	for _, col := range tableInfo.Columns {
+		if col.Name.O == "c_int" {
+			cIntID = col.ID
+		} else if col.Name.O == "c_json" {
+			cJsonID = col.ID
+		}
+	}
+	require.NotZero(t, cIntID)
+	require.NotZero(t, cJsonID)
+
+	// Check stats_histograms table
+	tk.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = ? and is_index = 0", tableInfo.ID, cIntID).Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = ? and is_index = 0", tableInfo.ID, cJsonID).Check(testkit.Rows("0"))
+}
