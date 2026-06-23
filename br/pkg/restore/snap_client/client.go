@@ -797,6 +797,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
+	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+		return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+	})
 	if rc.rateLimit != 0 {
 		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
 		createCallBacks = append(createCallBacks, createCallBack)
