@@ -49,42 +49,28 @@ const (
 
 // NewContext creates and logs a BR operation context for a command execution.
 func NewContext(command string) (Context, error) {
-	var ctx Context
-	if err := ctx.Ensure(command); err != nil {
-		return Context{}, err
-	}
-	return ctx, nil
-}
-
-// Ensure initializes and logs the operation context if it has not been created.
-func (c *Context) Ensure(command string) error {
-	if c.OperationID != "" {
-		if c.StartedAt.IsZero() {
-			return errors.New("operation started time is required")
-		}
-		return nil
-	}
-
 	operationID, err := uuid.NewRandom()
 	if err != nil {
-		return errors.Annotate(err, "failed to generate operation ID")
+		return Context{}, errors.Annotate(err, "failed to generate operation ID")
 	}
 
-	c.OperationID = operationID.String()
-	c.StartedAt = time.Now()
+	ctx := Context{
+		OperationID: operationID.String(),
+		StartedAt:   time.Now(),
+	}
 
 	host, err := os.Hostname()
 	if err != nil {
 		host = "unknown"
 	}
 	log.Info("BR operation started",
-		zap.String("operation_id", c.OperationID),
-		zap.Time("operation_started_at", c.StartedAt),
+		zap.String("operation_id", ctx.OperationID),
+		zap.Time("operation_started_at", ctx.StartedAt),
 		zap.String("host", host),
 		zap.Int("pid", os.Getpid()),
 		zap.String("command", command),
 	)
-	return nil
+	return ctx, nil
 }
 
 // SetRestoreID records the restore lineage for the operation.

@@ -24,28 +24,12 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestEnsureGeneratesStableOperationID(t *testing.T) {
-	var ctx Context
+func TestNewContextGeneratesOperationID(t *testing.T) {
+	ctx, err := NewContext("log-restore")
 
-	require.NoError(t, ctx.Ensure("log-restore"))
+	require.NoError(t, err)
 	require.NotEmpty(t, ctx.OperationID)
 	require.False(t, ctx.StartedAt.IsZero())
-
-	operationID := ctx.OperationID
-	startedAt := ctx.StartedAt
-
-	require.NoError(t, ctx.Ensure("log-restore"))
-	require.Equal(t, operationID, ctx.OperationID)
-	require.Equal(t, startedAt, ctx.StartedAt)
-}
-
-func TestEnsureRejectsIncompleteInitializedState(t *testing.T) {
-	ctx := Context{OperationID: "operation-id"}
-
-	err := ctx.Ensure("log-restore")
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "operation started time")
 }
 
 func TestSetRestoreIDBehavior(t *testing.T) {
@@ -71,14 +55,16 @@ func TestSetRestoreIDBehavior(t *testing.T) {
 		require.Equal(t, 0, logs.FilterMessage("BR operation restore ID resolved").Len())
 	})
 
-	t.Run("ignored restore ID before Ensure can be recorded later", func(t *testing.T) {
+	t.Run("ignored restore ID before context creation can be recorded later", func(t *testing.T) {
 		_, logs := withObservedLogs(t)
 		var ctx Context
 
 		ctx.SetRestoreID(123)
 		require.Equal(t, uint64(0), ctx.RestoreID)
 
-		require.NoError(t, ctx.Ensure("log-restore"))
+		var err error
+		ctx, err = NewContext("log-restore")
+		require.NoError(t, err)
 		ctx.SetRestoreID(123)
 
 		require.Equal(t, uint64(123), ctx.RestoreID)
@@ -146,6 +132,14 @@ func TestLockMetaValidation(t *testing.T) {
 			ctx:         Context{},
 			resource:    LockResourceMigrationRead,
 			expectedErr: "operation ID",
+		},
+		{
+			name: "missing started time",
+			ctx: Context{
+				OperationID: "operation-id",
+			},
+			resource:    LockResourceMigrationRead,
+			expectedErr: "operation started time",
 		},
 		{
 			name: "missing resource type",

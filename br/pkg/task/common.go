@@ -296,7 +296,22 @@ type Config struct {
 
 // EnsureOperationContext initializes command-scoped operation metadata once.
 func (cfg *Config) EnsureOperationContext(command string) error {
-	return cfg.OperationContext.Ensure(command)
+	if cfg.OperationContext.OperationID != "" {
+		if cfg.OperationContext.StartedAt.IsZero() {
+			return errors.New("operation started time is required")
+		}
+		return nil
+	}
+	if !cfg.OperationContext.StartedAt.IsZero() {
+		return errors.New("operation ID is required")
+	}
+
+	operationContext, err := operation.NewContext(command)
+	if err != nil {
+		return err
+	}
+	cfg.OperationContext = operationContext
+	return nil
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.

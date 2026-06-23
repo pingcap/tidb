@@ -139,6 +139,7 @@ go_test(
         "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",
         "//br/pkg/mock",
+        "//br/pkg/operation",
         "//br/pkg/restore/log_client",
         "//br/pkg/restore/snap_client",
         "//br/pkg/restore/split",
