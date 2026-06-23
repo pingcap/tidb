@@ -932,6 +932,11 @@ const (
 	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
 	ConstraintColumnar
+	// ConstraintMariaDBPeriodForSystemTime carries the MariaDB-only
+	// `PERIOD FOR SYSTEM_TIME (start_col, end_col)` table constraint. Keys
+	// stores the two referenced columns. Parsed only when the parser has
+	// been put into MariaDB mode via (*Parser).SetMariaDB.
+	ConstraintMariaDBPeriodForSystemTime
 )
 
 // Constraint is constraint for table definition.
@@ -1014,6 +1019,8 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		if n.IfNotExists {
 			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
+	case ConstraintMariaDBPeriodForSystemTime:
+		ctx.WriteKeyWord("PERIOD FOR SYSTEM_TIME")
 	}
 
 	if n.Tp == ConstraintForeignKey {
@@ -2794,6 +2801,7 @@ const (
 	TableOptionIetfQuotes
 	TableOptionSequence
 	TableOptionAffinity
+	TableOptionMariaDBSystemVersioning
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -3220,6 +3228,12 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+	case TableOptionMariaDBSystemVersioning:
+		if n.BoolValue {
+			ctx.WriteKeyWord("WITH SYSTEM VERSIONING")
+		} else {
+			ctx.WriteKeyWord("WITHOUT SYSTEM VERSIONING")
+		}
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -3446,6 +3460,12 @@ const (
 	AlterTableDropMaskingPolicy
 	AlterTableModifyMaskingPolicyExpression
 	AlterTableModifyMaskingPolicyRestrictOn
+	// AlterTableMariaDBAddSystemVersioning and AlterTableMariaDBDropSystemVersioning
+	// represent the MariaDB-only `ALTER TABLE ... {ADD|DROP} SYSTEM VERSIONING`
+	// specifications. Parsed only when the parser has been put into MariaDB
+	// mode via (*Parser).SetMariaDB.
+	AlterTableMariaDBAddSystemVersioning
+	AlterTableMariaDBDropSystemVersioning
 )
 
 // LockType is the type for AlterTableSpec.
@@ -4074,6 +4094,10 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("WITH VALIDATION")
 	case AlterTableWithoutValidation:
 		ctx.WriteKeyWord("WITHOUT VALIDATION")
+	case AlterTableMariaDBAddSystemVersioning:
+		ctx.WriteKeyWord("ADD SYSTEM VERSIONING")
+	case AlterTableMariaDBDropSystemVersioning:
+		ctx.WriteKeyWord("DROP SYSTEM VERSIONING")
 	case AlterTableRebuildPartition:
 		ctx.WriteKeyWord("REBUILD PARTITION ")
 		if n.NoWriteToBinlog {
