@@ -1654,6 +1654,9 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 		err1    string
 		ddl2    string
 		err2    string
+		// Some concurrent DDL orderings can make both statements valid, but
+		// only when the inherited `fk` constraint is on this child column.
+		bothSuccessIfFKColumn string
 	}{
 		{
 			ddl1: "alter  table t2 add constraint fk foreign key (a) references t1(a)",
@@ -1675,6 +1678,10 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			err1: "[ddl:1553]Cannot drop index 'a': needed in a foreign key constraint",
 			ddl2: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
 			err2: "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'",
+			// If the earlier duplicate-name race leaves `fk` on column b and
+			// the index drop wins this race, the FK add can auto-create the
+			// missing child index and both DDLs are valid.
+			bothSuccessIfFKColumn: "b",
 		},
 	}
 	tk.MustExec("drop table t1,t2")
@@ -1683,6 +1690,15 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 	for i, ca := range errorCases {
 		for _, sql := range ca.prepare {
 			tk.MustExec(sql)
+		}
+		allowBothSuccess := false
+		bothSuccessFKColumn := ""
+		if ca.bothSuccessIfFKColumn != "" {
+			rows := tk.MustQuery("select column_name from information_schema.key_column_usage " +
+				"where table_schema = 'test' and table_name = 't2' and constraint_name = 'fk'").Rows()
+			require.Len(t, rows, 1)
+			bothSuccessFKColumn = fmt.Sprint(rows[0][0])
+			allowBothSuccess = bothSuccessFKColumn == ca.bothSuccessIfFKColumn
 		}
 		var wg sync.WaitGroup
 		var err1, err2 error
@@ -1696,7 +1712,13 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			err2 = tk2.ExecToErr(ca.ddl2)
 		}()
 		wg.Wait()
-		if (err1 == nil && err2 == nil) || (err1 != nil && err2 != nil) {
+		if err1 == nil && err2 == nil {
+			require.Truef(t, allowBothSuccess,
+				"both ddl1 and ddl2 execute success, but expect 1 error, idx: %v, fk column: %s, expected fk column for both success: %s",
+				i, bothSuccessFKColumn, ca.bothSuccessIfFKColumn)
+			continue
+		}
+		if err1 != nil && err2 != nil {
 			require.Failf(t, "both ddl1 and ddl2 execute success, but expect 1 error", fmt.Sprintf("idx: %v, err1: %v, err2: %v", i, err1, err2))
 		}
 		if err1 != nil {
