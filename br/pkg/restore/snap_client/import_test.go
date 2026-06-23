@@ -401,6 +401,7 @@ type retryDownloadImporterClient struct {
 	fakeImporterClient
 
 	supportLatestMVCC bool
+	probeErr          error
 	firstErr          error
 	calls             atomic.Int32
 	mu                sync.Mutex
@@ -419,6 +420,9 @@ func (client *retryDownloadImporterClient) IsBatchDownloadLatestMVCCSupported(
 	ctx context.Context,
 	stores []uint64,
 ) (bool, error) {
+	if client.probeErr != nil {
+		return false, client.probeErr
+	}
 	return client.supportLatestMVCC, nil
 }
 
@@ -500,6 +504,45 @@ func TestDownloadKeepsExistingPeerBackoffWhenPeerRetryUnsupported(t *testing.T) 
 	uuids := runDownloadRetryUUIDTest(t, false, status.Error(codes.Unavailable, "transport is closing"))
 	require.Len(t, uuids, 2)
 	require.Equal(t, uuids[0], uuids[1])
+}
+
+func TestCheckPeerDownloadRetrySupportFallsBackOnProbeError(t *testing.T) {
+	ctx := context.Background()
+	splitClient := split.NewFakeSplitClient()
+	splitClient.AppendPdRegion(&router.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(2)),
+			Peers:    []*metapb.Peer{{StoreId: 1}},
+		},
+		Leader: &metapb.Peer{StoreId: 1},
+	})
+	stores := []*metapb.Store{{Id: 1, State: metapb.StoreState_Up}}
+	importClient := newRetryDownloadImporterClient(true, status.Error(codes.Canceled, "context canceled"))
+	importClient.probeErr = status.Error(codes.Unavailable, "probe unavailable")
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil,
+		splitClient,
+		importClient,
+		nil,
+		snapclient.RewriteModeKeyspace,
+		stores,
+		1,
+		0,
+		false,
+		nil,
+		nil,
+	)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+
+	require.NoError(t, importer.CheckPeerDownloadRetrySupport(ctx, stores))
+	require.Error(t, importer.Import(ctx, makeCompactedFileSets(1, 1)...))
+	require.Len(t, importClient.recordedUUIDs(), 1)
 }
 
 func waitForConcurrentDownloads(t *testing.T, importClient *blockingBatchDownloadImporterClient, errCh <-chan error) {

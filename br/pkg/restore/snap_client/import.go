@@ -383,7 +383,9 @@ func (importer *SnapFileImporter) CheckPeerDownloadRetrySupport(ctx context.Cont
 	}
 	support, err := importer.importClient.IsBatchDownloadLatestMVCCSupported(ctx, storeIDs)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("failed to check peer download retry support, fallback to legacy download retry", zap.Error(err))
+		importer.peerDownloadRetry = false
+		return nil
 	}
 	importer.peerDownloadRetry = support
 	return nil
