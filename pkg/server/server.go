@@ -364,12 +364,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
-// InitTiDBListener binds the MySQL protocol listener (and socket) ahead of Run.
-// Standby activation calls it so the server only acknowledges the activation
-// request after the listening port is already accepting TCP connections,
-// avoiding a race where the activation requester connects to the port before it
-// exists. It is idempotent: Run skips re-initialization when the listeners are
-// already bound.
+// InitTiDBListener prepares the MySQL protocol listener before activation succeeds.
 func (s *Server) InitTiDBListener() error {
 	return s.initTiDBListener()
 }
@@ -377,8 +372,6 @@ func (s *Server) InitTiDBListener() error {
 func (s *Server) initTiDBListener() (err error) {
 	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
 	needUnixSocket := s.cfg.Socket != ""
-	// The listeners may have been pre-bound (e.g. before standby activation is
-	// acknowledged); never bind twice.
 	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
 		(s.listener != nil || s.socket != nil) {
 		return nil

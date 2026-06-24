@@ -53,6 +53,8 @@ func (*testStandbyController) Handler(*Server) (string, *http.ServeMux) {
 
 func (*testStandbyController) OnConnActive() {}
 
+func (*testStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
+
 func (*testStandbyController) OnServerCreated(*Server) {}
 
 func (*testStandbyController) OnServerShutdown(StandbyShutdownServer) {}
@@ -259,6 +261,8 @@ func (c *mockStandbyController) Handler(_ *Server) (string, *http.ServeMux) {
 }
 
 func (c *mockStandbyController) OnConnActive() {}
+
+func (c *mockStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
 
 func (c *mockStandbyController) OnServerCreated(_ *Server) {}
 

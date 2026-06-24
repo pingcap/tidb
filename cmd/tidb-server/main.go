@@ -486,17 +486,9 @@ func main() {
 	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
-		// Bind the MySQL listening port before acknowledging the activation
-		// request. Otherwise the activation caller may receive the success
-		// response and connect to the port before svr.Run starts listening,
-		// hitting a connection error.
-		if lerr := svr.InitTiDBListener(); lerr != nil {
-			standbyController.EndStandby(lerr)
-			terror.MustNil(lerr)
-		}
-		standbyController.EndStandby(nil)
-
 		svr.StandbyController = standbyController
+		err = standbyController.PrepareForActivation(svr)
+		terror.MustNil(err)
 		svr.StandbyController.OnServerCreated(svr)
 	}
 	if deploymode.IsStarter() && config.GetGlobalConfig().KeyspaceActivateMode {
@@ -515,7 +507,8 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr, dom)
-	terror.MustNil(svr.Run(dom))
+	err = svr.Run(dom)
+	terror.MustNil(err)
 	<-exited
 	if err := syncLog(); err != nil {
 		// Log sync failure means shutdown did not finish cleanly, so keep
