@@ -507,8 +507,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr, dom)
-	err = svr.Run(dom)
-	terror.MustNil(err)
+	terror.MustNil(svr.Run(dom))
 	<-exited
 	if err := syncLog(); err != nil {
 		// Log sync failure means shutdown did not finish cleanly, so keep
