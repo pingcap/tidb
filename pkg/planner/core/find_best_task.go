@@ -849,6 +849,16 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	return 0, 0
 }
 
+// orderRatioMayPenalize reports whether the LIMIT-ordering risk adjustment
+// (tidb_opt_ordering_index_selectivity_ratio, applied at cost time in
+// AdjustRowCountForIndexScanByLimit) could inflate this ordered path's estimated row count.
+// It does so only when residual (non-access) filters exist, because those are the rows that
+// must be scanned before the LIMIT is satisfied. The limit-aware rule in compareCandidates
+// uses this to avoid preempting that cost-time penalty (see its call site).
+func orderRatioMayPenalize(path *util.AccessPath) bool {
+	return len(path.IndexFilters) > 0 || len(path.TableFilters) > 0
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
@@ -965,12 +975,22 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// ordered path when a bounded number of rows is needed. The explicit < MaxFloat64 bound makes
 	// the "no limit" exclusion self-evident and consistent with the cacheSortPropSkyline gate,
 	// instead of relying on the CountAfterAccess sum below staying finite.
+	//
+	// Also require the winning ordered path to carry no residual filters (see orderRatioMayPenalize):
+	// when it does, tidb_opt_ordering_index_selectivity_ratio inflates that path's row count at cost
+	// time (AdjustRowCountForIndexScanByLimit) to model the rows scanned before the LIMIT is met.
+	// This skyline rule reads the raw, pre-ratio CountAfterAccess, so without this guard it could
+	// prune the non-ordered alternative and let the ordered path win even though the ratio was meant
+	// to make it lose on cost. Deferring residual-filter ordered paths to the cost comparison keeps
+	// the two mechanisms from contradicting each other.
 	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
+		!orderRatioMayPenalize(lhs.path) &&
 		lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
 		rhs.path.CountAfterAccess+rhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
 	if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
+		!orderRatioMayPenalize(rhs.path) &&
 		rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
 		lhs.path.CountAfterAccess+lhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not

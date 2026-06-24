@@ -2294,6 +2294,20 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	require.Contains(t, []int{-1, 0, 1}, result)
 }
 
+// TestOrderRatioMayPenalize guards the residual-filter predicate that de-conflicts the
+// limit-aware compareCandidates rule from tidb_opt_ordering_index_selectivity_ratio: the rule
+// must not preempt the cost-time ratio penalty, which only applies to ordered paths that carry
+// residual (non-access) filters.
+func TestOrderRatioMayPenalize(t *testing.T) {
+	col := &expression.Column{UniqueID: 1}
+	// No residual filters -> ratio does not penalize -> rule may fire.
+	require.False(t, orderRatioMayPenalize(&util.AccessPath{}))
+	require.False(t, orderRatioMayPenalize(&util.AccessPath{AccessConds: []expression.Expression{col}}))
+	// Residual index/table filters -> ratio penalizes at cost time -> rule must defer.
+	require.True(t, orderRatioMayPenalize(&util.AccessPath{IndexFilters: []expression.Expression{col}}))
+	require.True(t, orderRatioMayPenalize(&util.AccessPath{TableFilters: []expression.Expression{col}}))
+}
+
 func TestCrossSkylinePrune(t *testing.T) {
 	sctx := coretestsdk.MockContext()
 	defer func() {
