@@ -71,3 +71,12 @@ type AlterTableModeTarget struct {
 	CurrentMode TableMode
 	TargetMode  TableMode
 }
+
+// AlterTableModeRequest is the unresolved request to change a table's mode.
+type AlterTableModeRequest struct {
+	SchemaID           int64
+	TableID            int64
+	TableMode          TableMode
+	ExpectedSchemaName string
+	ExpectedTableName  string
+}

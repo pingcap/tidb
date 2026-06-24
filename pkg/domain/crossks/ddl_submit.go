@@ -78,7 +78,7 @@ func (c *ddlClient) alterTableMode(
 		return errors.Trace(err)
 	}
 
-	jobsubmit.NotifyDDLOwner(ctx, c.etcdCli)
+	jobsubmit.NotifyDDLOwnerByEtcd(ctx, c.etcdCli)
 	return errors.Trace(c.waitDDLFinished(ctx, job.ID))
 }
 
