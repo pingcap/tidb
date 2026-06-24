@@ -106,11 +106,7 @@ require (
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-<<<<<<< HEAD
-	github.com/pingcap/tipb v0.0.0-20260210113932-1447c9d7e9fe
-=======
 	github.com/pingcap/tipb v0.0.0-20260617071407-7c071244534b
->>>>>>> 9f419ca60ca (util: add support columnar scan details (#69331))
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
