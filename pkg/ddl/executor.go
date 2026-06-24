@@ -5891,8 +5891,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 	if noop {
 		return nil
 	}
-	sctx.SetValue(sessionctx.QueryString, "skip")
 
+	sctx.SetValue(sessionctx.QueryString, "skip")
 	err = e.doDDLJob2(sctx, job, jobArgs)
 	return errors.Trace(err)
 }
