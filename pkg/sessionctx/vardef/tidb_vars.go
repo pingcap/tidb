@@ -1230,6 +1230,8 @@ const (
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableDDLAnalyze indicates whether ddl(create/reorg index) is with embedded index analyze.
 	TiDBEnableDDLAnalyze = "tidb_stats_update_during_ddl"
+	// TiDBDDLEnableAutoSplitHotRegion indicates whether add-index DDL automatically pre-splits hot index regions.
+	TiDBDDLEnableAutoSplitHotRegion = "tidb_ddl_enable_auto_split_hot_region"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
@@ -1720,6 +1722,7 @@ const (
 	DefTiDBEnableAnalyzeSnapshot                      = false
 	DefTiDBGenerateBinaryPlan                         = true
 	DefTiDBEnableDDLAnalyze                           = false
+	DefTiDBDDLEnableAutoSplitHotRegion                = false
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0
 	DefTiDBEnableTmpStorageOnOOM                      = true
