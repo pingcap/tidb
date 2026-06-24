@@ -3951,7 +3951,8 @@ func renameExpressionIndexColumnRefs(tblInfo *model.TableInfo, from, to ast.CISt
 	}
 }
 
-// RenameExpressionIndexColumns renames the hidden columns backing an expression index and their index references.
+// RenameExpressionIndexColumns renames hidden column definitions in tblInfo and their column-name
+// entries in each index column list. It does not rename the index itself.
 func RenameExpressionIndexColumns(tblInfo *model.TableInfo, from, to ast.CIStr) {
 	renameExpressionIndexColumnRefs(tblInfo, from, to)
 	renameHiddenColumns(tblInfo, from, to)

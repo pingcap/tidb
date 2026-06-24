@@ -418,6 +418,8 @@ func (d *SchemaTracker) createIndex(
 	}
 	for _, hiddenCol := range hiddenCols {
 		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		// The schema tracker applies finished DDLs directly, so hidden columns
+		// created for expression indexes must be public immediately.
 		colInfo.State = model.StatePublic
 	}
 

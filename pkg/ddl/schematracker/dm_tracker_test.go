@@ -104,17 +104,18 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 }
 
 func execDDL(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
-	ctx := context.Background()
-	sctx := mock.NewContext()
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	switch stmt := stmt.(type) {
 	case *ast.CreateTableStmt:
-		err = tracker.CreateTable(sctx, stmt)
+		execCreate(t, tracker, sql)
+		return
 	case *ast.AlterTableStmt:
-		err = tracker.AlterTable(ctx, sctx, stmt)
+		execAlter(t, tracker, sql)
+		return
 	case *ast.CreateIndexStmt:
+		sctx := mock.NewContext()
 		err = tracker.CreateIndex(sctx, stmt)
 	default:
 		require.Failf(t, "unsupported DDL", "%T", stmt)
@@ -145,7 +146,7 @@ func requireExpressionIndexHiddenColumnsPublic(t *testing.T, tblInfo *model.Tabl
 			require.Equal(t, model.StatePublic, col.State)
 		}
 	}
-	require.True(t, found)
+	require.True(t, found, "table %s should contain at least one public expression index hidden column", tblInfo.Name.O)
 }
 
 func TestExpressionIndexHiddenColumnState(t *testing.T) {
