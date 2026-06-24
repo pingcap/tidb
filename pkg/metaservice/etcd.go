@@ -49,12 +49,9 @@ func newClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
 			pdCli:           pdCli,
 		}
 	}
-	if pdCli != nil {
-		return &client{
-			pdCli: pdCli,
-		}
+	return &client{
+		pdCli: pdCli,
 	}
-	return nil
 }
 
 // GetKeyspaceEtcdCli return etcd client.

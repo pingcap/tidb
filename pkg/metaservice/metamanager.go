@@ -94,7 +94,7 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Group, 
 			return nil, errors.Annotatef(
 				ErrKeyspaceLevelGCRequired,
 				"keyspace %q configured meta service group %q",
-				keyspaceDescription(keyspaceMeta),
+				keyspaceMeta.GetName(),
 				groupID,
 			)
 		}
@@ -159,17 +159,11 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Info, er
 	return metaInfo, nil
 }
 
-func keyspaceDescription(keyspaceMeta *keyspacepb.KeyspaceMeta) string {
-	if keyspaceMeta == nil {
-		return "default"
-	}
-	return keyspaceMeta.GetName()
-}
-
 // GroupAddrs returns the meta service group addresses.
 func (info *Info) GroupAddrs(keyspaceMeta *keyspacepb.KeyspaceMeta) ([]string, error) {
-	if info == nil || info.Group == nil {
-		return nil, errors.Errorf("meta service group is missing for keyspace %q", keyspaceDescription(keyspaceMeta))
+	if info.Group == nil {
+		log.Error("meta service group is missing", zap.Any("keyspace-meta", keyspaceMeta))
+		return nil, errors.New("meta service group is missing")
 	}
 	return info.Group.Addrs, nil
 }
