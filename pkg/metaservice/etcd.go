@@ -43,6 +43,9 @@ type client struct {
 
 // newClient is used to implement etcd meta service.
 func newClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
+	if etcdCli == nil && pdCli == nil {
+		return nil
+	}
 	if etcdCli != nil {
 		return &client{
 			keyspaceEtcdCli: etcdCli,
