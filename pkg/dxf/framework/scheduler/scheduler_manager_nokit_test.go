@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	mockScheduler "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
@@ -73,6 +73,7 @@ func expectRuntimeFromNewSession(ctrl *gomock.Controller, taskMgr *mock.MockTask
 	server.EXPECT().GetRuntime().Return(runtime).AnyTimes()
 	taskMgr.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
 		se := utilmock.NewContext()
+		// Match the mock session store to the runtime so AcquireTaskRuntime takes the local-runtime path.
 		se.Store = runtime.Store()
 		return fn(&sessionWithSQLServer{
 			Context: se,
@@ -290,7 +291,7 @@ func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapim
 }
 
 func (tc *crossKeyspaceStartCase) holderID() string {
-	return fmt.Sprintf("DXF/scheduler/%d", tc.task.ID)
+	return dxfutil.GenHolderID("scheduler", tc.task.ID)
 }
 
 func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {

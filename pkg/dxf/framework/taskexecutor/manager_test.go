@@ -17,12 +17,12 @@ package taskexecutor
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -249,7 +249,7 @@ func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapim
 }
 
 func (tc *crossKeyspaceStartCase) holderID() string {
-	return fmt.Sprintf("DXF/executor/%d", tc.task.ID)
+	return dxfutil.GenHolderID("executor", tc.task.ID)
 }
 
 func TestStartTaskExecutorCrossKeyspaceRuntime(t *testing.T) {
@@ -679,7 +679,7 @@ func TestStartTaskExecutorResolveTaskRuntimeFromTaskKeyspace(t *testing.T) {
 	runtimeHandle := newRuntimeHandle(ctrl, taskStore)
 	runtimeHandle.EXPECT().Release()
 	server := sqlsvrapimock.NewMockServer(ctrl)
-	server.EXPECT().AcquireKSRuntime(taskKS, "DXF/executor/1").Return(runtimeHandle, nil)
+	server.EXPECT().AcquireKSRuntime(taskKS, dxfutil.GenHolderID("executor", task.ID)).Return(runtimeHandle, nil)
 
 	mockExecutor := mock.NewMockTaskExecutor(ctrl)
 	var gotStore kv.Storage
@@ -733,7 +733,7 @@ func TestStartTaskExecutorResolveTaskRuntimeError(t *testing.T) {
 
 	runtimeErr := errors.New("ks runtime not found")
 	server := sqlsvrapimock.NewMockServer(ctrl)
-	server.EXPECT().AcquireKSRuntime(taskKS, "DXF/executor/2").Return(nil, runtimeErr)
+	server.EXPECT().AcquireKSRuntime(taskKS, dxfutil.GenHolderID("executor", task.ID)).Return(nil, runtimeErr)
 	factoryCalled := false
 	RegisterTaskType(task.Type, func(context.Context, *proto.Task, Param) TaskExecutor {
 		factoryCalled = true

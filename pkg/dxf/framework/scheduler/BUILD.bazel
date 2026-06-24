@@ -74,6 +74,7 @@ go_test(
         "//pkg/domain/sqlsvrapi",
         "//pkg/domain/sqlsvrapi/mock",
         "//pkg/dxf/framework/dxfmetric",
+        "//pkg/dxf/framework/dxfutil",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/proto",

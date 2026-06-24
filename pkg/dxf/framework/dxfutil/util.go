@@ -29,6 +29,8 @@ type sessionProvider interface {
 }
 
 // AcquireTaskRuntime returns a runtime view for the task keyspace and a release function.
+// The sessionProvider must supply sessions whose store keyspace is the current node's keyspace;
+// this is used to detect whether the task belongs to a different keyspace.
 // Callers must call the release function when the returned runtime is no longer used.
 func AcquireTaskRuntime(
 	sessionProvider sessionProvider,
@@ -84,7 +86,7 @@ func CheckTaskRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 	return nil
 }
 
-// GenHolderID generate holder ID for a task.
+// GenHolderID generates a holder ID for the given DXF component and task ID.
 func GenHolderID(component string, taskID int64) string {
 	return fmt.Sprintf("DXF/%s/%d", component, taskID)
 }
