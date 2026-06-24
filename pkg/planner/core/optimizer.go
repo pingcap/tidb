@@ -48,12 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
->>>>>>> 84f3ca52e57 (planner: cache mpp info to avoid frequent grpc calling (#65694))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -684,22 +680,6 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
-<<<<<<< HEAD
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-	if err != nil {
-		return false, 0
-	}
-	var minLogicalCores = initialMaxCores // set to a large enough value here
-	for _, row := range rows {
-		if row[4].GetString() == "cpu-logical-cores" {
-			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 {
-				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
-=======
-	defer func(begin time.Time) {
-		// if there are any network jitters, this could take a long time.
-		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
-	}(time.Now())
 
 	serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache(serversInfo)
 
@@ -718,7 +698,6 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
 					}
 				}
->>>>>>> 84f3ca52e57 (planner: cache mpp info to avoid frequent grpc calling (#65694))
 			}
 		}
 	}
