@@ -299,11 +299,14 @@ func TestCreateTableWithIndex(t *testing.T) {
 
 	sql = "alter table test.t rename index idx_1 to idx_1_1"
 	execAlter(t, tracker, sql)
+	sql = "alter table test.t add index idx_1 ((cast(col_1 as char(64) array)))"
+	execAlter(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
 	expected := "CREATE TABLE `t` (\n" +
 		"  `col_1` json DEFAULT NULL,\n" +
-		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array)))\n" +
+		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array))),\n" +
+		"  KEY `idx_1` ((cast(`col_1` as char(64) array)))\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 }

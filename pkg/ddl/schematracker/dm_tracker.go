@@ -754,9 +754,37 @@ func (d *SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec 
 	if err != nil {
 		return err
 	}
+	renameExpressionIndexColumns(tblInfo, spec.FromKey, spec.ToKey)
 	idx := tblInfo.FindIndexByName(spec.FromKey.L)
 	idx.Name = spec.ToKey
 	return nil
+}
+
+func renameExpressionIndexColumns(tblInfo *model.TableInfo, from, to ast.CIStr) {
+	for _, idx := range tblInfo.Indices {
+		for _, idxCol := range idx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			if col.Hidden && expressionIndexOriginName(idxCol.Name) == from.O {
+				idxCol.Name.L = strings.Replace(idxCol.Name.L, from.L, to.L, 1)
+				idxCol.Name.O = strings.Replace(idxCol.Name.O, from.O, to.O, 1)
+			}
+		}
+	}
+	for _, col := range tblInfo.Columns {
+		if col.Hidden && expressionIndexOriginName(col.Name) == from.O {
+			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
+		}
+	}
+}
+
+func expressionIndexOriginName(name ast.CIStr) string {
+	columnName := strings.TrimPrefix(name.O, "_V$_")
+	pos := strings.LastIndex(columnName, "_")
+	if pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
 }
 
 // addTablePartitions is used by AlterTable.
