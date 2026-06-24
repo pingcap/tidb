@@ -204,6 +204,11 @@ func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
 	minTimestamp := types.NewTimeDatum(types.MinTimestamp)
 	require.Equal(t, float64(0), convertDatumToScalar(&minTimestamp, 0))
 
+	maxTimestamp := types.NewTimeDatum(types.MaxTimestamp)
+	maxTimestampScalar := convertDatumToScalar(&maxTimestamp, 0)
+	afterMaxTimestamp := types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp))
+	require.Equal(t, maxTimestampScalar+1, convertDatumToScalar(&afterMaxTimestamp, 0))
+
 	hg := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
 	upper := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp))
 	hg.AppendBucket(&datum, &upper, 2, 1)
@@ -212,7 +217,9 @@ func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
 	ctx.GetSessionVars().RiskRangeSkewRatio = 0.5
 	right := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 4, 0), mysql.TypeTimestamp, types.DefaultFsp))
 	estimate := hg.OutOfRangeRowCount(ctx, &upper, &right, 100, 100, 2)
-	require.Greater(t, estimate.Est, 20.0)
+	require.InDelta(t, 45.937499984687506, estimate.Est, eps)
+	require.InDelta(t, 18.374999993875, estimate.MinEst, eps)
+	require.InDelta(t, 73.4999999755, estimate.MaxEst, eps)
 }
 
 func TestEnumRangeValues(t *testing.T) {

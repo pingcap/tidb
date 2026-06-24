@@ -95,10 +95,15 @@ func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 	case mysql.TypeTimestamp:
 		minTime = types.MinTimestamp
 		if valueTime.Compare(types.MinTimestamp) < 0 {
-			// Relaxed SQL modes can store zero or before-min TIMESTAMP values, but they
-			// are outside the legal TIMESTAMP range. Keep them adjacent to the valid
-			// range so scalar estimation stays finite and ordered.
+			// Relaxed SQL modes can leave zero TIMESTAMP values in stats, and
+			// historical stats may also contain out-of-range bounds. Keep values
+			// outside the legal range adjacent to the valid range so scalar
+			// estimation stays finite and ordered.
 			return -1
+		}
+		if valueTime.Compare(types.MaxTimestamp) > 0 {
+			maxTimestamp := types.MaxTimestamp
+			return float64(maxTimestamp.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration) + 1
 		}
 	}
 	return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
