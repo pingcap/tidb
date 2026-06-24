@@ -1389,12 +1389,14 @@ func TestStringMatchSelectivityDoesNotRestoreTransientHistogramBoundsSelection(t
 
 	// Simulate a concurrent VecEvalBool call that temporarily narrowed the
 	// shared cached histogram bounds chunk to unrelated rows.
-	colStats.Bounds.SetSel([]int{4, 5})
+	transientSel := []int{4, 5}
+	colStats.Bounds.SetSel(transientSel)
 
 	ok, selectivity, err := cardinality.GetSelectivityByFilter(sctx, coll, filter)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.InEpsilon(t, 2.0/3.0, selectivity, 1e-12)
+	require.Equal(t, transientSel, colStats.Bounds.Sel())
 }
 
 func getTableReaderEstRows(t *testing.T, tk *testkit.TestKit, query string) float64 {
