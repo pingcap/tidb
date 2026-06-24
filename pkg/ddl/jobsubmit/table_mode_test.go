@@ -56,7 +56,7 @@ func TestBuildAlterTableModeJob(t *testing.T) {
 	require.Equal(t, model.JobVersion2, job.Version)
 	require.EqualValues(t, 101, job.SchemaID)
 	require.EqualValues(t, 202, job.TableID)
-	require.Equal(t, "TestDB", job.SchemaName)
+	require.Equal(t, "testdb", job.SchemaName)
 	require.Equal(t, model.ActionAlterTableMode, job.Type)
 	require.NotNil(t, job.BinlogInfo)
 	require.EqualValues(t, 7, job.CDCWriteSource)

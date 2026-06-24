@@ -48,15 +48,6 @@ func (t TableMode) String() string {
 	}
 }
 
-// AlterTableModeRequest identifies a table-mode change request by target IDs.
-type AlterTableModeRequest struct {
-	SchemaID           int64
-	TableID            int64
-	ExpectedSchemaName string
-	ExpectedTableName  string
-	TableMode          TableMode
-}
-
 // AlterTableModeTarget is the resolved target metadata for an AlterTableMode job.
 type AlterTableModeTarget struct {
 	SchemaID    int64

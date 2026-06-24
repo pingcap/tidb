@@ -99,13 +99,14 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 
 		// BDR mode only affects the DDL not from CDC.
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
+			schemaName := strings.ToLower(job.SchemaName)
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if bdr.IsDenied(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
+					if bdr.IsDenied(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(schemaName) {
 						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if bdr.IsDenied(ast.BDRRole(bdrRole), job.Type, spec.Args) && !filter.IsSystemSchema(job.SchemaName) {
+			} else if bdr.IsDenied(ast.BDRRole(bdrRole), job.Type, spec.Args) && !filter.IsSystemSchema(schemaName) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}
