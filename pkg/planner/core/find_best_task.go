@@ -1835,6 +1835,56 @@ func sameSortItems(a, b *property.PhysicalProperty) bool {
 	return true
 }
 
+// addEntryIfAbsent appends a cache entry for prop unless an entry with identical sort items
+// already exists or the per-DataSource entry cap is reached. Returns true if an entry was added.
+func (c *skylineCrossCache) addEntryIfAbsent(candidates []*candidatePath, prop *property.PhysicalProperty) bool {
+	for _, entry := range c.entries {
+		if sameSortItems(entry.sortProp, prop) {
+			return false
+		}
+	}
+	if len(c.entries) >= maxCrossCacheEntries {
+		return false
+	}
+	c.entries = append(c.entries, skylineCrossCacheEntry{
+		candidates: candidates,
+		sortProp:   prop.CloneEssentialFields(),
+	})
+	return true
+}
+
+// cacheSortPropSkyline records the sort-property skyline `candidates` on ds.CrossSkylineCache
+// so subsequent empty-property findBestTask calls can cross-prune against them.
+//
+// All of the following eligibility gates must hold, otherwise nothing is cached:
+//   - producedValidTask: at least one candidate produced a valid task for this sort property.
+//     Otherwise (e.g. TABLESAMPLE, where convertToSampleTable rejects any non-empty sort) we
+//     would cache infeasible candidates that later act as phantom dominators in
+//     crossSkylinePrune, pruning the only viable empty-property candidates.
+//   - non-empty SortItems and no PartialOrderInfo: only a genuine total-order skyline is useful.
+//   - ExpectedCnt != math.MaxFloat64: only Limit-bounded sort requests. Cross-pruning exists to
+//     protect the Limit-vs-TopN cost comparison, so the candidate worth protecting is always the
+//     child of a Limit (finite ExpectedCnt). An unbounded sort request (e.g. the order a StreamAgg
+//     needs for DISTINCT/GROUP BY) has no Limit consumer that benefits from the order; caching it
+//     would let an order-only (matchResult) dominance prune a cheaper order-less candidate from a
+//     later empty-property call. This is the established "a Limit is present" signal (see
+//     compareCandidates).
+//
+// Multiple sort properties accumulate (deduped by sort items, capped at maxCrossCacheEntries) so
+// cross-pruning does not depend on the order in which properties are explored.
+func cacheSortPropSkyline(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidates []*candidatePath, producedValidTask bool) {
+	if !producedValidTask || prop.IsSortItemEmpty() || prop.PartialOrderInfo != nil ||
+		prop.ExpectedCnt == math.MaxFloat64 {
+		return
+	}
+	cache, _ := ds.CrossSkylineCache.(*skylineCrossCache)
+	if cache == nil {
+		cache = &skylineCrossCache{}
+		ds.CrossSkylineCache = cache
+	}
+	cache.addEntryIfAbsent(candidates, prop)
+}
+
 // matchPropertyReadOnly checks whether a path can satisfy the sort property without
 // mutating the original AccessPath. It shallow-copies the path so that matchProperty's
 // side effects (writing GroupedRanges and GroupByColIdxs) are isolated to the copy.
@@ -2532,45 +2582,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 	}
 
-	// Cache sort-aware candidates for future cross-pruning by empty-property calls.
-	// Populate only after confirming at least one candidate produced a valid task for
-	// this sort property. Otherwise (e.g. TABLESAMPLE, where any non-empty sort property
-	// is rejected in convertToSampleTable) we would cache infeasible candidates that later
-	// act as phantom dominators in crossSkylinePrune, pruning the only viable empty-property
-	// candidates and causing plan failure or a worse fallback plan.
-	// Multiple sort properties are accumulated so pruning is not order-dependent; entries are
-	// deduplicated by sort items and capped to prevent unbounded growth.
-	//
-	// Only cache Limit-bounded ordered skylines (prop.ExpectedCnt != math.MaxFloat64).
-	// Cross-pruning exists to protect the Limit-vs-TopN cost comparison: the candidate worth
-	// protecting is always the child of a Limit, whose sort-property call carries a finite
-	// ExpectedCnt. An unbounded sort request (e.g. the order required by a StreamAgg for
-	// DISTINCT/GROUP BY) has no Limit consumer that benefits from the order, so caching it
-	// would let an order-only (matchResult) dominance prune a cheaper order-less candidate
-	// from a later empty-property call. ExpectedCnt != math.MaxFloat64 is the established
-	// "a Limit is present" signal (see compareCandidates).
-	if t != nil && !t.Invalid() && !prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil &&
-		prop.ExpectedCnt != math.MaxFloat64 {
-		cache, _ := ds.CrossSkylineCache.(*skylineCrossCache)
-		if cache == nil {
-			cache = &skylineCrossCache{}
-			ds.CrossSkylineCache = cache
-		}
-		// Deduplicate: skip if an entry with identical sort items already exists.
-		duplicate := false
-		for _, entry := range cache.entries {
-			if sameSortItems(entry.sortProp, prop) {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate && len(cache.entries) < maxCrossCacheEntries {
-			cache.entries = append(cache.entries, skylineCrossCacheEntry{
-				candidates: candidates,
-				sortProp:   prop.CloneEssentialFields(),
-			})
-		}
-	}
+	// Cache the sort-aware skyline so later empty-property calls can cross-prune against it.
+	// See cacheSortPropSkyline for the eligibility gates (valid task, Limit-bounded, etc.).
+	cacheSortPropSkyline(ds, prop, candidates, t != nil && !t.Invalid())
 
 	return
 }

@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -2420,6 +2421,23 @@ func TestCrossSkylinePrune(t *testing.T) {
 	result = crossSkylinePrune(ds, []*candidatePath{forcedCandidate}, cache)
 	require.Len(t, result, 1)
 	require.Same(t, forcedCandidate, result[0])
+
+	// Test 6: when every surviving candidate is an MVIndex path, fall back to the original
+	// set. MVIndex paths are incomparable in compareCandidates (and yield InvalidTask in
+	// convertToIndexScan), so they can never be pruned while every non-MVIndex path can.
+	// A result consisting solely of MVIndex survivors would otherwise bubble up as a
+	// "can't find a proper physical plan" error.
+	mvIndexCandidate := &candidatePath{
+		path: &util.AccessPath{
+			Index:            &model.IndexInfo{MVIndex: true},
+			CountAfterAccess: 50,
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropNotMatched,
+	}
+	// currentUnordered would be pruned, leaving only the MVIndex survivor -> fallback fires.
+	result = crossSkylinePrune(ds, []*candidatePath{mvIndexCandidate, currentUnordered}, cache)
+	require.Len(t, result, 2, "all-MVIndex survivors must trigger the original-set fallback")
 }
 
 func TestSkylineCrossCacheDedup(t *testing.T) {
@@ -2434,47 +2452,96 @@ func TestSkylineCrossCacheDedup(t *testing.T) {
 	dummyCandidates := []*candidatePath{{path: &util.AccessPath{}}}
 
 	// Add first entry.
-	addToCrossCacheIfNew(cache, dummyCandidates, prop1)
+	require.True(t, cache.addEntryIfAbsent(dummyCandidates, prop1))
 	require.Len(t, cache.entries, 1)
 
 	// Add duplicate — should be skipped.
-	addToCrossCacheIfNew(cache, dummyCandidates, prop1Dup)
+	require.False(t, cache.addEntryIfAbsent(dummyCandidates, prop1Dup))
 	require.Len(t, cache.entries, 1)
 
 	// Add different sort property — should succeed.
-	addToCrossCacheIfNew(cache, dummyCandidates, prop2)
+	require.True(t, cache.addEntryIfAbsent(dummyCandidates, prop2))
 	require.Len(t, cache.entries, 2)
 
 	// Fill to cap.
 	for i := range maxCrossCacheEntries - 2 {
 		col := &expression.Column{UniqueID: int64(10 + i)}
 		p := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col}}}
-		addToCrossCacheIfNew(cache, dummyCandidates, p)
+		require.True(t, cache.addEntryIfAbsent(dummyCandidates, p))
 	}
 	require.Len(t, cache.entries, maxCrossCacheEntries)
 
 	// One more should be rejected due to cap.
 	col99 := &expression.Column{UniqueID: 99}
 	propOver := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col99}}}
-	addToCrossCacheIfNew(cache, dummyCandidates, propOver)
+	require.False(t, cache.addEntryIfAbsent(dummyCandidates, propOver))
 	require.Len(t, cache.entries, maxCrossCacheEntries)
 }
 
-// addToCrossCacheIfNew is a test helper that mirrors the dedup+cap logic in findBestTask4LogicalDataSource.
-func addToCrossCacheIfNew(cache *skylineCrossCache, candidates []*candidatePath, prop *property.PhysicalProperty) {
-	duplicate := false
-	for _, entry := range cache.entries {
-		if sameSortItems(entry.sortProp, prop) {
-			duplicate = true
-			break
+// TestCacheSortPropSkyline exercises the eligibility gates that decide whether a sort-property
+// skyline is cached for cross-pruning. These gates are the load-bearing protection against
+// (a) caching infeasible candidates (no valid task) and (b) over-pruning order-less calls that
+// have no Limit consumer (unbounded ExpectedCnt).
+func TestCacheSortPropSkyline(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	col1 := &expression.Column{UniqueID: 1}
+	candidates := []*candidatePath{{path: &util.AccessPath{}}}
+
+	// A Limit-bounded sort property is the only shape that should be cached.
+	limitProp := func() *property.PhysicalProperty {
+		return &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}}, ExpectedCnt: 100}
+	}
+	newDS := func() *logicalop.DataSource {
+		ds := &logicalop.DataSource{}
+		ds.SetSCtx(sctx)
+		return ds
+	}
+	entryCount := func(ds *logicalop.DataSource) int {
+		cache, ok := ds.CrossSkylineCache.(*skylineCrossCache)
+		if !ok || cache == nil {
+			return 0
 		}
+		return len(cache.entries)
 	}
-	if !duplicate && len(cache.entries) < maxCrossCacheEntries {
-		cache.entries = append(cache.entries, skylineCrossCacheEntry{
-			candidates: candidates,
-			sortProp:   prop.CloneEssentialFields(),
-		})
-	}
+
+	// Eligible: valid task + non-empty sort + finite ExpectedCnt -> cached.
+	ds := newDS()
+	cacheSortPropSkyline(ds, limitProp(), candidates, true)
+	require.Equal(t, 1, entryCount(ds), "Limit-bounded sort skyline should be cached")
+
+	// Gate: no valid task -> not cached (e.g. TABLESAMPLE rejects non-empty sort).
+	ds = newDS()
+	cacheSortPropSkyline(ds, limitProp(), candidates, false)
+	require.Equal(t, 0, entryCount(ds), "must not cache when no candidate produced a valid task")
+
+	// Gate: unbounded sort request (ExpectedCnt == MaxFloat64) -> not cached. This is the
+	// over-pruning guard: an order required by e.g. StreamAgg-for-DISTINCT has no Limit consumer.
+	ds = newDS()
+	unbounded := limitProp()
+	unbounded.ExpectedCnt = math.MaxFloat64
+	cacheSortPropSkyline(ds, unbounded, candidates, true)
+	require.Equal(t, 0, entryCount(ds), "must not cache an unbounded (non-Limit) sort request")
+
+	// Gate: empty sort items -> not cached.
+	ds = newDS()
+	cacheSortPropSkyline(ds, &property.PhysicalProperty{ExpectedCnt: 100}, candidates, true)
+	require.Equal(t, 0, entryCount(ds), "must not cache an empty sort property")
+
+	// Gate: PartialOrderInfo set -> not cached.
+	ds = newDS()
+	partial := limitProp()
+	partial.PartialOrderInfo = &property.PartialOrderInfo{}
+	cacheSortPropSkyline(ds, partial, candidates, true)
+	require.Equal(t, 0, entryCount(ds), "must not cache a partial-order property")
+
+	// Dedup across calls on the same DataSource: identical sort items add only one entry.
+	ds = newDS()
+	cacheSortPropSkyline(ds, limitProp(), candidates, true)
+	cacheSortPropSkyline(ds, limitProp(), candidates, true)
+	require.Equal(t, 1, entryCount(ds), "identical sort items must not create duplicate entries")
 }
 
 func TestFastPlanContextTables(t *testing.T) {
