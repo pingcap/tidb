@@ -850,23 +850,23 @@ local TokenRequestCountPanel = graphPanel.new(
 local pagingPrechargeRow = row.new(collapse=true, title="Paging Pre-charge");
 
 local PagingRequestCountPanel = graphPanel.new(
-  title="Paging Request Count",
+  title="Cop Read Pre-charge Coverage",
   datasource=myDS,
   legend_rightSide=true,
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
   format="short",
-  description="Rate of coprocessor read RPCs split by whether the EMA produced a paging pre-charge hint (> 0, contributing to paging_precharge_total) or returned 0, i.e. EMA cold-start (contributing to paging_nonprecharge_total).",
+  description="Rate of read coprocessor RPCs split by whether they carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_paging_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
-    legendFormat="{{instance}}-{{resource_group}}-precharge",
+    'sum(rate(resource_manager_client_request_cop_read_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharged",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_paging_nonprecharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
-    legendFormat="{{instance}}-{{resource_group}}-nonprecharge",
+    'sum(rate(resource_manager_client_request_cop_read_no_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-no-precharge",
   )
 );
 

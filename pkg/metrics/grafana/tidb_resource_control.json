@@ -2476,7 +2476,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Rate of coprocessor read RPCs split by whether the EMA produced a paging pre-charge hint (> 0, contributing to paging_precharge_total) or returned 0, i.e. EMA cold-start (contributing to paging_nonprecharge_total).",
+               "description": "Rate of read coprocessor RPCs split by whether they carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2513,24 +2513,24 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_client_request_paging_precharge_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "expr": "sum(rate(resource_manager_client_request_cop_read_precharge_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-precharge",
+                     "legendFormat": "{{instance}}-{{resource_group}}-precharged",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_request_paging_nonprecharge_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "expr": "sum(rate(resource_manager_client_request_cop_read_no_precharge_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{resource_group}}-nonprecharge",
+                     "legendFormat": "{{instance}}-{{resource_group}}-no-precharge",
                      "refId": "B"
                   }
                ],
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Paging Request Count",
+               "title": "Cop Read Pre-charge Coverage",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
