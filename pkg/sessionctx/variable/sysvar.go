@@ -3099,6 +3099,7 @@ var defaultSysVars = []*SysVar{
 			s.EnableDDLAnalyze = TiDBOptOn(val)
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLEnableAutoSplitHotRegion, Value: BoolToOnOff(vardef.DefTiDBDDLEnableAutoSplitHotRegion), Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDefaultStrMatchSelectivity, Value: strconv.FormatFloat(vardef.DefTiDBDefaultStrMatchSelectivity, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		SetSession: func(s *SessionVars, val string) error {
 			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, vardef.DefTiDBDefaultStrMatchSelectivity)

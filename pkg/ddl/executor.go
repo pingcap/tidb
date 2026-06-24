@@ -2081,7 +2081,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
-		SessionVars:         make(map[string]string, 2),
+		SessionVars:         make(map[string]string, 3),
 	}
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
@@ -2089,6 +2089,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+	job.AddSystemVars(vardef.TiDBDDLEnableAutoSplitHotRegion, getEnableDDLAutoSplitHotRegion(ctx))
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
@@ -4854,7 +4855,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSystemVars(vardef.TiDBDDLEnableAutoSplitHotRegion, getEnableDDLAutoSplitHotRegion(ctx))
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
@@ -5167,6 +5170,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+	job.AddSystemVars(vardef.TiDBDDLEnableAutoSplitHotRegion, getEnableDDLAutoSplitHotRegion(ctx))
 
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
@@ -7613,6 +7617,14 @@ func getEnableDDLAnalyze(sctx sessionctx.Context) string {
 	}
 	logutil.DDLLogger().Info("system variable tidb_stats_update_during_ddl not found, use default value")
 	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
+}
+
+func getEnableDDLAutoSplitHotRegion(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLEnableAutoSplitHotRegion); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_ddl_enable_auto_split_hot_region not found, use default value")
+	return variable.BoolToOnOff(vardef.DefTiDBDDLEnableAutoSplitHotRegion)
 }
 
 func getAnalyzeVersion(sctx sessionctx.Context) string {
