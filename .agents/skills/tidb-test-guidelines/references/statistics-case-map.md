@@ -18,7 +18,7 @@
 - `pkg/statistics/integration_test.go` - statistics: Tests change ver to 2 behavior.
 - `pkg/statistics/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/statistics/sample_test.go` - statistics: Tests weighted sampling.
-- `pkg/statistics/scalar_test.go` - statistics: Tests calc fraction.
+- `pkg/statistics/scalar_test.go` - statistics: Tests calc fraction and scalar conversion for zero TIMESTAMP.
 - `pkg/statistics/statistics_test.go` - statistics: Tests merge histogram.
 - `pkg/statistics/table_test.go` - statistics: Tests clone col and idx existence map.
 
