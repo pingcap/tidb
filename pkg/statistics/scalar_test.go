@@ -18,9 +18,12 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const eps = 1e-9
@@ -174,6 +177,20 @@ func TestCalcFraction(t *testing.T) {
 		fraction := hg.calcFraction(0, &test.value)
 		require.InDelta(t, test.fraction, fraction, eps)
 	}
+}
+
+func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
+	core, recorded := observer.New(zap.ErrorLevel)
+	restore := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
+	)
+	defer restore()
+
+	datum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp))
+	_ = convertDatumToScalar(&datum, 0)
+
+	require.Empty(t, recorded.FilterMessage("encountered error").All())
 }
 
 func TestEnumRangeValues(t *testing.T) {

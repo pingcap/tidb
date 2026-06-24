@@ -23,11 +23,14 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestTimeEncoding(t *testing.T) {
@@ -1986,6 +1989,36 @@ func TestTimeSub(t *testing.T) {
 		rec := v1.Sub(typeCtx, &v2)
 		require.Equal(t, dur, rec)
 	}
+}
+
+func TestTimeSubTimestampGoTimeErrorLogRespectsContextFlags(t *testing.T) {
+	zeroTimestamp := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	minTimestamp := types.MinTimestamp
+
+	strictDuration, strictLogs := timeSubWithObservedErrorLogs(t, types.StrictContext, &zeroTimestamp, &minTimestamp)
+	require.Len(t, strictLogs.FilterMessage("encountered error").All(), 1)
+
+	tolerantCtx := types.NewContext(
+		types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr|types.FlagIgnoreZeroInDateErr,
+		time.UTC,
+		contextutil.IgnoreWarn,
+	)
+	tolerantDuration, tolerantLogs := timeSubWithObservedErrorLogs(t, tolerantCtx, &zeroTimestamp, &minTimestamp)
+	require.Empty(t, tolerantLogs.FilterMessage("encountered error").All())
+	require.Equal(t, strictDuration, tolerantDuration)
+}
+
+func timeSubWithObservedErrorLogs(t *testing.T, ctx types.Context, left, right *types.Time) (types.Duration, *observer.ObservedLogs) {
+	t.Helper()
+
+	core, recorded := observer.New(zap.ErrorLevel)
+	restore := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
+	)
+	defer restore()
+
+	return left.Sub(ctx, right), recorded
 }
 
 func TestCheckMonthDay(t *testing.T) {
