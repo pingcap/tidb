@@ -882,10 +882,11 @@ func (job *Job) NormalizeInvolvingSchemaInfo() {
 	job.SchemaName = normalizeInvolvingName(job.SchemaName)
 	job.TableName = normalizeInvolvingName(job.TableName)
 	for i := range job.InvolvingSchemaInfo {
-		job.InvolvingSchemaInfo[i].Database = normalizeInvolvingName(job.InvolvingSchemaInfo[i].Database)
-		job.InvolvingSchemaInfo[i].Table = normalizeInvolvingName(job.InvolvingSchemaInfo[i].Table)
-		job.InvolvingSchemaInfo[i].Policy = normalizeInvolvingName(job.InvolvingSchemaInfo[i].Policy)
-		job.InvolvingSchemaInfo[i].ResourceGroup = normalizeInvolvingName(job.InvolvingSchemaInfo[i].ResourceGroup)
+		item := &job.InvolvingSchemaInfo[i]
+		item.Database = normalizeInvolvingName(item.Database)
+		item.Table = normalizeInvolvingName(item.Table)
+		item.Policy = normalizeInvolvingName(item.Policy)
+		item.ResourceGroup = normalizeInvolvingName(item.ResourceGroup)
 	}
 }
 
