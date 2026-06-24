@@ -12,9 +12,9 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
+        "//pkg/objstore/storeapi",
         "//pkg/planner/extstore",
         "//pkg/testkit",
-        "//pkg/testkit/testdata",
         "//pkg/testkit/testsetup",
         "//pkg/util/replayer",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -84,6 +84,24 @@ var expectedFilesInReplayerForCapture = []string{
 	"variables.toml",
 }
 
+func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
+	require.True(t, rows.Next(), "unexpected data")
+	var item, filename string
+	require.NoError(t, rows.Scan(&item, &filename))
+	require.Equal(t, "File token", item)
+	require.NotEmpty(t, filename)
+	require.NoError(t, rows.Close())
+	return filename
+}
+
+func requireSingleStringFromRows(t *testing.T, rows *sql.Rows) string {
+	require.True(t, rows.Next(), "unexpected data")
+	var value string
+	require.NoError(t, rows.Scan(&value))
+	require.NoError(t, rows.Close())
+	return value
+}
+
 func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (srv *server.Server, client *testserverclient.TestServerClient) {
 	driver := server.NewTiDBDriver(store)
 	client = testserverclient.NewTestServerClient()
@@ -273,10 +291,7 @@ func TestPlanReplayerLoadWithSemicolonInColumnComment(t *testing.T) {
 	tk.MustExec("create table t(k1 int, k2 int comment 'xx;xxx')")
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 
 	resp, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
@@ -348,15 +363,9 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table tt")
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename2 string
-	require.NoError(t, rows.Scan(&filename2))
-	require.NoError(t, rows.Close())
+	filename2 := requireSingleStringFromRows(t, rows)
 	require.Equal(t, filename, filename2)
 
 	tk.MustExec("plan replayer capture 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7' '*'")
@@ -600,15 +609,9 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	require.NoError(t, err)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
-	var token string
-	require.NoError(t, rows.Scan(&token))
-	require.NoError(t, rows.Close())
+	token := requireSingleStringFromRows(t, rows)
 	require.Equal(t, filename, token)
 
 	// Cleanup the binding created for dumping to avoid interference when the same server later loads the replayer file.
@@ -673,12 +676,9 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
+	require.Equal(t, filename, requireSingleStringFromRows(t, rows))
 	return filename
 }
 
@@ -735,12 +735,9 @@ JOIN test_table t2 ON t1.id = t2.id;
 		}()
 	}
 	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
+	require.Equal(t, filename, requireSingleStringFromRows(t, rows))
 	return filename
 }
 

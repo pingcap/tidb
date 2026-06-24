@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -126,9 +127,33 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err erro
 	if err != nil {
 		return err
 	}
-	req.AppendString(0, e.Ctx().GetSessionVars().LastPlanReplayerToken)
+	appendPlanReplayerDumpResult(req, e.Ctx().GetSessionVars().LastPlanReplayerToken)
 	e.endFlag = true
 	return nil
+}
+
+func appendPlanReplayerDumpResult(req *chunk.Chunk, token string) {
+	if isPlanReplayerDownloadURL(token) {
+		rows := [][2]string{
+			{"Download URL", token},
+			{"Expires in", "1 hour"},
+			{"Browser", "Open the Download URL directly before it expires"},
+			{"curl", fmt.Sprintf("curl -L '%s' -o plan_replayer.zip", token)},
+			{"Note", "If the URL expires, rerun PLAN REPLAYER DUMP to get a new one"},
+		}
+		for _, row := range rows {
+			req.AppendString(0, row[0])
+			req.AppendString(1, row[1])
+		}
+		return
+	}
+	req.AppendString(0, "File token")
+	req.AppendString(1, token)
+}
+
+func isPlanReplayerDownloadURL(token string) bool {
+	u, err := url.Parse(token)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
