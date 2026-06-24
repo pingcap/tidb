@@ -282,3 +282,40 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
 	tk.MustExec("drop table t;")
 }
+
+func TestAddIndexAutoPresplitRealTiKV(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast reorg are always enabled on nextgen")
+	}
+	testutil.ReduceCheckInterval(t)
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	originalFastReorg := tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Rows()[0][0]
+	originalDistTask := tk.MustQuery("select @@global.tidb_enable_dist_task").Rows()[0][0]
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg = %q", fmt.Sprint(originalFastReorg)))
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %q", fmt.Sprint(originalDistTask)))
+	})
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(10)")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off")
+	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = on")
+	tk.MustExec("create table t (a int primary key, b int)")
+	for i := range 40 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%[1]d, %[1]d)", i))
+	}
+	tk.MustExec("analyze table t all columns")
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("select count(*) from t where b = 0")
+	tk.MustExec("explain select * from t where b = 0")
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+
+	tk.MustExec("alter table t add index idx(b)")
+	rows := tk.MustQuery("show table t index idx regions").Rows()
+	require.Greater(t, len(rows), 1)
+	tk.MustExec("admin check table t")
+}

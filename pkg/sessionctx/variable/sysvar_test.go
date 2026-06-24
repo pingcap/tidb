@@ -950,6 +950,28 @@ func TestSetTIDBFastDDL(t *testing.T) {
 	require.Equal(t, vardef.Off, val)
 }
 
+func TestSetTiDBDDLEnableAutoSplitHotRegion(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	autoSplit := GetSysVar(vardef.TiDBDDLEnableAutoSplitHotRegion)
+
+	require.Equal(t, vardef.Off, autoSplit.Value)
+	require.Equal(t, vardef.TypeBool, autoSplit.Type)
+	require.True(t, autoSplit.HasGlobalScope())
+	require.True(t, autoSplit.HasSessionScope())
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBDDLEnableAutoSplitHotRegion, vardef.On))
+	val, err := mock.GetGlobalSysVar(vardef.TiDBDDLEnableAutoSplitHotRegion)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	normalizedVal, err := autoSplit.Validate(vars, vardef.On, vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, normalizedVal)
+}
+
 func TestSetTIDBDiskQuota(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
