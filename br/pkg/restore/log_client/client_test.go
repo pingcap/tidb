@@ -107,22 +107,22 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 func requireLockMetaInStorage(
 	ctx context.Context,
 	t *testing.T,
-	storage storeapi.Storage,
+	stg storage.ExternalStorage,
 	pathPrefix string,
 	resource operation.LockResourceType,
-) objstore.LockMeta {
+) storage.LockMeta {
 	t.Helper()
 
-	var metas []objstore.LockMeta
-	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+	var metas []storage.LockMeta
+	err := stg.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		if !strings.HasPrefix(path, pathPrefix) {
 			return nil
 		}
-		content, err := storage.ReadFile(ctx, path)
+		content, err := stg.ReadFile(ctx, path)
 		if err != nil {
 			return err
 		}
-		var meta objstore.LockMeta
+		var meta storage.LockMeta
 		if err := json.Unmarshal(content, &meta); err != nil {
 			if strings.Contains(path, ".INTENT.") {
 				return nil
@@ -142,9 +142,9 @@ func requireLockMetaInStorage(
 func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.ToSlash(t.TempDir())
-	backend, err := objstore.ParseBackend("local://"+path, nil)
+	backend, err := storage.ParseBackend("local://"+path, nil)
 	require.NoError(t, err)
-	stg, err := objstore.New(ctx, backend, nil)
+	stg, err := storage.New(ctx, backend, nil)
 	require.NoError(t, err)
 
 	appendOpCtx, err := operation.NewContext("test append migration")

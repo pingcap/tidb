@@ -1119,19 +1119,15 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
-	lock, err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
-=======
 	truncateLockMeta, err := cfg.OperationContext.LockMeta(
 		operation.LockResourceLogTruncateExclusive, hintOnTruncateLock)
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
 	if err != nil {
 		return errors.Annotate(err, "failed to build log truncate lock metadata")
 	}
-	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, truncateLockMeta)
+	lock, err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, truncateLockMeta)
 	if err != nil {
 		log.Warn("Failed to acquire log truncate lock",
-			objstore.LockConflictLogFields(truncateLockPath, truncateLockMeta, err)...)
+			storage.LockConflictLogFields(truncateLockPath, truncateLockMeta, err)...)
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {

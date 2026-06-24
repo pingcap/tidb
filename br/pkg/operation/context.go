@@ -24,7 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"go.uber.org/zap"
 )
 
@@ -142,18 +142,18 @@ func (c Context) hintFieldIndex(key string) int {
 }
 
 // LockMeta builds object-storage lock metadata from the BR operation context.
-func (c Context) LockMeta(resource LockResourceType, hint string) (objstore.LockMetaInput, error) {
+func (c Context) LockMeta(resource LockResourceType, hint string) (storage.LockMetaInput, error) {
 	if c.OperationID == "" {
-		return objstore.LockMetaInput{}, errors.New("operation ID is required")
+		return storage.LockMetaInput{}, errors.New("operation ID is required")
 	}
 	if c.StartedAt.IsZero() {
-		return objstore.LockMetaInput{}, errors.New("operation started time is required")
+		return storage.LockMetaInput{}, errors.New("operation started time is required")
 	}
 	if resource == "" {
-		return objstore.LockMetaInput{}, errors.New("lock resource type is required")
+		return storage.LockMetaInput{}, errors.New("lock resource type is required")
 	}
 
-	return objstore.LockMetaInput{
+	return storage.LockMetaInput{
 		OwnerID:  c.OperationID,
 		LockType: string(resource),
 		Hint:     c.lockHint(hint),

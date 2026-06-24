@@ -7,11 +7,8 @@ import (
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/br/pkg/storage"
-=======
 	"github.com/pingcap/tidb/br/pkg/operation"
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 )
 
@@ -57,12 +54,8 @@ func (cx migrateToCtx) dryRun(ctx context.Context, f func(stream.MigrationExt) (
 		est     = cx.est
 		console = cx.console
 		estBase stream.MergeAndMigratedTo
-<<<<<<< HEAD
 		effects []storage.Effect
-=======
-		effects []objstore.Effect
 		runErr  error
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
 	)
 	effects = est.DryRun(func(me stream.MigrationExt) {
 		estBase, runErr = f(me)
@@ -91,16 +84,12 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return err
 	}
 
-<<<<<<< HEAD
-	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
-=======
 	operationContext, err := operation.NewContext("operator migrate-to")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	backend, err := objstore.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
+	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
 	if err != nil {
 		return err
 	}

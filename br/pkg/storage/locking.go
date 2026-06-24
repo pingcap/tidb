@@ -113,7 +113,7 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 	return txnID, s.WriteFile(cx, w.Target, w.Content(txnID))
 }
 
-func lockBlockerFromPath(ctx context.Context, storage storeapi.Storage, path string) LockBlocker {
+func lockBlockerFromPath(ctx context.Context, storage ExternalStorage, path string) LockBlocker {
 	blocker := LockBlocker{Path: path}
 	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
@@ -133,13 +133,9 @@ func (cx VerifyWriteContext) conflictingObjectsOfPrefixExpect(pfx string, expect
 		dirName = ""
 	}
 
-<<<<<<< HEAD:br/pkg/storage/locking.go
-	return cx.Storage.WalkDir(cx, &WalkOption{
-=======
 	var blockers []LockBlocker
 	blockerCount := 0
-	err := cx.Storage.WalkDir(cx, &storeapi.WalkOption{
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
+	err := cx.Storage.WalkDir(cx, &WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
 		// We'd better read a deleted intention...
@@ -399,16 +395,9 @@ func (l *RemoteLock) String() string {
 	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
 }
 
-<<<<<<< HEAD:br/pkg/storage/locking.go
-func tryFetchRemoteLockInfo(ctx context.Context, storage ExternalStorage, path string) error {
-	meta, err := getLockMeta(ctx, storage, path)
-	if err != nil {
-		return err
-=======
-func enrichErrLocked(ctx context.Context, storage storeapi.Storage, path string, local LockMetaInput, locked ErrLocked) ErrLocked {
+func enrichErrLocked(ctx context.Context, storage ExternalStorage, path string, local LockMetaInput, locked ErrLocked) ErrLocked {
 	if locked.Path == "" {
 		locked.Path = path
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
 	}
 	if isZeroLockMetaInput(locked.Local) {
 		locked.Local = local
@@ -429,7 +418,7 @@ func enrichErrLocked(ctx context.Context, storage storeapi.Storage, path string,
 	return locked
 }
 
-func annotateLockAttemptError(ctx context.Context, storage storeapi.Storage, path string, local LockMetaInput, err error, format string, args ...any) error {
+func annotateLockAttemptError(ctx context.Context, storage ExternalStorage, path string, local LockMetaInput, err error, format string, args ...any) error {
 	message := fmt.Sprintf(format, args...)
 	var locked ErrLocked
 	if stderrors.As(err, &locked) {
@@ -447,11 +436,7 @@ func annotateLockAttemptError(ctx context.Context, storage storeapi.Storage, pat
 // Will return a `ErrLocked` if there is another process already creates the lock file.
 // This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
 // manually deleting the "lock file" in external storage.
-<<<<<<< HEAD:br/pkg/storage/locking.go
-func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-=======
-func TryLockRemote(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error) {
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
+func TryLockRemote(ctx context.Context, storage ExternalStorage, path string, input LockMetaInput) (lock RemoteLock, err error) {
 	writer := conditionalPut{
 		Target: path,
 		Local:  input,
@@ -528,12 +513,8 @@ func newReadLockName(path string) string {
 	return fmt.Sprintf("%s.READ.%016x", path, readID)
 }
 
-<<<<<<< HEAD:br/pkg/storage/locking.go
-type Locker = func(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error)
-=======
 // Locker is a locker.
-type Locker = func(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error)
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
+type Locker = func(ctx context.Context, storage ExternalStorage, path string, input LockMetaInput) (lock RemoteLock, err error)
 
 const (
 	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
@@ -541,12 +522,8 @@ const (
 	lockRetryTimes = 60
 )
 
-<<<<<<< HEAD:br/pkg/storage/locking.go
-func LockWithRetry(ctx context.Context, locker Locker, storage ExternalStorage, path, hint string) (
-=======
 // LockWithRetry lock with retry.
-func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, path string, input LockMetaInput) (
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
+func LockWithRetry(ctx context.Context, locker Locker, storage ExternalStorage, path string, input LockMetaInput) (
 	lock RemoteLock, err error) {
 	const JitterMs = 5000
 
@@ -581,9 +558,6 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	}
 }
 
-<<<<<<< HEAD:br/pkg/storage/locking.go
-func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-=======
 // LockConflictLogFields returns structured fields for a failed lock attempt.
 func LockConflictLogFields(path string, input LockMetaInput, err error) []zap.Field {
 	fields := []zap.Field{
@@ -640,8 +614,7 @@ func lockBlockerLogFields(blockers []LockBlocker, limit int) []zap.Field {
 }
 
 // TryLockRemoteWrite try lock.
-func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error) {
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
+func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path string, input LockMetaInput) (lock RemoteLock, err error) {
 	target := writeLockName(path)
 	writer := conditionalPut{
 		Target: target,
@@ -680,12 +653,8 @@ func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path stri
 	return
 }
 
-<<<<<<< HEAD:br/pkg/storage/locking.go
-func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-=======
 // TryLockRemoteRead try lock.
-func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path string, input LockMetaInput) (lock RemoteLock, err error) {
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231)):pkg/objstore/locking.go
+func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path string, input LockMetaInput) (lock RemoteLock, err error) {
 	target := newReadLockName(path)
 	writeLock := writeLockName(path)
 	writer := conditionalPut{

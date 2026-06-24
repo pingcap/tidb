@@ -27,11 +27,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/br/pkg/storage"
-=======
 	"github.com/pingcap/tidb/br/pkg/operation"
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"

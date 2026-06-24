@@ -24,11 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/br/pkg/storage"
-=======
 	"github.com/pingcap/tidb/br/pkg/operation"
->>>>>>> 807326b066f (br, pkg/objstore: add operation metadata to external storage locks (#69231))
+	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
@@ -53,18 +50,18 @@ func testOperationContext(t *testing.T) operation.Context {
 
 type capturedLockWrite struct {
 	path string
-	meta objstore.LockMeta
+	meta storage.LockMeta
 }
 
 type lockCaptureStorage struct {
-	storeapi.Storage
+	storage.ExternalStorage
 	mu     sync.Mutex
 	writes []capturedLockWrite
 }
 
 func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	s.captureLockWrite(name, data)
-	return s.Storage.WriteFile(ctx, name, data)
+	return s.ExternalStorage.WriteFile(ctx, name, data)
 }
 
 func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
@@ -72,7 +69,7 @@ func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
 		return
 	}
 
-	var meta objstore.LockMeta
+	var meta storage.LockMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return
 	}
@@ -2685,7 +2682,7 @@ func testMigrationLockOperationMetadata(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			opCtx := testOperationContext(t)
-			capturingStorage := &lockCaptureStorage{Storage: tmp(t)}
+			capturingStorage := &lockCaptureStorage{ExternalStorage: tmp(t)}
 			est := MigrationExtension(capturingStorage).WithOperationContext(opCtx)
 
 			require.NoError(t, c.run(ctx, est))

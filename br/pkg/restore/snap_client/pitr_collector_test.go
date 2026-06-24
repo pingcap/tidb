@@ -34,18 +34,18 @@ func tmp(t *testing.T) *storage.LocalStorage {
 
 type capturedLockWrite struct {
 	path string
-	meta objstore.LockMeta
+	meta storage.LockMeta
 }
 
 type lockCaptureStorage struct {
-	storeapi.Storage
+	storage.ExternalStorage
 	mu     sync.Mutex
 	writes []capturedLockWrite
 }
 
 func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	s.captureLockWrite(name, data)
-	return s.Storage.WriteFile(ctx, name, data)
+	return s.ExternalStorage.WriteFile(ctx, name, data)
 }
 
 func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
@@ -53,7 +53,7 @@ func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
 		return
 	}
 
-	var meta objstore.LockMeta
+	var meta storage.LockMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return
 	}
@@ -193,7 +193,7 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
 	coll := newPiTRCollForTest(t)
 	defer coll.Done()
-	capturingStorage := &lockCaptureStorage{Storage: coll.coll.taskStorage}
+	capturingStorage := &lockCaptureStorage{ExternalStorage: coll.coll.taskStorage}
 	coll.coll.taskStorage = capturingStorage
 
 	require.NoError(t, coll.coll.prepareMig(coll.cx))
