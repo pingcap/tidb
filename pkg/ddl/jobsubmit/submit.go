@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -486,4 +487,16 @@ func setJobStateToQueueing(job *model.Job) {
 		}
 	}
 	job.State = model.JobStateQueueing
+}
+
+// NotifyDDLOwnerByEtcd notifies the DDL owner to pick up new DDL jobs by etcd.
+func NotifyDDLOwnerByEtcd(ctx context.Context, etcdCli *clientv3.Client) {
+	if etcdCli == nil {
+		return
+	}
+
+	err := ddlutil.PutKVToEtcd(ctx, etcdCli, 1, ddlutil.AddingDDLJobNotifyKey, "0")
+	if err != nil {
+		logutil.DDLLogger().Info("notify new DDL job failed", zap.Error(err))
+	}
 }

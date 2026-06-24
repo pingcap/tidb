@@ -111,28 +111,16 @@ func setBDRRoleForSubmitTest(ctx context.Context, t *testing.T, store kv.Storage
 }
 
 func newTableModeSpec(t *testing.T) *jobsubmit.JobSpec {
-	t.Helper()
-	job := &model.Job{
-		Version:        model.JobVersion2,
-		SchemaID:       100,
-		TableID:        200,
-		SchemaName:     "testdb",
-		Type:           model.ActionAlterTableMode,
-		Query:          "skip",
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: 7,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: "testdb",
-				Table:    "t1",
-			},
-		},
-	}
-	args := &model.AlterTableModeArgs{
-		TableMode: model.TableModeImport,
-		SchemaID:  100,
-		TableID:   200,
-	}
+	job, args, noop, err := jobsubmit.BuildAlterTableModeJob(newAlterTableModeSession(), model.AlterTableModeTarget{
+		SchemaID:    100,
+		SchemaName:  ast.NewCIStr("TestDB"),
+		TableID:     200,
+		TableName:   ast.NewCIStr("T1"),
+		CurrentMode: model.TableModeNormal,
+		TargetMode:  model.TableModeImport,
+	})
+	require.NoError(t, err)
+	require.False(t, noop)
 	return &jobsubmit.JobSpec{
 		Job:         job,
 		Args:        args,
