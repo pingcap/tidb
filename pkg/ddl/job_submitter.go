@@ -292,5 +292,5 @@ func (s *JobSubmitter) notifyNewJobSubmitted() {
 		asyncNotify(s.ddlJobNotifyCh)
 		return
 	}
-	jobsubmit.NotifyDDLOwner(s.ctx, s.etcdCli)
+	jobsubmit.NotifyDDLOwnerByEtcd(s.ctx, s.etcdCli)
 }

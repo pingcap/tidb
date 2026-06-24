@@ -489,8 +489,8 @@ func setJobStateToQueueing(job *model.Job) {
 	job.State = model.JobStateQueueing
 }
 
-// NotifyDDLOwner notify the DDL owner to pick up new DDL jobs.
-func NotifyDDLOwner(ctx context.Context, etcdCli *clientv3.Client) {
+// NotifyDDLOwnerByEtcd notify the DDL owner to pick up new DDL jobs by etcd.
+func NotifyDDLOwnerByEtcd(ctx context.Context, etcdCli *clientv3.Client) {
 	if etcdCli == nil {
 		return
 	}
