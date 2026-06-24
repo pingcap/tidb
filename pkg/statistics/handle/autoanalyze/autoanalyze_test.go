@@ -483,6 +483,7 @@ func TestFinishAutoAnalyzeTaskKeepsTaskWhenHistoryInsertFails(t *testing.T) {
 		StartTime: 10,
 	})
 	require.Error(t, err)
+	require.Empty(t, mgr.recycled)
 	tk.MustQuery("select count(*) from mysql.auto_analyze_tasks where id = 200").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from mysql.auto_analyze_tasks_history where id = 200").Check(testkit.Rows("1"))
 }

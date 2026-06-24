@@ -211,12 +211,12 @@ func getAutoAnalyzeTask(sctx sessionctx.Context) (*statistics.AutoAnalyzeTask, e
 
 // FinishAutoAnalyzeTask moves one finished task to history and recycles it from the external workload controller.
 func (sa *statAutoAnalyzeWorker) FinishAutoAnalyzeTask(task *statistics.AutoAnalyzeTask) error {
-	if err := recycleAutoAnalyzeTask(task.ID); err != nil {
-		return errors.Trace(err)
-	}
 	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return finishAutoAnalyzeTask(sctx, task)
 	}, statsutil.FlagWrapTxn); err != nil {
+		return errors.Trace(err)
+	}
+	if err := recycleAutoAnalyzeTask(task.ID); err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("finished an auto analyze task",

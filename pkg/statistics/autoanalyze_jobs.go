@@ -21,6 +21,5 @@ type AutoAnalyzeTask struct {
 	ID        uint64
 	TableID   int64
 	StartTime int64
-	EndTime   int64
 	Analyzed  bool
 }
