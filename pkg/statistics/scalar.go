@@ -68,17 +68,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		}
 		return scalar
 	case types.KindMysqlTime:
-		valueTime := value.GetMysqlTime()
-		var minTime types.Time
-		switch valueTime.Type() {
-		case mysql.TypeDate:
-			minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
-		case mysql.TypeDatetime:
-			minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
-		case mysql.TypeTimestamp:
-			minTime = types.MinTimestamp
-		}
-		return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
+		return convertMysqlTimeToScalar(value.GetMysqlTime())
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -93,6 +83,25 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		// do not know how to convert
 		return 0
 	}
+}
+
+func convertMysqlTimeToScalar(valueTime types.Time) float64 {
+	var minTime types.Time
+	switch valueTime.Type() {
+	case mysql.TypeDate:
+		minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
+	case mysql.TypeDatetime:
+		minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
+	case mysql.TypeTimestamp:
+		minTime = types.MinTimestamp
+		if valueTime.Compare(types.MinTimestamp) < 0 {
+			// Relaxed SQL modes can store zero or before-min TIMESTAMP values, but they
+			// are outside the legal TIMESTAMP range. Keep them adjacent to the valid
+			// range so scalar estimation stays finite and ordered.
+			return -1
+		}
+	}
+	return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
 }
 
 // PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also

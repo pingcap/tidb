@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -142,6 +143,13 @@ func TestCalcFraction(t *testing.T) {
 			tp:       types.NewFieldType(mysql.TypeTimestamp),
 		},
 		{
+			lower:    types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)),
+			upper:    types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			value:    types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 2, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			fraction: 0.5,
+			tp:       types.NewFieldType(mysql.TypeTimestamp),
+		},
+		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
@@ -188,9 +196,23 @@ func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
 	defer restore()
 
 	datum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp))
-	_ = convertDatumToScalar(&datum, 0)
+	scalar := convertDatumToScalar(&datum, 0)
 
 	require.Empty(t, recorded.FilterMessage("encountered error").All())
+	require.Equal(t, float64(-1), scalar)
+
+	minTimestamp := types.NewTimeDatum(types.MinTimestamp)
+	require.Equal(t, float64(0), convertDatumToScalar(&minTimestamp, 0))
+
+	hg := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
+	upper := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp))
+	hg.AppendBucket(&datum, &upper, 2, 1)
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+	right := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 4, 0), mysql.TypeTimestamp, types.DefaultFsp))
+	estimate := hg.OutOfRangeRowCount(ctx, &upper, &right, 100, 100, 2)
+	require.Greater(t, estimate.Est, 20.0)
 }
 
 func TestEnumRangeValues(t *testing.T) {
