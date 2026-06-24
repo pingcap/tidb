@@ -51,6 +51,7 @@ go_test(
         "job_args_test.go",
         "job_test.go",
         "placement_test.go",
+        "table_mode_test.go",
         "table_test.go",
     ],
     embed = [":model"],
