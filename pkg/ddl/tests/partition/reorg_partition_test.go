@@ -1212,3 +1212,23 @@ func TestReorgPartitionGlobalIndexNonTouchedAfterDropped(t *testing.T) {
 	// A missing global index entry would also stop the unique constraint from being enforced.
 	tk.MustContainErrMsg(`insert into t values (31,300)`, "Duplicate entry")
 }
+
+func TestReorgPartitionHandleNotExistNoPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartHandleNotExist"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned primary key, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/CheckReorgInfoEmptyErr", "1*return(true)")
+
+	tk.MustExec("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "10", "23", "34", "45", "56"))
+}
