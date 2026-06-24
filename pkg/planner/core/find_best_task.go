@@ -960,13 +960,17 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if rightDidNotLose && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
-	// match property result + limit is a winner
-	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 &&
+	// match property result + limit is a winner.
+	// Require a finite, positive limit (0 < ExpectedCnt < MaxFloat64): this rule only protects an
+	// ordered path when a bounded number of rows is needed. The explicit < MaxFloat64 bound makes
+	// the "no limit" exclusion self-evident and consistent with the cacheSortPropSkyline gate,
+	// instead of relying on the CountAfterAccess sum below staying finite.
+	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
 		lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
 		rhs.path.CountAfterAccess+rhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 &&
+	if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
 		rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
 		lhs.path.CountAfterAccess+lhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
