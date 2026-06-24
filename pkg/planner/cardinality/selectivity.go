@@ -997,7 +997,11 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		// VectorizedFilter mutates the input chunk's selection during evaluation.
+		// Keep the cached histogram bounds immutable by evaluating on a shallow chunk copy.
+		histBounds := hist.Bounds.Prune([]int{0})
+		histBounds.SetSel(nil)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(histBounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
