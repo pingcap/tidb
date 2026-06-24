@@ -1916,6 +1916,21 @@ func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidateP
 		// Safety: never prune everything — fall back to the original set.
 		return currentCandidates
 	}
+	// MVIndex paths are incomparable in compareCandidates (see #50125/#49438), so they
+	// can never be pruned here while every non-MVIndex path can. A single MVIndex path
+	// later yields base.InvalidTask in convertToIndexScan, so a result set consisting
+	// solely of MVIndex survivors would bubble up to a "can't find a proper plan" error.
+	// Treat that as the empty case and fall back to the original set.
+	allMVIndex := true
+	for _, c := range result {
+		if !isMVIndexPath(c.path) {
+			allMVIndex = false
+			break
+		}
+	}
+	if allMVIndex {
+		return currentCandidates
+	}
 	return result
 }
 
@@ -2331,31 +2346,6 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			candidates = crossSkylinePrune(ds, candidates, cache)
 		}
 	}
-	// Cache sort-aware candidates for future cross-pruning by empty-property calls.
-	// Multiple sort properties are accumulated so pruning is not order-dependent.
-	// Entries are deduplicated by sort items and capped to prevent unbounded growth.
-	if !prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil {
-		cache, _ := ds.CrossSkylineCache.(*skylineCrossCache)
-		if cache == nil {
-			cache = &skylineCrossCache{}
-			ds.CrossSkylineCache = cache
-		}
-		// Deduplicate: skip if an entry with identical sort items already exists.
-		duplicate := false
-		for _, entry := range cache.entries {
-			if sameSortItems(entry.sortProp, prop) {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate && len(cache.entries) < maxCrossCacheEntries {
-			cache.entries = append(cache.entries, skylineCrossCacheEntry{
-				candidates: candidates,
-				sortProp:   prop.CloneEssentialFields(),
-			})
-		}
-	}
-
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {
@@ -2539,6 +2529,46 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if curIsBetter {
 			t = idxTask
+		}
+	}
+
+	// Cache sort-aware candidates for future cross-pruning by empty-property calls.
+	// Populate only after confirming at least one candidate produced a valid task for
+	// this sort property. Otherwise (e.g. TABLESAMPLE, where any non-empty sort property
+	// is rejected in convertToSampleTable) we would cache infeasible candidates that later
+	// act as phantom dominators in crossSkylinePrune, pruning the only viable empty-property
+	// candidates and causing plan failure or a worse fallback plan.
+	// Multiple sort properties are accumulated so pruning is not order-dependent; entries are
+	// deduplicated by sort items and capped to prevent unbounded growth.
+	//
+	// Only cache Limit-bounded ordered skylines (prop.ExpectedCnt != math.MaxFloat64).
+	// Cross-pruning exists to protect the Limit-vs-TopN cost comparison: the candidate worth
+	// protecting is always the child of a Limit, whose sort-property call carries a finite
+	// ExpectedCnt. An unbounded sort request (e.g. the order required by a StreamAgg for
+	// DISTINCT/GROUP BY) has no Limit consumer that benefits from the order, so caching it
+	// would let an order-only (matchResult) dominance prune a cheaper order-less candidate
+	// from a later empty-property call. ExpectedCnt != math.MaxFloat64 is the established
+	// "a Limit is present" signal (see compareCandidates).
+	if t != nil && !t.Invalid() && !prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil &&
+		prop.ExpectedCnt != math.MaxFloat64 {
+		cache, _ := ds.CrossSkylineCache.(*skylineCrossCache)
+		if cache == nil {
+			cache = &skylineCrossCache{}
+			ds.CrossSkylineCache = cache
+		}
+		// Deduplicate: skip if an entry with identical sort items already exists.
+		duplicate := false
+		for _, entry := range cache.entries {
+			if sameSortItems(entry.sortProp, prop) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate && len(cache.entries) < maxCrossCacheEntries {
+			cache.entries = append(cache.entries, skylineCrossCacheEntry{
+				candidates: candidates,
+				sortProp:   prop.CloneEssentialFields(),
+			})
 		}
 	}
 
