@@ -1995,17 +1995,52 @@ func TestTimeSubTimestampGoTimeErrorLogRespectsContextFlags(t *testing.T) {
 	zeroTimestamp := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	minTimestamp := types.MinTimestamp
 
-	strictDuration, strictLogs := timeSubWithObservedErrorLogs(t, types.StrictContext, &zeroTimestamp, &minTimestamp)
-	require.Len(t, strictLogs.FilterMessage("encountered error").All(), 1)
+	testCases := []struct {
+		name              string
+		ctx               types.Context
+		expectedErrorLogs int
+	}{
+		{
+			name:              "strict context logs GoTime error",
+			ctx:               types.StrictContext,
+			expectedErrorLogs: 1,
+		},
+		{
+			name: "ignore invalid date error suppresses GoTime error log",
+			ctx: types.NewContext(
+				types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr,
+				time.UTC,
+				contextutil.IgnoreWarn,
+			),
+		},
+		{
+			name: "ignore zero in date suppresses GoTime error log",
+			ctx: types.NewContext(
+				types.DefaultStmtFlags|types.FlagIgnoreZeroInDateErr,
+				time.UTC,
+				contextutil.IgnoreWarn,
+			),
+		},
+		{
+			name: "ignore invalid date error and zero in date suppress GoTime error log",
+			ctx: types.NewContext(
+				types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr|types.FlagIgnoreZeroInDateErr,
+				time.UTC,
+				contextutil.IgnoreWarn,
+			),
+		},
+	}
 
-	tolerantCtx := types.NewContext(
-		types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr|types.FlagIgnoreZeroInDateErr,
-		time.UTC,
-		contextutil.IgnoreWarn,
-	)
-	tolerantDuration, tolerantLogs := timeSubWithObservedErrorLogs(t, tolerantCtx, &zeroTimestamp, &minTimestamp)
-	require.Empty(t, tolerantLogs.FilterMessage("encountered error").All())
-	require.Equal(t, strictDuration, tolerantDuration)
+	var strictDuration types.Duration
+	for i, tc := range testCases {
+		duration, logs := timeSubWithObservedErrorLogs(t, tc.ctx, &zeroTimestamp, &minTimestamp)
+		require.Lenf(t, logs.FilterMessage("encountered error").All(), tc.expectedErrorLogs, "%s", tc.name)
+		if i == 0 {
+			strictDuration = duration
+			continue
+		}
+		require.Equalf(t, strictDuration, duration, "%s", tc.name)
+	}
 }
 
 func timeSubWithObservedErrorLogs(t *testing.T, ctx types.Context, left, right *types.Time) (types.Duration, *observer.ObservedLogs) {
