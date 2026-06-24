@@ -698,6 +698,11 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.False(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
+
+	ema := newRUEMA()
+	ema.Observe(1_048_576, time.Now())
+	worker := &copIteratorWorker{ema: ema}
+	require.Zero(t, worker.predictedReadBytesForTask(tasks[0]))
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {

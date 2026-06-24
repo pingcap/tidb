@@ -1649,6 +1649,14 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
+func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
+	// PD treats PredictedReadBytes as the pre-charge signal and cannot see this task's paging state.
+	if !task.paging {
+		return 0
+	}
+	return worker.ema.Predict()
+}
+
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
@@ -1698,7 +1706,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.ema.Predict()
+	req.PredictedReadBytes = worker.predictedReadBytesForTask(task)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
