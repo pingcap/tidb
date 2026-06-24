@@ -150,6 +150,13 @@ func TestCalcFraction(t *testing.T) {
 			tp:       types.NewFieldType(mysql.TypeTimestamp),
 		},
 		{
+			lower:    types.NewTimeDatum(types.MaxTimestamp),
+			upper:    types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			value:    types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			fraction: 1.0,
+			tp:       types.NewFieldType(mysql.TypeTimestamp),
+		},
+		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
@@ -207,7 +214,8 @@ func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
 	maxTimestamp := types.NewTimeDatum(types.MaxTimestamp)
 	maxTimestampScalar := convertDatumToScalar(&maxTimestamp, 0)
 	afterMaxTimestamp := types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp))
-	require.Equal(t, maxTimestampScalar+1, convertDatumToScalar(&afterMaxTimestamp, 0))
+	afterMaxTimestampScalar := convertDatumToScalar(&afterMaxTimestamp, 0)
+	require.Greater(t, afterMaxTimestampScalar, maxTimestampScalar)
 
 	hg := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
 	upper := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp))

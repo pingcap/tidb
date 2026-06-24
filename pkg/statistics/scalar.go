@@ -103,7 +103,8 @@ func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 		}
 		if valueTime.Compare(types.MaxTimestamp) > 0 {
 			maxTimestamp := types.MaxTimestamp
-			return float64(maxTimestamp.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration) + 1
+			maxScalar := float64(maxTimestamp.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
+			return math.Nextafter(maxScalar, math.Inf(1))
 		}
 	}
 	return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
