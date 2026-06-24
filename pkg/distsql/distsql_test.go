@@ -129,7 +129,7 @@ func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
 
 	request := buildRequest(kv.TiKV)
 	response, err := Select(checkRequest(func(req *kv.Request) {
-		require.Nil(t, req.CoprRequestRateLimit)
+		require.Nil(t, req.CoprRequestLimiter)
 		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
 	}), dctx, request, colTypes)
 	require.NoError(t, err)
@@ -137,29 +137,29 @@ func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
 
 	request = buildRequest(kv.TiFlash)
 	response, err = Select(checkRequest(func(req *kv.Request) {
-		require.Nil(t, req.CoprRequestRateLimit)
+		require.Nil(t, req.CoprRequestLimiter)
 		require.Nil(t, req.QueryCopStoreLimiter)
 	}), dctx, request, colTypes)
 	require.NoError(t, err)
 	require.NoError(t, response.Close())
 
 	request = buildRequest(kv.TiKV)
-	explicitRateLimit := kv.NewCoprRequestRateLimit(7)
-	request.CoprRequestRateLimit = explicitRateLimit
+	explicitLimiter := kv.NewCoprRequestLimiter(7)
+	request.CoprRequestLimiter = explicitLimiter
 	response, err = Select(checkRequest(func(req *kv.Request) {
-		require.Same(t, explicitRateLimit, req.CoprRequestRateLimit)
+		require.Same(t, explicitLimiter, req.CoprRequestLimiter)
 		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
-		require.False(t, req.CoprRequestRateLimit.Acquire(make(chan struct{})))
-		req.CoprRequestRateLimit.Release()
+		require.False(t, req.CoprRequestLimiter.Acquire(make(chan struct{})))
+		req.CoprRequestLimiter.Release()
 	}), dctx, request, colTypes)
 	require.NoError(t, err)
 	require.NoError(t, response.Close())
 
 	dctx.QueryCopStoreLimiter = nil
 	request = buildRequest(kv.TiKV)
-	request.CoprRequestRateLimit = explicitRateLimit
+	request.CoprRequestLimiter = explicitLimiter
 	response, err = Select(checkRequest(func(req *kv.Request) {
-		require.Same(t, explicitRateLimit, req.CoprRequestRateLimit)
+		require.Same(t, explicitLimiter, req.CoprRequestLimiter)
 		require.Nil(t, req.QueryCopStoreLimiter)
 	}), dctx, request, colTypes)
 	require.NoError(t, err)

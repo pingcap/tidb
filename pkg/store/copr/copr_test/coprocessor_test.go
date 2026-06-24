@@ -139,7 +139,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, rateLimit.GetCapacity(), 4)
 }
 
-func TestBuildCopIteratorWithSharedRequestRateLimit(t *testing.T) {
+func TestBuildCopIteratorWithSharedRequestLimiter(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer require.NoError(t, store.Close())
@@ -161,18 +161,18 @@ func TestBuildCopIteratorWithSharedRequestRateLimit(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			shared := kv.NewCoprRequestRateLimit(7)
+			shared := kv.NewCoprRequestLimiter(7)
 			req := &kv.Request{
-				Tp:                   kv.ReqTypeDAG,
-				KeyRanges:            kv.NewNonPartitionedKeyRanges(ranges),
-				Concurrency:          15,
-				KeepOrder:            tc.keepOrder,
-				CoprRequestRateLimit: shared,
+				Tp:                 kv.ReqTypeDAG,
+				KeyRanges:          kv.NewNonPartitionedKeyRanges(ranges),
+				Concurrency:        15,
+				KeepOrder:          tc.keepOrder,
+				CoprRequestLimiter: shared,
 			}
 			it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
 			require.Nil(t, errRes)
-			require.Same(t, shared, it.GetRequestRateLimit())
-			require.Equal(t, 7, it.GetRequestRateLimit().Capacity())
+			require.Same(t, shared, it.GetRequestLimiter())
+			require.Equal(t, 7, it.GetRequestLimiter().Capacity())
 		})
 	}
 }

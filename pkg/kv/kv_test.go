@@ -39,7 +39,7 @@ func genRandHex(length int) []byte {
 }
 
 func TestCoprRequestLimiterWaitsUntilRelease(t *testing.T) {
-	limiter := NewCoprRequestRateLimit(1)
+	limiter := NewCoprRequestLimiter(1)
 	done := make(chan struct{})
 	require.False(t, limiter.Acquire(done))
 
@@ -70,7 +70,7 @@ func TestCoprRequestLimiterWaitsUntilRelease(t *testing.T) {
 }
 
 func TestCoprRequestLimiterAcquireCanBeCanceled(t *testing.T) {
-	limiter := NewCoprRequestRateLimit(1)
+	limiter := NewCoprRequestLimiter(1)
 	require.False(t, limiter.Acquire(make(chan struct{})))
 
 	done := make(chan struct{})
@@ -94,7 +94,7 @@ func TestCoprRequestLimiterAcquireCanBeCanceled(t *testing.T) {
 }
 
 func TestCoprRequestLimiterRedundantReleasePanics(t *testing.T) {
-	limiter := NewCoprRequestRateLimit(1)
+	limiter := NewCoprRequestLimiter(1)
 	require.Panics(t, func() {
 		limiter.Release()
 	})
@@ -102,7 +102,7 @@ func TestCoprRequestLimiterRedundantReleasePanics(t *testing.T) {
 
 func TestCoprRequestLimiterConcurrentAcquireRelease(t *testing.T) {
 	const capacity = int64(3)
-	limiter := NewCoprRequestRateLimit(int(capacity))
+	limiter := NewCoprRequestLimiter(int(capacity))
 	done := make(chan struct{})
 	var active atomic.Int64
 	var maxActive atomic.Int64

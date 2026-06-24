@@ -446,8 +446,8 @@ type coprRequestWaiter struct {
 	admitted bool
 }
 
-// NewCoprRequestRateLimit creates a cop request limiter with capacity n.
-func NewCoprRequestRateLimit(n int) CoprRequestLimiter {
+// NewCoprRequestLimiter creates a cop request limiter with capacity n.
+func NewCoprRequestLimiter(n int) CoprRequestLimiter {
 	if n <= 0 {
 		return nil
 	}
@@ -594,7 +594,7 @@ func (l *QueryCopStoreLimiter) GetStoreLimiter(storeID uint64) CoprRequestLimite
 	if limiter, ok := l.stores.Load(storeID); ok {
 		return limiter.(CoprRequestLimiter)
 	}
-	newLimiter := NewCoprRequestRateLimit(l.limit)
+	newLimiter := NewCoprRequestLimiter(l.limit)
 	limiter, _ := l.stores.LoadOrStore(storeID, newLimiter)
 	return limiter.(CoprRequestLimiter)
 }
@@ -789,10 +789,10 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
-	// CoprRequestRateLimit, if not nil, is used as the shared in-flight request
+	// CoprRequestLimiter, if not nil, is used as the shared in-flight request
 	// limiter for all cop iterators created from this request. The token lifecycle
 	// is tied to request send/response receive instead of result consumption.
-	CoprRequestRateLimit CoprRequestLimiter
+	CoprRequestLimiter CoprRequestLimiter
 	// QueryCopStoreLimiter, if not nil, limits in-flight cop request attempts
 	// per TiKV store within this request's statement.
 	QueryCopStoreLimiter *QueryCopStoreLimiter

@@ -935,7 +935,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			return
 		}
 
-		sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, e.dctx.DistSQLConcurrency)
+		sharedCoprRequestLimiter := getMergeSortSharedCoprRequestLimiter(needMerge, e.dctx.DistSQLConcurrency)
 		mergeSortIndexScanConcurrency := getMergeSortIndexScanConcurrency(needMerge, len(kvRanges), e.dctx.DistSQLConcurrency)
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for idx := range kvRanges {
@@ -960,7 +960,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				len(kvRanges),
 				worker.batchSize,
 				mergeSortIndexScanConcurrency,
-				sharedCoprRequestRateLimit,
+				sharedCoprRequestLimiter,
 			)
 			if err != nil {
 				for _, r := range results {
@@ -1021,17 +1021,14 @@ func getSelectResultInFlightCost(result distsql.SelectResult) int {
 	return inFlightCost
 }
 
-func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency int) kv.CoprRequestLimiter {
+func getMergeSortSharedCoprRequestLimiter(needMerge bool, distSQLConcurrency int) kv.CoprRequestLimiter {
 	if !needMerge {
 		return nil
 	}
 	// Use a shared limiter to bound aggregate in-flight cop requests across
 	// all partitions in merge-sort mode.
-	capacity := distSQLConcurrency
-	if capacity < 1 {
-		capacity = 1
-	}
-	return kv.NewCoprRequestRateLimit(2 * capacity)
+	capacity := max(distSQLConcurrency, 1)
+	return kv.NewCoprRequestLimiter(2 * capacity)
 }
 
 func getMergeSortIndexScanConcurrency(needMerge bool, kvRangesCount int, distSQLConcurrency int) int {
@@ -1066,7 +1063,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	totalRanges int,
 	batchSize int,
 	indexScanConcurrency int,
-	sharedCoprRequestRateLimit kv.CoprRequestLimiter,
+	sharedCoprRequestLimiter kv.CoprRequestLimiter,
 ) (distsql.SelectResult, error) {
 	if tblScanIdxForRewritePartitionID >= 0 {
 		// We should set the TblScan's TableID to the partition physical ID to make sure
@@ -1092,7 +1089,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
 		SetMemTracker(tracker).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-		SetCoprRequestRateLimit(sharedCoprRequestRateLimit)
+		SetCoprRequestLimiter(sharedCoprRequestLimiter)
 
 	if e.indexLookUpPushDown {
 		// Paging and Cop-cache is not supported in index lookup push down.

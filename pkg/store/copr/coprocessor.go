@@ -1348,9 +1348,9 @@ func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
 }
 
-// GetRequestRateLimit returns the shared request rate-limit object.
-func (it *copIterator) GetRequestRateLimit() kv.CoprRequestLimiter {
-	return it.req.CoprRequestRateLimit
+// GetRequestLimiter returns the shared request limiter.
+func (it *copIterator) GetRequestLimiter() kv.CoprRequestLimiter {
+	return it.req.CoprRequestLimiter
 }
 
 // GetTasks returns the built tasks.
@@ -1814,7 +1814,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	if exit {
 		return nil, nil
 	}
-	releaseRequestRateLimit, exit := acquireCoprRequestLimiter(worker.req.CoprRequestRateLimit, worker.finishCh)
+	releaseCoprRequestLimiter, exit := acquireCoprRequestLimiter(worker.req.CoprRequestLimiter, worker.finishCh)
 	if exit {
 		if releaseQueryCopStoreLimiter != nil {
 			releaseQueryCopStoreLimiter()
@@ -1826,8 +1826,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// remaining panic-safe.
 	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
 		defer func() {
-			if releaseRequestRateLimit != nil {
-				releaseRequestRateLimit()
+			if releaseCoprRequestLimiter != nil {
+				releaseCoprRequestLimiter()
 			}
 			if releaseQueryCopStoreLimiter != nil {
 				releaseQueryCopStoreLimiter()
