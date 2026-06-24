@@ -249,9 +249,9 @@ func calcAutoSplitRegionCount(rowCount int64, cfg autoSplitHotRegionConfig) int 
 	return regionsCnt
 }
 
-func getAutoSplitIndexBoundDatums(idxInfo *model.IndexInfo) ([]types.Datum, []types.Datum) {
-	lowerVals := make([]types.Datum, 0, len(idxInfo.Columns))
-	upperVals := make([]types.Datum, 0, len(idxInfo.Columns))
+func getAutoSplitIndexBoundDatums(idxInfo *model.IndexInfo) (lowerVals []types.Datum, upperVals []types.Datum) {
+	lowerVals = make([]types.Datum, 0, len(idxInfo.Columns))
+	upperVals = make([]types.Datum, 0, len(idxInfo.Columns))
 	for range idxInfo.Columns {
 		lowerVals = append(lowerVals, types.MinNotNullDatum())
 		upperVals = append(upperVals, types.MaxValueDatum())
