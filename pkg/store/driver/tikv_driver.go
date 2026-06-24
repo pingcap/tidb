@@ -361,7 +361,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if err != nil {
 		return nil, errors.Annotate(err, "get meta service info")
 	}
-	return metaServiceInfo.GroupAddrs(s.codec.GetKeyspaceMeta())
+	return metaServiceInfo.GroupAddrs(), nil
 }
 
 // GetPDAddrs returns PD addresses for PD-aware callers.

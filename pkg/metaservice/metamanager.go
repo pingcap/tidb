@@ -160,12 +160,8 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Info, er
 }
 
 // GroupAddrs returns the meta service group addresses.
-func (info *Info) GroupAddrs(keyspaceMeta *keyspacepb.KeyspaceMeta) ([]string, error) {
-	if info.Group == nil {
-		log.Error("meta service group is missing", zap.Any("keyspace-meta", keyspaceMeta))
-		return nil, errors.New("meta service group is missing")
-	}
-	return info.Group.Addrs, nil
+func (info *Info) GroupAddrs() []string {
+	return info.Group.Addrs
 }
 
 // FetchInfo loads meta service info for the keyspace using the PD client.
@@ -183,11 +179,7 @@ func GetInfoAndGroupAddrs(ctx context.Context, pdClient pd.Client, keyspaceMeta 
 	if err != nil {
 		return nil, nil, err
 	}
-	groupAddrs, err := info.GroupAddrs(keyspaceMeta)
-	if err != nil {
-		return nil, nil, err
-	}
-	return info, groupAddrs, nil
+	return info, info.GroupAddrs(), nil
 }
 
 // ServiceClient is used to request meta service.
