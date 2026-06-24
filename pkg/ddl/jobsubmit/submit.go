@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -88,11 +89,15 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 
 	for _, spec := range specs {
 		job := spec.Job
+		job.NormalizeInvolvingSchemaInfo()
 		if err = job.CheckInvolvingSchemaInfo(); err != nil {
 			return err
 		}
 		intest.Assert(job.Version != 0, "Job version should not be zero")
-
+		if job.TraceInfo == nil {
+			// job scheduler expects TraceInfo to be non-nil.
+			job.TraceInfo = &tracing.TraceInfo{}
+		}
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
