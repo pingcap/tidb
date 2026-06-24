@@ -420,8 +420,9 @@ type CoprRequestLimiter interface {
 	// Acquire blocks until this limiter admits one request attempt or done is
 	// closed. When exit is false, callers must call Release exactly once after
 	// the request attempt finishes. When exit is true, no token is held and
-	// callers should stop the current request attempt.
-	Acquire(done <-chan struct{}) (exit bool)
+	// callers should stop the current request attempt. waitTime only includes
+	// time spent waiting for an occupied limiter, not the fast acquire path.
+	Acquire(done <-chan struct{}) (waitTime time.Duration, exit bool)
 
 	// Release releases one token acquired by Acquire. It must only be called
 	// after Acquire returns false.
@@ -456,24 +457,25 @@ func NewCoprRequestLimiter(n int) CoprRequestLimiter {
 	}
 }
 
-func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (exit bool) {
+func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (waitTime time.Duration, exit bool) {
 	if l.tryAcquireFast() {
-		return false
+		return 0, false
 	}
 
 	select {
 	case <-done:
-		return true
+		return 0, true
 	default:
 	}
 
+	waitStart := time.Now()
 	waiter := &coprRequestWaiter{ready: make(chan struct{})}
 	l.waiters.Inc()
 	l.mu.Lock()
 	if l.head == nil && l.tryAcquire() {
 		l.waiters.Dec()
 		l.mu.Unlock()
-		return false
+		return 0, false
 	}
 	l.pushWaiter(waiter)
 	l.mu.Unlock()
@@ -483,16 +485,16 @@ func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (exit bool) {
 		l.mu.Lock()
 		if waiter.admitted {
 			l.mu.Unlock()
-			return false
+			return time.Since(waitStart), false
 		}
 		if waiter.queued {
 			l.removeWaiter(waiter)
 			l.waiters.Dec()
 		}
 		l.mu.Unlock()
-		return true
+		return time.Since(waitStart), true
 	case <-waiter.ready:
-		return false
+		return time.Since(waitStart), false
 	}
 }
 

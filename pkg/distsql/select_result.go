@@ -1004,6 +1004,33 @@ type selectResultRuntimeStats struct {
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
 	fetchRspDuration        time.Duration
+	limiterWait             limiterWaitRuntimeStats
+}
+
+type limiterWaitRuntimeStats struct {
+	total time.Duration
+	max   time.Duration
+}
+
+func (s *limiterWaitRuntimeStats) record(waitTime time.Duration) {
+	if waitTime <= 0 {
+		return
+	}
+	s.total += waitTime
+	if waitTime > s.max {
+		s.max = waitTime
+	}
+}
+
+func (s *limiterWaitRuntimeStats) merge(other limiterWaitRuntimeStats) {
+	s.total += other.total
+	if other.max > s.max {
+		s.max = other.max
+	}
+}
+
+func (s *limiterWaitRuntimeStats) hasValue() bool {
+	return s.total > 0
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -1023,6 +1050,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	}
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
+	s.limiterWait.record(copStats.LimiterWaitTime)
 	if copStats.ReqStats != nil {
 		if s.reqStat == nil {
 			s.reqStat = copStats.ReqStats
@@ -1048,6 +1076,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
 		fetchRspDuration:        s.fetchRspDuration,
+		limiterWait:             s.limiterWait,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -1090,6 +1119,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
 	s.fetchRspDuration += other.fetchRspDuration
+	s.limiterWait.merge(other.limiterWait)
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -1134,6 +1164,13 @@ func (s *selectResultRuntimeStats) String() string {
 		if s.buildTaskDuration > 0 {
 			buf.WriteString(", build_task_duration: ")
 			buf.WriteString(execdetails.FormatDuration(s.buildTaskDuration))
+		}
+		if s.limiterWait.hasValue() {
+			buf.WriteString(", limiter_wait:{total:")
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.total))
+			buf.WriteString(", max:")
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.max))
+			buf.WriteString("}")
 		}
 		if s.distSQLConcurrency > 0 {
 			buf.WriteString(", max_distsql_concurrency: ")

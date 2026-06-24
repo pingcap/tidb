@@ -41,15 +41,18 @@ func genRandHex(length int) []byte {
 func TestCoprRequestLimiterWaitsUntilRelease(t *testing.T) {
 	limiter := NewCoprRequestLimiter(1)
 	done := make(chan struct{})
-	require.False(t, limiter.Acquire(done))
+	waitTime, exit := limiter.Acquire(done)
+	require.False(t, exit)
+	require.Zero(t, waitTime)
 
 	acquired := make(chan struct{})
 	acquireExit := make(chan bool, 1)
 	go func() {
-		exit := limiter.Acquire(done)
+		waitTime, exit := limiter.Acquire(done)
 		acquireExit <- exit
 		close(acquired)
 		if !exit {
+			require.Greater(t, waitTime, time.Duration(0))
 			limiter.Release()
 		}
 	}()
@@ -71,14 +74,17 @@ func TestCoprRequestLimiterWaitsUntilRelease(t *testing.T) {
 
 func TestCoprRequestLimiterAcquireCanBeCanceled(t *testing.T) {
 	limiter := NewCoprRequestLimiter(1)
-	require.False(t, limiter.Acquire(make(chan struct{})))
+	waitTime, exit := limiter.Acquire(make(chan struct{}))
+	require.False(t, exit)
+	require.Zero(t, waitTime)
 
 	done := make(chan struct{})
 	result := make(chan bool)
 	var acquireStarted atomic.Bool
 	go func() {
 		acquireStarted.Store(true)
-		result <- limiter.Acquire(done)
+		_, exit := limiter.Acquire(done)
+		result <- exit
 	}()
 
 	require.Eventually(t, func() bool {
@@ -89,7 +95,9 @@ func TestCoprRequestLimiterAcquireCanBeCanceled(t *testing.T) {
 	require.True(t, <-result)
 
 	limiter.Release()
-	require.False(t, limiter.Acquire(make(chan struct{})))
+	waitTime, exit = limiter.Acquire(make(chan struct{}))
+	require.False(t, exit)
+	require.Zero(t, waitTime)
 	limiter.Release()
 }
 
@@ -115,7 +123,7 @@ func TestCoprRequestLimiterConcurrentAcquireRelease(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 20 {
-				if limiter.Acquire(done) {
+				if _, exit := limiter.Acquire(done); exit {
 					acquireExit.Store(true)
 					return
 				}
@@ -167,12 +175,16 @@ func TestQueryCopStoreLimiter(t *testing.T) {
 	require.NotSame(t, store1, limiterGroup.GetStoreLimiter(2))
 
 	done := make(chan struct{})
-	require.False(t, store1.Acquire(done))
+	waitTime, exit := store1.Acquire(done)
+	require.False(t, exit)
+	require.Zero(t, waitTime)
 
 	blocked := make(chan struct{})
 	go func() {
 		defer close(blocked)
-		require.False(t, store1.Acquire(done))
+		waitTime, exit := store1.Acquire(done)
+		require.False(t, exit)
+		require.Greater(t, waitTime, time.Duration(0))
 		store1.Release()
 	}()
 
@@ -183,7 +195,9 @@ func TestQueryCopStoreLimiter(t *testing.T) {
 	}
 
 	store2 := limiterGroup.GetStoreLimiter(2)
-	require.False(t, store2.Acquire(done))
+	waitTime, exit = store2.Acquire(done)
+	require.False(t, exit)
+	require.Zero(t, waitTime)
 	store2.Release()
 
 	store1.Release()

@@ -1067,12 +1067,13 @@ type copIteratorTaskSender struct {
 }
 
 type copResponse struct {
-	pbResp   *coprocessor.Response
-	detail   *CopRuntimeStats
-	startKey kv.Key
-	err      error
-	respSize int64
-	respTime time.Duration
+	pbResp          *coprocessor.Response
+	detail          *CopRuntimeStats
+	startKey        kv.Key
+	err             error
+	respSize        int64
+	respTime        time.Duration
+	limiterWaitTime time.Duration
 }
 
 type copTaskResult struct {
@@ -1810,17 +1811,18 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// so waiting for per-store admission does not consume request-local tokens.
 	// The long-term fix is to acquire both limiters in the client-go send path
 	// after the final RPCContext is selected.
-	releaseQueryCopStoreLimiter, exit := acquireCoprRequestLimiter(queryCopStoreLimiter, worker.finishCh)
+	releaseQueryCopStoreLimiter, queryCopStoreLimiterWaitTime, exit := acquireCoprRequestLimiter(queryCopStoreLimiter, worker.finishCh)
 	if exit {
 		return nil, nil
 	}
-	releaseCoprRequestLimiter, exit := acquireCoprRequestLimiter(worker.req.CoprRequestLimiter, worker.finishCh)
+	releaseCoprRequestLimiter, coprRequestLimiterWaitTime, exit := acquireCoprRequestLimiter(worker.req.CoprRequestLimiter, worker.finishCh)
 	if exit {
 		if releaseQueryCopStoreLimiter != nil {
 			releaseQueryCopStoreLimiter()
 		}
 		return nil, nil
 	}
+	limiterWaitTime := queryCopStoreLimiterWaitTime + coprRequestLimiterWaitTime
 	// Keep the limiter tokens and send attempt in a small scope so the tokens
 	// are released immediately after the send attempt returns, while still
 	// remaining panic-safe.
@@ -1845,7 +1847,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		if task.storeType == kv.TiDB {
 			return worker.handleTiDBSendReqErr(err, task)
 		}
-		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
+		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx, limiterWaitTime)
 		return nil, errors.Trace(err)
 	}
 
@@ -1868,10 +1870,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// enabled. coprocessor have a max_resp_size to control the response size,
 	// the default is 32MiB
 	if worker.req.Paging.Enable || copResp.GetRange() != nil {
-		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp, limiterWaitTime: limiterWaitTime}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
-		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp, limiterWaitTime: limiterWaitTime}, cacheKey, cacheValue, task, costTime)
 	}
 	if req.ReadType != "" && result != nil {
 		for _, remain := range result.remains {
@@ -1881,14 +1883,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	return result, err
 }
 
-func acquireCoprRequestLimiter(limiter kv.CoprRequestLimiter, done <-chan struct{}) (release func(), exit bool) {
+func acquireCoprRequestLimiter(limiter kv.CoprRequestLimiter, done <-chan struct{}) (release func(), waitTime time.Duration, exit bool) {
 	if limiter == nil {
-		return nil, false
+		return nil, 0, false
 	}
-	if limiter.Acquire(done) {
-		return nil, true
+	waitTime, exit = limiter.Acquire(done)
+	if exit {
+		return nil, waitTime, true
 	}
-	return limiter.Release, false
+	return limiter.Release, waitTime, false
 }
 
 func (worker *copIteratorWorker) resolveQueryCopStoreID(
@@ -2684,6 +2687,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 		resp.detail = new(CopRuntimeStats)
 		resp.detail.ScanDetail = &util.ScanDetail{}
 	}
+	resp.detail.LimiterWaitTime += resp.limiterWaitTime
 	return worker.collectCopRuntimeStats(resp.detail, bo, rpcCtx, resp)
 }
 
@@ -2747,9 +2751,9 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}
 }
 
-func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) {
+func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext, limiterWaitTime time.Duration) {
 	if worker.kvclient.Stats != nil && worker.stats != nil {
-		copStats := &CopRuntimeStats{}
+		copStats := &CopRuntimeStats{LimiterWaitTime: limiterWaitTime}
 		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
 		worker.stats.Lock()
 		worker.stats.stats = append(worker.stats.stats, copStats)
@@ -2762,7 +2766,8 @@ type CopRuntimeStats struct {
 	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
-	CoprCacheHit bool
+	LimiterWaitTime time.Duration
+	CoprCacheHit    bool
 }
 
 type copIteratorRuntimeStats struct {

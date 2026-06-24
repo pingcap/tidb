@@ -60,18 +60,28 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.NotEqual(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
 	backOffSleep["RegionMiss"] = time.Duration(200)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails:  execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
+		LimiterWaitTime: time.Millisecond,
+	}, 0, false)
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(200))
+	require.Equal(t, time.Millisecond, sr.stats.limiterWait.total)
+	require.Equal(t, time.Millisecond, sr.stats.limiterWait.max)
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
 	backOffSleep["RegionMiss"] = time.Duration(300)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails:  execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
+		LimiterWaitTime: 2 * time.Millisecond,
+	}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
+	require.Equal(t, 3*time.Millisecond, sr.stats.limiterWait.total)
+	require.Equal(t, 2*time.Millisecond, sr.stats.limiterWait.max)
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {
