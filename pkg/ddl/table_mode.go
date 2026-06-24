@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -67,7 +66,7 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 // Because BR will NOT use this function to set a table into ModeRestore,
 // instead BR will use (batch)CreateTableWithInfo.
 func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) error {
-	ok := jobsubmit.ValidateTableMode(tbInfo.Mode, args.TableMode)
+	ok := tbInfo.Mode.CanTransitionTo(args.TableMode)
 	if !ok {
 		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.Mode, args.TableMode, tbInfo.Name.O)
 	}

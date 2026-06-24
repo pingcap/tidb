@@ -48,6 +48,20 @@ func (t TableMode) String() string {
 	}
 }
 
+// CanTransitionTo returns whether the table mode can transition from t to target.
+// Now only block import/restore to convert to each other.
+// TODO: Now allow switching between the same table modes, but additional validation will be added later
+// to verify that only the same modification source can perform ALTER same table mode.
+func (t TableMode) CanTransitionTo(target TableMode) bool {
+	if t == TableModeImport && target == TableModeRestore {
+		return false
+	}
+	if t == TableModeRestore && target == TableModeImport {
+		return false
+	}
+	return true
+}
+
 // AlterTableModeTarget is the resolved target metadata for an AlterTableMode job.
 type AlterTableModeTarget struct {
 	SchemaID    int64

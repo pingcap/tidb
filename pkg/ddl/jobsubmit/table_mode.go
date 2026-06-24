@@ -20,20 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// ValidateTableMode returns whether a table mode transition is legal.
-// Now only block import/restore to convert to each other.
-// TODO: Now allow switching between the same table modes, but additional validation will be added later
-// to verify that only the same modification source can perform ALTER same table mode.
-func ValidateTableMode(origin, target model.TableMode) bool {
-	if origin == model.TableModeImport && target == model.TableModeRestore {
-		return false
-	}
-	if origin == model.TableModeRestore && target == model.TableModeImport {
-		return false
-	}
-	return true
-}
-
 // BuildAlterTableModeJob validates the resolved target and constructs the
 // durable ActionAlterTableMode job. The bool return is true when the target is
 // already in the requested mode and no job is needed.
@@ -41,7 +27,7 @@ func BuildAlterTableModeJob(
 	sctx sessionctx.Context,
 	target model.AlterTableModeTarget,
 ) (*model.Job, *model.AlterTableModeArgs, bool, error) {
-	if !ValidateTableMode(target.CurrentMode, target.TargetMode) {
+	if !target.CurrentMode.CanTransitionTo(target.TargetMode) {
 		return nil, nil, false, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(
 			target.CurrentMode, target.TargetMode, target.TableName.O)
 	}
@@ -55,12 +41,13 @@ func BuildAlterTableModeJob(
 		TableID:   target.TableID,
 	}
 	job := &model.Job{
-		Version:        model.JobVersion2,
-		SchemaID:       target.SchemaID,
-		TableID:        target.TableID,
-		SchemaName:     target.SchemaName.L,
-		TableName:      target.TableName.L,
-		Type:           model.ActionAlterTableMode,
+		Version:    model.JobVersion2,
+		SchemaID:   target.SchemaID,
+		TableID:    target.TableID,
+		SchemaName: target.SchemaName.L,
+		TableName:  target.TableName.L,
+		Type:       model.ActionAlterTableMode,
+		// alter table mode is an internal DDL, use "skip" as placeholder.
 		Query:          "skip",
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
