@@ -29,6 +29,7 @@ go_library(
         "//pkg/resourcegroup",
         "//pkg/session/cursor",
         "//pkg/session/sessmgr",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/tablecodec",
