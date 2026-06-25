@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/format/textrow"
@@ -31,13 +30,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const csvNullToken = "\\N"
-
-// Multipart-upload knobs, env-overridable for benchmarking the cross-region
-// write path: covering the bandwidth-delay product needs high part concurrency.
-var (
-	writerPartSize = int64(envInt("TIDB_EXPORT_PART_SIZE_MB", 8)) * 1024 * 1024
-	writerPartConc = envInt("TIDB_EXPORT_PART_CONC", 4)
+const (
+	csvNullToken   = "\\N"
+	writerPartSize = 8 * 1024 * 1024
+	writerPartConc = 4
 )
 
 // fileName mirrors dumpling's naming: <db>.<table>.<ordinal><writer><file>.csv
@@ -171,18 +167,9 @@ func newFileWriter(
 	}
 }
 
-// noopExportWriter, when true, makes fileWriter.Write discard encoded buffers instead of writing
-// them to S3. It isolates EXPORT read-path throughput from the (cross-region) S3 write bottleneck
-// for benchmarking. Enable via env TIDB_EXPORT_NOOP_WRITER=1 on the export executor (worker-tidb).
-var noopExportWriter = os.Getenv("TIDB_EXPORT_NOOP_WRITER") == "1"
-
 // Write writes one encoded buffer, cutting files as needed.
 func (w *fileWriter) Write(buf []byte) error {
 	if len(buf) == 0 {
-		return nil
-	}
-	if noopExportWriter {
-		w.curSize += int64(len(buf))
 		return nil
 	}
 	if err := w.switchWriter(); err != nil {
