@@ -177,6 +177,8 @@ region `x>=4, y>=4, x+y<=12`) in a small domain `[0,16)²`; its bounding box is
 `domain/2^L`; a cell id is a path of quadrant digits, so a cell's ancestors are its id
 prefixes and its descendants share its id as a prefix (a contiguous key range).
 
+![Spatial index covering cells for three geometries: triangle T (blue), rectangle id 75 (teal), triangle id 1 (red) in the shared violet cell 0320, over a Carbon-gray quadtree grid.](spatial-index/spatial-index-example.png)
+
 The covering mixes levels: a coarse cell where the triangle solidly fills it, finer
 cells hugging the diagonal edge. For `T` that is one size-2 cell plus six size-1 cells:
 

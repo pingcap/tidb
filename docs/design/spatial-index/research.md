@@ -472,6 +472,11 @@ inside T, `/` = straddles the hypotenuse, `.` = outside):
    4               8
 ```
 
+The same example in color (TiDB brand palette), showing the three geometries, their
+covering cells, the shared cell `0320`, and the quadtree grid levels:
+
+![Spatial index covering cells for three geometries: triangle T (blue), rectangle id 75 (teal), triangle id 1 (red) in the shared violet cell 0320, over a Carbon-gray quadtree grid.](spatial-index-example.png)
+
 **Covering.** Subdivide partial cells, keep fully-inside ones, drop outside ones. At
 level 3 (size-2 cells) the triangle's cell `03` splits into four:
 
