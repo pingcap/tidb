@@ -233,11 +233,12 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 }
 
 const (
-	// csvUploadConcurrency and csvUploadPartSize configure the concurrent
-	// multipart upload of CSV data files, letting upload overlap with encoding
-	// in place of the writerPipe. Values mirror the distributed exporter.
-	csvUploadConcurrency = 4
-	csvUploadPartSize    = 8 * 1024 * 1024
+	// dataFileUploadConcurrency and dataFileUploadPartSize configure the
+	// concurrent multipart upload of CSV/SQL data files, letting upload overlap
+	// with encoding in place of the writerPipe. Values mirror the distributed
+	// exporter.
+	dataFileUploadConcurrency = 4
+	dataFileUploadPartSize    = 8 * 1024 * 1024
 )
 
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
@@ -253,12 +254,12 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		return err
 	}
 
-	// The CSV path writes directly into the object store writer without a
+	// The CSV and SQL paths write directly into the object store writer without a
 	// writerPipe, so enable concurrent multipart upload to overlap upload with
-	// encoding. Other formats keep the default writer.
+	// encoding. Parquet keeps the default writer.
 	var wo *storeapi.WriterOption
-	if format == FileFormatCSV {
-		wo = &storeapi.WriterOption{Concurrency: csvUploadConcurrency, PartSize: csvUploadPartSize}
+	if format == FileFormatCSV || format == FileFormatSQLText {
+		wo = &storeapi.WriterOption{Concurrency: dataFileUploadConcurrency, PartSize: dataFileUploadPartSize}
 	}
 	somethingIsWritten := false
 	for {

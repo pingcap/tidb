@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sqlfile",
+    srcs = [
+        "sql.go",
+        "sqlfile.go",
+        "writer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dumpformat/sqlfile",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "sqlfile_test",
+    timeout = "short",
+    srcs = ["writer_test.go"],
+    embed = [":sqlfile"],
+    flaky = True,
+    shard_count = 4,
+    deps = ["@com_github_stretchr_testify//require"],
+)

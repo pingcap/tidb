@@ -35,6 +35,7 @@ go_library(
         "//pkg/config",
         "//pkg/dumpformat/csvfile",
         "//pkg/dumpformat/parquetfile",
+        "//pkg/dumpformat/sqlfile",
         "//pkg/errno",
         "//pkg/infoschema/context",
         "//pkg/meta/model",

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,46 +83,19 @@ func TestChunkRowIter(t *testing.T) {
 		require.NoError(t, rows.Close())
 	}()
 
-	var (
-		testFileSize      uint64 = 200
-		testStatementSize uint64 = 101
-
-		expectedSize = [][]uint64{
-			{50, 50},
-			{100, 100},
-			{150, 150},
-			{200, 50},
-		}
-	)
-
 	sqlRowIter := newRowIter(rows, 2)
-
 	res := newSimpleRowReceiver(2)
-	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
-	wp := newWriterPipe(nil, testFileSize, testStatementSize, metrics, nil)
 
-	var resSize [][]uint64
-	for sqlRowIter.HasNext() {
-		wp.currentStatementSize = 0
-		for sqlRowIter.HasNext() {
-			require.NoError(t, sqlRowIter.Decode(res))
-			sz := uint64(len(res.data[0]) + len(res.data[1]))
-			wp.AddFileSize(sz)
-			sqlRowIter.Next()
-			resSize = append(resSize, []uint64{wp.currentFileSize, wp.currentStatementSize})
-			if wp.ShouldSwitchStatement() {
-				break
-			}
-		}
-		if wp.ShouldSwitchFile() {
-			break
-		}
+	// Consume part of the 10 rows and verify the iterator state. The size-based
+	// statement/file switching that used to be exercised here now lives in
+	// sqlfile.SQLWriter and is covered by its own tests.
+	for range 4 {
+		require.True(t, sqlRowIter.HasNext())
+		require.NoError(t, sqlRowIter.Decode(res))
+		sqlRowIter.Next()
 	}
 
-	require.Equal(t, expectedSize, resSize)
 	require.True(t, sqlRowIter.HasNext())
-	require.True(t, wp.ShouldSwitchFile())
-	require.True(t, wp.ShouldSwitchStatement())
 	require.NoError(t, rows.Close())
 	require.Error(t, sqlRowIter.Decode(res))
 	sqlRowIter.Next()
