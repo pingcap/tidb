@@ -164,6 +164,12 @@ func WriteInsert(
 		bf.Grow(lengthLimit - bfCap)
 	}
 
+	// TODO(joechenrh): remove writerPipe for SQL too, mirroring the CSV path:
+	// write directly into the object store writer with concurrent multipart
+	// upload (WriterOption.Concurrency) instead of batching through this
+	// goroutine. Deferred because the SQL path also tracks per-statement size for
+	// INSERT framing, so it needs more care than CSV; kept here until it gets a
+	// dedicated PR with the test pass as the oracle.
 	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, metrics, cfg.Labels)
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
