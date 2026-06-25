@@ -171,7 +171,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 				zap.Int64("table ID", tbl.Meta().ID),
 				zap.Int64("index ID", eid))
 			return nil, errors.Annotatef(errIndexInfoNotFound,
-				"index info not found: %d, table ID: %d, job ID: %d",
+				"eid: %d, table ID: %d, job ID: %d",
 				eid, tbl.Meta().ID, jobMeta.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
