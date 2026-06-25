@@ -34,6 +34,8 @@ type CSVWriter struct {
 	kinds []FieldKind
 	// buf is the reused per-row scratch.
 	buf []byte
+	// written tracks the bytes written to the current sink, for EstimateFileSize.
+	written int64
 }
 
 // NewCSVWriter creates a CSVWriter over w. kinds classifies each column
@@ -42,11 +44,12 @@ func NewCSVWriter(w io.Writer, kinds []FieldKind, cfg *Config) *CSVWriter {
 	return &CSVWriter{w: w, cfg: cfg, kinds: kinds}
 }
 
-// Reset points the writer at a new sink, keeping the column kinds, config and
-// scratch buffer. Use it when the caller swaps the underlying buffer/file at a
-// row boundary.
+// Reset points the writer at a new sink and resets the size counter, keeping the
+// column kinds, config and scratch buffer. Use it when the caller cuts a new
+// file.
 func (cw *CSVWriter) Reset(w io.Writer) {
 	cw.w = w
+	cw.written = 0
 }
 
 // Write encodes one row and writes it, with the line terminator, to the
@@ -82,8 +85,15 @@ func (cw *CSVWriter) WriteHeader(names [][]byte) error {
 // flush appends the line terminator to the scratch and writes it to the sink.
 func (cw *CSVWriter) flush() error {
 	cw.buf = append(cw.buf, cw.cfg.LineTerminator...)
-	_, err := cw.w.Write(cw.buf)
+	n, err := cw.w.Write(cw.buf)
+	cw.written += int64(n)
 	return err
+}
+
+// EstimateFileSize returns the bytes written to the current sink, mirroring
+// parquetfile.ParquetWriter so callers rotate files uniformly across formats.
+func (cw *CSVWriter) EstimateFileSize() uint64 {
+	return uint64(cw.written)
 }
 
 // Close finalizes the writer. CSV has no format trailer, so this is a no-op kept
