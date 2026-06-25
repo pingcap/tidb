@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -2409,7 +2410,7 @@ func TestCrossSkylinePrune(t *testing.T) {
 	// Test 2: TiFlash candidates are never cross-pruned.
 	tiflashCandidate := &candidatePath{
 		path: &util.AccessPath{
-			StoreType:        2, // kv.TiFlash
+			StoreType:        kv.TiFlash,
 			CountAfterAccess: 50,
 		},
 		accessCondsColMap: util.Col2Len{1: -1},
