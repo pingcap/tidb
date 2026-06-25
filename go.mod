@@ -9,7 +9,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
 	github.com/BurntSushi/toml v1.6.0
-	github.com/DATA-DOG/go-sqlmock v1.5.0
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/Masterminds/semver v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/alibabacloud-go/tea v1.3.11
@@ -127,6 +127,7 @@ require (
 	github.com/tikv/pd/client v0.0.0-20260601035915-3ef6a3b10c84
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
+	github.com/twpayne/go-geom v1.6.1
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f

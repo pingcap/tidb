@@ -375,6 +375,17 @@ const (
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"
 
+	// Geospatial functions.
+	StGeomFromText = "st_geomfromtext"
+	StAsText       = "st_astext"
+	StAsWKT        = "st_aswkt"
+	StDistance     = "st_distance"
+	StContains     = "st_contains"
+	StWithin       = "st_within"
+	StX            = "st_x"
+	StY            = "st_y"
+	StSRID         = "st_srid"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"

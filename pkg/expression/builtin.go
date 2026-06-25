@@ -1000,6 +1000,17 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// Geospatial functions (spatial-index POC prerequisite).
+	ast.StGeomFromText: &stGeomFromTextFunctionClass{baseFunctionClass{ast.StGeomFromText, 1, 2}},
+	ast.StAsText:       &stAsTextFunctionClass{baseFunctionClass{ast.StAsText, 1, 1}},
+	ast.StAsWKT:        &stAsTextFunctionClass{baseFunctionClass{ast.StAsWKT, 1, 1}},
+	ast.StDistance:     &stDistanceFunctionClass{baseFunctionClass{ast.StDistance, 2, 2}},
+	ast.StContains:     &stContainsFunctionClass{baseFunctionClass{ast.StContains, 2, 2}},
+	ast.StWithin:       &stWithinFunctionClass{baseFunctionClass{ast.StWithin, 2, 2}},
+	ast.StX:            &stXFunctionClass{baseFunctionClass{ast.StX, 1, 1}},
+	ast.StY:            &stYFunctionClass{baseFunctionClass{ast.StY, 1, 1}},
+	ast.StSRID:         &stSRIDFunctionClass{baseFunctionClass{ast.StSRID, 1, 1}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
