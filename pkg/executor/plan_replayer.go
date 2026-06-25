@@ -132,11 +132,15 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err erro
 	return nil
 }
 
+// appendPlanReplayerDumpResult renders the `PLAN REPLAYER DUMP` result as Item/Value rows.
+// When the token is a presigned download URL (remote object storage on TiDB Cloud), the result
+// carries usage guidance plus the URL's validity window; otherwise it is the raw file token used
+// to fetch the dump from local storage.
 func appendPlanReplayerDumpResult(req *chunk.Chunk, token string) {
 	if isPlanReplayerDownloadURL(token) {
 		rows := [][2]string{
 			{"Download URL", token},
-			{"Expires in", "1 hour"},
+			{"Expires in", domain.PlanReplayerPresignExpireDesc},
 			{"Browser", "Open the Download URL directly before it expires"},
 			{"curl", fmt.Sprintf("curl -L '%s' -o plan_replayer.zip", token)},
 			{"Note", "If the URL expires, rerun PLAN REPLAYER DUMP to get a new one"},
@@ -151,6 +155,9 @@ func appendPlanReplayerDumpResult(req *chunk.Chunk, token string) {
 	req.AppendString(1, token)
 }
 
+// isPlanReplayerDownloadURL reports whether token is a presigned download URL rather than a local
+// file token. Local/in-memory storage backends return a bare file name from PresignFile, so an
+// http(s) scheme with a host is what distinguishes a real download URL.
 func isPlanReplayerDownloadURL(token string) bool {
 	u, err := url.Parse(token)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
