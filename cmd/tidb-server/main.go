@@ -486,9 +486,9 @@ func main() {
 	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
-		standbyController.EndStandby(nil)
-
 		svr.StandbyController = standbyController
+		err = standbyController.PrepareForActivation(svr)
+		terror.MustNil(err)
 		svr.StandbyController.OnServerCreated(svr)
 	}
 	if deploymode.IsStarter() && config.GetGlobalConfig().KeyspaceActivateMode {
