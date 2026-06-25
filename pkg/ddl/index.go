@@ -1935,9 +1935,6 @@ func isRetryableJobError(err error, jobErrCnt int64) bool {
 }
 
 func isRetryableError(err error, retryUnknown bool) bool {
-	if isBackfillTaskMetaOutdatedErr(err) {
-		return false
-	}
 	errMsg := err.Error()
 	for _, m := range dbterror.ReorgRetryableErrMsgs {
 		if strings.Contains(errMsg, m) {

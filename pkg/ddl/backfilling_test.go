@@ -65,9 +65,9 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
-func TestOutdatedBackfillTaskMetaIsNonRetryable(t *testing.T) {
-	err := errors.Annotatef(errBackfillTaskMetaOutdated, "index info not found: %d", 1)
-	require.False(t, isRetryableError(err, true))
+func TestIndexInfoNotFoundIsNonRetryable(t *testing.T) {
+	err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+	require.True(t, isIndexInfoNotFoundErr(err))
 	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 }
 
