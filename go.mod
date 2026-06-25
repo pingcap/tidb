@@ -365,6 +365,10 @@ require (
 )
 
 replace (
+	// go-geom (spatial POC) bumps go-sqlmock to v1.5.2 only for go-geom's own
+	// tests, which TiDB never builds; pin to the mirrored, master-used v1.5.0 so
+	// Bazel can fetch it (v1.5.2 is not in the dependency mirror).
+	github.com/DATA-DOG/go-sqlmock => github.com/DATA-DOG/go-sqlmock v1.5.0
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117

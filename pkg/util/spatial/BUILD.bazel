@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "spatial",
+    srcs = ["coverer.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/spatial",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "spatial_test",
+    timeout = "short",
+    srcs = ["coverer_test.go"],
+    embed = [":spatial"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

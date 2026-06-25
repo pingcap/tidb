@@ -165,8 +165,8 @@ func (c *PlanarCoverer) cover(level uint, col, row uint32, r Rect, out *[]CellKe
 	}
 
 	// Otherwise descend into the four child quadrants.
-	for dx := uint32(0); dx < 2; dx++ {
-		for dy := uint32(0); dy < 2; dy++ {
+	for dx := range uint32(2) {
+		for dy := range uint32(2) {
 			c.cover(level+1, col*2+dx, row*2+dy, r, out)
 		}
 	}

@@ -44,7 +44,7 @@ func TestPlanarCoverNoFalseNegatives(t *testing.T) {
 	const queries = 500
 	const pointsPerQuery = 200
 	totalInside := 0
-	for q := 0; q < queries; q++ {
+	for range queries {
 		x1 := rng.Float64()*2000 - 1000
 		x2 := rng.Float64()*2000 - 1000
 		y1 := rng.Float64()*2000 - 1000
@@ -53,7 +53,7 @@ func TestPlanarCoverNoFalseNegatives(t *testing.T) {
 		ranges, err := c.CoverRect(0, rect)
 		require.NoError(t, err)
 
-		for p := 0; p < pointsPerQuery; p++ {
+		for range pointsPerQuery {
 			px := rng.Float64()*2000 - 1000
 			py := rng.Float64()*2000 - 1000
 			if px < rect.MinX || px > rect.MaxX || py < rect.MinY || py > rect.MaxY {

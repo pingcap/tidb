@@ -398,7 +398,7 @@ func pointInRing(x, y float64, ring []geom.Coord) bool {
 		return false
 	}
 	j := n - 1
-	for i := 0; i < n; i++ {
+	for i := range n {
 		xi, yi := ring[i].X(), ring[i].Y()
 		xj, yj := ring[j].X(), ring[j].Y()
 		if (yi > y) != (yj > y) {

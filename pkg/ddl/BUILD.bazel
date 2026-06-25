@@ -291,6 +291,8 @@ go_test(
         "placement_policy_ddl_test.go",
         "placement_policy_test.go",
         "placement_sql_test.go",
+        "poc_geo_test.go",
+        "poc_inline_test.go",
         "primary_key_handle_test.go",
         "reorg_test.go",
         "reorg_util_test.go",

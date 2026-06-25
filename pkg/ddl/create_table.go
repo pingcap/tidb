@@ -1307,7 +1307,6 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
 }
 
-// BuildTableInfo creates a TableInfo.
 // rewriteSpatialConstraints validates each inline SPATIAL constraint and
 // rewrites it into an ordinary (expression) index on tidb_spatial_key(col),
 // mirroring the standalone CREATE SPATIAL INDEX path.
@@ -1344,6 +1343,7 @@ func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constrai
 	return nil
 }
 
+// BuildTableInfo creates a TableInfo.
 func BuildTableInfo(
 	ctx *metabuild.Context,
 	tableName ast.CIStr,

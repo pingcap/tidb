@@ -112,7 +112,7 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 
 // findSpatialHiddenColumn returns the expression.Column of the hidden generated
 // column of a spatial index whose source column is geomColID, or nil.
-func (s *SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, geomColID int64) *expression.Column {
+func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, geomColID int64) *expression.Column {
 	tblInfo := ds.TableInfo
 	// Resolve the geometry column's name from its ID.
 	var geomColName string
