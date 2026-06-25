@@ -2249,11 +2249,15 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 		ExpectedCnt: 100,
 	}
 
-	// LHS: matches sort, CountAfterAccess fits limit, no risk.
+	// LHS: matches the sort and its CountAfterAccess fits the limit, but it carries the HIGHER
+	// risk ratio (MaxCountAfterAccess/CountAfterAccess = 70/50 = 1.4 vs RHS 55/50 = 1.1). Losing
+	// the risk dimension is what makes leftDidNotLose false, so the earlier skyline rules do not
+	// fire and evaluation actually reaches the limit-aware rule under test. riskResult is part of
+	// predicateResult but NOT of totalSum, so totalSum stays > 0 via matchResult.
 	lhs := &candidatePath{
 		path: &util.AccessPath{
 			CountAfterAccess:    50,
-			MaxCountAfterAccess: 0,
+			MaxCountAfterAccess: 70,
 			IsIntHandlePath:     true, // table path avoids nil Index deref
 		},
 		accessCondsColMap: sharedColMap,
@@ -2261,11 +2265,13 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 		isFullRange:       true,
 	}
 
-	// RHS: does NOT match sort, CountAfterAccess exceeds limit when risk is considered.
+	// RHS: does NOT match the sort, has the LOWER risk ratio and CountAfterAccess <= LHS (so LHS
+	// loses the risk dimension), yet its worst case overshoots the limit (50 + 55 = 105 > 100) --
+	// the exact condition the limit-aware rule keys on.
 	rhs := &candidatePath{
 		path: &util.AccessPath{
-			CountAfterAccess:    80,
-			MaxCountAfterAccess: 40, // 80 + 40 = 120 > 100
+			CountAfterAccess:    50,
+			MaxCountAfterAccess: 55,
 			IsIntHandlePath:     true,
 		},
 		accessCondsColMap: sharedColMap,
@@ -2274,24 +2280,33 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	}
 
 	result, _ := compareCandidates(sctx, nil, propWithLimit, lhs, rhs, false)
-	// LHS should win: totalSum > 0 (matchResult=1), matchResult > 0, ExpectedCnt > 0,
-	// lhs.CountAfterAccess (50) <= 100, rhs.CountAfterAccess+MaxCountAfterAccess (120) > 100.
-	require.Equal(t, 1, result, "ordered candidate with CountAfterAccess fitting limit should win")
+	// LHS wins specifically via the limit-aware rule: leftDidNotLose is false (lost risk),
+	// totalSum > 0 (matchResult=1), matchResult > 0, ExpectedCnt in (0, MaxFloat64), LHS has no
+	// residual filters, lhs.CountAfterAccess (50) <= 100, rhs.CountAfterAccess+Max (105) > 100.
+	require.Equal(t, 1, result, "ordered candidate fitting the limit should win via the limit-aware rule")
 
 	// Symmetric: swap lhs/rhs, RHS should win.
 	result, _ = compareCandidates(sctx, nil, propWithLimit, rhs, lhs, false)
 	require.Equal(t, -1, result, "symmetric: ordered candidate should win when on rhs")
 
-	// No limit: should be a tie (totalSum != 0 but leftDidNotLose/rightDidNotLose fails
-	// because matchResult is non-zero in opposite direction, causing the basic rules not to fire).
+	// Control: prove it is the limit-aware rule doing the work. With a larger limit the
+	// non-ordered RHS no longer overshoots (105 <= 200), so the rule's overshoot condition
+	// fails; LHS still lost the risk dimension, so no rule produces a winner -> 0.
+	propLooseLimit := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 200,
+	}
+	result, _ = compareCandidates(sctx, nil, propLooseLimit, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire when RHS fits the limit")
+
+	// Control: with no limit (ExpectedCnt == 0) the limit-aware rule is gated off; LHS lost the
+	// risk dimension and nothing else decides, so there is no winner.
 	propNoLimit := &property.PhysicalProperty{
 		SortItems:   []property.SortItem{{Col: col1}},
 		ExpectedCnt: 0,
 	}
 	result, _ = compareCandidates(sctx, nil, propNoLimit, lhs, rhs, false)
-	// Without limit, the risk-based tiebreaker may fire. The limit-aware rule should not.
-	// We just verify no panic and the result is deterministic.
-	require.Contains(t, []int{-1, 0, 1}, result)
+	require.Equal(t, 0, result, "limit-aware rule must not fire without a limit")
 }
 
 // TestOrderRatioMayPenalize guards the residual-filter predicate that de-conflicts the
