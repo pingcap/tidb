@@ -529,6 +529,7 @@ const (
 	// MariaDB period markers for restore only; no engine semantics.
 	ColumnOptionMariaDBRowStart
 	ColumnOptionMariaDBRowEnd
+	ColumnOptionSrid
 )
 
 var (
@@ -566,6 +567,7 @@ type ColumnOption struct {
 	ConstraintName      string
 	PrimaryKeyTp        PrimaryKeyType
 	SecondaryEngineAttr string
+	Srid                uint32
 }
 
 // Restore implements Node interface.
@@ -692,6 +694,8 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW START")
 	case ColumnOptionMariaDBRowEnd:
 		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW END")
+	case ColumnOptionSrid:
+		ctx.WritePlainf("/*!80003 SRID %d */", n.Srid)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
