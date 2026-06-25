@@ -508,6 +508,16 @@ key, not because the local/global machinery differs. The rows stay distributed b
 table's partitioning regardless; only the global index is unified, which is why
 `partition_id` is stored in its value.
 
+One might try to make spatial queries prune by range-partitioning the table on the
+Hilbert/S2 value itself. That is redundant with TiKV, which already range-partitions the
+ordered index keyspace into Regions (each Region is a contiguous Hilbert range), so
+explicit Hilbert-range table partitioning re-implements at the logical layer what the
+physical layer already provides. Table partitioning still serves non-spatial purposes
+(multi-tenant isolation, data lifecycle via `DROP`/`TRUNCATE PARTITION`, placement and
+data residency), but those keys are non-spatial. So a partitioned spatial table is
+effectively always partitioned by a non-spatial key, which is exactly the case where
+spatial predicates cannot prune and the global index is the default.
+
 This is what `partition_id` means in the reviewed layout: the physical partition id of
 `PARTITION BY`, **not** the primary key (which is already in the index key). TiDB
 already implements global indexes for partitioned tables
