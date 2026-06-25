@@ -698,6 +698,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
 	gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
+	gcForceMergeTableCache := make(map[int64]struct{}, len(ranges))
 
 	logutil.Logger(ctx).Info("[gc worker] start delete ranges",
 		zap.String("uuid", w.uuid),
@@ -729,6 +730,14 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
+		if err := w.doGCForceMergeRanges(ctx, se, r, gcForceMergeTableCache); err != nil {
+			logutil.Logger(ctx).Error("[gc worker] report force merge ranges failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+		}
+
 		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
@@ -752,6 +761,26 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		zap.Duration("cost time", time.Since(startTime)))
 	metrics.GCHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
 	return nil
+}
+
+func (w *GCWorker) doGCForceMergeRanges(ctx context.Context, se session.Session, dr util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
+	if !variable.EnableDropTableForceMerge.Load() {
+		return nil
+	}
+
+	historyJob, err := ddl.GetHistoryJobByID(se, dr.JobID)
+	if err != nil {
+		return err
+	}
+	if historyJob == nil {
+		return dbterror.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+	}
+
+	forceMergeRanges := ddl.GetForceMergeRangesForGCDeleteRange(historyJob, dr, gcForceMergeTableCache)
+	if len(forceMergeRanges) == 0 {
+		return nil
+	}
+	return infosync.AddForceMergeRanges(ctx, forceMergeRanges)
 }
 
 // redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.

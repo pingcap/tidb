@@ -76,6 +76,7 @@ go_test(
     srcs = [
         "main_test.go",
         "mock_globalaccessor_test.go",
+        "pkdb_force_merge_test.go",
         "removed_test.go",
         "session_test.go",
         "statusvar_test.go",
