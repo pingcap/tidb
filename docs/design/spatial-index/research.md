@@ -492,9 +492,10 @@ guarantees boundary correctness regardless.)
 
 **Storage.** The triangle `T` (row `id=42`) writes one index entry per covering cell,
 all sharing the same handle and bbox, differing only in `cell_key`. Two more geometries
-are included for contrast: id 1 is a triangle `(5,5),(5,6),(6,6)` and id 75 is a
-rectangle `(3,3),(3,5),(6,5),(6,3)`. The entries are listed in `cell_key` order, as they
-are physically stored and scanned; the value is `(minX, minY, maxX, maxY)`:
+are included for contrast: id 1 is a triangle `(4,6),(5,6),(4,7)` (placed so it shares a
+cell with `T`) and id 75 is a rectangle `(3,3),(3,5),(6,5),(6,3)`. The entries are listed
+in `cell_key` order, as they are physically stored and scanned; the value is
+`(minX, minY, maxX, maxY)`:
 
 ```
 t{T}_i{X}_0033_75 -> 3, 3, 6, 5     # Rectangle id 75: tiles into 6 unit cells (offset from grid)
@@ -502,12 +503,12 @@ t{T}_i{X}_0122_75 -> 3, 3, 6, 5
 t{T}_i{X}_0123_75 -> 3, 3, 6, 5
 t{T}_i{X}_0211_75 -> 3, 3, 6, 5
 t{T}_i{X}_030_42  -> 4, 4, 8, 8     # Triangle T id 42: 7 cells (one size-2 + six size-1)
-t{T}_i{X}_0300_75 -> 3, 3, 6, 5
+t{T}_i{X}_0300_75 -> 3, 3, 6, 5     # rectangle cells 0300, 0301 are inside T's cell 030 (descendants)
 t{T}_i{X}_0301_75 -> 3, 3, 6, 5
-t{T}_i{X}_0303_1  -> 5, 5, 6, 6     # Triangle with id 1 fits in one unit cell
 t{T}_i{X}_0310_42 -> 4, 4, 8, 8
 t{T}_i{X}_0311_42 -> 4, 4, 8, 8
 t{T}_i{X}_0312_42 -> 4, 4, 8, 8
+t{T}_i{X}_0320_1  -> 4, 6, 5, 7     # Triangle id 1: SAME cell_key 0320 as T below (shared cell)
 t{T}_i{X}_0320_42 -> 4, 4, 8, 8
 t{T}_i{X}_0321_42 -> 4, 4, 8, 8
 t{T}_i{X}_0322_42 -> 4, 4, 8, 8
@@ -516,16 +517,25 @@ t{T}_i{X}_0322_42 -> 4, 4, 8, 8
 The seven `…_42` entries for `T` are the multi-valued-index (MVI) fan-out: MVI means one
 row writes multiple index *keys*, not multiple values under one key (TiKV keys are
 unique, so that does not exist). The other two rows show the range: the small triangle
-(id 1) fits in a single cell `0303`, so it writes one entry and needs no MVI (like a
+(id 1) fits in a single cell `0320`, so it writes one entry and needs no MVI (like a
 point); the offset rectangle (id 75) tiles into six unit cells. Each row's entries all
 carry that row's own bbox.
 
-Storage is per-geometry: a small shape gets fine cells, a large one a coarse cell. So id
-1 is stored under the fine cell `0303` while `T` is stored under the coarse cell `030`,
-different keys. But because `0303` is a descendant of `030`, a search that range-scans
-`030`'s territory returns both (the descendant matching); the coarse `030` key does not
-itself store id 1. This is visible in the sorted listing above: `030_42` is immediately
-followed by `0300_75`, `0301_75`, `0303_1`, all within `030`'s territory.
+Two key relationships are visible in the listing, and both come down to *level*:
+
+- **Shared cell (same level)**: id 1 lands in cell `0320`, which is also one of `T`'s
+  covering cells, so `0320_1` and `0320_42` are two entries under the *same* `cell_key`
+  (adjacent in the listing, differing only by handle). This is the normal case in a
+  populated index: many rows under one cell.
+- **Descendant, not shared (different level)**: the rectangle's cells `0300` and `0301`
+  are *children* of `T`'s coarse cell `030`, so they are different keys inside `030`'s
+  territory (`030_42` is immediately followed by `0300_75`, `0301_75`). A range scan over
+  `030` returns `T` (via `030`) and the rectangle (via `0300`/`0301`), the descendant
+  matching, but no key is shared.
+
+That is why id 1 had to be placed in a cell `T` itself emitted (a unit cell): had it sat
+where `T` uses the coarse `030`, it would get a finer descendant cell and only share
+territory, not a key.
 
 Ranges: all descendants of a cell are a contiguous key range (everything under `031` is
 `[0310 .. 0313]`), and a cell's ancestors are its prefixes (`0`, `03`, `031`). Those two
