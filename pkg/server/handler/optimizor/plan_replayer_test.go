@@ -94,6 +94,16 @@ func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
 	return filename
 }
 
+func requirePlanReplayerFileTokenFromResult(t *testing.T, rows [][]any) string {
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 2)
+	require.Equal(t, "File token", rows[0][0])
+	filename, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, filename)
+	return filename
+}
+
 func requireSingleStringFromRows(t *testing.T, rows *sql.Rows) string {
 	require.True(t, rows.Next(), "unexpected data")
 	var value string
@@ -986,9 +996,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	query := "select * from t where a > 1"
 
 	// 2-1. specify time1 to get the plan replayer
-	filename1 := tk.MustQuery(
+	filename1 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
 		fmt.Sprintf(template, strconv.FormatUint(ts1, 10), query),
-	).Rows()[0][0].(string)
+	).Rows())
 	zip1 := fetchZipFromPlanReplayerAPI(t, client, filename1)
 	jsonTbls1, metas1, errMsg1 := getInfoFromPlanReplayerZip(t, zip1)
 
@@ -1009,9 +1019,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Equal(t, []string{"Historical stats for test.t are unavailable, fallback to latest stats", ""}, errMsg1)
 
 	// 2-2. specify time2 to get the plan replayer
-	filename2 := tk.MustQuery(
+	filename2 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
 		fmt.Sprintf(template, time2.Format("2006-01-02 15:04:05.000000"), query),
-	).Rows()[0][0].(string)
+	).Rows())
 	zip2 := fetchZipFromPlanReplayerAPI(t, client, filename2)
 	jsonTbls2, metas2, errMsg2 := getInfoFromPlanReplayerZip(t, zip2)
 
@@ -1033,9 +1043,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Empty(t, errMsg2)
 
 	// 2-3. specify time3 to get the plan replayer
-	filename3 := tk.MustQuery(
+	filename3 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
 		fmt.Sprintf(template, time3.Format("2006-01-02T15:04:05.000000Z07:00"), query),
-	).Rows()[0][0].(string)
+	).Rows())
 	zip3 := fetchZipFromPlanReplayerAPI(t, client, filename3)
 	jsonTbls3, metas3, errMsg3 := getInfoFromPlanReplayerZip(t, zip3)
 
