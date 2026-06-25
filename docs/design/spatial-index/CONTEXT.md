@@ -70,6 +70,12 @@ functions are a prerequisite coded against, not a deliverable.
   `tidb_spatial_key(position)`, reusing expression-index DDL and the non-MVI
   `PlainIndexKVGenerator` write path. Restrict to POINT, NOT NULL, SRID-constrained
   columns. Refine via retained exact predicate (no new executor code).
+- Sunny Bains review (2026-06-25): store the geometry bbox in the index value for a
+  cheap pre-lookback filter (optionally full EWKB for a covering index); make spatial
+  indexes on partitioned tables global (Hilbert across all partitions, `partition_id`
+  in the value, where `partition_id` is the `PARTITION BY` physical partition id, not
+  the PK). MVP stays non-partitioned; global index is a follow-on. See research.md ->
+  "Index value contents and table partitioning" and its open-questions list.
 
 ## Open questions to resolve on resume
 
@@ -87,6 +93,10 @@ functions are a prerequisite coded against, not a deliverable.
 - S2 vs minimal in-house spherical coverer for 4326 (leaning S2 / golang/geo).
 - Whether `go-geom` covers exact `ST_Intersects`/`ST_Contains` for the refine step or
   needs supplementary code.
+- The Sunny Bains review open questions (research.md -> "Index value contents and table
+  partitioning"): index value payload (bbox vs +summary vs full EWKB), where the bbox
+  pre-filter runs (TiDB vs coprocessor), global-vs-local policy for partitioned tables,
+  `partition_id` encoding reuse, MVP scope, and the hidden-column index-value wrinkle.
 
 ## Next step on resume
 

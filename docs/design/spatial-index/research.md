@@ -28,6 +28,7 @@ not as deliverables of this effort.
 * [The TiDB mechanism: cell covering over multi-valued indexes](#the-tidb-mechanism-cell-covering-over-multi-valued-indexes)
 * [Synthesis: Hilbert-key index vs cell-covering MVI are the same design](#synthesis-hilbert-key-index-vs-cell-covering-mvi-are-the-same-design)
 * [Worked example: a spatial index on table t](#worked-example-a-spatial-index-on-table-t)
+* [Index value contents and table partitioning (Sunny Bains review)](#index-value-contents-and-table-partitioning-sunny-bains-review)
 * [SRID cell scheme](#srid-cell-scheme)
 * [Query support matrix](#query-support-matrix)
 * [Keeping the design reusable for TiFlash](#keeping-the-design-reusable-for-tiflash)
@@ -374,18 +375,21 @@ Generic geometry is a true MVI: cover the geometry with a bounded set of cells a
 write one entry per covering cell (a point covers to one cell, a polygon fans out):
 
 ```
--- point id=1 covers to one cell:
-t{T}_i{X}_{cell(c0)}_{1} -> ∅
--- polygon id=3 covers to several cells (<= max_cells):
-t{T}_i{X}_{cell(ca)}_{3} -> ∅
-t{T}_i{X}_{cell(cb)}_{3} -> ∅
-t{T}_i{X}_{cell(cc)}_{3} -> ∅
-t{T}_i{X}_{cell(cd)}_{3} -> ∅
+-- point id=1 covers to one cell (value carries the point/bbox; see review section):
+t{T}_i{X}_{cell(c0)}_{1} -> bbox(30,40,30,40)
+-- polygon id=3 covers to several cells (<= max_cells), same bbox repeated:
+t{T}_i{X}_{cell(ca)}_{3} -> bbox(polygon 3)
+t{T}_i{X}_{cell(cb)}_{3} -> bbox(polygon 3)
+t{T}_i{X}_{cell(cc)}_{3} -> bbox(polygon 3)
+t{T}_i{X}_{cell(cd)}_{3} -> bbox(polygon 3)
 ```
 
 Query path: cover -> range-scan -> dedup -> lookback -> refine. No tree to maintain.
-Optional optimization: store the exact `position` (or its MBR) in the index value to
-refine without the lookback, fetching the full row only for survivors.
+The index value holds the geometry's bounding box (and, for a partitioned table, the
+`partition_id`), enabling a cheap bbox pre-filter before the lookback and, optionally,
+the full EWKB for a covering index that skips the lookback entirely. See "Index value
+contents and table partitioning" below for the value design and the global-index
+choice.
 
 ### Paper approach (Hilbert R-tree)
 
@@ -434,6 +438,97 @@ The trade is exactly this: MVI accepts polygon fan-out to stay as plain ordered-
 entries (no tree, LSM-friendly, cheap updates); the paper avoids fan-out via MBRs but
 needs a tree (or the clustered reorg). For `t` keeping `id` as PK, the MVI secondary
 index is the clean fit.
+
+## Index value contents and table partitioning (Sunny Bains review)
+
+A design review with Sunny Bains (2026-06-25) independently confirmed the cell-covering
+secondary-index architecture (same key layout, Hilbert default, cover -> scan -> dedup
+-> lookback -> refine, Regions as Hilbert ranges, Hilbert as more TiKV-native than a
+distributed mutable R-tree) and contributed two refinements recorded here. Neither
+changes the core design; both sharpen it.
+
+### Storing the bounding box in the index value
+
+Rather than an empty index value, store the geometry's bounding box
+(`minX, minY, maxX, maxY`) in the value. This enables a cheap pre-lookback filter:
+intersect the stored bbox against the query box using only the index entry, and discard
+candidates that the coarse covering cell admitted but whose actual extent does not
+intersect, before fetching the row. This recovers part of the R-tree/SER-tree
+MBR-pruning benefit inside the flat MVI, with no tree to maintain (a per-entry MBR
+instead of a tree of MBRs). Two extensions: store an optional simplified geometry
+summary for a cheaper-but-tighter pre-filter, or store the full EWKB (a covering index)
+so the exact `ST_Intersects` refine needs no row fetch at all. For points the bbox is
+degenerate (the point itself), so the value can simply carry the exact coordinates,
+which already lets distance refine skip the lookback. Cost: larger index entries, and
+the value must be rewritten when the geometry changes; for polygons the same bbox is
+repeated across the geometry's covering-cell entries.
+
+### Global vs local spatial index for partitioned tables
+
+Two senses of "partition" both produce Hilbert-space ranges, at different layers; keep
+them distinct:
+
+- **TiKV Regions**: automatic physical sharding of the keyspace into contiguous ranges,
+  not user-controlled. A global Hilbert-ordered index distributes across Regions
+  naturally (each Region is a contiguous Hilbert range).
+- **TiDB table partitioning (`PARTITION BY ...`)**: user-defined logical partitioning of
+  a table into sub-tables, each with its own physical table id and keyspace. Indexes are
+  either *local* (one per partition) or *global* (one spanning all partitions, storing
+  the partition id in each entry).
+
+For a partitioned table the spatial index should be **global**: one Hilbert-ordered
+namespace across all partitions, each entry's value carrying the `partition_id` of the
+row's partition so the lookback can address `t{partition_id}_r{pk}`. A *local*
+(per-partition) spatial index fragments the Hilbert space, so a spatial query must scan
+the covering ranges in every partition's local index (fanout = number of partitions),
+which the review flags as very slow. A global index keeps fanout proportional to the
+query's spatial extent, not the partition count. The rows stay distributed by the
+table's partitioning; only the index is unified, which is exactly why `partition_id` is
+stored in the value.
+
+This is what `partition_id` means in the reviewed layout: the physical partition id of
+`PARTITION BY`, **not** the primary key (which is already in the index key). TiDB
+already implements global indexes for partitioned tables
+(`docs/design/2020-08-04-global-index.md`), so this rides on existing machinery.
+
+Reviewed index entry layout (generic geometry):
+
+```
+t{table_id}_i{spatial_index_id}_{spatial_key}_{clustered_pk}
+  -> minX, minY, maxX, maxY, [optional geom summary], [optional EWKB if covering]
+     [+ partition_id, only for a global index on a partitioned table]
+```
+
+The value's core is the bounding box; `partition_id` is appended only by a global index
+on a partitioned table (for a non-partitioned table the physical table id is the table
+id, so it is unnecessary).
+
+### Open questions from this review (resolve before deciding)
+
+These are captured so we can reach a common understanding and decide later; they are not
+yet decided.
+
+1. **Value contents**: bbox only, bbox + simplified geometry, or full EWKB (covering)?
+   Fixed per index, or a `WITH` option? What index-size / write-amplification budget is
+   acceptable?
+2. **Where the bbox pre-filter runs**: in TiDB after the index scan, or pushed to the
+   TiKV coprocessor so candidates are filtered before being returned (needs the value
+   decoded coprocessor-side)?
+3. **Global vs local policy**: force spatial indexes on partitioned tables to be global,
+   or allow local with a warning? Confirm that when a table is partitioned by a
+   non-spatial key, global is the only sensible spatial layout.
+4. **`partition_id` encoding**: reuse TiDB's existing global-index value encoding for the
+   partition id, or a spatial-specific layout? (Reuse preferred.)
+5. **MVP scope**: start non-partitioned only, or include global-index support from the
+   start? (Recommendation: non-partitioned first, global as a tracked follow-on.)
+6. **MVP mechanism wrinkle**: the points MVP models the index as an expression index on a
+   hidden generated column, whose value is normally empty/handle. Carrying a bbox (or
+   EWKB) in the value is not standard for a plain secondary index, so it needs either a
+   small extension to index-value generation or modeling the bbox as additional stored
+   index data. Clarify how the value is produced and encoded.
+7. **Dedup vs bbox**: when a polygon fans out to several cells each carrying the same
+   bbox, confirm dedup-by-PK happens first and the bbox filter is applied per surviving
+   candidate.
 
 ## SRID cell scheme
 
@@ -706,6 +801,10 @@ here as that alternative, not dismissed on implementation-layer grounds.
   spatial access path needs to account for the candidate-superset behavior.
 - **DDL backfill**: covering every existing row when adding a spatial index reuses
   the index backfill framework; cost of covering large polygons at scale is a risk.
+- **Index value contents and partitioning**: see the dedicated open-questions list in
+  "Index value contents and table partitioning (Sunny Bains review)" above (value
+  payload, bbox pre-filter location, global vs local policy, `partition_id` encoding,
+  MVP scope and mechanism).
 
 ## References
 

@@ -10,7 +10,7 @@ After this change a user can create a spatial index on a `POINT` column and have
 
 Observable outcome: on a seeded table, `EXPLAIN` shows a spatial index range scan plus a refine filter (not `TableFullScan`), and the query returns identical rows with and without the index.
 
-Scope is deliberately the smallest useful slice: the indexed column must be a `POINT` (one index entry per row, no covering fan-out), for SRID 0 and SRID 4326. Non-point geometries, the multi-valued covering index, native nearest-neighbour, and TiFlash are out of scope and are later deliverables tracked in `PLAN.md`.
+Scope is deliberately the smallest useful slice: the indexed column must be a `POINT` (one index entry per row, no covering fan-out), for SRID 0 and SRID 4326. Non-point geometries, the multi-valued covering index, native nearest-neighbour, partitioned-table (global) indexes, and TiFlash are out of scope and are later deliverables tracked in `PLAN.md`. The MVP targets non-partitioned tables; the global-index-for-partitioned-tables design from the Sunny Bains review (see `research.md` -> "Index value contents and table partitioning") is a tracked follow-on.
 
 ## Progress
 
@@ -47,6 +47,10 @@ Scope is deliberately the smallest useful slice: the indexed column must be a `P
 - Decision: Refine reuses the existing exact predicate as a retained filter; no new executor evaluation code.
   Rationale: the index returns a candidate superset; leaving `ST_Distance`/`ST_Contains` in `TableFilters` (the Selection above the scan) makes the result exact using functions the prerequisite already provides.
   Date/Author: 2026-06-24, Mattias Jonsson.
+
+- Decision: MVP stores the point's bbox/coordinates in the index value (so distance refine can skip the lookback for points), and targets non-partitioned tables only; the global index for partitioned tables is a follow-on.
+  Rationale: aligns with the Sunny Bains review's bbox-in-value refinement at the cheapest point (a point's bbox is just its coordinates), while deferring the partitioned-table global-index work. Open wrinkle to resolve in Milestone 2: the hidden-generated-column expression index normally has an empty value, so carrying the bbox/coordinates needs a small index-value-generation extension (tracked in `research.md` open questions, item 6).
+  Date/Author: 2026-06-25, Mattias Jonsson.
 
 - Open choice (not yet decided): user-facing DDL surface, MySQL-compatible `SPATIAL INDEX (col)` (needs parser grammar work) vs a lower-effort `CREATE INDEX ... USING HILBERT` or explicit expression-index syntax. Recommendation: `SPATIAL INDEX` for compatibility, but the internal representation is identical either way, so the grammar can be chosen late.
 
