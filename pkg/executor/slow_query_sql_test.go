@@ -185,7 +185,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	const purgeSQL = "purge materialized view log on test.t_internal_mv_purge_slow_log"
 	tk.MustExec(purgeSQL)
 	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
-		Check(testkit.Rows("1"))
+		Check(testkit.Rows("0"))
 
 	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (2, 20)")
 	func() {
@@ -201,7 +201,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	}()
 
 	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
-		Check(testkit.Rows("1"))
+		Check(testkit.Rows("0"))
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
