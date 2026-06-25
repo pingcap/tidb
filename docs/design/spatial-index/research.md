@@ -490,24 +490,27 @@ cells along the edge: `{ 030, 0310, 0311, 0312, 0320, 0321, 0322 }`. (Cells the
 hypotenuse only touches at a corner are dropped here for clarity; the exact refine
 guarantees boundary correctness regardless.)
 
-**Storage.** The triangle (row `id=42`) writes one index entry per covering cell, all
-sharing the same handle and bbox, differing only in `cell_key`:
+**Storage.** The triangle `T` (row `id=42`) writes one index entry per covering cell,
+all sharing the same handle and bbox, differing only in `cell_key`. Two more geometries
+are included for contrast: id 1 is a triangle `(5,5),(5,6),(6,6)` and id 75 is a
+rectangle `(3,3),(3,5),(6,5),(6,3)`. The entries are listed in `cell_key` order, as they
+are physically stored and scanned; the value is `(minX, minY, maxX, maxY)`:
 
 ```
-t{T}_i{X}_030_42  -> minX=4, minY=4, maxX=8, maxY=8
+t{T}_i{X}_0033_75 -> 3, 3, 6, 5     # Rectangle id 75: tiles into 6 unit cells (offset from grid)
+t{T}_i{X}_0122_75 -> 3, 3, 6, 5
+t{T}_i{X}_0123_75 -> 3, 3, 6, 5
+t{T}_i{X}_0211_75 -> 3, 3, 6, 5
+t{T}_i{X}_030_42  -> 4, 4, 8, 8     # Triangle T id 42: 7 cells (one size-2 + six size-1)
+t{T}_i{X}_0300_75 -> 3, 3, 6, 5
+t{T}_i{X}_0301_75 -> 3, 3, 6, 5
+t{T}_i{X}_0303_1  -> 5, 5, 6, 6     # Triangle with id 1 fits in one unit cell
 t{T}_i{X}_0310_42 -> 4, 4, 8, 8
 t{T}_i{X}_0311_42 -> 4, 4, 8, 8
 t{T}_i{X}_0312_42 -> 4, 4, 8, 8
 t{T}_i{X}_0320_42 -> 4, 4, 8, 8
 t{T}_i{X}_0321_42 -> 4, 4, 8, 8
 t{T}_i{X}_0322_42 -> 4, 4, 8, 8
-t{T}_i{X}_0303_1  -> 5, 5, 6, 6     # triangle (5,5),(5,6),(6,6), id 1: fits one unit cell
-t{T}_i{X}_0033_75 -> 3, 3, 6, 5     # rectangle (3,3),(3,5),(6,5),(6,3) = [3,6]x[3,5], id 75:
-t{T}_i{X}_0122_75 -> 3, 3, 6, 5     # offset from the coarse grid, so no size-2 cell fits inside;
-t{T}_i{X}_0123_75 -> 3, 3, 6, 5     # it tiles into six unit cells across all four L2 quadrants
-t{T}_i{X}_0211_75 -> 3, 3, 6, 5
-t{T}_i{X}_0300_75 -> 3, 3, 6, 5
-t{T}_i{X}_0301_75 -> 3, 3, 6, 5
 ```
 
 The seven `…_42` entries for `T` are the multi-valued-index (MVI) fan-out: MVI means one
@@ -521,7 +524,8 @@ Storage is per-geometry: a small shape gets fine cells, a large one a coarse cel
 1 is stored under the fine cell `0303` while `T` is stored under the coarse cell `030`,
 different keys. But because `0303` is a descendant of `030`, a search that range-scans
 `030`'s territory returns both (the descendant matching); the coarse `030` key does not
-itself store id 1.
+itself store id 1. This is visible in the sorted listing above: `030_42` is immediately
+followed by `0300_75`, `0301_75`, `0303_1`, all within `030`'s territory.
 
 Ranges: all descendants of a cell are a contiguous key range (everything under `031` is
 `[0310 .. 0313]`), and a cell's ancestors are its prefixes (`0`, `03`, `031`). Those two
