@@ -70,7 +70,10 @@ art for that scaffolding lives in issue #6347 and its closed PRs:
 Key facts inherited from that prior art, which constrain the index design:
 
 - **Storage format is EWKB**: a 4-byte little-endian SRID prefix followed by the
-  standard OGC WKB encoding, i.e. `<srid><wkb>`. This is what MySQL uses. Example
+  standard OGC (Open Geospatial Consortium) WKB encoding, i.e. `<srid><wkb>`. OGC
+  Simple Features is the standard, implemented by MySQL/MariaDB/PostGIS, that defines
+  the geometry types, the WKB/WKT formats, and the `ST_*` predicates we must match.
+  This is what MySQL uses. Example
   for `POINT(1 1)` with SRID 4326:
 
   ```
@@ -81,10 +84,31 @@ Key facts inherited from that prior art, which constrain the index design:
 - **One MySQL type, subtype as constraint**: all geometry types are
   `mysql.TypeGeometry` (`0xFF`); `POINT`, `LINESTRING`, etc. are the same storage
   type with a geometric-subtype constraint, mirroring MySQL's `Field::geometry_type`.
-- **Library**: the prior design adopts `github.com/twpayne/go-geom` (BSD-2) for the
-  basic geometry types and WKT/WKB parsing. It is adequate for parsing and bounding
-  boxes but weaker than Boost.Geometry for exact predicates/distance, so the exact
-  refine step may need additional code or libraries.
+- **Geometry library (type/EWKB layer)**: the prior design adopts
+  `github.com/twpayne/go-geom` (BSD-2) for the geometry types and WKB/EWKB parsing, and
+  it remains the most fitting choice for the storage layer: first-class EWKB + SRID
+  (`ewkb`/`ewkbhex`), `sql.Scanner`/`driver.Value`, and continuity with the prior PRs
+  (v1.6.1, Apr 2025; mature/stable, not abandoned). Its planar predicates are limited, so
+  the exact refine step (`ST_Contains`/`ST_Intersects`/`ST_Distance`) may need more. Other
+  pure-Go options (current mid-2026):
+  - `github.com/peterstace/simplefeatures` (MIT, updated Feb 2026): the only one with a
+    complete OGC predicate engine (DE-9IM, validity, set ops) plus WKB/WKT/GeoJSON/SRID.
+    Best for the exact-predicate functions, or as a single unified library if the type
+    work starts fresh (cost: diverging from go-geom and re-validating MySQL's
+    SRID-prefixed format).
+  - `github.com/paulmach/orb` (MIT, updated Mar 2026, most popular): oriented to web
+    mapping (tiles/GeoJSON/projections), weakest OGC predicates. Not recommended for a
+    SQL geometry engine.
+  - GEOS via cgo (`github.com/twpayne/go-geos`): full predicates, but cgo; avoid unless
+    completeness demands it.
+
+  This is the geometry **type + `ST_*` functions** layer's choice (the prerequisite), not
+  the index's. The spatial index adds only **S2** (`github.com/golang/geo`) for SRID 4326
+  covering and consumes whatever coordinate accessor the type exposes. S2 and go-geom are
+  **complementary, not alternatives**: S2 does spherical cells/covering and spherical
+  predicates; go-geom does the OGC geometry model + EWKB I/O + planar ops. So SRID 0 needs
+  go-geom (decode) + our planar coverer (no S2); SRID 4326 needs go-geom (decode) + S2
+  (cover + spherical refine).
 
 **The contract the index needs from the scaffolding** (and nothing more):
 
@@ -1114,7 +1138,9 @@ not map to this design and are not followed.
 - **Exact refine location**: TiDB-side first; coprocessor pushdown to TiKV later for
   efficiency. Pushdown needs `go-geom`-equivalent predicate evaluation in TiKV.
 - **`go-geom` predicate gaps**: exact `ST_Intersects`/`ST_Contains` may need code
-  beyond `go-geom`; verify coverage before committing the refine step to it.
+  beyond `go-geom`; verify coverage before committing the refine step to it. Candidates
+  if so: `peterstace/simplefeatures` (pure-Go OGC/DE-9IM predicates) or GEOS via cgo
+  (see "Geometry library" above).
 - **Statistics**: MVI row/NDV counts can exceed table row count due to fan-out
   (already noted in `pkg/statistics/analyze.go`); the optimizer's cost model for the
   spatial access path needs to account for the candidate-superset behavior.
