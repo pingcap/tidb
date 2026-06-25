@@ -168,7 +168,7 @@ const (
 	TiDBMViewRefreshHistTime = "tidb_mview_refresh_hist_time"
 	// TiDBMLogPurgeHistTime controls the retention time of mysql.tidb_mlog_purge_hist in hours.
 	TiDBMLogPurgeHistTime = "tidb_mlog_purge_hist_time"
-	// TiDBMLogLogSlowPurge controls whether automatic MLog purge statements are recorded in the slow query log.
+	// TiDBMLogLogSlowPurge controls whether MLog purge statements are recorded in the slow query log.
 	TiDBMLogLogSlowPurge = "tidb_mlog_log_slow_purge"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
