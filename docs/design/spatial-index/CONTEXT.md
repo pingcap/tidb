@@ -16,6 +16,13 @@ type and basic functions are expected to land independently (tracking issue #634
 dveeden's prior work). **Scope of this project is the index only**; the type and
 functions are a prerequisite coded against, not a deliverable.
 
+## Formal design doc
+
+The TiDB-template design document is `docs/design/2026-06-25-spatial-index.md` (one level
+up), following `docs/design/TEMPLATE.md`. It is the proposal for review (the WIP
+`*: Spatial index design` PR on this branch). The files in this directory are the
+supporting working material it references.
+
 ## Documents in this directory
 
 - `research.md`: the knowledge base. Surveys MySQL/MariaDB/PostGIS, index types
