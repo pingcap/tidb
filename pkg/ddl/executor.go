@@ -5917,6 +5917,11 @@ func validateCommentLength(ec errctx.Context, sqlMode mysql.SQLMode, name string
 	default:
 		// add more types of terror.Error if need
 	}
+	if errTooLongComment == dbterror.ErrTooLongTableComment || errTooLongComment == dbterror.ErrTooLongFieldComment {
+		if overrideLen := variable.CommentByteLengthLimit.Load(); overrideLen > 0 {
+			maxLen = int(overrideLen)
+		}
+	}
 	if len(*comment) > maxLen {
 		err := errTooLongComment.GenWithStackByArgs(name, maxLen)
 		if sqlMode.HasStrictMode() {

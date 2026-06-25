@@ -3785,6 +3785,14 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(EnableEAL.Load()), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: PKDBCommentByteLengthLimit, Value: strconv.FormatInt(DefPKDBCommentByteLengthLimit, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			CommentByteLengthLimit.Store(TidbOptInt64(val, DefPKDBCommentByteLengthLimit))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatInt(CommentByteLengthLimit.Load(), 10), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: LowerCaseTableNames, Value: "2", Type: TypeInt, MinValue: 0, MaxValue: 2, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return strconv.Itoa(model.GetLowerCaseTableNames()), nil
 	}},
