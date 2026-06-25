@@ -459,21 +459,10 @@ Cells are squares; a cell at level L has side `domain/2^L`. With quadrant digits
 `0=SW, 1=SE, 2=NW, 3=NE`, a cell id is the path of digits from the top, so a cell's
 ancestors are its prefixes and its descendants share its id as a prefix. The triangle
 lives inside the level-1 cell `0` = `[0,8)²` and, more tightly, the level-2 cell
-`03` = `[4,8)²`. Here is that `[4,8)²` cell at unit resolution (`#` = unit cell fully
-inside T, `/` = straddles the hypotenuse, `.` = outside):
+`03` = `[4,8)²`.
 
-```
- 8 +---+---+---+---+
-   | / | / | . | . |   y=7
-   | # | / | / | . |   y=6
-   | # | # | / | / |   y=5
-   | # | # | # | / |   y=4
- 4 +---+---+---+---+
-   4               8
-```
-
-The same example in color (TiDB brand palette), showing the three geometries, their
-covering cells, the shared cell `0320`, and the quadtree grid levels:
+The figure shows the example in the TiDB brand palette: the three geometries, their
+covering cells (dashed), the shared cell `0320`, and the quadtree grid levels.
 
 ![Spatial index covering cells for three geometries: triangle T (blue), rectangle id 75 (teal), triangle id 1 (red) in the shared violet cell 0320, over a Carbon-gray quadtree grid.](spatial-index-example.png)
 

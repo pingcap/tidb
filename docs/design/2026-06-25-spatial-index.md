@@ -170,8 +170,7 @@ plain cell index and is deferred (it needs an expanding-ring operator).
 
 ### Worked example: indexing and querying a triangle
 
-This condenses the full walkthrough (with the cell grid) in
-`docs/design/spatial-index/research.md`. Take a triangle `T = (4,4), (8,4), (4,8)` (the
+This condenses the full walkthrough in `docs/design/spatial-index/research.md`. Take a triangle `T = (4,4), (8,4), (4,8)` (the
 region `x>=4, y>=4, x+y<=12`) in a small domain `[0,16)²`; its bounding box is
 `[4,8]×[4,8]`, a small box well inside the domain. Cells are squares of side
 `domain/2^L`; a cell id is a path of quadrant digits, so a cell's ancestors are its id
