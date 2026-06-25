@@ -341,17 +341,20 @@ func WriteInsertInCsv(
 	// CSVWriter writes straight into the object store writer, mirroring the
 	// parquet path. The writer's multipart uploader (enabled via
 	// WriterOption.Concurrency in buildInterceptFileWriter) overlaps upload with
-	// encoding, so no writerPipe goroutine is needed; sink counts written bytes
-	// for file-size rotation.
-	sink := &countingWriter{w: &wrappedWriter{ctx: pCtx.Context, w: w}}
-	cw := csvfile.NewCSVWriter(sink, columnKinds(meta.ColumnTypes()), csvCfg)
+	// encoding, so no writerPipe goroutine is needed; CSVWriter counts written
+	// bytes for file-size rotation via EstimateFileSize.
+	selectedFields := meta.SelectedField()
+	var kinds []csvfile.FieldKind
+	if selectedFields != "" {
+		kinds = columnKinds(meta.ColumnTypes())
+	}
+	cw := csvfile.NewCSVWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, kinds, csvCfg)
 
 	var (
-		row            = MakeRowReceiver(meta.ColumnTypes())
-		counter        uint64
-		lastCounter    uint64
-		finishedSize   uint64
-		selectedFields = meta.SelectedField()
+		row          = MakeRowReceiver(meta.ColumnTypes())
+		counter      uint64
+		lastCounter  uint64
+		finishedSize uint64
 	)
 
 	defer func() {
@@ -401,8 +404,9 @@ func WriteInsertInCsv(
 				return counter, errors.Trace(err)
 			}
 		} else {
-			// All columns are generated; emit only the line terminator.
-			if _, err = sink.Write(csvCfg.LineTerminator); err != nil {
+			// All columns are generated; emit an empty row (just the line
+			// terminator) through the writer so it is counted for rotation.
+			if err = cw.Write(nil); err != nil {
 				return counter, errors.Trace(err)
 			}
 		}
@@ -413,7 +417,7 @@ func WriteInsertInCsv(
 		}
 
 		fileRowIter.Next()
-		if cfg.FileSize != UnspecifiedSize && uint64(sink.n) >= cfg.FileSize {
+		if cfg.FileSize != UnspecifiedSize && cw.EstimateFileSize() >= cfg.FileSize {
 			break
 		}
 	}
@@ -423,7 +427,7 @@ func WriteInsertInCsv(
 	if err = cw.Close(); err != nil {
 		return counter, errors.Trace(err)
 	}
-	finishedSize = uint64(sink.n)
+	finishedSize = cw.EstimateFileSize()
 	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
@@ -607,19 +611,6 @@ type wrappedWriter struct {
 
 func (w *wrappedWriter) Write(p []byte) (n int, err error) {
 	return w.w.Write(w.ctx, p)
-}
-
-// countingWriter forwards writes and tracks the total bytes written, used by the
-// CSV path for file-size based rotation in place of writerPipe's accounting.
-type countingWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
 }
 
 // WriteInsertInParquet writes table rows to parquet format.
