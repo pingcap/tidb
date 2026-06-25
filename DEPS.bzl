@@ -118,12 +118,8 @@ def go_deps():
         name = "com_github_alecthomas_assert_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/assert/v2",
-        sha256 = "c2863d73e485ceaf30c47e34a753daf49306acda057e2bd795e79fc279d130f0",
-        strip_prefix = "github.com/alecthomas/assert/v2@v2.10.0",
-        urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/alecthomas/assert/v2/com_github_alecthomas_assert_v2-v2.10.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/assert/v2/com_github_alecthomas_assert_v2-v2.10.0.zip",
-        ],
+        sum = "h1:jjRCHsj6hBJhkmhznrCzoNpbA3zqy0fYiUcYZP/GkPY=",
+        version = "v2.10.0",
     )
     go_repository(
         name = "com_github_alecthomas_chroma_v2",
@@ -162,12 +158,8 @@ def go_deps():
         name = "com_github_alecthomas_repr",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/repr",
-        sha256 = "e4d4ec046c3ad7425c8e78352dc114ab34b1dd7f3a42c640e19cb51c94484c36",
-        strip_prefix = "github.com/alecthomas/repr@v0.4.0",
-        urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/alecthomas/repr/com_github_alecthomas_repr-v0.4.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/repr/com_github_alecthomas_repr-v0.4.0.zip",
-        ],
+        sum = "h1:GhI2A8MACjfegCPVq9f1FLvIBS+DrQ2KQBFZP1iFzXc=",
+        version = "v0.4.0",
     )
     go_repository(
         name = "com_github_alecthomas_units",
@@ -4637,12 +4629,8 @@ def go_deps():
         name = "com_github_lib_pq",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lib/pq",
-        sha256 = "6791a7af67f846a86335350012c4efadd0850096ebf22350b7b20e01e216e6f2",
-        strip_prefix = "github.com/lib/pq@v1.10.9",
-        urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/lib/pq/com_github_lib_pq-v1.10.9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lib/pq/com_github_lib_pq-v1.10.9.zip",
-        ],
+        sum = "h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=",
+        version = "v1.10.9",
     )
     go_repository(
         name = "com_github_linode_linodego",
@@ -6751,23 +6739,15 @@ def go_deps():
         name = "com_github_twpayne_go_geom",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/twpayne/go-geom",
-        sha256 = "7208de13e67645c7d4d3a1cacc954a6abbe4aac517fa69de3d844aabd395cebb",
-        strip_prefix = "github.com/twpayne/go-geom@v1.6.1",
-        urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/twpayne/go-geom/com_github_twpayne_go_geom-v1.6.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/twpayne/go-geom/com_github_twpayne_go_geom-v1.6.1.zip",
-        ],
+        sum = "h1:iLE+Opv0Ihm/ABIcvQFGIiFBXd76oBIar9drAwHFhR4=",
+        version = "v1.6.1",
     )
     go_repository(
         name = "com_github_twpayne_go_kml_v3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/twpayne/go-kml/v3",
-        sha256 = "ef8a2e13ba85584ddb5c92615c751609c82d653494388da03be92b55a54c4522",
-        strip_prefix = "github.com/twpayne/go-kml/v3@v3.2.1",
-        urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/twpayne/go-kml/v3/com_github_twpayne_go_kml_v3-v3.2.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/twpayne/go-kml/v3/com_github_twpayne_go_kml_v3-v3.2.1.zip",
-        ],
+        sum = "h1:xkTIJ7KMnHGKpHGf30e4XS3UT8o/5jD62hmdGJPf7Io=",
+        version = "v3.2.1",
     )
     go_repository(
         name = "com_github_uber_jaeger_client_go",
