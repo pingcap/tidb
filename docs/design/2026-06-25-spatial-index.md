@@ -86,6 +86,38 @@ write one index entry per covering cell. Queries follow the standard spatial
 get candidate rows, then evaluate the exact predicate to drop false positives. The
 index always returns a superset; correctness lives in the refine step.
 
+### SQL syntax
+
+MySQL-compatible. `INDEX` and `KEY` are synonyms. Notation: `[...]` optional, `{a | b}` choice.
+
+    -- spatial column: NOT NULL, SRID-restricted to 0 or 4326
+    col_name {GEOMETRY | POINT | LINESTRING | POLYGON | ...} NOT NULL SRID {0 | 4326}
+
+    -- spatial index: in CREATE TABLE, ALTER TABLE ... ADD, or CREATE SPATIAL INDEX ... ON t (...)
+    SPATIAL {INDEX | KEY} [index_name] (geometry_col)
+
+The single geometry column is the only key part; it must be `NOT NULL` and SRID-restricted
+to `SRID 0` or `SRID 4326` (both relaxable later; see the SRID and NOT NULL notes under
+"Index entry layout"). A MySQL 8.0+ `SHOW CREATE TABLE` with a spatial index imports
+cleanly: TiDB already parses `SPATIAL INDEX`, and the `SRID` attribute and geometry types
+arrive with the prerequisite type work. `SHOW CREATE TABLE` emits the plain MySQL form:
+
+    `geom` point NOT NULL SRID 4326,
+    SPATIAL KEY `geom_idx` (`geom`)
+
+Future enhancements (TiDB extensions, not in the initial release; detail in
+`research.md` -> "SQL syntax"):
+
+- **Cell tuning** via bare `NAME = value` index options (e.g. `S2_MAX_CELLS = 8`), the
+  MySQL-family idiom MariaDB uses for its vector index; deferred (ship defaults-only,
+  matching TiDB's vector index, which exposes no such knobs).
+- **Composite (prefix-column) indexes**, e.g. `SPATIAL INDEX (tenant_id, geom)`, for
+  multi-tenant pruning; a very late milestone.
+
+TiDB-specific forms (tuning, composite) are emitted in `SHOW CREATE TABLE` inside a
+`/*T![spatial] ... */` feature comment so non-TiDB tools ignore them (matching
+`/*T![clustered_index] */`).
+
 ### Index entry layout
 
 For a table `t` (table id `T`) with a spatial index (index id `I`) on a geometry column,
@@ -232,6 +264,11 @@ machinery (`docs/design/2020-08-04-global-index.md`).
 3. **Phase 3, partitioned tables**: global spatial index with `partition_id`.
 4. **Later**: coprocessor pushdown of the refine predicate, expanding-ring kNN operator,
    and a TiFlash columnar spatial path (the coverer is kept engine-neutral to allow it).
+5. **Very late, not required for release**: composite (prefix-column) spatial indexes,
+   e.g. `SPATIAL INDEX (tenant_id, position)`, which prepend scalar equality-prefix
+   columns before the cell key so `WHERE tenant_id = ? AND <spatial>` prunes to one
+   prefix value and the spatial covering. Useful for multi-tenant/categorized data (an
+   in-index alternative to partition-by-tenant), but explicitly out of the release scope.
 
 ### Key integration points
 
@@ -353,9 +390,15 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
 
 ## Unresolved Questions
 
-- User-facing DDL grammar: MySQL-compatible `SPATIAL INDEX (col)` (parser work) vs
-  `CREATE INDEX ... USING HILBERT` / explicit expression-index syntax. Internal
-  representation is identical, so this can be chosen late.
+- User-facing DDL grammar: resolved to MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY`. Any
+  non-default cell tuning would be added later as bare `NAME = value` index options
+  (emitted inside a `/*T![spatial] ... */` comment), not in the initial release (see
+  Detailed Design -> SQL syntax). Remaining: confirm the exact MySQL `SHOW CREATE TABLE`
+  byte-form to match, and whether tuning options ship in the first cut or as a follow-up.
+- `NOT NULL` requirement: required initially for MySQL parity, but could be relaxed in
+  the future. The cell-covering/MVI encoding represents a NULL geometry as zero index
+  entries (NULL rows unindexed, and they never satisfy a spatial predicate, so no false
+  negatives), so lifting the restriction is feasible; deferred.
 - Index value contents: bbox only, bbox plus simplified geometry, or full EWKB
   (covering); fixed per index or a `WITH` option; the index-size/write-amplification
   budget.

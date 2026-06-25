@@ -33,6 +33,7 @@ not as deliverables of this effort.
 * [Query support matrix](#query-support-matrix)
 * [Keeping the design reusable for TiFlash](#keeping-the-design-reusable-for-tiflash)
 * [Investigation and alternatives: the ER-tree (LSM-embedded R-tree)](#investigation-and-alternatives-the-er-tree-lsm-embedded-r-tree)
+* [SQL syntax (dialect compatibility)](#sql-syntax-dialect-compatibility)
 * [Open research questions and risks](#open-research-questions-and-risks)
 * [References](#references)
 
@@ -942,6 +943,154 @@ This project targets a **secondary** spatial index, so cell-covering over MVI is
 fit. The ER-tree's clustered organization is a legitimate alternative worth
 revisiting if a spatial-clustered table organization becomes a goal; it is recorded
 here as that alternative, not dismissed on implementation-layer grounds.
+
+## SQL syntax (dialect compatibility)
+
+The user-facing DDL is MySQL-compatible first; non-default cell tuning, which MySQL has
+no syntax for, follows CockroachDB.
+
+### MySQL-compatible core (required)
+
+All MySQL 8.0+ forms parse and execute:
+
+```sql
+CREATE TABLE stores (
+  id   BIGINT PRIMARY KEY,
+  geom POINT NOT NULL SRID 4326,
+  SPATIAL INDEX (geom)               -- SPATIAL KEY name (geom) is equivalent
+);
+
+CREATE SPATIAL INDEX geom_idx ON stores (geom);
+ALTER TABLE stores ADD SPATIAL INDEX geom_idx (geom);
+ALTER TABLE stores ADD SPATIAL KEY   geom_idx (geom);   -- KEY == INDEX
+```
+
+Requirements, matching MySQL: the indexed column must be `NOT NULL` and SRID-restricted
+(this design supports SRID 0 and 4326); one spatial column per index.
+
+An indexed column therefore cannot mix SRIDs: it must be declared `SRID 0` or
+`SRID 4326`, and every value must match (an SRID-unrestricted column, declared without an
+`SRID` attribute, may hold mixed SRIDs but cannot carry a spatial index). This is a hard
+requirement, not a style choice: the cell encoding is SRID-specific (planar quadtree for
+0, spherical S2 for 4326), so a single ordered cell-key namespace cannot hold both, and
+cross-SRID distance/containment is undefined. TiDB rejects `SPATIAL INDEX` creation on an
+unrestricted column, which also matches MySQL's rule that SRID-restriction is required
+for the optimizer to use a spatial index.
+
+`NOT NULL` is required initially, matching MySQL. This restriction could be lifted in the
+future: unlike MySQL's R-tree (which has no representation for a NULL geometry), the
+cell-covering/MVI encoding represents a NULL or absent geometry as zero index entries
+(exactly like an empty array in a multi-valued index), and a NULL geometry never
+satisfies a spatial predicate, so skipping such rows is correct (no false negatives). If
+relaxed, NULL rows would simply be unindexed (and the spatial index could not serve
+`IS NULL`). For now it is kept `NOT NULL` for MySQL parity.
+
+Round-trip: a MySQL 8.0+ `SHOW CREATE TABLE` containing a spatial index must import
+cleanly, so TiDB accepts and emits the MySQL forms:
+
+```
+`geom` point NOT NULL SRID 4326,
+SPATIAL KEY `geom_idx` (`geom`)
+```
+
+MySQL has no spatial-index tuning syntax (its index is an R-tree), so a MySQL dump never
+carries cell parameters and imports against TiDB's defaults.
+
+TiDB status (commit 45ed9775ec): the parser already accepts `SPATIAL INDEX`
+(`ast.IndexKeyTypeSpatial`) but execution rejects it (`pkg/ddl/executor.go`: "SPATIAL
+index is not supported"); the `SRID` column attribute and the `GEOMETRY`/`POINT` types
+land with the prerequisite type work. Implementation must: remove the executor
+rejection and build the index; confirm `SPATIAL KEY` parses (KEY and INDEX are
+synonyms); and emit `SPATIAL KEY` plus the `SRID n` column attribute in
+`SHOW CREATE TABLE` for fidelity.
+
+### MariaDB (follow-up)
+
+MariaDB also uses `SPATIAL INDEX`/`SPATIAL KEY`. Its SRID / reference-system handling
+differs from MySQL and needs separate verification; treat MariaDB-specific differences
+as a follow-up once the MySQL path works.
+
+### Non-default cell tuning (deferred / optional, not in the initial release)
+
+Tuning knobs (covering tightness, planar bounds) are **deferred**: ship the index with
+sensible defaults (see "SRID cell scheme" and "Cell depth vs fan-out") and add tuning
+syntax only if a real need appears.
+
+This follows TiDB's own precedent. Its only comparable tunable index, the vector (HNSW)
+index, exposes **no** numeric knobs: no `ef_construction` (the index metadata stores only
+dimension and distance metric) and no `ef_search` (the wire protocol has an
+`hnsw_ef_search` field, but TiDB never sets it from SQL). TiDB's pattern is algorithm via
+`USING <ALGO>`, a semantic choice via the indexed function (the distance metric), and
+otherwise defaults-only. For spatial, the SRID already selects the scheme (planar
+quadtree for 0, S2 for 4326), so no knob is needed there; the cell parameters are the
+analog of HNSW's hidden knobs, so they stay hidden too, for now.
+
+If tuning is added later, the recommended form is **bare `NAME = value` index options**,
+the MySQL-family idiom. In MySQL/MariaDB neither `WITH` nor `USING` is a key=value list
+(`USING` is only the algorithm keyword `USING BTREE|HASH|RTREE`; `WITH` is only narrow
+clauses like `WITH PARSER` or MariaDB `WITH SYSTEM VERSIONING`); ordinary index options
+are bare `NAME [=] value` pairs (`KEY_BLOCK_SIZE`, `COMMENT`, `CLUSTERING = {YES|NO}`,
+`IGNORED`). Tellingly, MariaDB tunes its own modern index, the HNSW **vector** index, this
+exact way: `M = number` and `DISTANCE = {EUCLIDEAN | COSINE}` as bare `index_option`s, not
+a `WITH (...)` clause. So the spatial knobs should be bare options too:
+
+    CREATE SPATIAL INDEX g_idx ON t (g) S2_MAX_CELLS = 8;
+    ALTER TABLE t ADD SPATIAL INDEX g_idx (g) S2_MAX_LEVEL = 24 S2_LEVEL_MOD = 1;
+
+Candidate option names (covering tightness/precision and the SRID 0 planar bounds;
+borrowing CockroachDB's vocabulary): `S2_MAX_CELLS`, `S2_MAX_LEVEL`, `S2_LEVEL_MOD`,
+`GEOMETRY_MIN_X`, `GEOMETRY_MAX_X`, `GEOMETRY_MIN_Y`, `GEOMETRY_MAX_Y`. The alternative,
+the PostgreSQL/CockroachDB parenthesized `WITH (s2_max_cells = 8, ...)` storage-parameter
+clause, is familiar to PostGIS/Cockroach users but foreign to the MySQL family and would
+need a new generic `WITH (key=value)` index grammar; it is not preferred.
+
+Either way it is a TiDB-only extension. `SHOW CREATE TABLE` would emit the tuning inside a
+`/*T![spatial] ... */` feature comment so non-TiDB parsers ignore it (matching
+`/*T![clustered_index] */`), and a MySQL dump never carries these options, so import is
+unaffected:
+
+```
+SPATIAL KEY `geom_idx` (`geom`) /*T![spatial] S2_MAX_CELLS = 8 */
+```
+
+### Composite (prefix-column) spatial indexes (very late, not for release)
+
+A composite index prepends scalar equality-prefix columns before the geometry, e.g.
+`SPATIAL INDEX (tenant_id, position)`, to speed up `WHERE tenant_id = ? AND
+ST_Distance(position, p) < r`. It is explicitly a **very late milestone, not required for
+release**, recorded here so the design is not lost.
+
+Dialect support: MySQL does not allow it (a `SPATIAL INDEX` takes one geometry column
+only), so it is a TiDB extension; CockroachDB supports it (scalar prefix columns on an
+inverted/spatial index, prefix must be equality/IN-constrained), and PostGIS supports it
+via a multicolumn GiST index (`USING gist (tenant_id, geom)` with `btree_gist`).
+
+Mechanism: it is a prefix on the index key. Each entry becomes
+`t{T}_i{I}_{tenant_id}_{cell_key}_{handle}`: the scalar prefix sits before the cell key
+(structurally a composite multi-valued index, scalar columns plus the cell-covering
+"array" column, which the MVI machinery already supports). A query with `tenant_id = 7`
+fixes the prefix, the spatial predicate covers cells, and the scan touches only tenant 7's
+entries within the covering cells, then bbox pre-filter -> dedup -> lookback -> refine.
+This is the in-index equivalent of partitioning by tenant: per-prefix spatial pruning
+without partitioning the table.
+
+Syntax (TiDB extension): `SPATIAL {INDEX | KEY} name (scalar_col, ..., geometry_col)` with
+the geometry column **last** and SRID-restricted/`NOT NULL`; the `SPATIAL` keyword is
+required (a geometry column is not valid in a plain B-tree index, so a bare `CREATE INDEX`
+on it is an error). Leading columns must be `=`/`IN`-constrained in the query for the
+prefix to prune. Because the whole form is non-MySQL, `SHOW CREATE TABLE` wraps the entire
+index definition in a `/*T![spatial] ... */` comment so non-TiDB tools skip it.
+
+### Priority rationale
+
+MySQL first because the import-cleanliness requirement drives it, and its no-knob syntax
+maps onto TiDB defaults. The knobs themselves are deferred (defaults-only, matching
+TiDB's vector index). If added, the *syntax form* follows the MySQL family, bare
+`NAME = value` index options, as MariaDB does for its own vector index (`M`, `DISTANCE`),
+rather than the PostgreSQL/CockroachDB `WITH (...)` clause; CockroachDB is borrowed only
+for the parameter *vocabulary* (`s2_max_cells`, etc.), since it is the only mainstream S2
+cell-covering index. Oracle and SQL Server use proprietary spatial-index syntax that does
+not map to this design and are not followed.
 
 ## Open research questions and risks
 

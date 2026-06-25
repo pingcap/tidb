@@ -52,7 +52,8 @@ Scope is deliberately the smallest useful slice: the indexed column must be a `P
   Rationale: aligns with the Sunny Bains review's bbox-in-value refinement at the cheapest point (a point's bbox is just its coordinates), while deferring the partitioned-table global-index work. Open wrinkle to resolve in Milestone 2: the hidden-generated-column expression index normally has an empty value, so carrying the bbox/coordinates needs a small index-value-generation extension (tracked in `research.md` open questions, item 6).
   Date/Author: 2026-06-25, Mattias Jonsson.
 
-- Open choice (not yet decided): user-facing DDL surface, MySQL-compatible `SPATIAL INDEX (col)` (needs parser grammar work) vs a lower-effort `CREATE INDEX ... USING HILBERT` or explicit expression-index syntax. Recommendation: `SPATIAL INDEX` for compatibility, but the internal representation is identical either way, so the grammar can be chosen late.
+- Decision: user-facing DDL is MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY` (the parser already accepts `SPATIAL INDEX`; execution is rejected today in `pkg/ddl/executor.go` and needs implementing). The hidden-generated-column model is an internal implementation detail, not user-facing syntax. Non-default cell tuning uses a CockroachDB-style `WITH (...)` clause (a TiDB grammar extension); the points MVP may ship with defaults only and add the `WITH` grammar as a follow-up. Full syntax in `research.md` -> "SQL syntax".
+  Date/Author: 2026-06-25, Mattias Jonsson.
 
 ## Outcomes & Retrospective
 
