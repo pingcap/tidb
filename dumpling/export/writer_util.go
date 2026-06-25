@@ -324,12 +324,6 @@ func WriteInsertInCsv(
 		return 0, fileRowIter.Error()
 	}
 
-	bf := pool.Get().(*bytes.Buffer)
-	if bfCap := bf.Cap(); bfCap < lengthLimit {
-		bf.Grow(lengthLimit - bfCap)
-	}
-
-	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, metrics, cfg.Labels)
 	csvCfg := &csvfile.Config{
 		NullValue:       []byte(cfg.CsvNullValue),
 		Separator:       []byte(cfg.CsvSeparator),
@@ -338,26 +332,19 @@ func WriteInsertInCsv(
 		BinaryFormat:    csvfile.BinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
 		EscapeBackslash: cfg.EscapeBackslash,
 	}
-	// cw writes into bf; bf is swapped on flush below, so cw.Reset(bf) follows.
-	cw := csvfile.NewCSVWriter(bf, columnKinds(meta.ColumnTypes()), csvCfg)
-
-	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
-	ctx, cancel := tcontext.Background().WithLogger(pCtx.L()).WithCancel()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		wp.Run(ctx)
-		wg.Done()
-	}()
-	defer func() {
-		cancel()
-		wg.Wait()
-	}()
+	// CSVWriter writes straight into the object store writer, mirroring the
+	// parquet path. The writer's multipart uploader (enabled via
+	// WriterOption.Concurrency in buildInterceptFileWriter) overlaps upload with
+	// encoding, so no writerPipe goroutine is needed; sink counts written bytes
+	// for file-size rotation.
+	sink := &countingWriter{w: &wrappedWriter{ctx: pCtx.Context, w: w}}
+	cw := csvfile.NewCSVWriter(sink, columnKinds(meta.ColumnTypes()), csvCfg)
 
 	var (
 		row            = MakeRowReceiver(meta.ColumnTypes())
 		counter        uint64
 		lastCounter    uint64
+		finishedSize   uint64
 		selectedFields = meta.SelectedField()
 	)
 
@@ -367,17 +354,17 @@ func WriteInsertInCsv(
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", lastCounter),
-				zap.Uint64("finished size", wp.finishedFileSize),
+				zap.Uint64("finished size", finishedSize),
 				log.ShortError(err))
 			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
-			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedSizeGauge, float64(finishedSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", counter),
-				zap.Uint64("finished size", wp.finishedFileSize))
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+				zap.Uint64("finished size", finishedSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
 			summary.CollectSuccessUnit("total rows", 1, counter)
 		}
 	}()
@@ -392,12 +379,10 @@ func WriteInsertInCsv(
 			return 0, errors.Trace(err)
 		}
 	}
-	wp.currentFileSize += uint64(bf.Len())
 
 	// rawRow is reused across rows to avoid a per-row slice allocation.
 	rawRow := row.GetRawBytes()[:0]
 	for fileRowIter.HasNext() {
-		lastBfSize := bf.Len()
 		// When all table columns are generated, selectedFields is empty.
 		// Dumpling still iterates source rows via SELECT '' and emits only
 		// line terminators here.
@@ -411,44 +396,33 @@ func WriteInsertInCsv(
 			}
 		} else {
 			// All columns are generated; emit only the line terminator.
-			bf.Write(csvCfg.LineTerminator)
+			if _, err = sink.Write(csvCfg.LineTerminator); err != nil {
+				return counter, errors.Trace(err)
+			}
 		}
 		counter++
-		wp.currentFileSize += uint64(bf.Len() - lastBfSize)
-		if bf.Len() >= lengthLimit {
-			select {
-			case <-pCtx.Done():
-				return counter, pCtx.Err()
-			case err = <-wp.errCh:
-				return counter, err
-			case wp.input <- bf:
-				bf = pool.Get().(*bytes.Buffer)
-				if bfCap := bf.Cap(); bfCap < lengthLimit {
-					bf.Grow(lengthLimit - bfCap)
-				}
-				cw.Reset(bf)
-				AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
-				lastCounter = counter
-			}
+		if counter%1000 == 0 {
+			AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+			lastCounter = counter
 		}
 
 		fileRowIter.Next()
-		if wp.ShouldSwitchFile() {
+		if cfg.FileSize != UnspecifiedSize && uint64(sink.n) >= cfg.FileSize {
 			break
 		}
 	}
-
-	if bf.Len() > 0 {
-		wp.input <- bf
-	}
-	close(wp.input)
-	<-wp.closed
 	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 	lastCounter = counter
+
+	if err = cw.Close(); err != nil {
+		return counter, errors.Trace(err)
+	}
+	finishedSize = uint64(sink.n)
+	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}
-	return counter, wp.Error()
+	return counter, nil
 }
 
 func write(tctx *tcontext.Context, writer objectio.Writer, str string) error {
@@ -506,7 +480,7 @@ func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(context.Context) error) {
+func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType, wo *storeapi.WriterOption) (objectio.Writer, func(context.Context) error) {
 	fileName += compressType.FileSuffix()
 	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName
@@ -514,7 +488,7 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileNa
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
 		// which will cause a context canceled error when closing gcs's Writer
-		w, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(pCtx, fileName, nil)
+		w, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(pCtx, fileName, wo)
 		if err != nil {
 			pCtx.L().Warn("fail to open file",
 				zap.String("path", fullPath),
@@ -627,6 +601,19 @@ type wrappedWriter struct {
 
 func (w *wrappedWriter) Write(p []byte) (n int, err error) {
 	return w.w.Write(w.ctx, p)
+}
+
+// countingWriter forwards writes and tracks the total bytes written, used by the
+// CSV path for file-size based rotation in place of writerPipe's accounting.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // WriteInsertInParquet writes table rows to parquet format.
