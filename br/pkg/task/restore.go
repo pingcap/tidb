@@ -1008,6 +1008,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
 
+	// Perform this check early (before NewMgr and the main restore flow) so we fail
+	// fast instead of running heavier logic first and checking afterward.
 	if !IsStreamRestore(cmdName) {
 		if err := checkSnapshotRestoreMode(c, cfg); err != nil {
 			return err
