@@ -17,6 +17,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -870,9 +871,36 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 }
 
+// NormalizeInvolvingSchemaInfo enforces the DDL scheduler dependency-key
+// invariant: before a job is submitted, every scheduler object name must be in
+// canonical lower case. This includes the fallback Job.SchemaName/TableName and
+// explicit InvolvingSchemaInfo Database/Table/Policy/ResourceGroup fields. The
+// only exceptions are the sentinel values InvolvingAll and InvolvingNone. The
+// scheduler compares exact strings, so original-case names can make two DDL jobs
+// on the same object look independent.
+func (job *Job) NormalizeInvolvingSchemaInfo() {
+	job.SchemaName = normalizeInvolvingName(job.SchemaName)
+	job.TableName = normalizeInvolvingName(job.TableName)
+	for i := range job.InvolvingSchemaInfo {
+		item := &job.InvolvingSchemaInfo[i]
+		item.Database = normalizeInvolvingName(item.Database)
+		item.Table = normalizeInvolvingName(item.Table)
+		item.Policy = normalizeInvolvingName(item.Policy)
+		item.ResourceGroup = normalizeInvolvingName(item.ResourceGroup)
+	}
+}
+
+func normalizeInvolvingName(name string) string {
+	if name == InvolvingAll || name == InvolvingNone {
+		return name
+	}
+	return strings.ToLower(name)
+}
+
 // CheckInvolvingSchemaInfo check the job should set valid InvolvingSchemaInfo,
-// job scheduler uses this info to calculate job dependency, invalid
-// InvolvingSchemaInfo may cause job scheduler stuck or execute DDLs in wrong order.
+// job scheduler uses this info to calculate exact-string job dependency keys.
+// Invalid or unnormalized InvolvingSchemaInfo may cause job scheduler stuck or
+// execute DDLs in wrong order.
 func (job *Job) CheckInvolvingSchemaInfo() error {
 	involvedSI := job.GetInvolvingSchemaInfo()
 	for _, info := range involvedSI {
