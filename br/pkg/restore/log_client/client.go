@@ -1232,7 +1232,7 @@ func (rc *LogClient) BuildMetaKVFiles(
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
+		failpoint.Return(nil, nil, errors.New("failpoint: failed before id maps saved"))
 	})
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
@@ -1246,7 +1246,7 @@ func (rc *LogClient) BuildMetaKVFiles(
 		}
 	}
 	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
+		failpoint.Return(nil, nil, errors.New("failpoint: failed after id maps saved"))
 	})
 	log.Info("prepared meta files to be restored",
 		zap.Int("total files", len(files)),
