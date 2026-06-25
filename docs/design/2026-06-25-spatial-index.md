@@ -88,12 +88,13 @@ index always returns a superset; correctness lives in the refine step.
 
 ### Index entry layout
 
-For a table `t` (table id `T`) with a spatial index (index id `X`) on a geometry column,
-each covering cell of a row's geometry produces one entry:
+For a table `t` (table id `T`) with a spatial index (index id `I`) on a geometry column,
+each covering cell of a row's geometry produces one entry (the value is a single encoded
+object, shown in braces):
 
-    t{T}_i{X}_{cell_key}_{clustered_pk} -> minX, minY, maxX, maxY,
-                                           [optional geometry summary],
-                                           [optional EWKB if covering index]
+    t{T}_i{I}_{cell_key}_{clustered_pk} -> { minX, minY, maxX, maxY,
+                                             [optional geometry summary],
+                                             [optional EWKB if covering index] }
 
 - `cell_key` is the space-filling-curve cell id (encodes level and Hilbert/cell
   position). The entries are therefore ordered by the curve.
@@ -166,6 +167,41 @@ The bounded form `WHERE within radius ORDER BY distance LIMIT k` is supported by
 the `WHERE` from the index and letting an ordinary `TopN` sort the small candidate set.
 Native nearest-neighbour (`ORDER BY distance LIMIT k` with no radius) is not served by a
 plain cell index and is deferred (it needs an expanding-ring operator).
+
+### Worked example: indexing and querying a triangle
+
+This condenses the full walkthrough (with the cell grid) in
+`docs/design/spatial-index/research.md`. Take a triangle `T = (4,4), (8,4), (4,8)` (the
+region `x>=4, y>=4, x+y<=12`) in a small domain `[0,16)²`; its bounding box is
+`[4,8]×[4,8]`, a small box well inside the domain. Cells are squares of side
+`domain/2^L`; a cell id is a path of quadrant digits, so a cell's ancestors are its id
+prefixes and its descendants share its id as a prefix (a contiguous key range).
+
+The covering mixes levels: a coarse cell where the triangle solidly fills it, finer
+cells hugging the diagonal edge. For `T` that is one size-2 cell plus six size-1 cells:
+
+    030                  (size 2, the solid interior corner)
+    0310 0311 0312       (size 1, lower-right edge)
+    0320 0321 0322       (size 1, upper-left edge)
+
+Storage: row `id=42` writes one entry per covering cell, all sharing the handle and the
+encoded bbox object, differing only in `cell_key`:
+
+    t{T}_i{I}_030_42  -> {4,4,8,8}
+    t{T}_i{I}_0310_42 -> {4,4,8,8}
+    ...
+    t{T}_i{I}_0322_42 -> {4,4,8,8}
+
+These multiple keys are the MVI fan-out: an MVI is one row writing multiple index keys
+(as for JSON-array columns), not multiple values under one key. A point would write a
+single entry and need no MVI.
+
+Search covers the query region into cells, then for each query cell finds stored cells
+that are it, an ancestor, or a descendant: a finer query matches a coarser stored cell
+via ancestor prefixes (a few point lookups); a coarser query matches finer stored cells
+via a descendant range scan; the stored bbox cheaply rejects non-overlaps before the row
+fetch; and the exact predicate removes the over-cover of partial cells (a point in `0311`
+just past the hypotenuse passes the bbox but fails `ST_Contains`).
 
 ### Partitioned tables: global vs local
 
