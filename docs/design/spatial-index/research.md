@@ -259,7 +259,12 @@ A spatial index maps onto this directly:
 
 - **Index time**: cover each geometry with a set of hierarchical cells and write one
   index entry per covering cell. A point maps to one leaf cell; a polygon maps to a
-  handful of cells. One row, many cell keys: the MVI fan-out shape.
+  handful of cells. One row, many cell keys: the MVI fan-out shape. Note what MVI means
+  here: in TiDB an MVI is one row writing multiple index *keys* (exactly as it already
+  does for JSON-array columns), not multiple values under a single key. TiKV keys are
+  unique, so "multiple values per key" does not exist; the only representation is
+  multiple keys, and that is the multi-valued index. A point therefore produces one
+  entry and needs no MVI; only polygons/linestrings fan out and use it.
 - **Query time** (filter-and-refine, the standard spatial query pattern):
   1. Cover the query region (a polygon, or a distance-bounded disc/cap) with cells.
   2. Range-scan those cell-key ranges to get a candidate row set.
@@ -497,6 +502,12 @@ t{T}_i{X}_0320_42 -> 4, 4, 8, 8
 t{T}_i{X}_0321_42 -> 4, 4, 8, 8
 t{T}_i{X}_0322_42 -> 4, 4, 8, 8
 ```
+
+These seven cell-key entries are the multi-valued-index (MVI) fan-out: MVI means one
+row writes multiple index *keys*, not multiple values under one key (TiKV keys are
+unique, so that does not exist). A point would write a single entry and need no MVI; the
+polygon's several entries are exactly what MVI provides, the same mechanism it already
+uses for JSON-array columns.
 
 Ranges: all descendants of a cell are a contiguous key range (everything under `031` is
 `[0310 .. 0313]`), and a cell's ancestors are its prefixes (`0`, `03`, `031`). Those two
