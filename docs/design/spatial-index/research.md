@@ -439,6 +439,90 @@ entries (no tree, LSM-friendly, cheap updates); the paper avoids fan-out via MBR
 needs a tree (or the clustered reorg). For `t` keeping `id` as PK, the MVI secondary
 index is the clean fit.
 
+### Polygon walkthrough: a triangle
+
+The point case is trivial (one cell, one entry). A polygon shows the covering, the
+fan-out, and the multi-level ("zoom") search. Coordinates here use a small domain
+`[0,16)²` for readability; the real domain is far larger (±2^31) but the mechanics are
+identical.
+
+Take a triangle `T` with vertices `(4,4), (8,4), (4,8)` (the region `x>=4, y>=4,
+x+y<=12`). Its bounding box is `minX=4, minY=4, maxX=8, maxY=8`: a small box well
+inside the domain, and the triangle fills only half of it.
+
+Cells are squares; a cell at level L has side `domain/2^L`. With quadrant digits
+`0=SW, 1=SE, 2=NW, 3=NE`, a cell id is the path of digits from the top, so a cell's
+ancestors are its prefixes and its descendants share its id as a prefix. The triangle
+lives inside the level-1 cell `0` = `[0,8)²` and, more tightly, the level-2 cell
+`03` = `[4,8)²`. Here is that `[4,8)²` cell at unit resolution (`#` = unit cell fully
+inside T, `/` = straddles the hypotenuse, `.` = outside):
+
+```
+ 8 +---+---+---+---+
+   | / | / | . | . |   y=7
+   | # | / | / | . |   y=6
+   | # | # | / | / |   y=5
+   | # | # | # | / |   y=4
+ 4 +---+---+---+---+
+   4               8
+```
+
+**Covering.** Subdivide partial cells, keep fully-inside ones, drop outside ones. At
+level 3 (size-2 cells) the triangle's cell `03` splits into four:
+
+- `030` = `[4,6)²` (bottom-left): fully inside T, kept as one cell.
+- `031` = `[6,8)×[4,6)` and `032` = `[4,6)×[6,8)`: straddle the hypotenuse (partial).
+- `033` = `[6,8)²`: outside (the hypotenuse only grazes its corner).
+
+Keeping `031`/`032` whole over-covers past the diagonal. Subdividing them one more level
+(size-1 cells) hugs the edge tighter, the precision-vs-fan-out knob:
+
+- `031` -> `0310 [6,7)×[4,5)` inside, `0311 [7,8)×[4,5)` and `0312 [6,7)×[5,6)` partial
+- `032` -> `0320 [4,5)×[6,7)` inside, `0321 [5,6)×[6,7)` and `0322 [4,5)×[7,8)` partial
+
+So the covering mixes levels: one size-2 cell for the solid corner plus six size-1
+cells along the edge: `{ 030, 0310, 0311, 0312, 0320, 0321, 0322 }`. (Cells the
+hypotenuse only touches at a corner are dropped here for clarity; the exact refine
+guarantees boundary correctness regardless.)
+
+**Storage.** The triangle (row `id=42`) writes one index entry per covering cell, all
+sharing the same handle and bbox, differing only in `cell_key`:
+
+```
+t{T}_i{X}_030_42  -> minX=4, minY=4, maxX=8, maxY=8
+t{T}_i{X}_0310_42 -> 4, 4, 8, 8
+t{T}_i{X}_0311_42 -> 4, 4, 8, 8
+t{T}_i{X}_0312_42 -> 4, 4, 8, 8
+t{T}_i{X}_0320_42 -> 4, 4, 8, 8
+t{T}_i{X}_0321_42 -> 4, 4, 8, 8
+t{T}_i{X}_0322_42 -> 4, 4, 8, 8
+```
+
+Ranges: all descendants of a cell are a contiguous key range (everything under `031` is
+`[0310 .. 0313]`), and a cell's ancestors are its prefixes (`0`, `03`, `031`). Those two
+facts drive the search.
+
+**Search** (cover the query the same way, then for each query cell find stored cells
+that are it, an ancestor, or a descendant):
+
+- *Exact / finer query*: a point query at `(5,5)` lands in leaf cell `0303` (inside
+  `030`). Its ancestors include `030`, which is stored -> candidate. This is the case
+  where the query is finer than the stored cell.
+- *Coarser query (descendant range scan)*: a window query covering exactly cell `031`
+  range-scans `[0310 .. 0313]` and finds stored `0310, 0311, 0312` -> one candidate
+  after dedup. This is the case where the query is coarser than the stored cells.
+- *False positive caught by refine*: a point query at `(7.2, 4.9)` (`x+y=12.1 > 12`,
+  just outside T) lands in `0311`, a partial cell we kept, so it matches -> candidate.
+  The stored bbox `[4,8]²` contains the point, so the cheap bbox filter does not reject
+  it; the exact `ST_Contains(T, point)` returns false and removes the over-cover of cell
+  `0311`.
+
+Pipeline: cover the query -> range-scan descendants + look up ancestors -> bbox
+pre-filter -> dedup handles -> fetch rows -> exact predicate. The cross-level
+ancestor/descendant matching is what makes a mixed-level covering searchable; the bbox
+in the value is a cheap pre-fetch reject (most valuable when coverings are coarse); the
+exact refine is always required for correctness.
+
 ## Index value contents and table partitioning (Sunny Bains review)
 
 A design review with Sunny Bains (2026-06-25) independently confirmed the cell-covering
