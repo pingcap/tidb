@@ -745,6 +745,21 @@ levels to stay under the cap regardless of the polygon's size. Consequence: a
 point-heavy workload (the common "store locations" case) has write amplification of
 one entry per row, independent of the chosen precision.
 
+### Quantization and identity
+
+Coordinates are floating-point, but a `cell_key` is a lossy quantization to a leaf
+cell: any two distinct points within the same leaf cell get the *same* `cell_key`, so
+their index keys differ only by the appended handle (`..._<cell>_<handleA>` vs
+`..._<cell>_<handleB>`), exactly as for any non-unique secondary index. Leaf size is
+set by the max level (S2 level 30 is about 1 cm on Earth; a planar-quadtree leaf is
+domain-width / 2^maxLevel), so a finer level reduces collisions but never eliminates
+them (a leaf always spans a range, and floats are finite anyway). The `cell_key` is
+therefore a spatial bucket, not a location: exact coordinates live in the row (and,
+with the covering option, the bbox in the index value) and drive the exact refine, so
+cell_key precision affects only candidate selectivity, not correctness. A dense cluster
+of points collapses onto one `cell_key` (many handles under it), which is a fan-out
+consideration for hotspots.
+
 ### SRID 4326: spherical S2 cells
 
 SRID 4326 is WGS 84 lat/long on the globe: naturally bounded, but treating it as a
