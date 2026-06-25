@@ -33,7 +33,12 @@ import (
 const (
 	csvNullToken   = "\\N"
 	writerPartSize = 8 * 1024 * 1024
-	writerPartConc = 4
+	// writerPartConc is the per-file multipart-upload concurrency. The cross-
+	// region S3 write is RTT-bound per connection (~10-20 MiB/s), so a single
+	// writer needs many parts in flight to cover the bandwidth-delay product;
+	// at thread<=7 a low value (e.g. 4) caps the whole export on the write side
+	// well below the cop read rate. 16 keeps the upload from being the limiter.
+	writerPartConc = 16
 )
 
 // fileName mirrors dumpling's naming: <db>.<table>.<ordinal><writer><file>.csv
