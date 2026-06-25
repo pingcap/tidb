@@ -61,8 +61,13 @@ const (
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
+	// JobStepPreparing is used by prepare-enabled jobs before generating
+	// first business-step subtasks.
+	JobStepPreparing = "preparing"
 	// JobStepGlobalSorting is the first step when using global sort,
 	// step goes from none -> global-sorting -> importing -> validating -> none.
+	// for prepare-enabled global sort, step goes from none -> preparing ->
+	// global-sorting -> importing -> validating -> none.
 	JobStepGlobalSorting = "global-sorting"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
@@ -135,6 +140,21 @@ func (j *JobInfo) CanCancel() bool {
 // IsSuccess returns whether the job is successful.
 func (j *JobInfo) IsSuccess() bool {
 	return j.Status == JobStatusFinished
+}
+
+// IsSourceFileSizeUnknown returns whether source_file_size has not been
+// determined yet for async-prepare jobs.
+func (j *JobInfo) IsSourceFileSizeUnknown() bool {
+	// if the job is not using async prepare, source_file_size is determined
+	// when creating the job, and it will never be 0 since we check total file
+	// size > 0 in precheck.
+	if j.SourceFileSize > 0 {
+		return false
+	}
+	if j.Status == jobStatusPending {
+		return true
+	}
+	return j.Status == JobStatusRunning && j.Step == JobStepPreparing
 }
 
 // GetJob returns the job with the given id if the user has privilege.
@@ -253,10 +273,58 @@ func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), step = %?
-		WHERE id = %? AND status = %?;`,
+			SET update_time = CURRENT_TIMESTAMP(6), step = %?
+			WHERE id = %? AND status = %?;`,
 		step, jobID, JobStatusRunning)
 
+	return err
+}
+
+// UpdateJobPreparedInfo updates import job fields that are known only after
+// async prepare succeeds.
+func UpdateJobPreparedInfo(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	sourceFileSize int64,
+	format string,
+) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	rs, err := conn.ExecuteInternal(ctx, `SELECT parameters FROM mysql.tidb_import_jobs
+		WHERE id = %? AND status = %?;`,
+		jobID, JobStatusRunning)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+	// no matched running job, keep historical behavior: no-op.
+	if len(rows) == 0 {
+		return nil
+	}
+
+	parameters := &ImportParameters{}
+	parametersStr := rows[0].GetString(0)
+	if len(parametersStr) > 0 {
+		if err = json.Unmarshal([]byte(parametersStr), parameters); err != nil {
+			return err
+		}
+	}
+	if format != "" {
+		parameters.Format = format
+	}
+
+	paramsBytes, err := json.Marshal(parameters)
+	if err != nil {
+		return err
+	}
+	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+				SET update_time = CURRENT_TIMESTAMP(6), source_file_size = %?, parameters = %?
+				WHERE id = %? AND status = %?;`,
+		sourceFileSize, paramsBytes, jobID, JobStatusRunning)
 	return err
 }
 

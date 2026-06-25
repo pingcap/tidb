@@ -61,8 +61,14 @@ var (
 	ErrUnknownCheckpointDriver = errors.Normalize("unknown checkpoint driver '%s'", errors.RFCCodeText("Lightning:Checkpoint:ErrUnknownCheckpointDriver"))
 	ErrInvalidCheckpoint       = errors.Normalize("invalid checkpoint", errors.RFCCodeText("Lightning:Checkpoint:ErrInvalidCheckpoint"))
 	ErrCheckpointNotFound      = errors.Normalize("checkpoint not found", errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointNotFound"))
-	ErrInitCheckpoint          = errors.Normalize("init checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrInitCheckpoint"))
-	ErrCleanCheckpoint         = errors.Normalize("clean checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrCleanCheckpoint"))
+	// ErrCheckpointTableNotFound is the stable identity for table-scoped
+	// checkpoint operations when the checkpoint row does not exist.
+	ErrCheckpointTableNotFound = errors.Normalize(
+		"checkpoint for table %s not found",
+		errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"),
+	)
+	ErrInitCheckpoint  = errors.Normalize("init checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrInitCheckpoint"))
+	ErrCleanCheckpoint = errors.Normalize("clean checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrCleanCheckpoint"))
 
 	ErrMetaMgrUnknown = errors.Normalize("unknown error occur on meta manager", errors.RFCCodeText("Lightning:MetaMgr:ErrMetaMgrUnknown"))
 
@@ -98,7 +104,7 @@ var (
 	ErrTableIsChecksuming   = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
 	ErrResolveDuplicateRows = errors.Normalize("resolve duplicate rows error on table '%s'", errors.RFCCodeText("Lightning:Restore:ErrResolveDuplicateRows"))
 	// ErrFoundDuplicateKeys shoud be replaced with ErrFoundDataConflictRecords and ErrFoundIndexConflictRecords (TODO)
-	ErrFoundDuplicateKeys        = errors.Normalize("found duplicate key '%s', value '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"))
+	ErrFoundDuplicateKeys        = errors.Normalize("found duplicate key '%x', value '%x'", errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"))
 	ErrAddIndexFailed            = errors.Normalize("add index on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrAddIndexFailed"))
 	ErrDropIndexFailed           = errors.Normalize("drop index %s on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrDropIndexFailed"))
 	ErrFoundDataConflictRecords  = errors.Normalize("found data conflict records in table %s, primary key is '%s', row data is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDataConflictRecords"))

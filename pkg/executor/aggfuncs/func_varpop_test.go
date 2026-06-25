@@ -27,7 +27,7 @@ import (
 
 func TestMergePartialResult4Varpop(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, types.NewFloat64Datum(float64(2)), types.NewFloat64Datum(float64(2)/float64(3)), types.NewFloat64Datum(float64(59)/float64(8)-float64(19*19)/float64(8*8))),
+		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 0, 5, types.NewFloat64Datum(float64(2)), types.NewFloat64Datum(float64(2)/float64(3)), types.NewFloat64Datum(float64(59)/float64(8)-float64(19*19)/float64(8*8))),
 	}
 	for _, test := range tests {
 		testMergePartialResult(t, test)
@@ -36,7 +36,7 @@ func TestMergePartialResult4Varpop(t *testing.T) {
 
 func TestVarpop(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, nil, types.NewFloat64Datum(float64(2))),
+		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 0, 5, nil, types.NewFloat64Datum(float64(2))),
 	}
 	for _, test := range tests {
 		testAggFunc(t, test)
@@ -45,9 +45,9 @@ func TestVarpop(t *testing.T) {
 
 func TestMemVarpop(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 	}
 	for n, test := range tests {

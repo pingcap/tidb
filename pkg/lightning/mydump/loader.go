@@ -21,11 +21,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -93,12 +92,6 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
-// ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
-type ParquetFileMeta struct {
-	allocator memory.Allocator
-	Loc       *time.Location
-}
-
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
@@ -117,7 +110,7 @@ type SourceFileMeta struct {
 	Rows     int64
 
 	// ParquetMeta store meta only used for parquet
-	ParquetMeta ParquetFileMeta
+	ParquetMeta parquetfile.FileMeta
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -297,6 +290,7 @@ type mdLoaderSetup struct {
 	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
+	viewIndexMap  map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
 
 	// store file info of parquet from parallel reading
@@ -376,6 +370,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
+		viewIndexMap:  make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
 	}
 
@@ -545,18 +540,17 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if len(s.viewSchemas) != 0 {
 		// setup view schema
 		for _, fileInfo := range s.viewSchemas {
-			_, tableExists := s.insertView(fileInfo)
-			if !tableExists {
-				// we are not expect the user only has view schema without table schema when user use dumpling to get view.
-				// remove the last `-view.sql` from path as the relate table schema file path
-				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+			if _, viewExists := s.insertView(fileInfo); viewExists && s.loader.router == nil {
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
 
-	// Sql file for restore data
+	s.pruneViewPlaceholders(ctx)
+
+	// SQL files for importing data.
 	for _, fileInfo := range s.tableDatas {
-		// set a dummy `FileInfo` here without file meta because we needn't restore the table schema
+		// Set a dummy `FileInfo` here without file meta because we needn't import the table schema.
 		tableMeta, _, _ := s.insertTable(FileInfo{TableName: fileInfo.TableName})
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
 		tableMeta.TotalSize += fileInfo.FileMeta.RealSize
@@ -649,7 +643,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		// Only sample once for each table
 		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
-			rows, rowSize, err := SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
+			rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
@@ -822,7 +816,7 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (tblMeta *MDTableMeta, db
 	return ptr, dbExists, false
 }
 
-func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExists bool) {
+func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, viewExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -830,19 +824,60 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExist
 		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
 	}
 	dbMeta, dbExists := s.insertDB(dbFileInfo)
-	_, ok := s.tableIndexMap[fileInfo.TableName]
-	if ok {
-		meta := &MDTableMeta{
-			DB:           fileInfo.TableName.Schema,
-			Name:         fileInfo.TableName.Name,
-			SchemaFile:   fileInfo,
-			charSet:      s.loader.charSet,
-			IndexRatio:   0.0,
-			IsRowOrdered: true,
-		}
-		dbMeta.Views = append(dbMeta.Views, meta)
+	_, viewExists = s.viewIndexMap[fileInfo.TableName]
+	if !viewExists {
+		s.viewIndexMap[fileInfo.TableName] = len(dbMeta.Views)
 	}
-	return dbExists, ok
+	meta := &MDTableMeta{
+		DB:           fileInfo.TableName.Schema,
+		Name:         fileInfo.TableName.Name,
+		SchemaFile:   fileInfo,
+		charSet:      s.loader.charSet,
+		IndexRatio:   0.0,
+		IsRowOrdered: true,
+	}
+	dbMeta.Views = append(dbMeta.Views, meta)
+	return dbExists, viewExists
+}
+
+func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
+	if len(s.viewIndexMap) == 0 || len(s.tableIndexMap) == 0 {
+		return
+	}
+
+	// Dumpling emits a table schema file for each view before the dedicated view
+	// schema file is discovered. Once the view list is complete, drop those
+	// placeholder tables so schema import only sees the real table objects.
+	const maxPrunedTableLogSamples = 20
+	prunedCount := 0
+	prunedTables := make([]string, 0, maxPrunedTableLogSamples)
+	for _, dbMeta := range s.loader.dbs {
+		filtered := dbMeta.Tables[:0]
+		for _, tableMeta := range dbMeta.Tables {
+			if _, ok := s.viewIndexMap[tableKey(tableMeta.DB, tableMeta.Name)]; ok {
+				prunedCount++
+				if len(prunedTables) < maxPrunedTableLogSamples {
+					prunedTables = append(prunedTables, common.UniqueTable(tableMeta.DB, tableMeta.Name))
+				}
+				continue
+			}
+			filtered = append(filtered, tableMeta)
+		}
+		dbMeta.Tables = filtered
+	}
+	if prunedCount > 0 {
+		logutil.Logger(ctx).Info("pruned view placeholder tables",
+			zap.String("category", "loader"),
+			zap.Int("count", prunedCount),
+			zap.Strings("tables(sampled)", prunedTables))
+	}
+
+	clear(s.tableIndexMap)
+	for _, dbMeta := range s.loader.dbs {
+		for i, tableMeta := range dbMeta.Tables {
+			s.tableIndexMap[tableKey(tableMeta.DB, tableMeta.Name)] = i
+		}
+	}
 }
 
 // GetDatabases gets the list of scanned MDDatabaseMeta for the loader.

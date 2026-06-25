@@ -389,20 +389,32 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 }
 
 func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
+	isIndexed := false
+	for _, idx := range tbl.Indices() {
+		for _, col := range idx.Meta().Columns {
+			if col.Name.L == oldCol.Name.L || col.Name.L == newCol.Name.L {
+				isIndexed = true
+				break
+			}
+		}
+		if isIndexed {
+			break
+		}
+	}
+
 	if oldCol.GeneratedExprString == newCol.GeneratedExprString {
-		return nil
+		if oldCol.FieldType.Equal(&newCol.FieldType) || !isIndexed {
+			return nil
+		}
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 
 	if newCol.GeneratedStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
-	for _, idx := range tbl.Indices() {
-		for _, col := range idx.Meta().Columns {
-			if col.Name.L == newCol.Name.L {
-				return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
-			}
-		}
+	if isIndexed {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 	return nil
 }

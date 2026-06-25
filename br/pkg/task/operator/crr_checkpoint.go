@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -32,10 +34,13 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
 )
 
 type cleanupFunc func()
+
+const etcdGRPCBackOffMaxDelay = 3 * time.Second
 
 // NewCRRCheckpointService creates the CRR checkpoint service and its dependent clients.
 func NewCRRCheckpointService(
@@ -43,9 +48,27 @@ func NewCRRCheckpointService(
 	g glue.Glue,
 	cfg CRRCheckpointConfig,
 ) (*service.Service, cleanupFunc, error) {
+	_, upstreamStorage, err := task.GetStorage(ctx, cfg.UpstreamStorage, &cfg.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkCRRExternalStorage(ctx, upstreamStorage, "upstream"); err != nil {
+		upstreamStorage.Close()
+		return nil, nil, err
+	}
+	_, downstreamStorage, err := task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
+	if err != nil {
+		upstreamStorage.Close()
+		return nil, nil, err
+	}
+	if err := checkCRRExternalStorage(ctx, downstreamStorage, "downstream"); err != nil {
+		log.Warn("failed to check the downstream storage", zap.Error(err))
+	}
+
 	mgr, err := task.NewMgr(
 		ctx,
 		g,
+		cfg.KeyspaceName,
 		cfg.PD,
 		cfg.TLS,
 		task.GetKeepalive(&cfg.Config),
@@ -54,54 +77,33 @@ func NewCRRCheckpointService(
 		conn.StreamVersionChecker,
 	)
 	if err != nil {
+		upstreamStorage.Close()
+		downstreamStorage.Close()
 		return nil, nil, err
 	}
 
 	etcdCli, err := dialEtcdWithCfg(ctx, cfg.Config)
 	if err != nil {
+		upstreamStorage.Close()
+		downstreamStorage.Close()
 		mgr.Close()
 		return nil, nil, err
-	}
-
-	_, upstreamStorage, err := task.GetStorage(ctx, cfg.UpstreamStorage, &cfg.Config)
-	if err != nil {
-		closeEtcdClient(etcdCli)
-		mgr.Close()
-		return nil, nil, err
-	}
-
-	var downstreamStorage storeapi.Storage
-	if cfg.DownstreamStorage != "" {
-		_, downstreamStorage, err = task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
-		if err != nil {
-			upstreamStorage.Close()
-			closeEtcdClient(etcdCli)
-			mgr.Close()
-			return nil, nil, err
-		}
 	}
 
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCli)
-	syncChecker, err := buildObjectSyncChecker(upstreamStorage, downstreamStorage)
+	syncChecker, err := buildObjectSyncChecker(
+		upstreamStorage,
+		downstreamStorage,
+		cfg.CheckSyncedFromDownstreamStorage,
+	)
 	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
+		downstreamStorage.Close()
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
 		return nil, nil, err
 	}
-	stateStore, err := buildResumeStateStore(upstreamStorage, cfg.CRRConfig.StateStorageSubDir)
-	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
-		upstreamStorage.Close()
-		closeEtcdClient(etcdCli)
-		mgr.Close()
-		return nil, nil, err
-	}
+	stateStore := buildResumeStateStore(downstreamStorage)
 	svc, err := service.New(
 		service.Deps{
 			PD:       env,
@@ -120,9 +122,7 @@ func NewCRRCheckpointService(
 		},
 	)
 	if err != nil {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
+		downstreamStorage.Close()
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
@@ -130,9 +130,7 @@ func NewCRRCheckpointService(
 	}
 
 	cleanup := func() {
-		if downstreamStorage != nil {
-			downstreamStorage.Close()
-		}
+		downstreamStorage.Close()
 		upstreamStorage.Close()
 		closeEtcdClient(etcdCli)
 		mgr.Close()
@@ -140,18 +138,33 @@ func NewCRRCheckpointService(
 	return svc, cleanup, nil
 }
 
+func checkCRRExternalStorage(ctx context.Context, storage storeapi.Storage, source string) error {
+	exists, err := storage.FileExists(ctx, metautil.LockFile)
+	if err != nil {
+		return errors.Annotatef(err, "error occurred when checking %s file in %s storage", metautil.LockFile, source)
+	}
+	if !exists {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"%s storage %s is not a log backup directory because %s does not exist",
+			source, storage.URI(), metautil.LockFile,
+		)
+	}
+	return nil
+}
+
 func buildObjectSyncChecker(
 	upstreamStorage storeapi.Storage,
 	downstreamStorage storeapi.Storage,
+	checkSyncedFromDownstreamStorage bool,
 ) (service.ObjectSyncChecker, error) {
-	if downstreamStorage != nil {
+	if checkSyncedFromDownstreamStorage && downstreamStorage != nil {
 		return service.NewExistenceSyncChecker(downstreamStorage), nil
 	}
 	if upstreamChecker, ok := upstreamStorage.(service.ObjectSyncChecker); ok {
 		return upstreamChecker, nil
 	}
 	return nil, fmt.Errorf(
-		"downstream storage must not be nil when upstream storage cannot check object sync",
+		"upstream storage cannot check object sync; to confirm replication by downstream storage existence, enable --check-synced-from-downstream-storage",
 	)
 }
 
@@ -161,20 +174,12 @@ type storageResumeStateStore struct {
 }
 
 func buildResumeStateStore(
-	upstreamStorage storeapi.Storage,
-	subDir string,
-) (service.ResumeStateStore, error) {
-	if subDir == "" {
-		return nil, nil
-	}
-	path, err := service.GetStatusFileName(subDir)
-	if err != nil {
-		return nil, err
-	}
+	storage storeapi.Storage,
+) service.ResumeStateStore {
 	return &storageResumeStateStore{
-		storage: upstreamStorage,
-		path:    path,
-	}, nil
+		storage: storage,
+		path:    service.GetStatusFileName(),
+	}
 }
 
 func (s *storageResumeStateStore) LoadState(ctx context.Context) (*service.PersistentState, error) {
@@ -215,7 +220,21 @@ func closeEtcdClient(etcdCli *clientv3.Client) {
 	}
 }
 
-func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, error) {
+func etcdGRPCBackoffConfig() backoff.Config {
+	backoffCfg := backoff.DefaultConfig
+	backoffCfg.MaxDelay = etcdGRPCBackOffMaxDelay
+	return backoffCfg
+}
+
+func etcdKeepaliveParams(cfg task.Config) keepalive.ClientParameters {
+	return keepalive.ClientParameters{
+		Time:                cfg.GRPCKeepaliveTime,
+		Timeout:             cfg.GRPCKeepaliveTimeout,
+		PermitWithoutStream: true,
+	}
+}
+
+func newEtcdClientConfig(ctx context.Context, cfg task.Config) (clientv3.Config, error) {
 	var (
 		tlsConfig *tls.Config
 		err       error
@@ -224,26 +243,34 @@ func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, er
 	if cfg.TLS.IsEnabled() {
 		tlsConfig, err = cfg.TLS.ToTLSConfig()
 		if err != nil {
-			return nil, errors.Trace(err)
+			var empty clientv3.Config
+			return empty, errors.Trace(err)
 		}
 	}
 
-	etcdCli, err := clientv3.New(clientv3.Config{
+	return clientv3.Config{
 		TLS:              tlsConfig,
 		Endpoints:        cfg.PD,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                cfg.GRPCKeepaliveTime,
-				Timeout:             cfg.GRPCKeepaliveTimeout,
-				PermitWithoutStream: false,
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: etcdGRPCBackoffConfig(),
 			}),
+			grpc.WithKeepaliveParams(etcdKeepaliveParams(cfg)),
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
 		Context: ctx,
-	})
+	}, nil
+}
+
+func dialEtcdWithCfg(ctx context.Context, cfg task.Config) (*clientv3.Client, error) {
+	etcdCfg, err := newEtcdClientConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	etcdCli, err := clientv3.New(etcdCfg)
 	if err != nil {
 		return nil, err
 	}

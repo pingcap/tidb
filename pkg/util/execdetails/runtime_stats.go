@@ -123,9 +123,10 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	}
 	if e.tiflashStats != nil {
 		stats.tiflashStats = &TiflashStats{
-			scanContext:    e.tiflashStats.scanContext.Clone(),
-			waitSummary:    e.tiflashStats.waitSummary.Clone(),
-			networkSummary: e.tiflashStats.networkSummary.Clone(),
+			scanContext:         e.tiflashStats.scanContext.Clone(),
+			columnarScanContext: e.tiflashStats.columnarScanContext.Clone(),
+			waitSummary:         e.tiflashStats.waitSummary.Clone(),
+			networkSummary:      e.tiflashStats.networkSummary.Clone(),
 		}
 	}
 	return stats
@@ -148,6 +149,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 			e.tiflashStats = &TiflashStats{}
 		}
 		e.tiflashStats.scanContext.Merge(tmp.tiflashStats.scanContext)
+		e.tiflashStats.columnarScanContext.Merge(tmp.tiflashStats.columnarScanContext)
 		e.tiflashStats.waitSummary.Merge(tmp.tiflashStats.waitSummary)
 		e.tiflashStats.networkSummary.Merge(tmp.tiflashStats.networkSummary)
 	}
@@ -164,6 +166,12 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 			e.tiflashStats = &TiflashStats{}
 		}
 		e.tiflashStats.scanContext.mergeExecSummary(tiflashScanContext)
+	}
+	if columnarScanContext := summary.GetColumnarScanContext(); columnarScanContext != nil {
+		if e.tiflashStats == nil {
+			e.tiflashStats = &TiflashStats{}
+		}
+		e.tiflashStats.columnarScanContext.mergeExecSummary(columnarScanContext)
 	}
 	if tiflashWaitSummary := summary.GetTiflashWaitSummary(); tiflashWaitSummary != nil {
 		if e.tiflashStats == nil {
@@ -246,7 +254,10 @@ func (crs *CopRuntimeStats) String() string {
 						buf.WriteString(", ")
 						buf.WriteString(crs.stats.tiflashStats.networkSummary.String())
 					}
-					if !crs.stats.tiflashStats.scanContext.Empty() {
+					if !crs.stats.tiflashStats.columnarScanContext.Empty() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.columnarScanContext.String())
+					} else if !crs.stats.tiflashStats.scanContext.Empty() {
 						buf.WriteString(", ")
 						buf.WriteString(crs.stats.tiflashStats.scanContext.String())
 					}

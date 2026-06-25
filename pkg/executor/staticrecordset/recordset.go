@@ -62,7 +62,7 @@ func (s *staticRecordSet) Next(ctx context.Context, req *chunk.Chunk) (err error
 			ctx = context.WithValue(ctx, clientutil.RUDetailsCtxKey, ruDetails)
 		}
 		if metrics := execdetails.RUV2MetricsFromContext(s.sourceCtx); metrics != nil {
-			ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, metrics)
+			ctx = execdetails.ContextWithRUV2Metrics(ctx, metrics)
 		}
 	}
 	defer func() {

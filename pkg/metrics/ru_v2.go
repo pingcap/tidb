@@ -30,6 +30,8 @@ var (
 	RUV2PlanDeriveStatsPaths    prometheus.Counter
 	RUV2ResourceManagerReadCnt  prometheus.Counter
 	RUV2ResourceManagerWriteCnt prometheus.Counter
+	RUV2WriteKeys               prometheus.Counter
+	RUV2WriteSize               prometheus.Counter
 	RUV2SessionParserTotal      prometheus.Counter
 	RUV2TxnCnt                  prometheus.Counter
 
@@ -40,6 +42,44 @@ var (
 	RUV2TiKVStorageProcessedKeysBatchGet  prometheus.Counter
 	RUV2TiKVStorageProcessedKeysGet       prometheus.Counter
 	RUV2TiKVCoprocessorWorkTotal          *prometheus.CounterVec
+)
+
+var (
+	ruv2ExecutorL1BatchPointGetExec prometheus.Counter
+	ruv2ExecutorL1PointGetExecutor  prometheus.Counter
+	ruv2ExecutorL1LimitExec         prometheus.Counter
+
+	ruv2ExecutorL2ExpandExec              prometheus.Counter
+	ruv2ExecutorL2HashAggExec             prometheus.Counter
+	ruv2ExecutorL2HashJoinExec            prometheus.Counter
+	ruv2ExecutorL2HashJoinV1Exec          prometheus.Counter
+	ruv2ExecutorL2HashJoinV2Exec          prometheus.Counter
+	ruv2ExecutorL2IndexLookUpJoin         prometheus.Counter
+	ruv2ExecutorL2IndexLookUpMergeJoin    prometheus.Counter
+	ruv2ExecutorL2IndexNestedLoopHashJoin prometheus.Counter
+	ruv2ExecutorL2IndexLookUpExec         prometheus.Counter
+	ruv2ExecutorL2IndexReaderExec         prometheus.Counter
+	ruv2ExecutorL2MemTableReaderExec      prometheus.Counter
+	ruv2ExecutorL2MergeJoinExec           prometheus.Counter
+	ruv2ExecutorL2ProjectionExec          prometheus.Counter
+	ruv2ExecutorL2SelectionExec           prometheus.Counter
+	ruv2ExecutorL2TableDualExec           prometheus.Counter
+	ruv2ExecutorL2TableReaderExec         prometheus.Counter
+	ruv2ExecutorL2TopNExec                prometheus.Counter
+	ruv2ExecutorL2UnionScanExec           prometheus.Counter
+	ruv2ExecutorL2SelectLockExec          prometheus.Counter
+	ruv2ExecutorL2WindowExec              prometheus.Counter
+
+	ruv2ExecutorL3SortExec      prometheus.Counter
+	ruv2ExecutorL3StreamAggExec prometheus.Counter
+
+	ruv2TiKVCoprocessorWorkTotalBatchIndexScan    prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchTableScan    prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchSelection    prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchTopN         prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchLimit        prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchSimpleAggr   prometheus.Counter
+	ruv2TiKVCoprocessorWorkTotalBatchFastHashAggr prometheus.Counter
 )
 
 // InitRUV2Metrics initializes RUv2 metrics.
@@ -125,6 +165,24 @@ func InitRUV2Metrics() {
 		},
 	)
 
+	RUV2WriteKeys = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "write_keys",
+			Help:      "Counter of commit write keys for RU v2.",
+		},
+	)
+
+	RUV2WriteSize = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "write_size",
+			Help:      "Shadow counter of commit write size for RU v2.",
+		},
+	)
+
 	RUV2SessionParserTotal = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -205,4 +263,139 @@ func InitRUV2Metrics() {
 			Help:      "Counter of TiKV coprocessor executor work for RU v2.",
 		}, []string{LblType},
 	)
+
+	initRUV2CachedLabelCounters()
+}
+
+func initRUV2CachedLabelCounters() {
+	ruv2ExecutorL1BatchPointGetExec = RUV2ExecutorL1.WithLabelValues("BatchPointGetExec")
+	ruv2ExecutorL1PointGetExecutor = RUV2ExecutorL1.WithLabelValues("PointGetExecutor")
+	ruv2ExecutorL1LimitExec = RUV2ExecutorL1.WithLabelValues("LimitExec")
+
+	ruv2ExecutorL2ExpandExec = RUV2ExecutorL2.WithLabelValues("ExpandExec")
+	ruv2ExecutorL2HashAggExec = RUV2ExecutorL2.WithLabelValues("HashAggExec")
+	ruv2ExecutorL2HashJoinExec = RUV2ExecutorL2.WithLabelValues("HashJoinExec")
+	ruv2ExecutorL2HashJoinV1Exec = RUV2ExecutorL2.WithLabelValues("HashJoinV1Exec")
+	ruv2ExecutorL2HashJoinV2Exec = RUV2ExecutorL2.WithLabelValues("HashJoinV2Exec")
+	ruv2ExecutorL2IndexLookUpJoin = RUV2ExecutorL2.WithLabelValues("IndexLookUpJoin")
+	ruv2ExecutorL2IndexLookUpMergeJoin = RUV2ExecutorL2.WithLabelValues("IndexLookUpMergeJoin")
+	ruv2ExecutorL2IndexNestedLoopHashJoin = RUV2ExecutorL2.WithLabelValues("IndexNestedLoopHashJoin")
+	ruv2ExecutorL2IndexLookUpExec = RUV2ExecutorL2.WithLabelValues("IndexLookUpExecutor")
+	ruv2ExecutorL2IndexReaderExec = RUV2ExecutorL2.WithLabelValues("IndexReaderExecutor")
+	ruv2ExecutorL2MemTableReaderExec = RUV2ExecutorL2.WithLabelValues("MemTableReaderExec")
+	ruv2ExecutorL2MergeJoinExec = RUV2ExecutorL2.WithLabelValues("MergeJoinExec")
+	ruv2ExecutorL2ProjectionExec = RUV2ExecutorL2.WithLabelValues("ProjectionExec")
+	ruv2ExecutorL2SelectionExec = RUV2ExecutorL2.WithLabelValues("SelectionExec")
+	ruv2ExecutorL2TableDualExec = RUV2ExecutorL2.WithLabelValues("TableDualExec")
+	ruv2ExecutorL2TableReaderExec = RUV2ExecutorL2.WithLabelValues("TableReaderExecutor")
+	ruv2ExecutorL2TopNExec = RUV2ExecutorL2.WithLabelValues("TopNExec")
+	ruv2ExecutorL2UnionScanExec = RUV2ExecutorL2.WithLabelValues("UnionScanExec")
+	ruv2ExecutorL2SelectLockExec = RUV2ExecutorL2.WithLabelValues("SelectLockExec")
+	ruv2ExecutorL2WindowExec = RUV2ExecutorL2.WithLabelValues("WindowExec")
+
+	ruv2ExecutorL3SortExec = RUV2ExecutorL3.WithLabelValues("SortExec")
+	ruv2ExecutorL3StreamAggExec = RUV2ExecutorL3.WithLabelValues("StreamAggExec")
+
+	ruv2TiKVCoprocessorWorkTotalBatchIndexScan = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchIndexScan")
+	ruv2TiKVCoprocessorWorkTotalBatchTableScan = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchTableScan")
+	ruv2TiKVCoprocessorWorkTotalBatchSelection = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchSelection")
+	ruv2TiKVCoprocessorWorkTotalBatchTopN = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchTopN")
+	ruv2TiKVCoprocessorWorkTotalBatchLimit = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchLimit")
+	ruv2TiKVCoprocessorWorkTotalBatchSimpleAggr = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchSimpleAggr")
+	ruv2TiKVCoprocessorWorkTotalBatchFastHashAggr = RUV2TiKVCoprocessorWorkTotal.WithLabelValues("BatchFastHashAggr")
+}
+
+// RUV2ExecutorCounter returns a cached RUv2 executor counter when the label is known.
+func RUV2ExecutorCounter(level int, label string) prometheus.Counter {
+	switch level {
+	case 1:
+		switch label {
+		case "BatchPointGetExec":
+			return ruv2ExecutorL1BatchPointGetExec
+		case "PointGetExecutor":
+			return ruv2ExecutorL1PointGetExecutor
+		case "LimitExec":
+			return ruv2ExecutorL1LimitExec
+		default:
+			return RUV2ExecutorL1.WithLabelValues(label)
+		}
+	case 2:
+		switch label {
+		case "ExpandExec":
+			return ruv2ExecutorL2ExpandExec
+		case "HashAggExec":
+			return ruv2ExecutorL2HashAggExec
+		case "HashJoinExec":
+			return ruv2ExecutorL2HashJoinExec
+		case "HashJoinV1Exec":
+			return ruv2ExecutorL2HashJoinV1Exec
+		case "HashJoinV2Exec":
+			return ruv2ExecutorL2HashJoinV2Exec
+		case "IndexLookUpJoin":
+			return ruv2ExecutorL2IndexLookUpJoin
+		case "IndexLookUpMergeJoin":
+			return ruv2ExecutorL2IndexLookUpMergeJoin
+		case "IndexNestedLoopHashJoin":
+			return ruv2ExecutorL2IndexNestedLoopHashJoin
+		case "IndexLookUpExecutor":
+			return ruv2ExecutorL2IndexLookUpExec
+		case "IndexReaderExecutor":
+			return ruv2ExecutorL2IndexReaderExec
+		case "MemTableReaderExec":
+			return ruv2ExecutorL2MemTableReaderExec
+		case "MergeJoinExec":
+			return ruv2ExecutorL2MergeJoinExec
+		case "ProjectionExec":
+			return ruv2ExecutorL2ProjectionExec
+		case "SelectionExec":
+			return ruv2ExecutorL2SelectionExec
+		case "TableDualExec":
+			return ruv2ExecutorL2TableDualExec
+		case "TableReaderExecutor":
+			return ruv2ExecutorL2TableReaderExec
+		case "TopNExec":
+			return ruv2ExecutorL2TopNExec
+		case "UnionScanExec":
+			return ruv2ExecutorL2UnionScanExec
+		case "SelectLockExec":
+			return ruv2ExecutorL2SelectLockExec
+		case "WindowExec":
+			return ruv2ExecutorL2WindowExec
+		default:
+			return RUV2ExecutorL2.WithLabelValues(label)
+		}
+	case 3:
+		switch label {
+		case "SortExec":
+			return ruv2ExecutorL3SortExec
+		case "StreamAggExec":
+			return ruv2ExecutorL3StreamAggExec
+		default:
+			return RUV2ExecutorL3.WithLabelValues(label)
+		}
+	default:
+		return nil
+	}
+}
+
+// RUV2TiKVCoprocessorWorkTotalCounter returns a cached TiKV coprocessor RUv2 counter when the label is known.
+func RUV2TiKVCoprocessorWorkTotalCounter(label string) prometheus.Counter {
+	switch label {
+	case "BatchIndexScan":
+		return ruv2TiKVCoprocessorWorkTotalBatchIndexScan
+	case "BatchTableScan":
+		return ruv2TiKVCoprocessorWorkTotalBatchTableScan
+	case "BatchSelection":
+		return ruv2TiKVCoprocessorWorkTotalBatchSelection
+	case "BatchTopN":
+		return ruv2TiKVCoprocessorWorkTotalBatchTopN
+	case "BatchLimit":
+		return ruv2TiKVCoprocessorWorkTotalBatchLimit
+	case "BatchSimpleAggr":
+		return ruv2TiKVCoprocessorWorkTotalBatchSimpleAggr
+	case "BatchFastHashAggr":
+		return ruv2TiKVCoprocessorWorkTotalBatchFastHashAggr
+	default:
+		return RUV2TiKVCoprocessorWorkTotal.WithLabelValues(label)
+	}
 }

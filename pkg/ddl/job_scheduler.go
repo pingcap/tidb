@@ -60,9 +60,6 @@ import (
 )
 
 var (
-	// addingDDLJobNotifyKey is the key in etcd to notify DDL scheduler that there
-	// is a new DDL job.
-	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	schedulerLoopRetryInterval  = time.Second
 )
@@ -210,15 +207,6 @@ func (s *jobScheduler) close() {
 	failpoint.InjectCall("afterSchedulerClose")
 }
 
-func hasSysDB(job *model.Job) bool {
-	for _, info := range job.GetInvolvingSchemaInfo() {
-		if metadef.IsSystemRelatedDB(info.Database) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if s.serverStateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
@@ -226,7 +214,7 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 		}
 		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
 		// and stop the reorganization workers
-		if job.IsPausing() || hasSysDB(job) {
+		if job.IsPausing() || util.HasSysDB(job) {
 			return true, nil
 		}
 		var errs []error
@@ -301,7 +289,7 @@ func (s *jobScheduler) schedule() error {
 	se := sess.NewSession(sessCtx)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if s.etcdCli != nil {
-		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
+		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, util.AddingDDLJobNotifyKey)
 	}
 	if err := s.checkAndUpdateClusterState(true); err != nil {
 		return errors.Trace(err)
@@ -331,8 +319,8 @@ func (s *jobScheduler) schedule() error {
 		case <-ticker.C:
 		case _, ok := <-notifyDDLJobByEtcdCh:
 			if !ok {
-				logutil.DDLLogger().Warn("start worker watch channel closed", zap.String("watch key", addingDDLJobNotifyKey))
-				notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
+				logutil.DDLLogger().Warn("start worker watch channel closed", zap.String("watch key", util.AddingDDLJobNotifyKey))
+				notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, util.AddingDDLJobNotifyKey)
 				time.Sleep(time.Second)
 				continue
 			}

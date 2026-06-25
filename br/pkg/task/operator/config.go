@@ -18,23 +18,25 @@ import (
 )
 
 const (
-	flagTableConcurrency  = "table-concurrency"
-	flagRestoredTS        = "restored-ts"
-	flagUpstreamClusterID = "upstream-cluster-id"
-	flagStorePatterns     = "stores"
-	flagTaskName          = "task-name"
-	flagUpstreamStorage   = "upstream-storage"
-	flagDownstreamStorage = "downstream-storage"
-	flagTTL               = "ttl"
-	flagSafePoint         = "safepoint"
-	flagStorage           = "storage"
-	flagLoadCreds         = "load-creds"
-	flagJSON              = "json"
-	flagRecent            = "recent"
-	flagTo                = "to"
-	flagBase              = "base"
-	flagYes               = "yes"
-	flagDryRun            = "dry-run"
+	flagTableConcurrency                 = "table-concurrency"
+	flagRestoredTS                       = "restored-ts"
+	flagUpstreamClusterID                = "upstream-cluster-id"
+	flagChecksumTS                       = "checksum-ts"
+	flagStorePatterns                    = "stores"
+	flagTaskName                         = "task-name"
+	flagUpstreamStorage                  = "upstream-storage"
+	flagDownstreamStorage                = "downstream-storage"
+	flagCheckSyncedFromDownstreamStorage = "check-synced-from-downstream-storage"
+	flagTTL                              = "ttl"
+	flagSafePoint                        = "safepoint"
+	flagStorage                          = "storage"
+	flagLoadCreds                        = "load-creds"
+	flagJSON                             = "json"
+	flagRecent                           = "recent"
+	flagTo                               = "to"
+	flagBase                             = "base"
+	flagYes                              = "yes"
+	flagDryRun                           = "dry-run"
 )
 
 type PauseGcConfig struct {
@@ -230,14 +232,16 @@ type CRRCheckpointConfig struct {
 	task.Config
 	CRRConfig crrconfig.Config
 
-	UpstreamStorage   string
-	DownstreamStorage string
+	UpstreamStorage                  string
+	DownstreamStorage                string
+	CheckSyncedFromDownstreamStorage bool
 }
 
 func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
 	crrconfig.DefineFlags(flags)
 	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
-	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated log backup storage URI.")
+	flags.Bool(flagCheckSyncedFromDownstreamStorage, false, "Check object sync by file existence on downstream storage.")
 }
 
 func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
@@ -258,11 +262,19 @@ func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return err
 	}
 
+	cfg.CheckSyncedFromDownstreamStorage, err = flags.GetBool(flagCheckSyncedFromDownstreamStorage)
+	if err != nil {
+		return err
+	}
+
 	if cfg.CRRConfig.TaskName == "" {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagTaskName)
 	}
 	if cfg.UpstreamStorage == "" {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
+	}
+	if cfg.DownstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagDownstreamStorage)
 	}
 	return nil
 }
@@ -277,7 +289,6 @@ func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
 	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
-	f.Uint64(flagUpstreamClusterID, 0, "")
 }
 
 func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
@@ -289,8 +300,9 @@ func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
 func DefineFlagsForChecksumPitrTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
-	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagRestoredTS, 0, "The restore point time")
 	f.Uint64(flagUpstreamClusterID, 0, "The upstream cluster id of used pitr id map")
+	f.Uint64(flagChecksumTS, 0, "The checksum time (use current pd tso if not specified)")
 }
 
 func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -317,6 +329,8 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 
 type ChecksumWithPitrIdMapConfig struct {
 	task.RestoreConfig
+
+	ChecksumTS uint64 `json:"checksum-ts" toml:"checksum-ts"`
 }
 
 func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -329,6 +343,10 @@ func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (er
 		return errors.Trace(err)
 	}
 	cfg.UpstreamClusterID, err = flags.GetUint64(flagUpstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.ChecksumTS, err = flags.GetUint64(flagChecksumTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

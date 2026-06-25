@@ -1,0 +1,240 @@
+set tidb_cost_model_version=1;
+set @@tidb_opt_enable_alternative_logical_plans=ON;
+drop table if exists articles;
+create table articles (id int primary key, title varchar(200), body text);
+insert into articles values
+(1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
+(2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
+(3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
+(4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
+(5, 'MySQL Security', 'How to secure your MySQL database');
+select id, title from articles where match(title) against('MySQL tutorial');
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title, body) against('MySQL tutorial');
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('+MySQL +tutorial' in boolean mode);
+id	title
+1	MySQL Tutorial
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('Optim*' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'Optim*' is not supported in the LIKE fallback'
+select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '"MySQL' is not supported in the LIKE fallback'
+select id, title from articles where match(title, body) against('+MySQL +database -PostgreSQL' in boolean mode);
+id	title
+5	MySQL Security
+select id, title from articles where match(title) against('tutorial security' in boolean mode);
+id	title
+1	MySQL Tutorial
+5	MySQL Security
+select id, title from articles where match(title) against('');
+id	title
+set @@tidb_opt_enable_alternative_logical_plans=OFF;
+select id, title from articles where match(title) against('MySQL');
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+set @@tidb_opt_enable_alternative_logical_plans=ON;
+select id, title from articles where match(title) against('MySQL');
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('PostgreSQL');
+id	title
+4	MySQL vs. PostgreSQL
+drop table if exists special_chars;
+create table special_chars (id int primary key, content varchar(200));
+insert into special_chars values
+(1, 'Progress is at 100%'),
+(2, 'Progress is at 50%'),
+(3, 'File name is test_file.txt'),
+(4, 'Path is C:\\Windows\\System32'),
+(5, 'Normal text without special chars');
+select id, content from special_chars where match(content) against('100%');
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '100%' is not supported in the LIKE fallback'
+select id, content from special_chars where match(content) against('test_file');
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'test_file' is not supported in the LIKE fallback'
+select id, content from special_chars where match(content) against('C:\\Windows');
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'C:\Windows' is not supported in the LIKE fallback'
+select id, content from special_chars where match(content) against('+100% +Progress' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '+100%' is not supported in the LIKE fallback'
+drop table if exists special_chars;
+select id, title from articles where match(title) against('-PostgreSQL -Security' in boolean mode);
+id	title
+select id, title from articles where match(title) against('"MySQL tutorial' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '"MySQL' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('+MySQL	+tutorial
+-Security' in boolean mode);
+id	title
+1	MySQL Tutorial
+select id, title from articles where match(title) against('+MySQL +* tutorial' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '+*' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('+MySQL -PostgreSQL -Security -Well' in boolean mode);
+id	title
+1	MySQL Tutorial
+3	Optimizing MySQL
+select id, title from articles where match(title) against('+MySQL -Security tutorial "How To" Optim*' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '"How' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('
+');
+id	title
+select id, title from articles where match(title) against('MySQL     tutorial    PostgreSQL');
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('+"MySQL Tutorial"' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '+"MySQL' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('-"MySQL Tutorial"' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '-"MySQL' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('+MySQL +"How To" -PostgreSQL' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '+"How' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('tutorial -Security' in boolean mode);
+id	title
+1	MySQL Tutorial
+select id, title from articles where match(title) against('tutorial PostgreSQL -Security' in boolean mode);
+id	title
+1	MySQL Tutorial
+4	MySQL vs. PostgreSQL
+select id, title from articles where match(title) against('MySQL, PostgreSQL.');
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'MySQL,' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('>MySQL <Security' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '>MySQL' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against(NULL);
+id	title
+select id, title from articles where not match(title) against(NULL);
+id	title
+select id, title from articles where (match(title) against(NULL));
+id	title
+select id, title from articles where match(title) against('~Security ~PostgreSQL' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '~Security' is not supported in the LIKE fallback'
+select id, title from articles where match(title) against('MySQL' with query expansion);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST WITH QUERY EXPANSION is not supported in the LIKE fallback'
+select id, match(title) against('MySQL') as score from articles;
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+select id, title from articles order by match(title) against('MySQL') desc;
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+select id, title from articles group by id, title having match(title) against('PostgreSQL');
+id	title
+4	MySQL vs. PostgreSQL
+select a.id, a.title from articles a inner join articles a2 on a.id = a2.id and match(a.title) against('Security');
+id	title
+5	MySQL Security
+select id from articles where match(id) against('MySQL');
+Error 1235 (42000): This version of TiDB doesn't yet support 'Doesn't support match search on a non-string column without fulltext index'
+select id from articles where match(id) against('xx-yy');
+Error 1235 (42000): This version of TiDB doesn't yet support 'Doesn't support match search on a non-string column without fulltext index'
+select id from articles where match(id) against(NULL);
+Error 1235 (42000): This version of TiDB doesn't yet support 'Doesn't support match search on a non-string column without fulltext index'
+select id, title from articles
+where match(title) against('MySQL') and match(body) against('PostgreSQL');
+id	title
+4	MySQL vs. PostgreSQL
+select id, title from articles where not match(title) against('MySQL');
+id	title
+select id, title from articles where (match(title) against('MySQL'));
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where (match(title) against('MySQL')) is null;
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+select id, title from articles where (match(title) against('MySQL')) > 0.5;
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+select id, title from articles where (match(title) against('MySQL')) = 0;
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+select id, title from articles where (case when match(title) against('MySQL') then 1 else 0 end) = 1;
+Error 1105 (HY000): cannot use 'MATCH ... AGAINST' outside of fulltext index
+set @@tidb_enable_prepared_plan_cache=1;
+prepare st_fts_lit from 'select id, title from articles where match(title) against(''MySQL'')';
+execute st_fts_lit;
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+execute st_fts_lit;
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st_fts_lit;
+set @@tidb_enable_prepared_plan_cache=DEFAULT;
+set @@tidb_enable_prepared_plan_cache=1;
+prepare st_fts from 'select id, title from articles where match(title) against(?)';
+set @q='MySQL';
+execute st_fts using @q;
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+execute st_fts using @q;
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @q='PostgreSQL';
+execute st_fts using @q;
+id	title
+4	MySQL vs. PostgreSQL
+deallocate prepare st_fts;
+set @@tidb_enable_prepared_plan_cache=DEFAULT;
+set @@tidb_enable_prepared_plan_cache=1;
+prepare st_fts_null from 'select id, title from articles where match(title) against(?)';
+set @q = NULL;
+execute st_fts_null using @q;
+id	title
+set @q = 'PostgreSQL';
+execute st_fts_null using @q;
+id	title
+4	MySQL vs. PostgreSQL
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st_fts_null;
+set @@tidb_enable_prepared_plan_cache=DEFAULT;
+select id, match(title) against('+MySQL' in boolean mode) as score from articles;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
+select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
+select id, title from articles where (match(title) against('+MySQL' in boolean mode)) is null;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
+set @@tidb_opt_enable_alternative_logical_plans=OFF;
+select id, title from articles where match(title) against('+MySQL' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
+set @@tidb_opt_enable_alternative_logical_plans=ON;
+set @@tidb_opt_enable_alternative_logical_plans=OFF;
+drop table if exists articles;

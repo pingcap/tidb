@@ -57,48 +57,58 @@ func ParseNullTermString(b []byte) (str []byte, remain []byte) {
 }
 
 // ParseLengthEncodedInt parses a length encoded integer.
-func ParseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
+// It returns io.EOF when the length-encoded header is truncated.
+func ParseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int, err error) {
+	if len(b) == 0 {
+		return 0, false, 0, io.EOF
+	}
+
 	switch b[0] {
 	// 251: NULL
 	case 0xfb:
-		n = 1
-		isNull = true
-		return
+		return 0, true, 1, nil
 
 	// 252: value of following 2
 	case 0xfc:
+		if len(b) < 3 {
+			return 0, false, 0, io.EOF
+		}
 		num = uint64(b[1]) | uint64(b[2])<<8
-		n = 3
-		return
+		return num, false, 3, nil
 
 	// 253: value of following 3
 	case 0xfd:
+		if len(b) < 4 {
+			return 0, false, 0, io.EOF
+		}
 		num = uint64(b[1]) | uint64(b[2])<<8 | uint64(b[3])<<16
-		n = 4
-		return
+		return num, false, 4, nil
 
 	// 254: value of following 8
 	case 0xfe:
+		if len(b) < 9 {
+			return 0, false, 0, io.EOF
+		}
 		num = uint64(b[1]) | uint64(b[2])<<8 | uint64(b[3])<<16 |
 			uint64(b[4])<<24 | uint64(b[5])<<32 | uint64(b[6])<<40 |
 			uint64(b[7])<<48 | uint64(b[8])<<56
-		n = 9
-		return
+		return num, false, 9, nil
 	}
 
-	// https://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer: If the first byte of a packet is a length-encoded integer and its byte value is 0xfe, you must check the length of the packet to verify that it has enough space for a 8-byte integer.
-	// TODO: 0xff is undefined
+	// https://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer
+	// TODO: 0xff is undefined.
 
 	// 0-250: value of first byte
-	num = uint64(b[0])
-	n = 1
-	return
+	return uint64(b[0]), false, 1, nil
 }
 
 // ParseLengthEncodedBytes parses a length encoded byte slice.
 func ParseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	// Get length
-	num, isNull, n := ParseLengthEncodedInt(b)
+	num, isNull, n, err := ParseLengthEncodedInt(b)
+	if err != nil {
+		return nil, isNull, n, err
+	}
 	if num < 1 {
 		return nil, isNull, n, nil
 	}

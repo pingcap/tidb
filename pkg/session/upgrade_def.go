@@ -493,6 +493,20 @@ const (
 	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
 	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
 	version258 = 258
+
+	// version259
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version259 = 259
+
+	// Add mysql.tidb_masking_policy table.
+	version260 = 260
+
+	// version261
+	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	version261 = 261
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -506,7 +520,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version258
+var currentBootstrapVersion int64 = version261
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -689,6 +703,9 @@ var (
 		{version: version256, fn: upgradeToVer256},
 		{version: version257, fn: upgradeToVer257},
 		{version: version258, fn: upgradeToVer258},
+		{version: version259, fn: upgradeToVer259},
+		{version: version260, fn: upgradeToVer260},
+		{version: version261, fn: upgradeToVer261},
 	}
 )
 
@@ -2108,4 +2125,17 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 		return
 	}
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
+func upgradeToVer259(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
+}
+
+func upgradeToVer260(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
+}
+
+func upgradeToVer261(s sessionapi.Session, _ int64) {
+	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
 }

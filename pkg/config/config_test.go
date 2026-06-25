@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -167,6 +168,290 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
+}
+
+func TestErrorMessageExtensionConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "^Access denied for user '.+'@'.+' \\(using password: (YES|NO)\\)$", suffix = "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details" },
+  { pattern = "^require_secure_transport can not be set to ON with SEM\\(security enhanced mode\\) enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details" },
+  { pattern = "^sleep\\(\\) argument is greater than [0-9]+$", suffix = "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details" },
+  { pattern = "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details" },
+  { pattern = "^Access denied; you need \\(at least one of\\) the RESTRICTED_VARIABLES_ADMIN privilege\\(s\\) for this operation$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details" },
+  { pattern = "^Feature '.+' is not supported when security enhanced mode is enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details" },
+]
+`), 0644))
+
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, []ErrorMessageExtension{
+		{Pattern: `^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`, Suffix: "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details"},
+		{Pattern: `^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details"},
+		{Pattern: `^sleep\(\) argument is greater than [0-9]+$`, Suffix: "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details"},
+		{Pattern: `^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details"},
+		{Pattern: `^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details"},
+		{Pattern: `^Feature '.+' is not supported when security enhanced mode is enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details"},
+	}, conf.ErrorMessageExtensions)
+
+	require.Empty(t, NewConfig().ErrorMessageExtensions)
+
+	originGlobalConfig := GetGlobalConfig()
+	StoreGlobalConfig(conf)
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+	})
+	preparedExtensions := GetErrorMessageExtensions()
+	require.NotEmpty(t, preparedExtensions)
+	preparedExtensions[0].Suffix = ""
+	require.NotEmpty(t, GetErrorMessageExtensions()[0].Suffix)
+}
+
+func TestErrorMessageExtensionInvalidRegexp(t *testing.T) {
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: "[", Suffix: "invalid regexp"},
+	}
+	require.ErrorContains(t, conf.Valid(), "invalid error-msg-extension regexp")
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: " \t", Suffix: "missing pattern"},
+	}
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	conf = NewConfig()
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: ".*", Suffix: "not allowed"},
+	}
+	require.ErrorContains(t, conf.Valid(), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = ".*", suffix = "not allowed" },
+]
+`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { suffix = "missing pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "", suffix = "empty pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+}
+
+func TestKeyspaceObservability(t *testing.T) {
+	conf := NewConfig()
+	content := `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+slow-log-field = "Keyspace_meta_slow_a"
+stmt-log-field = "stmt_meta_a"
+required = true
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "keyspace_meta_label_b"
+slow-log-field = "Keyspace_meta_slow_b"
+`
+	_, err := toml.Decode(content, conf)
+	require.NoError(t, err)
+	require.NoError(t, conf.KeyspaceObservability.Valid())
+	require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{
+		"meta_a": "value_a",
+		"meta_b": "value_b",
+	}))
+	require.Equal(t, map[string]string{"keyspace_meta_label_a": "value_a", "keyspace_meta_label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []KeyspaceObservabilityLogField{
+		{Name: "Keyspace_meta_slow_a", Value: "value_a"},
+		{Name: "Keyspace_meta_slow_b", Value: "value_b"},
+	}, conf.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
+
+	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)
+}
+
+func TestKeyspaceObservabilityInvalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		err     string
+	}{
+		{
+			name: "empty source",
+			content: `
+[[keyspace-observability.fields]]
+source = ""
+metric-label = "keyspace_meta_label_a"
+`,
+			err: "source cannot be empty",
+		},
+		{
+			name: "empty output",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+`,
+			err: "at least one output must be set",
+		},
+		{
+			name: "invalid label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "1_label"
+`,
+			err: `invalid metric-label "1_label"`,
+		},
+		{
+			name: "duplicate label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "KEYSPACE_META_LABEL_A"
+`,
+			err: `duplicated metric-label "KEYSPACE_META_LABEL_A"`,
+		},
+		{
+			name: "reserved label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "KEYSPACE_ID"
+`,
+			err: `metric-label "KEYSPACE_ID" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "metric variable label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "TYPE"
+`,
+			err: `metric-label "TYPE" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "api label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "api"
+`,
+			err: `metric-label "api" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "service scope label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "service_scope"
+`,
+			err: `metric-label "service_scope" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "task id label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "task_id"
+`,
+			err: `metric-label "task_id" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "slow log field without prefix",
+			content: `
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "Digest"
+	`,
+			err: `slow-log-field "Digest" must start with "Keyspace_meta_"`,
+		},
+		{
+			name: "slow log field with lowercase prefix",
+			content: `
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "keyspace_meta_slow"
+	`,
+			err: `slow-log-field "keyspace_meta_slow" must start with "Keyspace_meta_"`,
+		},
+		{
+			name: "invalid slow log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Bad Field"
+`,
+			err: `invalid slow-log-field "Bad Field"`,
+		},
+		{
+			name: "duplicate slow log field",
+			content: `
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "Keyspace_meta_slow"
+
+	[[keyspace-observability.fields]]
+	source = "meta_b"
+	slow-log-field = "Keyspace_meta_SLOW"
+	`,
+			err: `duplicated slow-log-field "Keyspace_meta_SLOW"`,
+		},
+		{
+			name: "duplicate stmt log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+stmt-log-field = "stmt_meta"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+stmt-log-field = "stmt_meta"
+`,
+			err: `duplicated stmt-log-field "stmt_meta"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := NewConfig()
+			_, err := toml.Decode(tt.content, conf)
+			require.NoError(t, err)
+			require.ErrorContains(t, conf.KeyspaceObservability.Valid(), tt.err)
+		})
+	}
+
+	conf := NewConfig()
+	_, err := toml.Decode(`
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+`, conf)
+	require.NoError(t, err)
+	require.ErrorContains(t, conf.Valid(), "keyspace-observability.fields can only be configured when deploy-mode is starter")
 }
 
 func TestRemovedVariableCheck(t *testing.T) {
@@ -924,7 +1209,7 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
-	require.Equal(t, 1.34, conf.RUV2.RUScale)
+	require.Equal(t, 2.01, conf.RUV2.RUScale)
 	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
@@ -1046,6 +1331,225 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
+}
+
+func TestDeployModeConfig(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, deploymode.Premium, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+	conf.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
+	conf.DeployMode = deploymode.Premium
+	conf.MaxAllowedPacket = 0
+	require.NoError(t, conf.Valid())
+	conf.MaxAllowedPacket = DefMaxAllowedPacket
+
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
+
+	if kerneltype.IsClassic() {
+		require.NoError(t, os.WriteFile(configFile, []byte(`dxf-resource-limit = 30`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+		require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "deploy-mode can only be configured for nextgen TiDB")
+
+		conf = NewConfig()
+		conf.DeployMode = deploymode.PremiumReserved
+		require.ErrorContains(t, conf.Valid(), "deploy-mode can only be configured for nextgen TiDB")
+		return
+	}
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"`), 0644))
+
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 30`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, 30, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"
+dxf-resource-limit = 100`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 9`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 101`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.True(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+max-import-data-size = "1MiB"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
+	conf = NewConfig()
+	conf.StarterParams.EnableManagerNotifier = true
+	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	conf = NewConfig()
+	conf.StarterParams.MaxImportDataSize = 1
+	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+[standby]
+standby-mode = true
+activation-timeout = 30
+max-idle-seconds = 60
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.Standby.StandByMode)
+	require.Equal(t, uint(30), conf.Standby.ActivationTimeout)
+	require.Equal(t, uint(60), conf.Standby.MaxIdleSeconds)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+deploy-mode = "starter"
+[standby]
+enable-zero-backend = false
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.False(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, minMaxAllowedPacket)), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.Equal(t, uint64(minMaxAllowedPacket), conf.MaxAllowedPacket)
+	require.NoError(t, conf.Valid())
+
+	maxAllowedPacketErr := fmt.Sprintf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	for _, packetSize := range []uint64{0, minMaxAllowedPacket - 1, minMaxAllowedPacket + 1, maxOfMaxAllowedPacket + 1} {
+		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, packetSize)), 0644))
+		conf = NewConfig()
+		require.NoError(t, conf.Load(configFile))
+		require.ErrorContains(t, conf.Valid(), maxAllowedPacketErr)
+	}
+
+	originDeployMode := deploymode.Get()
+	originGlobalConfig := GetGlobalConfig()
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	conf = NewConfig()
+	conf.MaxAllowedPacket = minMaxAllowedPacket
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(minMaxAllowedPacket), GetMaxAllowedPacket())
+	conf.MaxAllowedPacket = 0
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(DefMaxAllowedPacket), GetMaxAllowedPacket())
+
+	t.Run("adjust starter config with full TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCA, "/tmp/cluster-ca.pem")
+		t.Setenv(EnvClusterCert, "/tmp/cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/cluster-key.pem")
+		t.Setenv(EnvSQLCA, "/tmp/sql-ca.pem")
+		t.Setenv(EnvSQLCert, "/tmp/sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config keeps CA when env overrides cert and key", func(t *testing.T) {
+		conf := NewConfig()
+		conf.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		conf.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		conf.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		conf.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		conf.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		conf.Security.SSLKey = "/tmp/config-sql-key.pem"
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/env-cluster-key.pem")
+		t.Setenv(EnvSQLCert, "/tmp/env-sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/env-sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/config-cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/env-cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/env-cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/env-sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/env-sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config rejects incomplete TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		require.ErrorContains(t, conf.AdjustStarterConfig(true), "CLUSTER_CERT and CLUSTER_KEY must be set together")
+	})
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
+}
+
+func TestKeyspaceActivateModeConfig(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.KeyspaceActivateMode = true
+	require.NoError(t, conf.Valid())
+
+	conf.Standby.StandByMode = true
+	require.ErrorContains(t, conf.Valid(), "can't set standby and keyspace-activate mode at the same time")
+
+	conf.Standby.StandByMode = false
+	conf.DeployMode = deploymode.Premium
+	require.ErrorContains(t, conf.Valid(), "keyspace-activate can only be configured for starter deploy mode")
 }
 
 func TestConflictInstanceConfig(t *testing.T) {
@@ -1396,6 +1900,40 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
+}
+
+func TestExternalWorkloadValid(t *testing.T) {
+	conf := NewConfig()
+	require.NoError(t, conf.Valid())
+
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload can only be configured when deploy-mode is starter")
+
+	conf = NewConfig()
+	confFile := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(confFile, []byte("[external-workload]\nenable = false\n"), 0644))
+	require.ErrorContains(t, conf.Load(confFile), "external-workload can only be configured when deploy-mode is starter")
+
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload controller-addr must not be empty")
+
+	conf.ExternalWorkload.ControllerAddr = "http://127.0.0.1:1234"
+	conf.ExternalWorkload.TidbPool = ""
+	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
+
+	conf.ExternalWorkload.TidbPool = "pool-a"
+	conf.ExternalWorkload.Role = "unknown"
+	require.ErrorContains(t, conf.Valid(), `invalid external-workload role "unknown"`)
+
+	conf.ExternalWorkload.Role = " GCV2 "
+	require.NoError(t, conf.Valid())
+	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
 }
 
 func TestGetGlobalKeyspaceName(t *testing.T) {
