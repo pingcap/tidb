@@ -82,7 +82,7 @@ func (c *ddlClient) alterTableMode(
 	return errors.Trace(c.waitDDLFinished(ctx, job.ID))
 }
 
-func (c *ddlClient) Close() {}
+func (*ddlClient) Close() {}
 
 func (c *ddlClient) buildAlterTableModeJob(
 	target model.AlterTableModeTarget,
