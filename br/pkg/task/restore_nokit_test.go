@@ -15,9 +15,15 @@
 package task
 
 import (
+	"context"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -86,4 +92,31 @@ func TestSplitRegionIndexStepFlag(t *testing.T) {
 		require.ErrorContains(t, err, FlagSplitRegionIndexStep)
 		require.ErrorContains(t, err, "greater than 0")
 	})
+}
+
+func TestCheckSnapshotRestoreModeRejectsRawBackup(t *testing.T) {
+	ctx := context.Background()
+	store, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	meta := &backuppb.BackupMeta{
+		IsRawKv:             true,
+		BackupSchemaVersion: backuppb.BackupSchemaVersion,
+	}
+	data, err := proto.Marshal(meta)
+	require.NoError(t, err)
+	require.NoError(t, store.WriteFile(ctx, metautil.MetaFile, data))
+
+	cfg := &RestoreConfig{
+		Config: Config{
+			Storage: "local://" + store.URI(),
+			CipherInfo: backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			},
+		},
+	}
+
+	err = checkSnapshotRestoreMode(ctx, cfg)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "restore mode mismatch")
 }
