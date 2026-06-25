@@ -476,15 +476,37 @@ them distinct:
   either *local* (one per partition) or *global* (one spanning all partitions, storing
   the partition id in each entry).
 
-For a partitioned table the spatial index should be **global**: one Hilbert-ordered
-namespace across all partitions, each entry's value carrying the `partition_id` of the
-row's partition so the lookback can address `t{partition_id}_r{pk}`. A *local*
-(per-partition) spatial index fragments the Hilbert space, so a spatial query must scan
-the covering ranges in every partition's local index (fanout = number of partitions),
-which the review flags as very slow. A global index keeps fanout proportional to the
-query's spatial extent, not the partition count. The rows stay distributed by the
-table's partitioning; only the index is unified, which is exactly why `partition_id` is
-stored in the value.
+The local-vs-global choice itself is **not spatial-specific**: it is the same mechanism
+and tradeoff as for any TiDB secondary index on a partitioned table. A local index
+stores entries per partition (a query that does not constrain the partition key must
+scan every partition's local index); a global index is one namespace across all
+partitions with `partition_id` in the value, scanned once, at the cost of cross-partition
+lookback and the usual global-index maintenance (for example `DROP`/`TRUNCATE PARTITION`
+must clean up global entries).
+
+What *is* spatial-specific is predicate alignment. Partition pruning only helps when the
+query constrains the partition key, and a pure spatial predicate constrains the geometry,
+which is essentially never the partition key (tables are normally partitioned by a
+non-spatial key: tenant, time, hash). So a spatial query cannot be pruned to a subset of
+partitions, and a *local* spatial index therefore fans out to **all** partitions by
+default. A normal secondary index often escapes this (queries may carry the partition
+key, or the table is partitioned to align with the index's hot column); the only way to
+make a local spatial index prune is to partition the table spatially by the Hilbert/cell
+key, which is the clustered-spatial direction with its mutable-geometry cost.
+
+Exception that confirms it is a workload property, not a spatial law: if spatial queries
+are always co-scoped by the partition key (e.g. a multi-tenant table partitioned by
+`tenant_id`, queried as "near me `WHERE tenant_id = 7`"), partition pruning applies and a
+local spatial index within the pruned partition is fine, even preferable (no global-index
+overhead). The determinant is the same as for any index: does the query carry the
+partition key? Pure-spatial queries favor a **global** index (one Hilbert-ordered
+namespace, `partition_id` in the value so the lookback can address `t{partition_id}_r{pk}`,
+fanout proportional to the query's spatial extent rather than the partition count);
+partition-key-co-constrained queries let a local index prune. Global is therefore the
+stronger *default* for spatial, because pure spatial predicates do not carry the partition
+key, not because the local/global machinery differs. The rows stay distributed by the
+table's partitioning regardless; only the global index is unified, which is why
+`partition_id` is stored in its value.
 
 This is what `partition_id` means in the reviewed layout: the physical partition id of
 `PARTITION BY`, **not** the primary key (which is already in the index key). TiDB
@@ -514,9 +536,12 @@ yet decided.
 2. **Where the bbox pre-filter runs**: in TiDB after the index scan, or pushed to the
    TiKV coprocessor so candidates are filtered before being returned (needs the value
    decoded coprocessor-side)?
-3. **Global vs local policy**: force spatial indexes on partitioned tables to be global,
-   or allow local with a warning? Confirm that when a table is partitioned by a
-   non-spatial key, global is the only sensible spatial layout.
+3. **Global vs local policy**: since this is the general secondary-index tradeoff (not
+   spatial-specific), the real question is the workload, are spatial queries pure-spatial
+   (favor global, since they cannot prune partitions) or always co-constrained by the
+   partition key (e.g. multi-tenant, where a local index prunes and avoids global-index
+   overhead)? Decide whether to default to global, allow local, or choose by detected
+   workload, and whether to warn when a local spatial index cannot prune.
 4. **`partition_id` encoding**: reuse TiDB's existing global-index value encoding for the
    partition id, or a spatial-specific layout? (Reuse preferred.)
 5. **MVP scope**: start non-partitioned only, or include global-index support from the
