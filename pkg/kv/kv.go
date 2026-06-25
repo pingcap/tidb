@@ -806,6 +806,7 @@ type Storage interface {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() ([]string, error)
+	GetPDAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }
