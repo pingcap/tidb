@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/spatial"
 	"github.com/twpayne/go-geom"
 	"github.com/twpayne/go-geom/encoding/wkb"
 	"github.com/twpayne/go-geom/encoding/wkt"
@@ -41,6 +42,7 @@ var (
 	_ functionClass = &stXFunctionClass{}
 	_ functionClass = &stYFunctionClass{}
 	_ functionClass = &stSRIDFunctionClass{}
+	_ functionClass = &tidbSpatialKeyFunctionClass{}
 )
 
 var (
@@ -52,7 +54,12 @@ var (
 	_ builtinFunc = &builtinStXSig{}
 	_ builtinFunc = &builtinStYSig{}
 	_ builtinFunc = &builtinStSRIDSig{}
+	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 )
+
+// defaultPlanarCoverer is the SRID 0 coverer used by tidb_spatial_key and the
+// planner hook. It is immutable, so a single shared instance is safe.
+var defaultPlanarCoverer = spatial.NewDefaultPlanarCoverer()
 
 // encodeEWKB serializes a go-geom value with the given SRID into TiDB's
 // EWKB storage form (<srid_le_uint32><wkb_le>).
@@ -481,4 +488,55 @@ func (b *builtinStSRIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 		return 0, false, err
 	}
 	return int64(srid), false, nil
+}
+
+type tidbSpatialKeyFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbSpatialKeyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	// The CellKey is a fixed 8-byte big-endian Morton code.
+	bf.tp.SetFlen(8)
+	sig := &builtinTiDBSpatialKeySig{bf}
+	return sig, nil
+}
+
+type builtinTiDBSpatialKeySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBSpatialKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBSpatialKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements tidb_spatial_key(geom): the order-preserving CellKey a
+// POINT geometry is indexed under. POC scope: SRID 0 POINTs.
+func (b *builtinTiDBSpatialKeySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	pt, ok := g.(*geom.Point)
+	if !ok {
+		return "", false, errors.New("tidb_spatial_key: only POINT geometries are supported in the POC")
+	}
+	key, err := defaultPlanarCoverer.EncodePoint(srid, pt.X(), pt.Y())
+	if err != nil {
+		return "", false, err
+	}
+	return string(key), false, nil
 }

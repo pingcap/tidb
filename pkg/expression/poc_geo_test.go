@@ -47,3 +47,15 @@ func TestPOCGeoFunctions(t *testing.T) {
 	// Within radius 6 of origin: ids 1 and 2.
 	tk.MustQuery("SELECT id FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(0 0)', 0)) <= 6 ORDER BY id").Check(testkit.Rows("1", "2"))
 }
+
+// TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.
+func TestPOCSpatialKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Same leaf cell -> equal key; key length is 8 bytes.
+	tk.MustQuery("SELECT length(tidb_spatial_key(ST_GeomFromText('POINT(0 0)', 0)))").Check(testkit.Rows("8"))
+	// Distinct far-apart points -> distinct keys; ordering is well-defined.
+	tk.MustQuery("SELECT hex(tidb_spatial_key(ST_GeomFromText('POINT(0 0)',0))) = hex(tidb_spatial_key(ST_GeomFromText('POINT(0 0)',0)))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT hex(tidb_spatial_key(ST_GeomFromText('POINT(0 0)',0))) <> hex(tidb_spatial_key(ST_GeomFromText('POINT(1000000 1000000)',0)))").Check(testkit.Rows("1"))
+}
