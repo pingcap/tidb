@@ -501,13 +501,27 @@ t{T}_i{X}_0312_42 -> 4, 4, 8, 8
 t{T}_i{X}_0320_42 -> 4, 4, 8, 8
 t{T}_i{X}_0321_42 -> 4, 4, 8, 8
 t{T}_i{X}_0322_42 -> 4, 4, 8, 8
+t{T}_i{X}_0303_1  -> 5, 5, 6, 6     # triangle (5,5),(5,6),(6,6), id 1: fits one unit cell
+t{T}_i{X}_0033_75 -> 3, 3, 6, 5     # rectangle (3,3),(3,5),(6,5),(6,3) = [3,6]x[3,5], id 75:
+t{T}_i{X}_0122_75 -> 3, 3, 6, 5     # offset from the coarse grid, so no size-2 cell fits inside;
+t{T}_i{X}_0123_75 -> 3, 3, 6, 5     # it tiles into six unit cells across all four L2 quadrants
+t{T}_i{X}_0211_75 -> 3, 3, 6, 5
+t{T}_i{X}_0300_75 -> 3, 3, 6, 5
+t{T}_i{X}_0301_75 -> 3, 3, 6, 5
 ```
 
-These seven cell-key entries are the multi-valued-index (MVI) fan-out: MVI means one
+The seven `…_42` entries for `T` are the multi-valued-index (MVI) fan-out: MVI means one
 row writes multiple index *keys*, not multiple values under one key (TiKV keys are
-unique, so that does not exist). A point would write a single entry and need no MVI; the
-polygon's several entries are exactly what MVI provides, the same mechanism it already
-uses for JSON-array columns.
+unique, so that does not exist). The other two rows show the range: the small triangle
+(id 1) fits in a single cell `0303`, so it writes one entry and needs no MVI (like a
+point); the offset rectangle (id 75) tiles into six unit cells. Each row's entries all
+carry that row's own bbox.
+
+Storage is per-geometry: a small shape gets fine cells, a large one a coarse cell. So id
+1 is stored under the fine cell `0303` while `T` is stored under the coarse cell `030`,
+different keys. But because `0303` is a descendant of `030`, a search that range-scans
+`030`'s territory returns both (the descendant matching); the coarse `030` key does not
+itself store id 1.
 
 Ranges: all descendants of a cell are a contiguous key range (everything under `031` is
 `[0310 .. 0313]`), and a cell's ancestors are its prefixes (`0`, `03`, `031`). Those two
