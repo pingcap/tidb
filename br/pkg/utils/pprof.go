@@ -5,7 +5,6 @@ package utils
 import (
 	"fmt"
 	"net" //nolint:goimports
-
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
