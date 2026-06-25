@@ -372,8 +372,8 @@ Points-only is a plain secondary index on the computed value `H(position)` (one 
 per row, MVI machinery not needed):
 
 ```
-t{T}_i{X}_{H(30,40)}_{1} -> ∅
-t{T}_i{X}_{H(31,41)}_{2} -> ∅
+t{T}_i{I}_{H(30,40)}_{1} -> ∅
+t{T}_i{I}_{H(31,41)}_{2} -> ∅
 ```
 
 Generic geometry is a true MVI: cover the geometry with a bounded set of cells and
@@ -381,12 +381,12 @@ write one entry per covering cell (a point covers to one cell, a polygon fans ou
 
 ```
 -- point id=1 covers to one cell (value carries the point/bbox; see review section):
-t{T}_i{X}_{cell(c0)}_{1} -> bbox(30,40,30,40)
+t{T}_i{I}_{cell(c0)}_{1} -> bbox(30,40,30,40)
 -- polygon id=3 covers to several cells (<= max_cells), same bbox repeated:
-t{T}_i{X}_{cell(ca)}_{3} -> bbox(polygon 3)
-t{T}_i{X}_{cell(cb)}_{3} -> bbox(polygon 3)
-t{T}_i{X}_{cell(cc)}_{3} -> bbox(polygon 3)
-t{T}_i{X}_{cell(cd)}_{3} -> bbox(polygon 3)
+t{T}_i{I}_{cell(ca)}_{3} -> bbox(polygon 3)
+t{T}_i{I}_{cell(cb)}_{3} -> bbox(polygon 3)
+t{T}_i{I}_{cell(cc)}_{3} -> bbox(polygon 3)
+t{T}_i{I}_{cell(cd)}_{3} -> bbox(polygon 3)
 ```
 
 Query path: cover -> range-scan -> dedup -> lookback -> refine. No tree to maintain.
@@ -404,11 +404,11 @@ entries (which the MVI design does not have).
 
 ```
 -- leaf data entries (one per row, both points and polygons):
-t{T}_i{X}_data_{H(30,40)}_{1} -> MBR=(30,40,30,40)   -- point: degenerate box
-t{T}_i{X}_data_{H(...)}_{3}   -> MBR=bbox(polygon 3)
+t{T}_i{I}_data_{H(30,40)}_{1} -> MBR=(30,40,30,40)   -- point: degenerate box
+t{T}_i{I}_data_{H(...)}_{3}   -> MBR=bbox(polygon 3)
 -- R-tree node entries:
-t{T}_i{X}_node_{n17}  -> [(cMBR_a, ->n1), (cMBR_b, ->n2), ...]
-t{T}_i{X}_node_{root} -> (tMBR, ->n17, ...)
+t{T}_i{I}_node_{n17}  -> [(cMBR_a, ->n1), (cMBR_b, ->n2), ...]
+t{T}_i{I}_node_{root} -> (tMBR, ->n17, ...)
 ```
 
 Both points and polygons are one entry per row (no fan-out); a point is a polygon with
@@ -492,20 +492,20 @@ in `cell_key` order, as they are physically stored and scanned; the value is
 `(minX, minY, maxX, maxY)`:
 
 ```
-t{T}_i{X}_0033_75 -> 3, 3, 6, 5     # Rectangle id 75: tiles into 6 unit cells (offset from grid)
-t{T}_i{X}_0122_75 -> 3, 3, 6, 5
-t{T}_i{X}_0123_75 -> 3, 3, 6, 5
-t{T}_i{X}_0211_75 -> 3, 3, 6, 5
-t{T}_i{X}_030_42  -> 4, 4, 8, 8     # Triangle T id 42: 7 cells (one size-2 + six size-1)
-t{T}_i{X}_0300_75 -> 3, 3, 6, 5     # rectangle cells 0300, 0301 are inside T's cell 030 (descendants)
-t{T}_i{X}_0301_75 -> 3, 3, 6, 5
-t{T}_i{X}_0310_42 -> 4, 4, 8, 8
-t{T}_i{X}_0311_42 -> 4, 4, 8, 8
-t{T}_i{X}_0312_42 -> 4, 4, 8, 8
-t{T}_i{X}_0320_1  -> 4, 6, 5, 7     # Triangle id 1: SAME cell_key 0320 as T below (shared cell)
-t{T}_i{X}_0320_42 -> 4, 4, 8, 8
-t{T}_i{X}_0321_42 -> 4, 4, 8, 8
-t{T}_i{X}_0322_42 -> 4, 4, 8, 8
+t{T}_i{I}_0033_75 -> 3, 3, 6, 5     # Rectangle id 75: tiles into 6 unit cells (offset from grid)
+t{T}_i{I}_0122_75 -> 3, 3, 6, 5
+t{T}_i{I}_0123_75 -> 3, 3, 6, 5
+t{T}_i{I}_0211_75 -> 3, 3, 6, 5
+t{T}_i{I}_030_42  -> 4, 4, 8, 8     # Triangle T id 42: 7 cells (one size-2 + six size-1)
+t{T}_i{I}_0300_75 -> 3, 3, 6, 5     # rectangle cells 0300, 0301 are inside T's cell 030 (descendants)
+t{T}_i{I}_0301_75 -> 3, 3, 6, 5
+t{T}_i{I}_0310_42 -> 4, 4, 8, 8
+t{T}_i{I}_0311_42 -> 4, 4, 8, 8
+t{T}_i{I}_0312_42 -> 4, 4, 8, 8
+t{T}_i{I}_0320_1  -> 4, 6, 5, 7     # Triangle id 1: SAME cell_key 0320 as T below (shared cell)
+t{T}_i{I}_0320_42 -> 4, 4, 8, 8
+t{T}_i{I}_0321_42 -> 4, 4, 8, 8
+t{T}_i{I}_0322_42 -> 4, 4, 8, 8
 ```
 
 The seven `…_42` entries for `T` are the multi-valued-index (MVI) fan-out: MVI means one
