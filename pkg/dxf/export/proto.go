@@ -18,9 +18,6 @@
 package export
 
 import (
-	"os"
-	"strconv"
-
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
@@ -36,57 +33,6 @@ type TaskMeta struct {
 	FileSize int64 `json:"file_size"`
 	// SubtaskRegions is the number of regions per subtask span, 0 means auto.
 	SubtaskRegions int `json:"subtask_regions"`
-	// Each encoder (one per task-concurrency slot) serves ReadersPerEncoder
-	// readers and WritersPerEncoder writers; both 0 mean the default 1. Writers
-	// must be a multiple of readers so the readers evenly split the writers'
-	// sub-ranges. Total readers = thread×ReadersPerEncoder, total writers =
-	// thread×WritersPerEncoder, decoupling cop read concurrency from S3 write
-	// fan-out.
-	ReadersPerEncoder int `json:"readers_per_encoder"`
-	WritersPerEncoder int `json:"writers_per_encoder"`
-}
-
-const (
-	defaultReadersPerEncoder = 1
-	defaultWritersPerEncoder = 1
-)
-
-func (m *TaskMeta) effectiveReadersPerEncoder() int {
-	if m.ReadersPerEncoder > 0 {
-		return m.ReadersPerEncoder
-	}
-	return defaultReadersPerEncoder
-}
-
-// Benchmark env knobs (perf prototype). They let the worker-tidb operator tune
-// the export pipeline without a statement-level option, mirroring the existing
-// TIDB_EXPORT_NOOP_WRITER switch.
-var (
-	// exportReaderPool is the size of the decoupled reader pool. When > 0 the
-	// executor uses the decoupled pipeline: a shared pool of this many readers
-	// round-robins region-sized pages into m ordered per-file buffers (m =
-	// file/writer count), so the number of concurrent cop reads is decoupled
-	// from the writer/file count. 0 keeps the coupled 1:1 reader/writer path.
-	exportReaderPool = envInt("TIDB_EXPORT_READERS", 0)
-	// exportEncBufSize is the per-file encoded-buffer channel depth used by the
-	// decoupled pipeline.
-	exportEncBufSize = envInt("TIDB_EXPORT_ENCBUF", channelBufSize)
-)
-
-// envInt reads a positive integer from env var name, falling back to def when
-// it is unset, malformed, or non-positive.
-func envInt(name string, def int) int {
-	if v, err := strconv.Atoi(os.Getenv(name)); err == nil && v > 0 {
-		return v
-	}
-	return def
-}
-
-func (m *TaskMeta) effectiveWritersPerEncoder() int {
-	if m.WritersPerEncoder > 0 {
-		return m.WritersPerEncoder
-	}
-	return defaultWritersPerEncoder
 }
 
 // SubtaskMeta is the subtask meta of the Dump step. Each subtask owns a
