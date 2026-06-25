@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -32,12 +32,78 @@ func prepareForeignKeyTables(tk *testkit.TestKit) {
 	tk.MustExec("insert into parent values (1), (2)")
 }
 
-func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
+func TestForeignKeySharedLockOptimisticReverseReferenceOrder(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+
+	prepareForeignKeyTables(tk1)
+
+	// Foreign-key shared locks do not support optimistic transactions. The checks below reference
+	// parent rows in reverse orders, so the second optimistic transaction should fail at commit
+	// time with a write conflict.
+	tk1.MustExec("begin optimistic")
+	tk2.MustExec("begin optimistic")
+
+	tk1.MustExec("insert into child values (1, 1)")
+	tk2.MustExec("insert into child values (3, 2)")
+
+	tk1.MustExec("insert into child values (2, 2)")
+	tk2.MustExec("insert into child values (4, 1)")
+
+	tk1.MustExec("commit")
+	err := tk2.ExecToErr("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Write conflict")
+
+	tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestForeignKeySharedLockPessimisticReverseReferenceOrder(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+
+	prepareForeignKeyTables(tk1)
+
+	// Pessimistic transactions can acquire compatible foreign-key shared locks, so the same
+	// reverse reference order should let both transactions commit.
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk1.MustExec("insert into child values (1, 1)")
+	tk2.MustExec("insert into child values (3, 2)")
+
+	tk1.MustExec("insert into child values (2, 2)")
+	tk2.MustExec("insert into child values (4, 1)")
+
+	tk1.MustExec("commit")
+	tk2.MustExec("commit")
+
+	tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 2", "3 2", "4 1"))
+}
+
+func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
 	}
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -97,9 +163,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
-	}
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -155,9 +218,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 func TestSharedLockChildTableConflict(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
-	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
 	}
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -263,9 +323,6 @@ func TestSharedLockCascadeUpdateExplicitPessimisticTxn(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
-	}
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -302,9 +359,6 @@ func TestSharedLockCascadeUpdateExplicitPessimisticTxn(t *testing.T) {
 func TestSharedLockLockView(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
-	}
-	if kerneltype.IsNextGen() {
-		t.Skip("does not support shared lock in next-gen TiKV")
 	}
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -398,4 +452,91 @@ func TestSharedLockLockView(t *testing.T) {
 
 	tk1.MustExec("commit")
 	require.NoError(t, <-exclusiveLockDoneCh)
+}
+
+func TestSharedLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	testTk := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	testTk.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/dataLockWaitsSkipResolvingLocks", "return(true)")
+	prepareForeignKeyTables(tk1)
+
+	conn2 := tk2.MustQuery("select connection_id()").Rows()[0][0].(string)
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from parent where id=1 for update")
+	insertDoneCh := make(chan error, 1)
+	insertDone := false
+	t.Cleanup(func() {
+		if _, err := tk1.Exec("rollback"); err != nil {
+			t.Errorf("rollback blocker transaction: %v", err)
+		}
+		if !insertDone {
+			select {
+			case err := <-insertDoneCh:
+				if err != nil {
+					t.Errorf("insert goroutine failed after rolling back blocker transaction: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Errorf("insert goroutine did not finish after rolling back blocker transaction")
+			}
+		}
+	})
+
+	tk2.MustExec("begin pessimistic")
+	conn2TxnID := tk2.Session().TxnInfo().StartTS
+	go func() {
+		_, err := tk2.Exec("insert into child values (1, 1)")
+		if err == nil {
+			_, err = tk2.Exec("commit")
+		}
+		insertDoneCh <- err
+	}()
+
+	var (
+		insertErr            error
+		insertFinishedEarly  bool
+		waitingTxnAndSession [][]any
+	)
+	require.Eventually(t, func() bool {
+		select {
+		case insertErr = <-insertDoneCh:
+			insertDone = true
+			insertFinishedEarly = true
+			return true
+		default:
+		}
+
+		waitingTxnAndSession = testTk.MustQuery(fmt.Sprintf(
+			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
+			conn2TxnID, conn2,
+		)).Rows()
+		return len(waitingTxnAndSession) > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Falsef(t, insertFinishedEarly, "insert should be blocked before DATA_LOCK_WAITS row is observed, err: %v", insertErr)
+	require.Len(t, waitingTxnAndSession, 1)
+	waitingTxnID := waitingTxnAndSession[0][0].(string)
+	sessionID := waitingTxnAndSession[0][1].(string)
+	require.Equal(t, waitingTxnID, fmt.Sprintf("%d", conn2TxnID))
+	require.Equal(t, sessionID, conn2)
+
+	tk1.MustExec("commit")
+	insertErr = <-insertDoneCh
+	insertDone = true
+	require.NoError(t, insertErr)
+	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1"))
 }

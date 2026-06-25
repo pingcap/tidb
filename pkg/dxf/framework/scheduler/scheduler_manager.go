@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -352,8 +351,8 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		return
 	}
 
-	holderID := fmt.Sprintf("DXF/scheduler/%d", task.ID)
-	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, sm.store.GetKeyspace(), task.Keyspace, holderID)
+	holderID := dxfutil.GenHolderID("scheduler", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, task.Keyspace, holderID)
 	if err != nil {
 		sm.logger.Warn("acquire task runtime failed", zap.Int64("task-id", basicTask.ID),
 			zap.String("task-key", basicTask.Key), zap.Error(err))

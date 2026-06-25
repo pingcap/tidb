@@ -33,7 +33,9 @@ go_library(
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/execdetails",
+        "//pkg/util/hack",
         "//pkg/util/intest",
+        "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
@@ -93,7 +95,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 42,
+    shard_count = 43,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",

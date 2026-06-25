@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -69,6 +70,32 @@ func TestHintSuite(t *testing.T) {
 			testKit.MustExec(`select /*+ set_var(max_execution_time=2222) */ * from foo where a = 1;`)
 			testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 			testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
+		})
+
+		t.Run("TestRestrictedBindingPlanHint", func(t *testing.T) {
+			testKit.MustExec(`drop table if exists sem_binding_hint_t`)
+			testKit.MustExec(`create table sem_binding_hint_t(a int, b int, key idx_a(a), key idx_b(b))`)
+			testKit.MustExec(`insert into sem_binding_hint_t values
+				(1, 1), (2, 1), (3, 1), (4, 1), (5, 1),
+				(6, 6), (7, 7), (8, 8), (9, 9), (10, 10),
+				(11, 11), (12, 12), (13, 13), (14, 14), (15, 15),
+				(16, 16), (17, 17), (18, 18), (19, 19), (20, 20)`)
+			testKit.MustExec(`analyze table sem_binding_hint_t`)
+
+			testKit.MustQuery(`explain format = 'plan_tree' select a from sem_binding_hint_t where a = 1`).CheckContain("idx_a")
+			testKit.MustQuery(`explain format = 'plan_tree' select /*+ ignore_index(sem_binding_hint_t, idx_a) */ a from sem_binding_hint_t where a = 1`).CheckNotContain("idx_a")
+
+			testKit.MustExec(`create binding using select /*+ ignore_index(sem_binding_hint_t, idx_a) */ a from sem_binding_hint_t where a = 1`)
+			require.NoError(t, semv2.EnableBy(&semv2.Config{
+				TiDBVersion:     "v0.0.0",
+				RestrictedHints: []string{"ignore_index"},
+			}))
+			t.Cleanup(semv2.Disable)
+
+			plan := testKit.MustQuery(`explain format = 'plan_tree' select a from sem_binding_hint_t where a = 1`)
+			require.True(t, testKit.Session().GetSessionVars().FoundInBinding)
+			testKit.MustQuery(`show warnings`).CheckContain("the IGNORE_INDEX() optimizer hint is restricted under the current security policy and is ignored")
+			plan.CheckContain("idx_a")
 		})
 
 		t.Run("TestSetVarDecimalValueHintsWork", func(t *testing.T) {

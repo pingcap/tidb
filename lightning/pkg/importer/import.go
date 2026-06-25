@@ -71,6 +71,7 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -383,7 +384,9 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithAPIContext(ctx, apiContext, componentName, addrs, tls.ToPDSecurityOption(), ingestctrl.PDClientOptions()...)
+		// Disable router QueryRegion streams so newer Lightning can import into older PD clusters.
+		pdClientOptions := append(ingestctrl.PDClientOptions(), opt.WithEnableRouterClient(false))
+		pdCli, err = pd.NewClientWithAPIContext(ctx, apiContext, componentName, addrs, tls.ToPDSecurityOption(), pdClientOptions...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -448,6 +451,8 @@ func NewImportControllerWithPauser(
 			raftKV2SwitchModeDuration = cfg.Cron.SwitchMode.Duration
 		}
 		backendConfig := ingestctrl.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
+		// Use legacy PD region RPCs so newer Lightning can import into older clusters.
+		backendConfig.DisablePDClientRouterClient = true
 		backendObj, err = ingestctrl.NewBackend(ctx, tls, backendConfig, pdCliForTiKV)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -1208,7 +1213,10 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithAPIContext(ctx, rc.apiContext, componentName, addrs, tlsOpt)
+	// Disable router QueryRegion streams for older PD clusters during duplicate resolution.
+	pdCli, err := pd.NewClientWithAPIContext(
+		ctx, rc.apiContext, componentName, addrs, tlsOpt, opt.WithEnableRouterClient(false),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

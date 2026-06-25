@@ -2954,13 +2954,13 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 	h := domain.GetDomain(e.Ctx()).StatsHandle()
 	if s.RefreshMode != nil {
 		if *s.RefreshMode == ast.RefreshStatsModeLite {
-			return h.InitStatsLite(ctx, tableIDs...)
+			return h.InitStatsLite(ctx, is, tableIDs...)
 		}
 		return h.InitStats(ctx, is, tableIDs...)
 	}
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	if liteInitStats {
-		return h.InitStatsLite(ctx, tableIDs...)
+		return h.InitStatsLite(ctx, is, tableIDs...)
 	}
 	return h.InitStats(ctx, is, tableIDs...)
 }
