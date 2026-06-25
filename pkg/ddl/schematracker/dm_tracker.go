@@ -418,6 +418,7 @@ func (d *SchemaTracker) createIndex(
 	}
 	for _, hiddenCol := range hiddenCols {
 		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		// Mark the hidden column public to match the metadata produced by executing ADD INDEX.
 		colInfo.State = model.StatePublic
 	}
 
