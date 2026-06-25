@@ -33,6 +33,7 @@ go_library(
         "//dumpling/context",
         "//dumpling/log",
         "//pkg/config",
+        "//pkg/dumpformat/csvfile",
         "//pkg/dumpformat/parquetfile",
         "//pkg/errno",
         "//pkg/infoschema/context",
