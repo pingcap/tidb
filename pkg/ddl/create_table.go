@@ -1308,6 +1308,42 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 }
 
 // BuildTableInfo creates a TableInfo.
+// rewriteSpatialConstraints validates each inline SPATIAL constraint and
+// rewrites it into an ordinary (expression) index on tidb_spatial_key(col),
+// mirroring the standalone CREATE SPATIAL INDEX path.
+func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constraint) error {
+	for _, constr := range constraints {
+		if constr.Tp != ast.ConstraintSpatial {
+			continue
+		}
+		if len(constr.Keys) != 1 || constr.Keys[0].Column == nil {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires exactly one column in the POC")
+		}
+		colName := constr.Keys[0].Column.Name.L
+		col := table.FindCol(cols, colName)
+		if col == nil {
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(constr.Keys[0].Column.Name)
+		}
+		if col.FieldType.GetType() != mysql.TypeGeometry || col.FieldType.GetGeometryType() != field_types.GeomPoint {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on POINT columns in the POC")
+		}
+		if !mysql.HasNotNullFlag(col.GetFlag()) {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
+		}
+		if col.Srid != 0 {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 in the POC, got SRID %d", col.Srid)
+		}
+		constr.Keys[0].Expr = &ast.FuncCallExpr{
+			FnName: ast.NewCIStr(ast.TiDBSpatialKey),
+			Args:   []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: col.Name}}},
+		}
+		constr.Keys[0].Column = nil
+		constr.Keys[0].Length = types.UnspecifiedLength
+		constr.Tp = ast.ConstraintIndex
+	}
+	return nil
+}
+
 func BuildTableInfo(
 	ctx *metabuild.Context,
 	tableName ast.CIStr,
@@ -1331,6 +1367,14 @@ func BuildTableInfo(
 		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
+
+	// Rewrite inline SPATIAL constraints into expression indexes on
+	// tidb_spatial_key(col), so the rest of the build (hidden-column generation,
+	// BuildIndexInfo) treats them as ordinary expression indexes. POC scope:
+	// a single NOT NULL SRID-0 POINT column.
+	if err := rewriteSpatialConstraints(tblColumns, constraints); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// This pre-scan is necessary because index building in the main loop may need to check
 	// tbInfo.HasClusteredIndex() before the PRIMARY KEY constraint is fully processed.

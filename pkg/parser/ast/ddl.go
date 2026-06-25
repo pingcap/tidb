@@ -943,6 +943,9 @@ const (
 	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
 	ConstraintColumnar
+	// ConstraintSpatial is only used in AST for inline `SPATIAL [INDEX|KEY]`.
+	// DDL rewrites it into an expression index on tidb_spatial_key(col).
+	ConstraintSpatial
 )
 
 // Constraint is constraint for table definition.
@@ -995,6 +998,8 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE KEY")
 	case ConstraintUniqIndex:
 		ctx.WriteKeyWord("UNIQUE INDEX")
+	case ConstraintSpatial:
+		ctx.WriteKeyWord("SPATIAL")
 	case ConstraintFulltext:
 		ctx.WriteKeyWord("FULLTEXT")
 	case ConstraintCheck:

@@ -1049,6 +1049,27 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
+// spatialIndexSourceColumn reports whether idxInfo is a spatial index (a single
+// hidden generated column whose expression is tidb_spatial_key(col)) and, if so,
+// returns the back-quoted source column for SHOW CREATE TABLE rendering.
+func spatialIndexSourceColumn(idxInfo *model.IndexInfo, tableInfo *model.TableInfo) (string, bool) {
+	if len(idxInfo.Columns) != 1 {
+		return "", false
+	}
+	col := tableInfo.Columns[idxInfo.Columns[0].Offset]
+	const prefix = ast.TiDBSpatialKey + "("
+	if !col.Hidden || !strings.HasPrefix(col.GeneratedExprString, prefix) {
+		return "", false
+	}
+	// GeneratedExprString is e.g. "tidb_spatial_key(`p`)"; the inner text is the
+	// already-escaped source column reference.
+	inner := strings.TrimSuffix(strings.TrimPrefix(col.GeneratedExprString, prefix), ")")
+	if inner == "" {
+		return "", false
+	}
+	return inner, true
+}
+
 func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
@@ -1228,6 +1249,19 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	}
 
 	for i, idxInfo := range publicIndices {
+		// A spatial index is internally an expression index on
+		// tidb_spatial_key(col); render it in the MySQL-compatible SPATIAL KEY
+		// form so SHOW CREATE TABLE round-trips, hiding the implementation detail.
+		if spatialCol, ok := spatialIndexSourceColumn(idxInfo, tableInfo); ok {
+			fmt.Fprintf(buf, "  SPATIAL KEY %s (%s)", stringutil.Escape(idxInfo.Name.O, sqlMode), spatialCol)
+			if idxInfo.Invisible {
+				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			}
+			if i != len(publicIndices)-1 {
+				buf.WriteString(",\n")
+			}
+			continue
+		}
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
