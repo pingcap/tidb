@@ -983,6 +983,19 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// prune the non-ordered alternative and let the ordered path win even though the ratio was meant
 	// to make it lose on cost. Deferring residual-filter ordered paths to the cost comparison keeps
 	// the two mechanisms from contradicting each other.
+	//
+	// This rule intentionally relaxes the strict skyline contract ("a path is pruned only if another
+	// is no worse on every factor"): it can return a winner that loses on accessResult. That is by
+	// design and is the whole point of the rule. The case it exists for is exactly an ordered index
+	// with weaker WHERE-coverage beating a more selective non-ordered index under a LIMIT (otherwise
+	// the non-ordered path wins on access and forces a risky TopN). Guarding on accessResult >= 0
+	// would defeat that purpose. The genuine risk of overriding access -- an optimistic "fits the
+	// limit" estimate driven by residual filtering -- is already fenced off above by
+	// !orderRatioMayPenalize (residual-filter paths defer to cost) and by the CountAfterAccess <=
+	// ExpectedCnt check (the winner provably fits the limit). We deliberately do NOT also guard
+	// scanResult/globalResult: scanResult is biased (a table scan always scores +1, so the guard
+	// would not stop the case it appears to target) and globalResult is a niche partition-index
+	// preference; neither reflects the order-vs-limit risk this rule arbitrates.
 	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
 		!orderRatioMayPenalize(lhs.path) &&
 		lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
