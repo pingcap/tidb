@@ -40,3 +40,33 @@ func TestPOCGeoCreateTable(t *testing.T) {
 	tk.MustQuery("SELECT id, hex(p) FROM pts").Check(
 		testkit.Rows("1 00000000010100000000000000000000000000000000000000"))
 }
+
+// TestPOCCreateSpatialIndex verifies CREATE SPATIAL INDEX builds a hidden
+// generated column over tidb_spatial_key and writes one index entry per row.
+func TestPOCCreateSpatialIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE locs (id int primary key, p POINT NOT NULL SRID 0)")
+	tk.MustExec("INSERT INTO locs VALUES " +
+		"(1, ST_GeomFromText('POINT(0 0)',0)), (2, ST_GeomFromText('POINT(3 4)',0)), (3, ST_GeomFromText('POINT(10 10)',0))")
+
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p)")
+
+	// The index exists and admin check passes (entries consistent with rows).
+	tk.MustExec("ADMIN CHECK TABLE locs")
+	tk.MustExec("ADMIN CHECK INDEX locs sidx")
+
+	// A later insert keeps the index consistent.
+	tk.MustExec("INSERT INTO locs VALUES (4, ST_GeomFromText('POINT(1 1)',0))")
+	tk.MustExec("ADMIN CHECK TABLE locs")
+
+	// Rejections: non-point / nullable / non-zero SRID / non-geometry.
+	tk.MustExec("CREATE TABLE bad1 (id int primary key, p POINT SRID 0)") // nullable
+	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad1 (p)", "[ddl:8200]SPATIAL index requires a NOT NULL column")
+	tk.MustExec("CREATE TABLE bad2 (id int primary key, g GEOMETRY NOT NULL)")
+	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad2 (g)", "[ddl:8200]SPATIAL index is only supported on POINT columns in the POC")
+	tk.MustExec("CREATE TABLE bad3 (id int primary key, p POINT NOT NULL SRID 4326)")
+	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad3 (p)", "[ddl:8200]SPATIAL index only supports SRID 0 in the POC, got SRID 4326")
+}

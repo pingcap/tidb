@@ -460,6 +460,8 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+	// Spatial index internal function (POC).
+	ast.TiDBSpatialKey: {},
 	// JSON functions.
 	ast.JSONType:          {},
 	ast.JSONExtract:       {},

@@ -5062,12 +5062,60 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 	return nil
 }
 
+// createSpatialIndex implements `CREATE SPATIAL INDEX` for the points-only POC.
+// A spatial index on a POINT column is modeled as an ordinary expression index
+// on a hidden virtual generated column `tidb_spatial_key(col)`, reusing the
+// expression-index DDL and the plain (non-MVI) index write path. The planner
+// recognizes such an index structurally (a single hidden column whose generated
+// expression is tidb_spatial_key(...)).
+func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	if len(indexPartSpecifications) != 1 {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires exactly one column in the POC")
+	}
+	part := indexPartSpecifications[0]
+	if part.Column == nil {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+	}
+	_, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	col := table.FindCol(t.Cols(), part.Column.Name.L)
+	if col == nil {
+		return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(part.Column.Name)
+	}
+	if col.FieldType.GetType() != mysql.TypeGeometry || col.FieldType.GetGeometryType() != parser_types.GeomPoint {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on POINT columns in the POC")
+	}
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
+	}
+	if col.Srid != 0 {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 in the POC, got SRID %d", col.Srid)
+	}
+
+	// Rewrite the column part into the expression tidb_spatial_key(`col`), so
+	// the existing expression-index path creates the hidden generated column
+	// and a plain secondary index over it.
+	part.Expr = &ast.FuncCallExpr{
+		FnName: ast.NewCIStr(ast.TiDBSpatialKey),
+		Args: []ast.ExprNode{
+			&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: col.Name}},
+		},
+	}
+	part.Column = nil
+	part.Length = types.UnspecifiedLength
+
+	return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, indexPartSpecifications, indexOption, ifNotExists)
+}
+
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	switch keyType {
 	case ast.IndexKeyTypeSpatial:
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
+		return e.createSpatialIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	case ast.IndexKeyTypeColumnar:
 		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
