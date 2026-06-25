@@ -595,6 +595,15 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
+	commonHandleV1CommittedValue := []byte{0, IndexVersionFlag, 1}
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1CommittedValue))
+	commonHandleV1UntouchedValue := []byte{1, IndexVersionFlag, 1, kv.UnCommitIndexKVFlag}
+	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1UntouchedValue))
+	legacyUniqueValueWithMarkerLikeBytes := EncodeHandleInUniqueIndexValue(kv.IntHandle(0x017d010000000031), false)
+	require.Len(t, legacyUniqueValueWithMarkerLikeBytes, 8)
+	require.Equal(t, IndexVersionFlag, legacyUniqueValueWithMarkerLikeBytes[1])
+	require.Equal(t, kv.UnCommitIndexKVFlag, legacyUniqueValueWithMarkerLikeBytes[len(legacyUniqueValueWithMarkerLikeBytes)-1])
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, legacyUniqueValueWithMarkerLikeBytes))
 	IndexKey2TempIndexKey(untouchedIndexKey)
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
 	elem := TempIndexValueElem{Handle: kv.IntHandle(1), Delete: true, Distinct: true}
