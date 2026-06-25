@@ -168,6 +168,8 @@ const (
 	TiDBMViewRefreshHistTime = "tidb_mview_refresh_hist_time"
 	// TiDBMLogPurgeHistTime controls the retention time of mysql.tidb_mlog_purge_hist in hours.
 	TiDBMLogPurgeHistTime = "tidb_mlog_purge_hist_time"
+	// TiDBMLogLogSlowPurge controls whether MLog purge statements are recorded in the slow query log.
+	TiDBMLogLogSlowPurge = "tidb_mlog_log_slow_purge"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
@@ -1370,6 +1372,7 @@ const (
 	DefTiDBMLogPurgeBatchSize               = 10000
 	DefTiDBMLogPurgeMinRate                 = 2000
 	DefTiDBMLogPurgeRateBudgetRatio         = 0.5
+	DefTiDBMLogLogSlowPurge                 = false
 	DefMaxPreparedStmtCount                 = -1
 	DefWaitTimeout                          = 28800
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
@@ -1781,6 +1784,7 @@ var (
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
+	MLogLogSlowPurge                = atomic.NewBool(DefTiDBMLogLogSlowPurge)
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
