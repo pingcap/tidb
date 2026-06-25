@@ -80,7 +80,9 @@ func EnsureRepo(
 		objstore.TryLockRemote,
 		storage,
 		repoInitLockPath,
-		"initialize BR snapshot repository metadata",
+		objstore.LockMetaInput{
+			Hint: "initialize BR snapshot repository metadata",
+		},
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
