@@ -8223,6 +8223,18 @@ func TestUUIDTypeMariaDBEnabled(t *testing.T) {
 	RunTest(t, cases, false, true)
 }
 
+func TestUUIDKeywordCompatibility(t *testing.T) {
+	cases := []testCase{
+		{`SELECT uuid FROM t`, true, "SELECT `uuid` FROM `t`"},
+		{`SELECT uuid.uuid FROM uuid`, true, "SELECT `uuid`.`uuid` FROM `uuid`"},
+		{`SELECT 1 AS uuid`, true, "SELECT 1 AS `uuid`"},
+		{`SELECT * FROM t AS uuid`, true, "SELECT * FROM `t` AS `uuid`"},
+		{`ALTER TABLE t ADD COLUMN uuid INT`, true, "ALTER TABLE `t` ADD COLUMN `uuid` INT"},
+		{`CREATE TABLE t (uuid INT, KEY uuid (uuid))`, true, "CREATE TABLE `t` (`uuid` INT,INDEX `uuid`(`uuid`))"},
+	}
+	RunTest(t, cases, false, false)
+}
+
 func TestUUIDTypeMariaDBDisabled(t *testing.T) {
 	cases := []testCase{
 		{`CREATE TABLE t (id UUID)`, false, ""},
