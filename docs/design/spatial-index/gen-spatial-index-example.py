@@ -43,11 +43,14 @@ out.append(f'<text x="{MX}" y="34" font-size="20" font-weight="700" fill="{TXT}"
 def vline(x,color,w): out.append(f'<line x1="{sx(x)}" y1="{sy(0)}" x2="{sx(x)}" y2="{sy(8)}" stroke="{color}" stroke-width="{w}"/>')
 def hline(y,color,w): out.append(f'<line x1="{sx(0)}" y1="{sy(y)}" x2="{sx(8)}" y2="{sy(y)}" stroke="{color}" stroke-width="{w}"/>')
 for i in range(9):
-    vline(i, G_UNIT, 1); hline(i, G_UNIT, 1)
+    vline(i, G_UNIT, 1)
+    hline(i, G_UNIT, 1)
 for i in (0,2,4,6,8):
-    vline(i, G_L3, 1.5); hline(i, G_L3, 1.5)
+    vline(i, G_L3, 1.5)
+    hline(i, G_L3, 1.5)
 for i in (0,4,8):
-    vline(i, G_L2, 2.5); hline(i, G_L2, 2.5)
+    vline(i, G_L2, 2.5)
+    hline(i, G_L2, 2.5)
 out.append(f'<rect x="{sx(0)}" y="{sy(8)}" width="{8*S}" height="{8*S}" fill="none" stroke="{G_L1}" stroke-width="3"/>')
 
 # --- covering cell borders (dashed). Labels are queued and drawn LAST, on top, with a
@@ -126,5 +129,6 @@ for cx, cy, text, color, weight in labels:
 out.append('</svg>')
 
 path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spatial-index-example.svg")
-open(path, "w").write("\n".join(out))
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(out))
 print("wrote", path, "bytes:", len("\n".join(out)))

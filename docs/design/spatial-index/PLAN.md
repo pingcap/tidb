@@ -45,7 +45,7 @@ Concrete first deliverable: the points-only MVP is planned in detail in `docs/de
   Rationale: keeps scope to the index; the type work (prior art #66602/#38611) is owned separately. The only coupling is a small contract (read EWKB+SRID, compute MBR, recognize the optimized predicates), so localizing it limits churn.
   Date/Author: 2026-06-23, Mattias Jonsson.
 
-- Decision: SRID 0 planar coverer defaults its domain to `[-(1<<31), (1<<31)-1]` per axis (a generous bound covering common coordinate systems; CockroachDB's docs use the same value), exposed as an overridable per-index `WITH` option; out-of-domain coordinates stay correct but un-prunable (no rejection).
+- Decision: SRID 0 planar coverer defaults its domain to `[-(1<<31), (1<<31)-1]` per axis (a generous bound covering common coordinate systems; CockroachDB's docs use the same value), exposed as an overridable per-index option; out-of-domain coordinates are clamped to the boundary cell (still indexed and correct, over-covered near the edge), not rejected.
   Rationale: a safe catch-all that contains common CRSes (Web Mercator ±20,037,508 m, lat/long ±180/±90), while the override lets meter- or degree-scale data get tight leaf cells (leaf size = domain-width / 2^maxLevel).
   Date/Author: 2026-06-23, Mattias Jonsson.
 

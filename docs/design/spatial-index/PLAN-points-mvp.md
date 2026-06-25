@@ -52,7 +52,7 @@ Scope is deliberately the smallest useful slice: the indexed column must be a `P
   Rationale: aligns with the Sunny Bains review's bbox-in-value refinement at the cheapest point (a point's bbox is just its coordinates), while deferring the partitioned-table global-index work. Open wrinkle to resolve in Milestone 2: the hidden-generated-column expression index normally has an empty value, so carrying the bbox/coordinates needs a small index-value-generation extension (tracked in `research.md` open questions, item 6).
   Date/Author: 2026-06-25, Mattias Jonsson.
 
-- Decision: user-facing DDL is MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY` (the parser already accepts `SPATIAL INDEX`; execution is rejected today in `pkg/ddl/executor.go` and needs implementing). The hidden-generated-column model is an internal implementation detail, not user-facing syntax. Non-default cell tuning uses a CockroachDB-style `WITH (...)` clause (a TiDB grammar extension); the points MVP may ship with defaults only and add the `WITH` grammar as a follow-up. Full syntax in `research.md` -> "SQL syntax".
+- Decision: user-facing DDL is MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY` (the parser already accepts `SPATIAL INDEX`; execution is rejected today in `pkg/ddl/executor.go` and needs implementing). The hidden-generated-column model is an internal implementation detail, not user-facing syntax. Non-default cell tuning is deferred (ship defaults-only); if added later it would be bare `NAME = value` index options (the MySQL-family idiom, as MariaDB tunes its vector index), not a `WITH (...)` clause. Full syntax in `research.md` -> "SQL syntax".
   Date/Author: 2026-06-25, Mattias Jonsson.
 
 ## Outcomes & Retrospective
@@ -86,13 +86,13 @@ Today only `TypeGeometry` (`pkg/parser/mysql/type.go:47`) exists; the rest is ab
 
 The work goes bottom-up so the riskiest piece is proven before the rest is built on it.
 
-First, add an engine-neutral coverer package (proposed `pkg/util/spatial`). Define a `Coverer` interface with `EncodePoint(srid, x, y) (int64, error)` returning a point's cell id, and `CoverQuery(srid, region) ([]CellRange, error)` returning the cell-id ranges covering a query region (a rectangle, or a distance-bounded disc on a plane). Implement `planarCoverer` for SRID 0 over a configurable bounded domain (default `[-(1<<31), (1<<31)-1]` per axis, per `research.md`). Validate in isolation: a point encodes to one cell; `CoverQuery` of a region returns ranges that include the cell of every point inside the region (no false negatives), checked against brute force on random points. In the same milestone, write a throwaway test that constructs an `AccessPath` and confirms coverer-produced ranges can be injected as `path.Ranges` and drive an index scan, this de-risks the planner hook before committing to its final location.
+First, add an engine-neutral coverer package (proposed `pkg/util/spatial`). Define the shared `CellCoverer` seam (`CellKey []byte`; see PLAN.md / research.md) with `EncodePoint(srid, x, y) (CellKey, error)` returning a point's encoded cell key, and `CoverQuery(srid, region) ([]CellKeyRange, error)` returning the cell-key ranges covering a query region (a rectangle, or a distance-bounded disc on a plane). Implement `planarCoverer` for SRID 0 over a configurable bounded domain (default `[-(1<<31), (1<<31)-1]` per axis, per `research.md`). Validate in isolation: a point encodes to one cell; `CoverQuery` of a region returns ranges that include the cell of every point inside the region (no false negatives), checked against brute force on random points. In the same milestone, write a throwaway test that constructs an `AccessPath` and confirms coverer-produced ranges can be injected as `path.Ranges` and drive an index scan, this de-risks the planner hook before committing to its final location.
 
-Second, wire DDL. Add an internal builtin `tidb_spatial_key(geom) -> bigint` in a new `pkg/expression/builtin_spatial.go`, registered in the `funcs` map, that calls `spatial.EncodePoint` on the decoded point. Creating a spatial index on a `POINT` column generates a hidden virtual generated column whose `GeneratedExprString` is `tidb_spatial_key(<col>)` and builds a plain (non-MVI) secondary index on it, reusing the expression-index path. Record minimal metadata on `IndexInfo` marking it spatial and recording the source column and SRID so the planner can recognize it. Enforce the `POINT`, `NOT NULL`, SRID-constrained column restriction at DDL validation.
+Second, wire DDL. Add an internal builtin `tidb_spatial_key(geom)` returning the point's encoded cell key (the `CellKey`, an order-preserving fixed-width binary value) in a new `pkg/expression/builtin_spatial.go`, registered in the `funcs` map, that calls `spatial.EncodePoint` on the decoded point. Creating a spatial index on a `POINT` column generates a hidden virtual generated column whose `GeneratedExprString` is `tidb_spatial_key(<col>)` and builds a plain (non-MVI) secondary index on it, reusing the expression-index path. Record minimal metadata on `IndexInfo` marking it spatial and recording the source column and SRID so the planner can recognize it. Enforce the `POINT`, `NOT NULL`, SRID-constrained column restriction at DDL validation.
 
 Third, the planner hook and refine. In access-path construction for a `DataSource`, for each spatial index whose point column appears in a recognized spatial predicate (`ST_Distance(col, const) <= r`, `ST_Distance_Sphere(...) <= r`, `ST_Contains(const_poly, col)`, `ST_Within(col, const_poly)`, or a rectangular MBR test), evaluate the constant query region at plan time, call `CoverQuery`, set the resulting cell ranges as the path's `Ranges`, and leave the original exact predicate in `TableFilters` so the Selection above the scan refines. Confirm via `EXPLAIN` and result-equivalence. The bounded form `WHERE within radius ORDER BY distance LIMIT k` is supported automatically: the index serves the `WHERE`, an ordinary `TopN` sorts the small candidate set.
 
-Fourth, add `s2Coverer` for SRID 4326 using `github.com/golang/geo/s2`, behind the same `Coverer` interface, with spherical-cap covering for distance queries and correct antimeridian/pole handling. No code above the coverer interface changes.
+Fourth, add `s2Coverer` for SRID 4326 using `github.com/golang/geo/s2`, behind the same `CellCoverer` interface, with spherical-cap covering for distance queries and correct antimeridian/pole handling. No code above the coverer interface changes.
 
 Fifth, the correctness and compatibility pass.
 
@@ -141,12 +141,16 @@ Capture as work proceeds: the `EXPLAIN` output showing the spatial access path; 
 
 In `pkg/util/spatial` (final path to be confirmed):
 
-    type CellRange struct{ Lo, Hi int64 }
+    type CellKey []byte                       // order-preserving encoded cell id (shared seam; see PLAN.md / research.md)
+    type CellKeyRange struct{ Lo, Hi CellKey }
 
-    type Coverer interface {
-        EncodePoint(srid uint32, x, y float64) (int64, error)
-        CoverQuery(srid uint32, region QueryRegion) ([]CellRange, error)
+    type CellCoverer interface {
+        EncodePoint(srid uint32, x, y float64) (CellKey, error)        // a point covers to one cell
+        CoverQuery(srid uint32, region QueryRegion) ([]CellKeyRange, error)
     }
+
+`CellKey` is the byte form used across the design (it models S2's unsigned cell ids
+cleanly, unlike a signed `int64`).
 
 Implementations: `planarCoverer` (SRID 0, bounded domain), `s2Coverer` (SRID 4326, via `github.com/golang/geo/s2`, Apache 2.0). A thin `PointAccessor` wraps the prerequisite type's EWKB decode so type churn is localized. The internal builtin `tidb_spatial_key` lives in `pkg/expression/builtin_spatial.go` and is registered in `pkg/expression/builtin.go`. DDL reuses the expression-index path (`pkg/ddl/index.go`); the write path reuses `PlainIndexKVGenerator` (`pkg/table/tables/index.go`); the planner hook lives in access-path construction (`pkg/planner/core`, possibly with a small `pkg/util/ranger` addition).
 

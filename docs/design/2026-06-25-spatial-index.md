@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
 - Author(s): [Mattias Jonsson](http://github.com/mjonss)
-- Discussion PR: this PR (work in progress); builds on the earlier draft https://github.com/pingcap/tidb/pull/38916
+- Discussion PR: https://github.com/pingcap/tidb/pull/69473; builds on the earlier draft https://github.com/pingcap/tidb/pull/38916
 - Tracking Issue: https://github.com/pingcap/tidb/issues/6347
 
 ## Table of Contents
@@ -161,7 +161,8 @@ Two implementations, chosen by the column's SRID, sit behind it:
   natural bounds, so the index fixes a configurable coordinate domain (default
   `[-(1<<31), (1<<31)-1]` per axis, a generous bound covering common coordinate systems
   with headroom; CockroachDB's docs use the same value), quadtree-subdivides it, and
-  leaves out-of-domain coordinates correct but un-prunable.
+  clamps out-of-domain coordinates to the boundary cell (still indexed and correct,
+  over-covered near the edge), so the index stays complete and needs no full-scan fallback.
 - **SRID 4326 (WGS 84 lat/long): S2 spherical cells** via `github.com/golang/geo/s2`
   (Apache 2.0, Google's open-source S2 port). S2 handles the antimeridian and poles
   natively and covers a distance query as a spherical cap, which a flat lat/long grid
@@ -361,8 +362,8 @@ Risks:
   `go-geom`; to be verified.
 - **Global index costs** (Phase 3): cross-partition writes and partition-DDL cleanup are
   the usual global-index costs, inherited because global is the spatial default.
-- **SRID 0 domain**: data outside the configured bounds stays correct but unindexed (a
-  performance, not correctness, risk).
+- **SRID 0 domain**: data outside the configured bounds is clamped to the boundary cell
+  (over-covered near the edge), a performance, not correctness, risk.
 
 ## Investigation & Alternatives
 

@@ -1,8 +1,8 @@
 # Spatial Index Project: Context and Resume Notes
 
-Status: **parked** as of 2026-06-24. No code written yet; this is a design/research
-effort captured in documents. This file is the handoff so the project can resume from
-a cold start.
+Status: **in design review** as of 2026-06-25, PR https://github.com/pingcap/tidb/pull/69473.
+No code written yet; this is a design/research effort captured in documents. This file
+orients a reader and supports resuming the implementation work.
 
 Branch: `spatial-index-design` on remote `origin` (`mjonss/tidb`). Based on master tip
 `807326b066`.
@@ -19,9 +19,9 @@ functions are a prerequisite coded against, not a deliverable.
 ## Formal design doc
 
 The TiDB-template design document is `docs/design/2026-06-25-spatial-index.md` (one level
-up), following `docs/design/TEMPLATE.md`. It is the proposal for review (the WIP
-`*: Spatial index design` PR on this branch). The files in this directory are the
-supporting working material it references.
+up), following `docs/design/TEMPLATE.md`. It is the proposal under review (the
+`*: Spatial index design` PR, https://github.com/pingcap/tidb/pull/69473). The files in
+this directory are the supporting working material it references.
 
 ## Documents in this directory
 
@@ -83,16 +83,19 @@ supporting working material it references.
   in the value, where `partition_id` is the `PARTITION BY` physical partition id, not
   the PK). MVP stays non-partitioned; global index is a follow-on. See research.md ->
   "Index value contents and table partitioning" and its open-questions list.
+- SQL syntax (2026-06-25): MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY` on a `NOT NULL`,
+  SRID-restricted (0/4326) geometry column (a MySQL 8.0+ `SHOW CREATE TABLE` imports
+  cleanly; TiDB already parses `SPATIAL INDEX`, execution is the gap). Cell tuning is
+  deferred (defaults-only; if added, bare `NAME = value` index options, not `WITH`).
+  Composite (prefix-column) indexes are a very-late milestone. See research.md ->
+  "SQL syntax".
 
 ## Open questions to resolve on resume
 
-- Points-only MVP DDL grammar: MySQL-compatible `SPATIAL INDEX (col)` (parser work) vs
-  `USING HILBERT` / explicit expression-index syntax. Internal representation is
-  identical, so this can be chosen late. Recommendation: `SPATIAL INDEX`.
 - Cell-depth / max-cells default tuning, measure against representative point data (the
   Capital Bikeshare dataset used in TiDB docs is a candidate).
-- SRID 0 domain bounds default and out-of-domain behavior (currently: stay correct but
-  un-prunable, no rejection).
+- SRID 0 domain bounds default and out-of-domain behavior (currently: clamp to the
+  boundary cell, still indexed and correct, over-covered near the edge; not rejected).
 - Coverer package location: `pkg/util/spatial` (tentative) vs `pkg/types/spatial`.
 - Is a *clustered* spatial table ever a target use case, or is a secondary index on
   normally-clustered tables the only goal? This decides whether the ER-tree clustered
@@ -105,7 +108,7 @@ supporting working material it references.
   pre-filter runs (TiDB vs coprocessor), global-vs-local policy for partitioned tables,
   `partition_id` encoding reuse, MVP scope, and the hidden-column index-value wrinkle.
 
-## Next step on resume
+## Next step (implementation)
 
 Start Milestone 1 of `PLAN-points-mvp.md`: build `pkg/util/spatial` with the SRID 0
 planar coverer (`EncodePoint`, `CoverQuery`) and its no-false-negatives unit test, plus

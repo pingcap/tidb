@@ -694,8 +694,11 @@ SRID 0 is an abstract Cartesian plane: unitless `float64` coordinates, Euclidean
 distance, and **no natural bound**. A hierarchical grid needs a bounded universe to
 subdivide (an R-tree would adapt to data, but a static curve cannot). Therefore the
 index fixes a coordinate domain, a configurable `[min,max]²` box, quadtree-
-subdivides it to a fixed depth, and handles out-of-domain coordinates by leaving
-them un-prunable (still correct, just unindexed) rather than rejecting them.
+subdivides it to a fixed depth, and handles out-of-domain coordinates by clamping them
+to the nearest boundary cell (so they are still indexed and correct, just over-covered
+near the edge) rather than rejecting them or leaving them unindexed. Clamping keeps the
+index complete, so the planner needs no full-table-scan fallback for these rows; the
+exact refine, on the real coordinates, drops the over-cover.
 
 Important framing: **needing bounds is a property of the cell/space-filling-curve
 approach, not of spatial indexing in general.** MySQL, MariaDB, and PostGIS have no
@@ -1101,8 +1104,8 @@ not map to this design and are not followed.
   (e.g. the Capital Bikeshare dataset the docs already use).
 - **SRID 0 domain bounds**: default proposed as `[-(1<<31), (1<<31)-1]` per axis (a
   generous bound; CockroachDB's docs use the same value), exposed as an overridable
-  per-index `WITH` option; out-of-domain
-  coordinates stay correct but un-prunable (no rejection). Confirm the `WITH` syntax
+  per-index option; out-of-domain coordinates are clamped to the boundary cell (still
+  indexed and correct, over-covered near the edge), not rejected. Confirm the option
   surface and whether to infer bounds from any future known-SRID metadata.
 - **S2 library choice**: `github.com/golang/geo` (the `s2` package), Google's
   official Go S2 port, is Apache 2.0, so adopt it for the 4326 coverer rather than
