@@ -2858,6 +2858,13 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMLogLogSlowPurge, Value: BoolToOnOff(DefTiDBMLogLogSlowPurge), Type: TypeBool,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			MLogLogSlowPurge.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(MLogLogSlowPurge.Load()), nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalIgnoreError, Value: BoolToOnOff(DefTiDBBatchDMLIgnoreError), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.NonTransactionalIgnoreError = TiDBOptOn(val)

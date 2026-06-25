@@ -1673,6 +1673,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
+	if shouldSkipSlowLogForInternalMVMaintenance(sessVars) {
+		return
+	}
 	sqlText := a.GetTextToLog(true)
 	if len(sqlText) == 0 {
 		sqlText = restoreStmtTextForSlowLogWhenEmptySQL(a.StmtNode)
@@ -1842,6 +1845,14 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+func shouldSkipSlowLogForInternalMVMaintenance(sessVars *variable.SessionVars) bool {
+	if sessVars == nil {
+		return false
+	}
+	// Controlled by tidb_mlog_log_slow_purge: ON -> log (don't skip), OFF -> skip.
+	return !variable.MLogLogSlowPurge.Load() && sessVars.StmtCtx.StmtType == "PurgeMaterializedViewLog"
 }
 
 func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
