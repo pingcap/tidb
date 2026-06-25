@@ -20,6 +20,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/spatial"
@@ -73,6 +74,31 @@ func encodeEWKB(g geom.T, srid uint32) (string, error) {
 		return "", err
 	}
 	return string(append(buf.Bytes(), wkbVal...)), nil
+}
+
+// DecodeEWKBPoint decodes an EWKB POINT value into its SRID and coordinates.
+// Exported for the planner's spatial-index resolver.
+func DecodeEWKBPoint(ewkb string) (srid uint32, x, y float64, err error) {
+	s, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	pt, ok := g.(*geom.Point)
+	if !ok {
+		return 0, 0, 0, errors.New("expected a POINT geometry")
+	}
+	return s, pt.X(), pt.Y(), nil
+}
+
+// EWKBBounds returns the SRID and 2D bounding box of an EWKB geometry.
+// Exported for the planner's spatial-index resolver.
+func EWKBBounds(ewkb string) (srid uint32, minX, minY, maxX, maxY float64, err error) {
+	s, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
+	b := g.Bounds()
+	return s, b.Min(0), b.Min(1), b.Max(0), b.Max(1), nil
 }
 
 // decodeEWKB parses TiDB's EWKB storage form back into an SRID and geometry.
@@ -189,6 +215,7 @@ func (b *builtinStAsTextSig) evalString(ctx EvalContext, row chunk.Row) (string,
 
 type stDistanceFunctionClass struct {
 	baseFunctionClass
+	expropt.SessionVarsPropReader
 }
 
 func (c *stDistanceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -198,6 +225,9 @@ func (c *stDistanceFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
+	}
+	if sv, svErr := c.GetSessionVars(ctx.GetEvalCtx()); svErr == nil {
+		sv.StmtCtx.SpatialFunctionIsUsed = true
 	}
 	sig := &builtinStDistanceSig{bf}
 	return sig, nil
@@ -250,6 +280,7 @@ func (b *builtinStDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 
 type stContainsFunctionClass struct {
 	baseFunctionClass
+	expropt.SessionVarsPropReader
 }
 
 func (c *stContainsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -259,6 +290,9 @@ func (c *stContainsFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
+	}
+	if sv, svErr := c.GetSessionVars(ctx.GetEvalCtx()); svErr == nil {
+		sv.StmtCtx.SpatialFunctionIsUsed = true
 	}
 	sig := &builtinStContainsSig{bf}
 	return sig, nil
@@ -281,6 +315,7 @@ func (b *builtinStContainsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 
 type stWithinFunctionClass struct {
 	baseFunctionClass
+	expropt.SessionVarsPropReader
 }
 
 func (c *stWithinFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -290,6 +325,9 @@ func (c *stWithinFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
+	}
+	if sv, svErr := c.GetSessionVars(ctx.GetEvalCtx()); svErr == nil {
+		sv.StmtCtx.SpatialFunctionIsUsed = true
 	}
 	sig := &builtinStWithinSig{bf}
 	return sig, nil

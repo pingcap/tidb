@@ -98,6 +98,7 @@ var optRuleList = []base.LogicalOptRule{
 	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
 	&FullTextIndexResolverWhere{},
+	&SpatialIndexResolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
@@ -136,6 +137,7 @@ var optRuleFlags = []uint64{
 	rule.FlagMaxMinEliminate,
 	rule.FlagConstantPropagation,
 	rule.FlagFullTextIndexResolveWhere,
+	rule.FlagSpatialIndexResolve,
 	rule.FlagConvertOuterToInnerJoin,
 	rule.FlagPredicatePushDown,
 	rule.FlagJoinKeyTypeCast,
@@ -405,6 +407,9 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		flag |= rule.FlagFullTextIndexResolveTopN
 		flag |= rule.FlagFullTextIndexResolveProjection
 		flag |= rule.FlagFullTextIndexResolveReject
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.SpatialFunctionIsUsed {
+		flag |= rule.FlagSpatialIndexResolve
 	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {

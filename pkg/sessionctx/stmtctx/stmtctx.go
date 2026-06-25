@@ -515,6 +515,11 @@ type StatementContext struct {
 	// rewrite rules only when needed.
 	FTSFunctionIsUsed bool
 
+	// SpatialFunctionIsUsed indicates that a spatial predicate (ST_Distance,
+	// ST_Contains, ST_Within) appears in the current statement, so the optimizer
+	// runs the spatial-index resolver rule only when it can matter.
+	SpatialFunctionIsUsed bool
+
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
@@ -692,6 +697,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
 	sc.FTSFunctionIsUsed = false
+	sc.SpatialFunctionIsUsed = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
