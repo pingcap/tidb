@@ -274,10 +274,12 @@ func TestSnapImporterPDScanRequestFlowControl(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 200 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			_, err := importer.PaginateScanRegionForTest(ctx, []byte{}, []byte{})
 			require.NoError(t, err)
-		})
+		}()
 	}
 	wg.Wait()
 }

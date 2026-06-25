@@ -221,13 +221,16 @@ func (s *randomizedCRRSimulation) runRound(
 			name: "replicate-and-compute",
 			run: func(log *randomizedCRRRoundLog) {
 				wg := new(sync.WaitGroup)
-				wg.Go(func() {
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
 					log.replicatedFiles = s.replicateRandomBufferedFiles(replicateRNG)
-				})
-				wg.Go(func() {
+				}()
+				go func() {
+					defer wg.Done()
 					log.restartedCalculator = s.restartCalculatorIfNeeded(computeRNG)
 					log.checkpoint, log.advanced = s.tryComputeCheckpoint(s.cfg.ComputeTimeout)
-				})
+				}()
 				wg.Wait()
 			},
 		},

@@ -1513,11 +1513,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
-	if err != nil {
-		return err
-	}
-
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)

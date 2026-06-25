@@ -1244,7 +1244,6 @@ func (rc *LogClient) BuildMetaKVFiles(
 		); err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-
 	}
 	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
@@ -1285,7 +1284,6 @@ func (rc *LogClient) RestoreMetaKVFiles(
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 ) error {
-
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := RestoreMetaKVFilesWithBatchMethod(
 		ctx,
