@@ -823,7 +823,7 @@ type CSVConfig struct {
 	AllowEmptyLine bool   `toml:"-" json:"-"`
 	// For non-empty Delimiter (for example quotes), null elements inside quotes are not considered as null except for
 	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
-	QuotedNullIsText bool `toml:"-" json:"-"`
+	QuotedNullIsText bool `toml:"quoted-null-is-text" json:"quoted-null-is-text"`
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html
 	// > If the field begins with the ENCLOSED BY character, instances of that character are recognized as terminating a
 	// > field value only if followed by the field or line TERMINATED BY sequence.

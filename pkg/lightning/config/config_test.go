@@ -668,6 +668,16 @@ func TestStringOrStringSlice(t *testing.T) {
 	require.ErrorContains(t, err, "invalid string slice")
 }
 
+func TestQuotedNullIsText(t *testing.T) {
+	cfg := &Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		quoted-null-is-text = true
+	`))
+	require.NoError(t, err)
+	require.True(t, cfg.Mydumper.CSV.QuotedNullIsText)
+}
+
 func TestTOMLUnusedKeys(t *testing.T) {
 	cfg := &Config{}
 	err := cfg.LoadFromTOML([]byte(`

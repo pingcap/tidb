@@ -258,6 +258,9 @@ header = true
 not-null = false
 # if non-null = false (i.e. CSV can contain NULL), fields equal to this value will be treated as NULL
 null = '\N'
+# if true, values matching `null` will be treated as plain text when enclosed by `delimiter`;
+# `\N` still follows the existing NULL special case when backslash escaping is enabled.
+#quoted-null-is-text = false
 # whether to interpret backslash-escape inside strings.
 backslash-escape = true
 # if a line ends with a separator, remove it.
