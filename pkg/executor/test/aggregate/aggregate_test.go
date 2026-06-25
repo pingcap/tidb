@@ -73,6 +73,26 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
+func TestSumIntDistinct(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency = 4")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency = 4")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned, g int)")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 1), (2, 2, 1), (2, 2, 1), (3, 3, 2), (3, 3, 2), (null, null, 2)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select /*+ hash_agg() */ g, sum_int(distinct a), sum_int(distinct b) from t group by g order by g").Check(testkit.Rows(
+		"1 3 3",
+		"2 3 3",
+	))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values (null, null, 1), (null, null, 1)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("<nil> <nil>"))
+}
+
 func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {

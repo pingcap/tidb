@@ -238,6 +238,27 @@ func (e *sumDistinctInt64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Pa
 	return nil
 }
 
+func (*sumDistinctInt64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	s, d := (*partialResult4SumDistinctInt64)(src), (*partialResult4SumDistinctInt64)(dst)
+	for val := range s.valSet.M {
+		if d.valSet.Exist(val) {
+			continue
+		}
+		memDelta += d.valSet.Insert(val)
+		if d.isNull {
+			d.val = val
+			d.isNull = false
+			continue
+		}
+		sum, err := types.AddInt64(d.val, val)
+		if err != nil {
+			return memDelta, err
+		}
+		d.val = sum
+	}
+	return memDelta, nil
+}
+
 type sumUint struct {
 	baseSumIntAggFunc
 }
@@ -421,4 +442,26 @@ func (e *sumDistinctUint64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr P
 	}
 	chk.AppendUint64(e.ordinal, p.val)
 	return nil
+}
+
+func (*sumDistinctUint64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	s, d := (*partialResult4SumDistinctUint64)(src), (*partialResult4SumDistinctUint64)(dst)
+	for key := range s.valSet.M {
+		if d.valSet.Exist(key) {
+			continue
+		}
+		memDelta += d.valSet.Insert(key)
+		val := uint64(key)
+		if d.isNull {
+			d.val = val
+			d.isNull = false
+			continue
+		}
+		sum, err := types.AddUint64(d.val, val)
+		if err != nil {
+			return memDelta, err
+		}
+		d.val = sum
+	}
+	return memDelta, nil
 }
