@@ -176,3 +176,16 @@ func greatCircleMeters(lat1, lng1, lat2, lng2 float64) float64 {
 	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(la1)*math.Cos(la2)*math.Sin(dLng/2)*math.Sin(dLng/2)
 	return EarthRadiusMeters * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
+
+// TestCoverFixedLevelCellsCap ensures a geometry far too large for the cell level
+// fails loudly instead of trying to materialize billions of cells.
+func TestCoverFixedLevelCellsCap(t *testing.T) {
+	c := NewPlanarCoverer(0, 0, 1, 1, 16) // leaf ~ 1/65536
+	// Small geometry: fine.
+	ks, err := c.CoverFixedLevelCells(Rect{MinX: 0.10, MinY: 0.10, MaxX: 0.1005, MaxY: 0.1005})
+	require.NoError(t, err)
+	require.NotEmpty(t, ks)
+	// Whole-domain geometry at a fine level: capped with an error, not OOM.
+	_, err = c.CoverFixedLevelCells(Rect{MinX: 0, MinY: 0, MaxX: 1, MaxY: 1})
+	require.Error(t, err)
+}

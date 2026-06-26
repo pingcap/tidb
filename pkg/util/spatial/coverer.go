@@ -223,12 +223,21 @@ func (c *PlanarCoverer) coverLevelFor(r Rect) uint {
 	return uint(l)
 }
 
+// MaxFixedLevelCells bounds how many cells a single geometry may cover in the
+// multi-valued index. A fixed-level covering must use one shared level for both
+// stored and query geometries (so set-overlap is exact), which means a geometry
+// large relative to the leaf cell touches many cells. Rather than risk an
+// out-of-memory write when the index level is too fine for the data, the covering
+// fails loudly past this bound; the fix is a coarser cell level (index COMMENT).
+const MaxFixedLevelCells = 8192
+
 // CoverFixedLevelCells returns the canonical cell keys of every cell at the
 // coverer's level that overlaps the rectangle. Unlike CoverRect (which returns
 // leaf-resolution ranges for an ordered range scan), this returns one discrete
 // key per touched cell, suitable for a set-overlap (multi-valued index) match: a
 // stored geometry and a query geometry that intersect both touch a common cell,
 // so their cell sets overlap. Over-covering (bbox) is fine; the caller refines.
+// It errors if the rectangle would cover more than MaxFixedLevelCells cells.
 func (c *PlanarCoverer) CoverFixedLevelCells(r Rect) ([]CellKey, error) {
 	if r.MinX > r.MaxX {
 		r.MinX, r.MaxX = r.MaxX, r.MinX
@@ -240,7 +249,12 @@ func (c *PlanarCoverer) CoverFixedLevelCells(r Rect) ([]CellKey, error) {
 	col1 := c.quantize(r.MaxX, c.minX, c.maxX)
 	row0 := c.quantize(r.MinY, c.minY, c.maxY)
 	row1 := c.quantize(r.MaxY, c.minY, c.maxY)
-	keys := make([]CellKey, 0, (col1-col0+1)*(row1-row0+1))
+	// Count in uint64 to avoid the 32-bit overflow at large spans.
+	count := (uint64(col1-col0) + 1) * (uint64(row1-row0) + 1)
+	if count > MaxFixedLevelCells {
+		return nil, errors.Errorf("spatial: geometry covers %d cells (> %d); use a coarser cell level", count, MaxFixedLevelCells)
+	}
+	keys := make([]CellKey, 0, count)
 	for col := col0; col <= col1; col++ {
 		for row := row0; row <= row1; row++ {
 			keys = append(keys, mortonKey(interleave(col, row)))

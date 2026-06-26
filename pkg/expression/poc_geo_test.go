@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 // TestPOCGeoFunctions exercises the geometry storage + ST_ builtins end to end.
@@ -71,4 +72,16 @@ func TestPOCSpatialKey(t *testing.T) {
 	// Distinct far-apart points -> distinct keys; ordering is well-defined.
 	tk.MustQuery("SELECT hex(tidb_spatial_key(ST_GeomFromText('POINT(0 0)',0))) = hex(tidb_spatial_key(ST_GeomFromText('POINT(0 0)',0)))").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT hex(tidb_spatial_key(ST_GeomFromText('POINT(0 0)',0))) <> hex(tidb_spatial_key(ST_GeomFromText('POINT(1000000 1000000)',0)))").Check(testkit.Rows("1"))
+}
+
+// TestPOCSphereSRIDCheck verifies ST_Distance_Sphere rejects non-4326 SRIDs
+// (evaluated per row so constant folding does not defer the error).
+func TestPOCSphereSRIDCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE pts0 (id int primary key, p POINT NOT NULL SRID 0)")
+	tk.MustExec("INSERT INTO pts0 VALUES (1, ST_GeomFromText('POINT(0 0)',0))")
+	err := tk.QueryToErr("SELECT ST_Distance_Sphere(p, ST_GeomFromText('POINT(1 1)',0)) FROM pts0")
+	require.ErrorContains(t, err, "only SRID 4326 is supported")
 }

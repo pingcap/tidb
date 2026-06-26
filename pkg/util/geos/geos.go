@@ -64,7 +64,19 @@ func stripSRID(ewkb string) ([]byte, error) {
 }
 
 // Relate evaluates a binary relational predicate between two EWKB geometries.
-func Relate(pred Predicate, ewkb1, ewkb2 string) (bool, error) {
+// go-geos panics when GEOS raises a topology exception (e.g. an invalid,
+// self-intersecting polygon), so the panic is recovered and returned as an error
+// rather than aborting the goroutine on user-controlled input.
+func Relate(pred Predicate, ewkb1, ewkb2 string) (res bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			res, err = false, errors.Errorf("geos: %v", r)
+		}
+	}()
+	return relate(pred, ewkb1, ewkb2)
+}
+
+func relate(pred Predicate, ewkb1, ewkb2 string) (bool, error) {
 	wkb1, err := stripSRID(ewkb1)
 	if err != nil {
 		return false, err

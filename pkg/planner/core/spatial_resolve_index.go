@@ -89,6 +89,13 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 		if !ok {
 			continue
 		}
+		// Only inject when the indexed column's SRID matches the covering scheme;
+		// otherwise the stored keys (planar Morton vs S2) are in a different space
+		// and the ranges would never match. The retained exact predicate still
+		// produces the correct (full-scan) result.
+		if !req.sridMatchesColumn(ds.TableInfo, req.geomColID) {
+			continue
+		}
 		ranges, err := req.ranges(params)
 		if err != nil || len(ranges) == 0 {
 			continue
@@ -263,6 +270,25 @@ func (q coverRequest) ranges(params spatial.PlanarParams) ([]spatial.CellKeyRang
 	}
 }
 
+// sridMatchesColumn reports whether the indexed column's declared SRID is the
+// one the covering scheme expects (0 for the planar rect, 4326 for the S2 cap /
+// lat-lng rect).
+func (q coverRequest) sridMatchesColumn(tblInfo *model.TableInfo, geomColID int64) bool {
+	var colSRID uint32
+	for _, c := range tblInfo.Columns {
+		if c.ID == geomColID {
+			colSRID = c.Srid
+			break
+		}
+	}
+	switch q.kind {
+	case coverSphereCap, coverLatLngRect:
+		return colSRID == spatial.SRID4326
+	default:
+		return colSRID == 0
+	}
+}
+
 // recognizeSpatialPredicate matches the supported spatial predicates and returns
 // a covering request plus the indexed geometry column's ID.
 func recognizeSpatialPredicate(cond expression.Expression, evalCtx expression.EvalContext) (coverRequest, bool) {
@@ -409,6 +435,9 @@ func isFoldableConst(e expression.Expression) bool {
 // buildCellRangeExpr builds OR_i (h >= lo_i AND h <= hi_i) over the covering
 // ranges, where h is the hidden spatial-key column.
 func buildCellRangeExpr(ctx expression.BuildContext, h *expression.Column, ranges []spatial.CellKeyRange) expression.Expression {
+	if len(ranges) == 0 {
+		return nil
+	}
 	boolType := types.NewFieldType(mysql.TypeLonglong)
 	orTerms := make([]expression.Expression, 0, len(ranges))
 	for _, r := range ranges {

@@ -82,3 +82,14 @@ func TestRelateConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestRelateInvalidGeometryNoPanic confirms a GEOS topology exception on an
+// invalid (self-intersecting) polygon is returned as an error, not a panic.
+func TestRelateInvalidGeometryNoPanic(t *testing.T) {
+	bowtie := ewkb(t, "POLYGON((0 0,2 2,2 0,0 2,0 0))") // self-intersecting
+	pt := ewkb(t, "POINT(1 1)")
+	require.NotPanics(t, func() {
+		_, _ = Relate(Within, pt, bowtie)
+		_, _ = Relate(Overlaps, bowtie, bowtie)
+	})
+}

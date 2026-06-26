@@ -333,13 +333,22 @@ func (b *builtinStDistanceSphereSig) evalReal(ctx EvalContext, row chunk.Row) (f
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	_, g1, err := decodeEWKB(g1r)
+	s1, g1, err := decodeEWKB(g1r)
 	if err != nil {
 		return 0, false, err
 	}
-	_, g2, err := decodeEWKB(g2r)
+	s2, g2, err := decodeEWKB(g2r)
 	if err != nil {
 		return 0, false, err
+	}
+	if s1 != s2 {
+		return 0, false, errors.New("ST_Distance_Sphere: arguments have different SRIDs")
+	}
+	// Require the geographic SRID 4326, both so the haversine is meaningful and so
+	// a mixed-SRID call cannot pair a spherical refine with a planar index scan
+	// (which would silently drop rows).
+	if s1 != spatial.SRID4326 {
+		return 0, false, errors.New("ST_Distance_Sphere: only SRID 4326 is supported in the POC")
 	}
 	p1, ok1 := g1.(*geom.Point)
 	p2, ok2 := g2.(*geom.Point)
