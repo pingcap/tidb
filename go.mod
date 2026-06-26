@@ -100,7 +100,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260609033303-412e01458771
+	github.com/pingcap/kvproto v0.0.0-20260611082716-a15c348f8713
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -366,10 +366,6 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	// Temporary: pin to JmPotato/kvproto demo/ru-paging-size which adds
-	// `paging_size_bytes` to coprocessor.Request. Revert once
-	// pingcap/kvproto#1448 is merged and tagged.
-	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20260428063603-042bfc75f2ac
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
