@@ -1050,27 +1050,40 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 }
 
 // spatialIndexSourceColumn reports whether idxInfo is a spatial index (a single
-// hidden generated column whose expression is tidb_spatial_key(col)) and, if so,
-// returns the back-quoted source column for SHOW CREATE TABLE rendering.
+// hidden generated column whose expression is tidb_spatial_key(col) for points,
+// or cast(tidb_spatial_keys(col, ...) as ... array) for general geometries) and,
+// if so, returns the back-quoted source column for SHOW CREATE TABLE rendering.
 func spatialIndexSourceColumn(idxInfo *model.IndexInfo, tableInfo *model.TableInfo) (string, bool) {
 	if len(idxInfo.Columns) != 1 {
 		return "", false
 	}
 	col := tableInfo.Columns[idxInfo.Columns[0].Offset]
-	const prefix = ast.TiDBSpatialKey + "("
-	if !col.Hidden || !strings.HasPrefix(col.GeneratedExprString, prefix) {
+	if !col.Hidden {
 		return "", false
 	}
-	// GeneratedExprString is e.g. "tidb_spatial_key(`p`)" or, when tuned,
-	// "tidb_spatial_key(`p`, 12, 0e+00, ...)". The first argument is the
-	// already-escaped source column; the tuning args (if any) are surfaced via
-	// the index comment instead.
-	inner := strings.TrimSuffix(strings.TrimPrefix(col.GeneratedExprString, prefix), ")")
-	inner = strings.TrimSpace(strings.SplitN(inner, ",", 2)[0])
-	if inner == "" {
+	expr := col.GeneratedExprString
+	// Find the spatial-key call (the MVI form is wrapped in cast(... as ... array)).
+	var marker string
+	switch {
+	case strings.Contains(expr, ast.TiDBSpatialKeys+"("):
+		marker = ast.TiDBSpatialKeys + "("
+	case strings.Contains(expr, ast.TiDBSpatialKey+"("):
+		marker = ast.TiDBSpatialKey + "("
+	default:
 		return "", false
 	}
-	return inner, true
+	// The first argument after the marker is the (already-escaped) source column;
+	// the tuning args, if any, are surfaced via the index comment instead.
+	inner := expr[strings.Index(expr, marker)+len(marker):]
+	end := strings.IndexAny(inner, ",)")
+	if end < 0 {
+		return "", false
+	}
+	colRef := strings.TrimSpace(inner[:end])
+	if colRef == "" {
+		return "", false
+	}
+	return colRef, true
 }
 
 func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {

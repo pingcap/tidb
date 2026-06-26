@@ -223,6 +223,32 @@ func (c *PlanarCoverer) coverLevelFor(r Rect) uint {
 	return uint(l)
 }
 
+// CoverFixedLevelCells returns the canonical cell keys of every cell at the
+// coverer's level that overlaps the rectangle. Unlike CoverRect (which returns
+// leaf-resolution ranges for an ordered range scan), this returns one discrete
+// key per touched cell, suitable for a set-overlap (multi-valued index) match: a
+// stored geometry and a query geometry that intersect both touch a common cell,
+// so their cell sets overlap. Over-covering (bbox) is fine; the caller refines.
+func (c *PlanarCoverer) CoverFixedLevelCells(r Rect) ([]CellKey, error) {
+	if r.MinX > r.MaxX {
+		r.MinX, r.MaxX = r.MaxX, r.MinX
+	}
+	if r.MinY > r.MaxY {
+		r.MinY, r.MaxY = r.MaxY, r.MinY
+	}
+	col0 := c.quantize(r.MinX, c.minX, c.maxX)
+	col1 := c.quantize(r.MaxX, c.minX, c.maxX)
+	row0 := c.quantize(r.MinY, c.minY, c.maxY)
+	row1 := c.quantize(r.MaxY, c.minY, c.maxY)
+	keys := make([]CellKey, 0, (col1-col0+1)*(row1-row0+1))
+	for col := col0; col <= col1; col++ {
+		for row := row0; row <= row1; row++ {
+			keys = append(keys, mortonKey(interleave(col, row)))
+		}
+	}
+	return keys, nil
+}
+
 // cover walks the quadtree node at (level, col, row) given in that node's grid
 // resolution, descending no deeper than coverLevel. It appends covering ranges
 // (in Morton/leaf resolution) to out.

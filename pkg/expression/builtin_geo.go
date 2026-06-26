@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"math"
 	"strings"
 
@@ -46,6 +47,7 @@ var (
 	_ functionClass = &stYFunctionClass{}
 	_ functionClass = &stSRIDFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
+	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
 
 var (
@@ -58,6 +60,7 @@ var (
 	_ builtinFunc = &builtinStYSig{}
 	_ builtinFunc = &builtinStSRIDSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
+	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
 
 // defaultPlanarCoverer is the SRID 0 coverer used by tidb_spatial_key and the
@@ -530,6 +533,84 @@ func (b *builtinStSRIDSig) Clone() builtinFunc {
 	newSig := &builtinStSRIDSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+type tidbSpatialKeysFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbSpatialKeysFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	if len(args) != 1 && len(args) != 6 {
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	for range args[1:] {
+		argTps = append(argTps, types.ETReal)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	return &builtinTiDBSpatialKeysSig{bf}, nil
+}
+
+type builtinTiDBSpatialKeysSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBSpatialKeysSig) Clone() builtinFunc {
+	newSig := &builtinTiDBSpatialKeysSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// SpatialKeyHexLen is the width of a hex-encoded cell key (8 bytes -> 16 chars),
+// used as the element type of the multi-valued spatial index.
+const SpatialKeyHexLen = 16
+
+// evalJSON implements tidb_spatial_keys(geom): the JSON array of fixed-level cell
+// keys (hex-encoded) covering the geometry's bounding box. Backs the MVI for
+// general (non-point) geometries. POC scope: SRID 0.
+func (b *builtinTiDBSpatialKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.BinaryJSON{}, isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return types.BinaryJSON{}, false, err
+	}
+	if srid != 0 {
+		return types.BinaryJSON{}, false, errors.New("tidb_spatial_keys: only SRID 0 is supported in the POC")
+	}
+	params := spatial.DefaultPlanarParams()
+	if len(b.args) == 6 {
+		vals := make([]float64, 5)
+		for i := range vals {
+			v, isNull, err := b.args[i+1].EvalReal(ctx, row)
+			if isNull || err != nil {
+				return types.BinaryJSON{}, isNull, err
+			}
+			vals[i] = v
+		}
+		params = spatial.PlanarParams{Level: uint(vals[0]), MinX: vals[1], MinY: vals[2], MaxX: vals[3], MaxY: vals[4]}
+	}
+	bnd := g.Bounds()
+	cells, err := params.Coverer().CoverFixedLevelCells(spatial.Rect{
+		MinX: bnd.Min(0), MinY: bnd.Min(1), MaxX: bnd.Max(0), MaxY: bnd.Max(1),
+	})
+	if err != nil {
+		return types.BinaryJSON{}, false, err
+	}
+	elems := make([]any, len(cells))
+	for i, k := range cells {
+		elems[i] = hex.EncodeToString(k)
+	}
+	return types.CreateBinaryJSON(elems), false, nil
 }
 
 func (b *builtinStSRIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {

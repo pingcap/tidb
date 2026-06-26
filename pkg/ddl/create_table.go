@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -1317,7 +1318,7 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 // (e.g. COMMENT 'spatial:18,-180,-90,180,90'); without it the column uses the
 // default coverer. Baking the params into the expression args makes them the
 // single source of truth shared by the write path and the planner.
-func buildSpatialKeyExpr(colName ast.CIStr, comment string) (*ast.FuncCallExpr, error) {
+func buildSpatialKeyExpr(colName ast.CIStr, comment string, isPoint bool) (ast.ExprNode, error) {
 	args := []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}}
 	if params, ok, err := parseSpatialComment(comment); err != nil {
 		return nil, err
@@ -1330,8 +1331,24 @@ func buildSpatialKeyExpr(colName ast.CIStr, comment string) (*ast.FuncCallExpr, 
 			ast.NewValueExpr(params.MaxY, "", ""),
 		)
 	}
-	return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TiDBSpatialKey), Args: args}, nil
+	if isPoint {
+		// A POINT maps to exactly one cell: a plain (non-MVI) index on the scalar
+		// cell key.
+		return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TiDBSpatialKey), Args: args}, nil
+	}
+	// A general geometry covers many cells: a multi-valued index over the JSON
+	// array of cell keys, i.e. CAST(tidb_spatial_keys(col, ...) AS CHAR(16) ARRAY).
+	keysCall := &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TiDBSpatialKeys), Args: args}
+	castType := types.NewFieldType(mysql.TypeString)
+	castType.SetFlen(spatialKeyHexLen)
+	castType.SetCharset(charset.CharsetUTF8MB4)
+	castType.SetCollate(charset.CollationUTF8MB4)
+	castType.SetArray(true)
+	return &ast.FuncCastExpr{Expr: keysCall, Tp: castType, FunctionType: ast.CastFunction}, nil
 }
+
+// spatialKeyHexLen is the CHAR width of a hex-encoded cell key (8 bytes).
+const spatialKeyHexLen = 16
 
 // parseSpatialComment extracts per-index cell tuning from an index comment.
 func parseSpatialComment(comment string) (spatial.PlanarParams, bool, error) {
@@ -1346,6 +1363,29 @@ func parseSpatialComment(comment string) (spatial.PlanarParams, bool, error) {
 		return spatial.PlanarParams{}, false, err
 	}
 	return p, true, nil
+}
+
+// validateSpatialColumn checks a column is indexable by a SPATIAL index and
+// reports whether it is a POINT (plain index) vs a general geometry (MVI). A
+// general-geometry MVI is SRID 0 only in the POC; POINT supports SRID 0 or 4326.
+func validateSpatialColumn(col *table.Column) (isPoint bool, err error) {
+	if col.FieldType.GetType() != mysql.TypeGeometry {
+		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on geometry columns")
+	}
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
+		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
+	}
+	isPoint = col.FieldType.GetGeometryType() == field_types.GeomPoint
+	if isPoint {
+		if col.Srid != 0 && col.Srid != 4326 {
+			return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index on a POINT supports SRID 0 or 4326 in the POC, got SRID %d", col.Srid)
+		}
+		return true, nil
+	}
+	if col.Srid != 0 {
+		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index on a general geometry supports SRID 0 in the POC, got SRID %d", col.Srid)
+	}
+	return false, nil
 }
 
 // rewriteSpatialConstraints validates each inline SPATIAL constraint and
@@ -1364,20 +1404,15 @@ func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constrai
 		if col == nil {
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(constr.Keys[0].Column.Name)
 		}
-		if col.FieldType.GetType() != mysql.TypeGeometry || col.FieldType.GetGeometryType() != field_types.GeomPoint {
-			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on POINT columns in the POC")
-		}
-		if !mysql.HasNotNullFlag(col.GetFlag()) {
-			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
-		}
-		if col.Srid != 0 && col.Srid != 4326 {
-			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 or 4326 in the POC, got SRID %d", col.Srid)
+		isPoint, err := validateSpatialColumn(col)
+		if err != nil {
+			return err
 		}
 		comment := ""
 		if constr.Option != nil {
 			comment = constr.Option.Comment
 		}
-		keyExpr, err := buildSpatialKeyExpr(col.Name, comment)
+		keyExpr, err := buildSpatialKeyExpr(col.Name, comment, isPoint)
 		if err != nil {
 			return err
 		}

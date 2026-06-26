@@ -392,10 +392,14 @@ const (
 	StX              = "st_x"
 	StY              = "st_y"
 	StSRID           = "st_srid"
-	// TiDBSpatialKey is an internal function: it maps a geometry to its
+	// TiDBSpatialKey is an internal function: it maps a POINT to its
 	// order-preserving spatial index CellKey. It backs the hidden generated
-	// column of a spatial index and is not intended for direct user use.
+	// column of a points-only spatial index and is not intended for direct use.
 	TiDBSpatialKey = "tidb_spatial_key"
+	// TiDBSpatialKeys is an internal function: it maps a general geometry to the
+	// JSON array of fixed-level cell keys covering it, backing the multi-valued
+	// (general-geometry) spatial index. Not intended for direct user use.
+	TiDBSpatialKeys = "tidb_spatial_keys"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"

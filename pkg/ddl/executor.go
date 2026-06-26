@@ -5085,25 +5085,20 @@ func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, inde
 	if col == nil {
 		return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(part.Column.Name)
 	}
-	if col.FieldType.GetType() != mysql.TypeGeometry || col.FieldType.GetGeometryType() != parser_types.GeomPoint {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on POINT columns in the POC")
-	}
-	if !mysql.HasNotNullFlag(col.GetFlag()) {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
-	}
-	if col.Srid != 0 && col.Srid != 4326 {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 or 4326 in the POC, got SRID %d", col.Srid)
+	isPoint, err := validateSpatialColumn(col)
+	if err != nil {
+		return err
 	}
 
-	// Rewrite the column part into the expression tidb_spatial_key(`col`), so
-	// the existing expression-index path creates the hidden generated column
-	// and a plain secondary index over it. Per-index cell tuning may be supplied
-	// via the index comment (see buildSpatialKeyExpr).
+	// Rewrite the column part into the spatial key expression (a scalar
+	// tidb_spatial_key for POINTs -> plain index, or CAST(tidb_spatial_keys(...)
+	// AS CHAR ARRAY) for general geometries -> multi-valued index), reusing the
+	// expression-index path. Per-index cell tuning comes from the index comment.
 	comment := ""
 	if indexOption != nil {
 		comment = indexOption.Comment
 	}
-	keyExpr, err := buildSpatialKeyExpr(col.Name, comment)
+	keyExpr, err := buildSpatialKeyExpr(col.Name, comment, isPoint)
 	if err != nil {
 		return err
 	}
