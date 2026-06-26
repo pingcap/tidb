@@ -80,6 +80,12 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery(`SELECT ST_AsGeoJSON(ST_GeomFromText('POINT(1 2)'))`).Check(testkit.Rows(`{"type":"Point","coordinates":[1,2]}`))
 	// GeoJSON parses to a 4326 geometry (MySQL default) and round-trips.
 	tk.MustQuery(`SELECT ST_AsText(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[3,4]}'))`).Check(testkit.Rows("POINT(3 4)"))
+
+	// Measurement/derived: ST_Area, ST_Length, ST_Dimension, ST_Centroid.
+	tk.MustQuery("SELECT ST_Area(ST_GeomFromText('POLYGON((0 0,3 0,3 4,0 4,0 0))'))").Check(testkit.Rows("12"))
+	tk.MustQuery("SELECT ST_Length(ST_GeomFromText('LINESTRING(0 0,3 4)'))").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT ST_Dimension(ST_GeomFromText('POINT(1 1)')), ST_Dimension(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))").Check(testkit.Rows("0 2"))
+	tk.MustQuery("SELECT ST_AsText(ST_Centroid(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))')))").Check(testkit.Rows("POINT(2 2)"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.

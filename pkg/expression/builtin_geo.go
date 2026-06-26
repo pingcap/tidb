@@ -52,6 +52,10 @@ var (
 	_ functionClass = &stIsEmptyFunctionClass{}
 	_ functionClass = &stAsGeoJSONFunctionClass{}
 	_ functionClass = &stGeomFromGeoJSONFunctionClass{}
+	_ functionClass = &stAreaFunctionClass{}
+	_ functionClass = &stLengthFunctionClass{}
+	_ functionClass = &stDimensionFunctionClass{}
+	_ functionClass = &stCentroidFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
@@ -74,6 +78,10 @@ var (
 	_ builtinFunc = &builtinStIsEmptySig{}
 	_ builtinFunc = &builtinStAsGeoJSONSig{}
 	_ builtinFunc = &builtinStGeomFromGeoJSONSig{}
+	_ builtinFunc = &builtinStAreaSig{}
+	_ builtinFunc = &builtinStLengthSig{}
+	_ builtinFunc = &builtinStDimensionSig{}
+	_ builtinFunc = &builtinStCentroidSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
@@ -955,6 +963,165 @@ func (b *builtinStGeomFromGeoJSONSig) evalString(ctx EvalContext, row chunk.Row)
 		return "", false, errors.Trace(err)
 	}
 	return encodeEWKB(g, spatial.SRID4326), false, nil
+}
+
+type stAreaFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stAreaFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStAreaSig{bf}
+	return sig, nil
+}
+
+type builtinStAreaSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStAreaSig) Clone() builtinFunc {
+	newSig := &builtinStAreaSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalReal implements ST_Area(geom) -> the area (0 for non-areal geometries).
+func (b *builtinStAreaSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	return g.Area(), false, nil
+}
+
+type stLengthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stLengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStLengthSig{bf}
+	return sig, nil
+}
+
+type builtinStLengthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStLengthSig) Clone() builtinFunc {
+	newSig := &builtinStLengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalReal implements ST_Length(geom) -> the length (0 for non-linear geometries).
+func (b *builtinStLengthSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	return g.Length(), false, nil
+}
+
+type stDimensionFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stDimensionFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStDimensionSig{bf}
+	return sig, nil
+}
+
+type builtinStDimensionSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStDimensionSig) Clone() builtinFunc {
+	newSig := &builtinStDimensionSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt implements ST_Dimension(geom) -> 0 (point), 1 (line), 2 (area).
+func (b *builtinStDimensionSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	return int64(g.Dimension()), false, nil
+}
+
+type stCentroidFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stCentroidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStCentroidSig{bf}
+	return sig, nil
+}
+
+type builtinStCentroidSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStCentroidSig) Clone() builtinFunc {
+	newSig := &builtinStCentroidSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_Centroid(geom) -> the centroid point, keeping the SRID.
+func (b *builtinStCentroidSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	return encodeEWKB(g.Centroid().AsGeometry(), srid), false, nil
 }
 
 type tidbSpatialKeysFunctionClass struct {

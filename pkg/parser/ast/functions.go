@@ -403,6 +403,10 @@ const (
 	StCoveredBy       = "st_coveredby"
 	StAsGeoJSON       = "st_asgeojson"
 	StGeomFromGeoJSON = "st_geomfromgeojson"
+	StArea            = "st_area"
+	StLength          = "st_length"
+	StCentroid        = "st_centroid"
+	StDimension       = "st_dimension"
 	// TiDBSpatialKey is an internal function: it maps a POINT to its
 	// order-preserving spatial index CellKey. It backs the hidden generated
 	// column of a points-only spatial index and is not intended for direct use.

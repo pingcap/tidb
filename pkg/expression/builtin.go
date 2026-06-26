@@ -1030,6 +1030,10 @@ var funcs = map[string]functionClass{
 	ast.StCoveredBy:       &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StCoveredBy, 2, 2}, pred: geomrel.CoveredBy},
 	ast.StAsGeoJSON:       &stAsGeoJSONFunctionClass{baseFunctionClass{ast.StAsGeoJSON, 1, 1}},
 	ast.StGeomFromGeoJSON: &stGeomFromGeoJSONFunctionClass{baseFunctionClass{ast.StGeomFromGeoJSON, 1, 1}},
+	ast.StArea:            &stAreaFunctionClass{baseFunctionClass{ast.StArea, 1, 1}},
+	ast.StLength:          &stLengthFunctionClass{baseFunctionClass{ast.StLength, 1, 1}},
+	ast.StCentroid:        &stCentroidFunctionClass{baseFunctionClass{ast.StCentroid, 1, 1}},
+	ast.StDimension:       &stDimensionFunctionClass{baseFunctionClass{ast.StDimension, 1, 1}},
 	ast.TiDBSpatialKey:    &tidbSpatialKeyFunctionClass{baseFunctionClass{ast.TiDBSpatialKey, 1, 6}},
 	ast.TiDBSpatialKeys:   &tidbSpatialKeysFunctionClass{baseFunctionClass{ast.TiDBSpatialKeys, 1, 6}},
 }
