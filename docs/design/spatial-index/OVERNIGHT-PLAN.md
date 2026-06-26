@@ -19,10 +19,13 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
   `POLYGON`, `MULTI*`, `GEOMETRYCOLLECTION`) + per-column `SRID`; EWKB storage
   (`<srid_le_u32><wkb>`), MySQL-compatible. Pure-Go geometry stack
   (`simplefeatures` + `golang/geo` S2) — no cgo/libgeos.
-- **ST_ functions**: `ST_GeomFromText`, `ST_AsText`; `ST_X`/`ST_Y`/`ST_SRID`
-  (getter); `ST_Distance` (planar), `ST_Distance_Sphere` (4326); DE-9IM
-  predicates `ST_Within/Contains/Intersects/Equals/Disjoint/Touches/Crosses/
-  Overlaps` (OGC-correct via simplefeatures).
+- **ST_ functions**: I/O `ST_GeomFromText`/`ST_AsText`, `ST_GeomFromWKB`/
+  `ST_AsBinary`(`ST_AsWKB`); accessors `ST_X`/`ST_Y`/`ST_SRID` (getter),
+  `ST_GeometryType`, `ST_Envelope`; `ST_Distance` (planar),
+  `ST_Distance_Sphere` (4326); DE-9IM predicates `ST_Within/Contains/Intersects/
+  Equals/Disjoint/Touches/Crosses/Overlaps` (OGC-correct via simplefeatures).
+  Geometry-returning builtins are typed `GEOMETRY`, so a plain B-tree functional
+  index over them is correctly rejected.
 - **Index**: `CREATE SPATIAL INDEX` (standalone + inline), `SHOW CREATE` renders
   `SPATIAL KEY`. Point index → scalar plain index on hidden `tidb_spatial_key`;
   general-geometry index → multi-valued index on `tidb_spatial_keys` (one row →
@@ -35,12 +38,14 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
 
 ### Left for a complete MVP
 
-- Fix the geometry-functional-index correctness bug (see Known limitations).
 - DML maintenance verified for general geometry (UPDATE/DELETE re-covering), not
   just points.
-- I/O + accessor breadth: `ST_GeomFromWKB`, `ST_AsBinary`/`ST_AsWKB`,
-  `ST_GeometryType`, `ST_IsValid`, `ST_IsEmpty`, `ST_Envelope`, `ST_SRID` setter.
+- Remaining I/O/accessors: `ST_IsValid`, `ST_IsEmpty`, `ST_SRID` setter form,
+  GeoJSON. (`ST_GeomFromWKB`/`ST_AsBinary`/`ST_GeometryType`/`ST_Envelope` done.)
 - MySQL error parity for the POC divergences (`ST_SRID`, constructors).
+
+Done since the initial plan: the geometry-functional-index correctness bug is
+fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
 
 ### First release (MySQL surface + planner integration)
 
@@ -121,14 +126,6 @@ Then: **self-review → enumerate tests → benchmark → review again.**
 
 ## Known limitations (POC)
 
-- Geometry builtins are typed as binary strings, not `mysql.TypeGeometry`. As a
-  result a regular B-tree functional index over a geometry-returning expression
-  (e.g. `KEY ((ST_GeomFromText(x)))`) is wrongly *accepted* instead of being
-  rejected with `ErrFunctionalIndexOnJSONOrGeometryFunction` — the DDL guard in
-  `pkg/ddl/index.go` only checks `TypeJSON`, and the column's inferred type is a
-  string, so neither condition fires. This surfaces as the `expression_index`
-  mysql-test divergence. Proper fix (deferred): type the geometry builtins as
-  `TypeGeometry` and extend the index guard to reject `TypeGeometry` too.
 - `POLYGON()` / `LINESTRING()` / etc. parse as function calls but are not
   implemented (resolve to "function does not exist"); `ST_SRID` on a
   non-geometry argument returns a generic "invalid geometry value" error rather
