@@ -42,6 +42,16 @@ type Env interface {
 	StreamMeta
 	// GCLockResolver try to resolve locks when region checkpoint stopped.
 	tikv.RegionLockResolver
+<<<<<<< HEAD
+=======
+	// LogBackupFlushIntervalGetter fetches TiKV log-backup.max-flush-interval for resolving locks.
+	LogBackupFlushIntervalGetter
+}
+
+// LogBackupFlushIntervalGetter fetches TiKV log-backup.max-flush-interval.
+type LogBackupFlushIntervalGetter interface {
+	GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error)
+>>>>>>> a239f120bbb (br: fix conifg typo (#69470))
 }
 
 // PDRegionScanner is a simple wrapper over PD
@@ -168,6 +178,68 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 	return env, nil
 }
 
+<<<<<<< HEAD
+=======
+func GetLogBackupFlushIntervalFromTiKVConfig(
+	ctx context.Context,
+	fetchTiKVConfigs func(context.Context, func([]byte) error) error,
+) (time.Duration, error) {
+	var maxFlushInterval time.Duration
+	var minFlushInterval time.Duration
+	storeCount := 0
+	err := fetchTiKVConfigs(ctx, func(resp []byte) error {
+		flushInterval, err := parseLogBackupFlushIntervalFromConfig(resp)
+		if err != nil {
+			log.Warn("failed to parse log-backup.max-flush-interval from TiKV config", zap.Error(err))
+			return err
+		}
+		if storeCount == 0 || flushInterval < minFlushInterval {
+			minFlushInterval = flushInterval
+		}
+		if flushInterval > maxFlushInterval {
+			maxFlushInterval = flushInterval
+		}
+		storeCount++
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if storeCount == 0 {
+		return 0, errors.New("no TiKV config found for log-backup.max-flush-interval")
+	}
+	if minFlushInterval != maxFlushInterval {
+		log.Warn("TiKV log-backup.max-flush-interval is not consistent; use the max value for resolve lock",
+			zap.Int("stores", storeCount),
+			zap.Duration("min-flush-interval", minFlushInterval),
+			zap.Duration("max-flush-interval", maxFlushInterval))
+	}
+	return maxFlushInterval, nil
+}
+
+func parseLogBackupFlushIntervalFromConfig(resp []byte) (time.Duration, error) {
+	type logbackup struct {
+		MaxFlushInterval *configtypes.Duration `json:"max-flush-interval"`
+	}
+
+	type config struct {
+		LogBackup logbackup `json:"log-backup"`
+	}
+	var c config
+	e := json.Unmarshal(resp, &c)
+	if e != nil {
+		return 0, e
+	}
+	if c.LogBackup.MaxFlushInterval == nil {
+		return 0, errors.New("log-backup.max-flush-interval is not found in TiKV config")
+	}
+	if c.LogBackup.MaxFlushInterval.Duration <= 0 {
+		return 0, errors.Errorf("invalid log-backup.max-flush-interval %s", c.LogBackup.MaxFlushInterval)
+	}
+	return c.LogBackup.MaxFlushInterval.Duration, nil
+}
+
+>>>>>>> a239f120bbb (br: fix conifg typo (#69470))
 type LogBackupService interface {
 	// GetLogBackupClient gets the log backup client.
 	GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error)

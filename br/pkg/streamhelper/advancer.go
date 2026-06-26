@@ -188,6 +188,63 @@ func (c *CheckpointAdvancer) GetInResolvingLock() bool {
 	return c.inResolvingLock.Load()
 }
 
+<<<<<<< HEAD
+=======
+func (c *CheckpointAdvancer) spawnLogBackupConfigUpdater(ctx context.Context) {
+	go c.runLogBackupConfigUpdater(ctx)
+}
+
+func (c *CheckpointAdvancer) runLogBackupConfigUpdater(ctx context.Context) {
+	c.refreshLogBackupFlushInterval(ctx)
+	ticker := time.NewTicker(logBackupConfigRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.refreshLogBackupFlushInterval(ctx)
+		}
+	}
+}
+
+func (c *CheckpointAdvancer) refreshLogBackupFlushInterval(ctx context.Context) {
+	timeout := c.Config().TickTimeout()
+	if timeout < logBackupConfigFetchTimeout {
+		timeout = logBackupConfigFetchTimeout
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	flushInterval, err := c.env.GetLogBackupFlushInterval(fetchCtx)
+	if err != nil {
+		log.Warn("failed to refresh TiKV log-backup.max-flush-interval; keep previous advancer intervals",
+			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),
+			zap.Duration("current-try-advance-threshold", c.getDefaultStartPollThreshold()),
+			logutil.ShortError(err))
+		return
+	}
+	if flushInterval <= 0 {
+		log.Warn("ignore invalid TiKV log-backup.max-flush-interval; keep previous advancer intervals",
+			zap.Duration("flush-interval", flushInterval),
+			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),
+			zap.Duration("current-try-advance-threshold", c.getDefaultStartPollThreshold()))
+		return
+	}
+	previous := c.getResolveLockInterval()
+	previousTryAdvanceThreshold := c.getDefaultStartPollThreshold()
+	c.resolveLockInterval.Store(int64(flushInterval))
+	tryAdvanceThreshold := flushInterval * 4 / 3
+	c.tryAdvanceThreshold.Store(int64(tryAdvanceThreshold))
+	if previous != flushInterval || previousTryAdvanceThreshold != tryAdvanceThreshold {
+		log.Info("refreshed TiKV log-backup.max-flush-interval for advancer intervals",
+			zap.Duration("previous-resolve-lock-interval", previous),
+			zap.Duration("resolve-lock-interval", flushInterval),
+			zap.Duration("previous-try-advance-threshold", previousTryAdvanceThreshold),
+			zap.Duration("try-advance-threshold", tryAdvanceThreshold))
+	}
+}
+
+>>>>>>> a239f120bbb (br: fix conifg typo (#69470))
 // GetCheckpointInRange scans the regions in the range,
 // collect them to the collector.
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte,
