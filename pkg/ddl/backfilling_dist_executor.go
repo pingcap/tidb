@@ -32,6 +32,12 @@ import (
 	"go.uber.org/zap"
 )
 
+var errIndexInfoNotFound = errors.New("index info not found")
+
+func isIndexInfoNotFoundErr(err error) bool {
+	return errors.Cause(err) == errIndexInfoNotFound
+}
+
 // Version constants for BackfillTaskMeta.
 const (
 	BackfillTaskMetaVersion0 = iota
@@ -146,7 +152,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			logutil.DDLIngestLogger().Warn("index info not found",
 				zap.Int64("table ID", tbl.Meta().ID),
 				zap.Int64("index ID", eid))
-			return nil, errors.Errorf("index info not found: %d", eid)
+			return nil, errors.Annotatef(errIndexInfoNotFound,
+				"eid: %d, table ID: %d, job ID: %d",
+				eid, tbl.Meta().ID, jobMeta.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
@@ -228,6 +236,9 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
+	if isIndexInfoNotFoundErr(err) {
+		return false
+	}
 	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 
