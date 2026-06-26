@@ -85,6 +85,11 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	}
 }
 
+// convertMysqlTimeToScalar maps a types.Time to the float64 scalar used for
+// histogram fraction and out-of-range estimation. The scalar is the duration
+// from the type's minimum bound (MinDatetime for date/datetime, MinTimestamp
+// for timestamp). TIMESTAMP values outside the legal range are clamped just
+// outside the valid scalar range so estimates stay finite and ordered.
 func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 	var minTime types.Time
 	switch valueTime.Type() {
@@ -101,14 +106,17 @@ func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 			// subtraction saturates to math.MinInt64 ns. That artificial huge
 			// distance from normal TIMESTAMP values would skew fraction and
 			// out-of-range estimates, so keep before-min values finite and just
-			// before the legal TIMESTAMP range.
+			// before the legal TIMESTAMP range. All before-min values collapse to
+			// the same -1; this is acceptable since they are invalid/zero values
+			// and calcFraction treats value <= lower as 0.
 			return -1
 		}
 		if valueTime.Compare(types.MaxTimestamp) > 0 {
 			// Historical stats may also contain above-max TIMESTAMP bounds. Put
 			// them just after the legal maximum. maxScalar + 1 is not enough here:
 			// at this magnitude float64 rounds it back to maxScalar, collapsing a
-			// [MaxTimestamp, after-max] bucket into a zero-width interval.
+			// [MaxTimestamp, after-max] bucket into a zero-width interval, so use
+			// Nextafter to advance by a single ULP.
 			maxTimestamp := types.MaxTimestamp
 			maxScalar := float64(maxTimestamp.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
 			return math.Nextafter(maxScalar, math.Inf(1))

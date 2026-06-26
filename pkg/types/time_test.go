@@ -2012,6 +2012,7 @@ func TestTimeSubTimestampGoTimeErrorLogRespectsContextFlags(t *testing.T) {
 				time.UTC,
 				contextutil.IgnoreWarn,
 			),
+			expectedErrorLogs: 0,
 		},
 		{
 			name: "ignore zero in date suppresses GoTime error log",
@@ -2020,6 +2021,7 @@ func TestTimeSubTimestampGoTimeErrorLogRespectsContextFlags(t *testing.T) {
 				time.UTC,
 				contextutil.IgnoreWarn,
 			),
+			expectedErrorLogs: 0,
 		},
 		{
 			name: "ignore invalid date error and zero in date suppress GoTime error log",
@@ -2028,6 +2030,7 @@ func TestTimeSubTimestampGoTimeErrorLogRespectsContextFlags(t *testing.T) {
 				time.UTC,
 				contextutil.IgnoreWarn,
 			),
+			expectedErrorLogs: 0,
 		},
 	}
 

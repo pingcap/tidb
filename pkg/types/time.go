@@ -725,6 +725,11 @@ func (t *Time) Sub(ctx Context, t1 *Time) Duration {
 	}
 }
 
+// logTimeSubGoTimeErr logs a GoTime conversion error produced by Time.Sub for
+// TIMESTAMP operands. Such errors are expected when the context tolerates
+// invalid/zero dates (e.g. zero TIMESTAMP values read from stats under relaxed
+// SQL modes), and are suppressed there to avoid log noise; in strict contexts
+// the original terror.Log behavior is preserved.
 func logTimeSubGoTimeErr(ctx Context, err error) {
 	if err == nil {
 		return

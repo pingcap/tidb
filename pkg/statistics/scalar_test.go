@@ -194,7 +194,10 @@ func TestCalcFraction(t *testing.T) {
 	}
 }
 
-func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
+// TestConvertMysqlTimeToScalarTimestampBounds verifies that zero/before-min and
+// above-max TIMESTAMP values are clamped to finite, ordered scalars and that
+// the zero-TIMESTAMP path does not emit tolerated GoTime error logs.
+func TestConvertMysqlTimeToScalarTimestampBounds(t *testing.T) {
 	core, recorded := observer.New(zap.ErrorLevel)
 	restore := log.ReplaceGlobals(
 		zap.New(core),
@@ -216,6 +219,13 @@ func TestConvertDatumToScalarZeroTimestampDoesNotLog(t *testing.T) {
 	afterMaxTimestamp := types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp))
 	afterMaxTimestampScalar := convertDatumToScalar(&afterMaxTimestamp, 0)
 	require.Greater(t, afterMaxTimestampScalar, maxTimestampScalar)
+}
+
+// TestOutOfRangeRowCountZeroTimestampLowerBound verifies the end-to-end
+// out-of-range estimate when a histogram bucket has a zero TIMESTAMP (clamped
+// to scalar -1) as its lower bound.
+func TestOutOfRangeRowCountZeroTimestampLowerBound(t *testing.T) {
+	datum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp))
 
 	hg := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
 	upper := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp))
