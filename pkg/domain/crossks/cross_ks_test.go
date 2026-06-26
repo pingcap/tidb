@@ -414,12 +414,12 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	})
 
 	dbInfo, tbl := getAlterTableModeTarget(t, targetDom.InfoSchema())
-	req := model.AlterTableModeRequest{
-		SchemaID:           dbInfo.ID,
-		TableID:            tbl.Meta().ID,
-		TableMode:          model.TableModeImport,
-		ExpectedSchemaName: "test",
-		ExpectedTableName:  "t_mode",
+	req := model.AlterTableModeTarget{
+		SchemaID:   dbInfo.ID,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    tbl.Meta().ID,
+		TableName:  ast.NewCIStr("t_mode"),
+		TargetMode: model.TableModeImport,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -427,17 +427,17 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode", targetKS, req))
 	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
 
-	req.ExpectedSchemaName = "renamed_test"
+	req.SchemaName = ast.NewCIStr("renamed_test")
 	err := alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode-schema-mismatch", targetKS, req)
 	require.ErrorContains(t, err, "expected schema name")
 
-	req.ExpectedSchemaName = "test"
-	req.ExpectedTableName = "renamed_t_mode"
+	req.SchemaName = ast.NewCIStr("test")
+	req.TableName = ast.NewCIStr("renamed_t_mode")
 	err = alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode-mismatch", targetKS, req)
 	require.ErrorContains(t, err, "expected table name")
 
-	req.ExpectedTableName = "t_mode"
-	req.TableMode = model.TableModeNormal
+	req.TableName = ast.NewCIStr("t_mode")
+	req.TargetMode = model.TableModeNormal
 	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode", targetKS, req))
 	require.Equal(t, model.TableModeNormal, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
 
@@ -467,12 +467,12 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	require.NoError(t, sessMgr.ServerStateSyncer().UpdateGlobalState(
 		context.Background(), serverstate.NewStateInfo(serverstate.StateUpgrading)))
 	require.False(t, sessMgr.ServerStateSyncer().IsUpgradingState())
-	upgradingReq := model.AlterTableModeRequest{
-		SchemaID:           dbInfo.ID,
-		TableID:            upgradeTbl.Meta().ID,
-		TableMode:          model.TableModeImport,
-		ExpectedSchemaName: "test",
-		ExpectedTableName:  "t_mode_upgrade",
+	upgradingReq := model.AlterTableModeTarget{
+		SchemaID:   dbInfo.ID,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    upgradeTbl.Meta().ID,
+		TableName:  ast.NewCIStr("t_mode_upgrade"),
+		TargetMode: model.TableModeImport,
 	}
 	upgradingCtx, upgradingCancel := context.WithCancel(context.Background())
 	defer upgradingCancel()
@@ -517,16 +517,12 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	}
 }
 
-type alterTableModeRuntimeAcquirer interface {
-	AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error)
-}
-
 func alterTableModeInKeyspaceForTest(
 	ctx context.Context,
-	acquirer alterTableModeRuntimeAcquirer,
+	acquirer sqlsvrapi.Server,
 	holderID string,
 	targetKS string,
-	req model.AlterTableModeRequest,
+	req model.AlterTableModeTarget,
 ) error {
 	runtime, err := acquirer.AcquireKSRuntime(targetKS, holderID)
 	if err != nil {

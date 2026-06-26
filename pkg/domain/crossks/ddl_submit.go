@@ -17,7 +17,6 @@ package crossks
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/traceevent"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -36,9 +33,10 @@ import (
 const ddlHistoryPollInterval = 100 * time.Millisecond
 
 type ddlClient struct {
-	store   kv.Storage
-	etcdCli *clientv3.Client
-	opts    jobsubmit.SubmitOptions
+	store     kv.Storage
+	etcdCli   *clientv3.Client
+	opts      jobsubmit.SubmitOptions
+	sampleLog *zap.Logger
 }
 
 func newDDLClient(
@@ -46,16 +44,18 @@ func newDDLClient(
 	etcdCli *clientv3.Client,
 	opts jobsubmit.SubmitOptions,
 ) *ddlClient {
+	sampleLog := logutil.SampleErrVerboseLoggerFactory(time.Minute, 3, zap.String("target-keyspace", store.GetKeyspace()))()
 	return &ddlClient{
-		store:   store,
-		etcdCli: etcdCli,
-		opts:    opts,
+		store:     store,
+		etcdCli:   etcdCli,
+		opts:      opts,
+		sampleLog: sampleLog,
 	}
 }
 
 func (c *ddlClient) alterTableMode(
 	ctx context.Context,
-	req model.AlterTableModeRequest,
+	req model.AlterTableModeTarget,
 ) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	target, err := c.resolveAlterTableModeTarget(ctx, req)
@@ -93,16 +93,7 @@ func (c *ddlClient) buildAlterTableModeJob(
 	}
 	defer c.opts.SessPool.Put(sctx)
 
-	job, args, noop, err := jobsubmit.BuildAlterTableModeJob(sctx, target)
-	if err != nil || noop {
-		return job, args, noop, errors.Trace(err)
-	}
-	job.TraceInfo = &tracing.TraceInfo{
-		ConnectionID: sctx.GetSessionVars().ConnectionID,
-		SessionAlias: sctx.GetSessionVars().SessionAlias,
-		TraceID:      traceevent.TraceIDFromContext(sctx.GetTraceCtx()),
-	}
-	return job, args, false, nil
+	return jobsubmit.BuildAlterTableModeJob(sctx, target)
 }
 
 func (c *ddlClient) refreshServerState(ctx context.Context) error {
@@ -115,28 +106,31 @@ func (c *ddlClient) refreshServerState(ctx context.Context) error {
 
 func (c *ddlClient) resolveAlterTableModeTarget(
 	ctx context.Context,
-	req model.AlterTableModeRequest,
+	req model.AlterTableModeTarget,
 ) (model.AlterTableModeTarget, error) {
 	var (
 		dbInfo  *model.DBInfo
 		tblInfo *model.TableInfo
 	)
 	err := kv.RunInNewTxn(ctx, c.store, false, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
+		m := meta.NewReader(txn)
 		var err error
 		dbInfo, err = m.GetDatabase(req.SchemaID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if dbInfo == nil {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %d", req.SchemaID))
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", req.SchemaID))
 		}
 		tblInfo, err = m.GetTable(req.SchemaID, req.TableID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if tblInfo == nil {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbInfo.Name, fmt.Sprintf("TableID: %d", req.TableID))
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
+				fmt.Sprintf("(Table ID %d)", req.TableID),
+			)
 		}
 		return nil
 	})
@@ -146,24 +140,24 @@ func (c *ddlClient) resolveAlterTableModeTarget(
 
 	// below checks shouldn't happen in normal execution path, but if we add a
 	// fallback restore table mode mechanism to end user, it might.
-	if strings.ToLower(req.ExpectedSchemaName) != dbInfo.Name.L {
+	if req.SchemaName.L != dbInfo.Name.L {
 		return model.AlterTableModeTarget{}, errors.Errorf(
 			"expected schema name %s does not match target schema name %s",
-			req.ExpectedSchemaName, dbInfo.Name.O)
+			req.SchemaName.O, dbInfo.Name.O)
 	}
-	if strings.ToLower(req.ExpectedTableName) != tblInfo.Name.L {
+	if req.TableName.L != tblInfo.Name.L {
 		return model.AlterTableModeTarget{}, errors.Errorf(
 			"expected table name %s does not match target table name %s",
-			req.ExpectedTableName, tblInfo.Name.O)
+			req.TableName.O, tblInfo.Name.O)
 	}
 
 	return model.AlterTableModeTarget{
 		SchemaID:    req.SchemaID,
-		SchemaName:  dbInfo.Name,
+		SchemaName:  req.SchemaName,
 		TableID:     req.TableID,
-		TableName:   tblInfo.Name,
+		TableName:   req.TableName,
 		CurrentMode: tblInfo.Mode,
-		TargetMode:  req.TableMode,
+		TargetMode:  req.TargetMode,
 	}, nil
 }
 
@@ -181,7 +175,7 @@ func (c *ddlClient) waitDDLFinished(ctx context.Context, jobID int64) error {
 
 		historyJob, err := c.getHistoryJob(ctx, jobID)
 		if err != nil {
-			logutil.BgLogger().Warn("get target DDL history failed, retrying",
+			c.sampleLog.Warn("get target DDL history failed, retrying",
 				zap.Int64("jobID", jobID), zap.Error(err))
 		} else if historyJob != nil {
 			if historyJob.IsSynced() {

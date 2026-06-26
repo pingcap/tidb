@@ -48,7 +48,7 @@ func (m *MockRuntime) ISGOMOCK() struct{} {
 }
 
 // AlterTableMode mocks base method.
-func (m *MockRuntime) AlterTableMode(arg0 context.Context, arg1 model.AlterTableModeRequest) error {
+func (m *MockRuntime) AlterTableMode(arg0 context.Context, arg1 model.AlterTableModeTarget) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AlterTableMode", arg0, arg1)
 	ret0, _ := ret[0].(error)

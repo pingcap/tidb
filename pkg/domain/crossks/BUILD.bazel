@@ -37,8 +37,6 @@ go_library(
         "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/logutil",
-        "//pkg/util/traceevent",
-        "//pkg/util/tracing",
         "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
@@ -59,7 +57,7 @@ go_test(
     ],
     embed = [":crossks"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 8,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

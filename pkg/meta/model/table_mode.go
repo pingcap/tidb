@@ -62,7 +62,8 @@ func (t TableMode) CanTransitionTo(target TableMode) bool {
 	return true
 }
 
-// AlterTableModeTarget is the resolved target metadata for an AlterTableMode job.
+// AlterTableModeTarget describes a table-mode change request and, after resolution,
+// the metadata needed to build an AlterTableMode job.
 type AlterTableModeTarget struct {
 	SchemaID    int64
 	SchemaName  ast.CIStr
@@ -70,13 +71,4 @@ type AlterTableModeTarget struct {
 	TableName   ast.CIStr
 	CurrentMode TableMode
 	TargetMode  TableMode
-}
-
-// AlterTableModeRequest is the unresolved request to change a table's mode.
-type AlterTableModeRequest struct {
-	SchemaID           int64
-	TableID            int64
-	TableMode          TableMode
-	ExpectedSchemaName string
-	ExpectedTableName  string
 }

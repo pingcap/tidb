@@ -457,8 +457,8 @@ func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
 	return h.entry.sessMgr.SysSessionPool()
 }
 
-func (h *runtimeHandle) AlterTableMode(ctx context.Context, req model.AlterTableModeRequest) error {
-	return h.entry.sessMgr.alterTableMode(ctx, req)
+func (h *runtimeHandle) AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
+	return h.entry.sessMgr.alterTableMode(ctx, target)
 }
 
 func (h *runtimeHandle) Release() {
@@ -502,8 +502,8 @@ func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 }
 
 // alterTableMode implements sqlsvrapi.Runtime.
-func (m *SessionManager) alterTableMode(ctx context.Context, req model.AlterTableModeRequest) error {
-	return m.ddlClient.alterTableMode(ctx, req)
+func (m *SessionManager) alterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
+	return m.ddlClient.alterTableMode(ctx, target)
 }
 
 // Coordinator returns the InfoSchemaCoordinator used by the session manager.

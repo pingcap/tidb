@@ -27,7 +27,7 @@ import (
 type Runtime interface {
 	Store() kv.Storage
 	SysSessionPool() util.DestroyableSessionPool
-	AlterTableMode(ctx context.Context, req model.AlterTableModeRequest) error
+	AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error
 }
 
 // KSRuntimeHandle is an acquired runtime handle for a target keyspace.
