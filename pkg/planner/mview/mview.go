@@ -67,9 +67,6 @@ func FindVisibleIndexWithPrefixCoveringColumns(
 
 // SetFullUpdateLookupIndexHint binds the full-update lookup inner scan to the supporting index.
 func SetFullUpdateLookupIndexHint(sel *ast.SelectStmt, indexName pmodel.CIStr) error {
-	if indexName.O == "" {
-		return nil
-	}
 	baseTableName, err := fullUpdateLookupInnerBaseTableName(sel)
 	if err != nil {
 		return err
@@ -1894,6 +1891,7 @@ func buildFullUpdateLookupInnerSelect(
 			NullOrder: true,
 		})
 	}
+
 	return &ast.SelectStmt{
 		Fields: &ast.FieldList{Fields: fields},
 		From: &ast.TableRefsClause{TableRefs: &ast.Join{
