@@ -60,6 +60,60 @@ func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, gr
 	return mviewutil.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
 }
 
+// FindVisibleIndexWithPrefixCoveringColumns returns the usable key layout for MIN/MAX full-update lookup.
+func FindVisibleIndexWithPrefixCoveringColumns(
+	baseTableInfo *model.TableInfo,
+	groupByCols []string,
+) (pmodel.CIStr, bool) {
+	indexName, ok := mviewutil.FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+	if !ok {
+		return pmodel.CIStr{}, false
+	}
+	return pmodel.NewCIStr(indexName), true
+}
+
+// SetFullUpdateLookupIndexHint binds the full-update lookup inner scan to the supporting index.
+func SetFullUpdateLookupIndexHint(sel *ast.SelectStmt, indexName pmodel.CIStr) error {
+	if indexName.O == "" {
+		return nil
+	}
+	baseTableName, err := fullUpdateLookupInnerBaseTableName(sel)
+	if err != nil {
+		return err
+	}
+	baseTableName.IndexHints = []*ast.IndexHint{
+		{
+			IndexNames: []pmodel.CIStr{indexName},
+			HintType:   ast.HintUse,
+			HintScope:  ast.HintForScan,
+		},
+	}
+	return nil
+}
+
+func fullUpdateLookupInnerBaseTableName(sel *ast.SelectStmt) (*ast.TableName, error) {
+	if sel == nil || sel.From == nil || sel.From.TableRefs == nil {
+		return nil, errors.New("mview full-update lookup template: invalid select for index hint")
+	}
+	innerSrc, ok := sel.From.TableRefs.Right.(*ast.TableSource)
+	if !ok {
+		return nil, errors.New("mview full-update lookup template: inner table source not found for index hint")
+	}
+	innerSel, ok := innerSrc.Source.(*ast.SelectStmt)
+	if !ok || innerSel.From == nil || innerSel.From.TableRefs == nil {
+		return nil, errors.New("mview full-update lookup template: inner select not found for index hint")
+	}
+	baseSrc, ok := innerSel.From.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		return nil, errors.New("mview full-update lookup template: inner base table source not found for index hint")
+	}
+	baseTableName, ok := baseSrc.Source.(*ast.TableName)
+	if !ok {
+		return nil, errors.New("mview full-update lookup template: inner base table not found for index hint")
+	}
+	return baseTableName, nil
+}
+
 // SQL construction overview:
 //   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
 //   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
@@ -1847,7 +1901,6 @@ func buildFullUpdateLookupInnerSelect(
 			NullOrder: true,
 		})
 	}
-
 	return &ast.SelectStmt{
 		Fields: &ast.FieldList{Fields: fields},
 		From: &ast.TableRefsClause{TableRefs: &ast.Join{

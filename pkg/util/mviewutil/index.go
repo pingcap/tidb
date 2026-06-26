@@ -26,7 +26,14 @@ import (
 // either PK-is-handle on the single group key, or an index whose leading
 // columns cover all group-by columns without prefix length.
 func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	return HasIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, "", true)
+	_, ok := FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+	return ok
+}
+
+// FindVisibleIndexWithPrefixCoveringColumns returns the public visible key layout
+// usable by MIN/MAX materialized-view refresh.
+func FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) (string, bool) {
+	return findIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, "", true)
 }
 
 // HasIndexWithPrefixCoveringColumns reports whether the table has a key layout
@@ -39,12 +46,22 @@ func HasIndexWithPrefixCoveringColumns(
 	excludedIndexName string,
 	requireVisiblePublic bool,
 ) bool {
+	_, ok := findIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, excludedIndexName, requireVisiblePublic)
+	return ok
+}
+
+func findIndexWithPrefixCoveringColumns(
+	baseTableInfo *model.TableInfo,
+	groupByCols []string,
+	excludedIndexName string,
+	requireVisiblePublic bool,
+) (string, bool) {
 	if baseTableInfo == nil {
-		return false
+		return "", false
 	}
 	prefixLen := len(groupByCols)
 	if prefixLen == 0 {
-		return false
+		return "", false
 	}
 	groupBySet := make(map[string]struct{}, prefixLen)
 	for _, col := range groupByCols {
@@ -55,7 +72,7 @@ func HasIndexWithPrefixCoveringColumns(
 	if baseTableInfo.PKIsHandle && prefixLen == 1 && excludedIndexName != strings.ToLower(mysql.PrimaryKeyName) {
 		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
 			if _, ok := groupBySet[pkCol.Name.L]; ok {
-				return true
+				return mysql.PrimaryKeyName, true
 			}
 		}
 	}
@@ -90,8 +107,8 @@ func HasIndexWithPrefixCoveringColumns(
 			matched[name] = struct{}{}
 		}
 		if ok && len(matched) == prefixLen {
-			return true
+			return idx.Name.O, true
 		}
 	}
-	return false
+	return "", false
 }
