@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/geos"
+	"github.com/pingcap/tidb/pkg/util/geomrel"
 	"github.com/pingcap/tidb/pkg/util/spatial"
 	"github.com/twpayne/go-geom"
 	"github.com/twpayne/go-geom/encoding/wkb"
@@ -42,7 +42,7 @@ var (
 	_ functionClass = &stAsTextFunctionClass{}
 	_ functionClass = &stDistanceFunctionClass{}
 	_ functionClass = &stDistanceSphereFunctionClass{}
-	_ functionClass = &geosRelFunctionClass{}
+	_ functionClass = &geomRelFunctionClass{}
 	_ functionClass = &stXFunctionClass{}
 	_ functionClass = &stYFunctionClass{}
 	_ functionClass = &stSRIDFunctionClass{}
@@ -55,7 +55,7 @@ var (
 	_ builtinFunc = &builtinStAsTextSig{}
 	_ builtinFunc = &builtinStDistanceSig{}
 	_ builtinFunc = &builtinStDistanceSphereSig{}
-	_ builtinFunc = &builtinGeosRelSig{}
+	_ builtinFunc = &builtinGeomRelSig{}
 	_ builtinFunc = &builtinStXSig{}
 	_ builtinFunc = &builtinStYSig{}
 	_ builtinFunc = &builtinStSRIDSig{}
@@ -369,18 +369,19 @@ func greatCircleMeters(lng1, lat1, lng2, lat2 float64) float64 {
 	return spatial.EarthRadiusMeters * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
 
-// geosRelFunctionClass implements an OGC binary relational predicate
-// (ST_Within, ST_Contains, ST_Intersects, ...) by delegating to GEOS, so the
-// boundary/DE-9IM semantics match MySQL. setsSpatialFlag marks the predicates
-// the planner can serve from a spatial index, so the resolver rule runs.
-type geosRelFunctionClass struct {
+// geomRelFunctionClass implements an OGC binary relational predicate
+// (ST_Within, ST_Contains, ST_Intersects, ...) via the pure-Go simplefeatures
+// engine (pkg/util/geomrel), so the boundary/DE-9IM semantics match MySQL.
+// setsSpatialFlag marks the predicates the planner can serve from a spatial
+// index, so the resolver rule runs.
+type geomRelFunctionClass struct {
 	baseFunctionClass
 	expropt.SessionVarsPropReader
-	pred            geos.Predicate
+	pred            geomrel.Predicate
 	setsSpatialFlag bool
 }
 
-func (c *geosRelFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *geomRelFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -393,24 +394,24 @@ func (c *geosRelFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			sv.StmtCtx.SpatialFunctionIsUsed = true
 		}
 	}
-	return &builtinGeosRelSig{baseBuiltinFunc: bf, pred: c.pred, funcName: c.funcName}, nil
+	return &builtinGeomRelSig{baseBuiltinFunc: bf, pred: c.pred, funcName: c.funcName}, nil
 }
 
-type builtinGeosRelSig struct {
+type builtinGeomRelSig struct {
 	baseBuiltinFunc
-	pred     geos.Predicate
+	pred     geomrel.Predicate
 	funcName string
 }
 
-func (b *builtinGeosRelSig) Clone() builtinFunc {
-	newSig := &builtinGeosRelSig{pred: b.pred, funcName: b.funcName}
+func (b *builtinGeomRelSig) Clone() builtinFunc {
+	newSig := &builtinGeomRelSig{pred: b.pred, funcName: b.funcName}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalInt evaluates the relational predicate via GEOS over the two EWKB
+// evalInt evaluates the relational predicate via simplefeatures over the two EWKB
 // geometries (after checking their SRIDs agree, as MySQL requires).
-func (b *builtinGeosRelSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+func (b *builtinGeomRelSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	g1, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -430,7 +431,7 @@ func (b *builtinGeosRelSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	if s1 != s2 {
 		return 0, false, errors.Errorf("%s: binary geometry function passed two arguments with different SRIDs", b.funcName)
 	}
-	res, err := geos.Relate(b.pred, g1, g2)
+	res, err := geomrel.Relate(b.pred, g1, g2)
 	if err != nil {
 		return 0, false, err
 	}

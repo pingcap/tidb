@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/geos"
+	"github.com/pingcap/tidb/pkg/util/geomrel"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1008,14 +1008,14 @@ var funcs = map[string]functionClass{
 	ast.StAsWKT:          &stAsTextFunctionClass{baseFunctionClass{ast.StAsWKT, 1, 1}},
 	ast.StDistance:       &stDistanceFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDistance, 2, 2}},
 	ast.StDistanceSphere: &stDistanceSphereFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDistanceSphere, 2, 2}},
-	ast.StContains:       &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StContains, 2, 2}, pred: geos.Contains, setsSpatialFlag: true},
-	ast.StWithin:         &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StWithin, 2, 2}, pred: geos.Within, setsSpatialFlag: true},
-	ast.StIntersects:     &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StIntersects, 2, 2}, pred: geos.Intersects},
-	ast.StEquals:         &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StEquals, 2, 2}, pred: geos.Equals},
-	ast.StDisjoint:       &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDisjoint, 2, 2}, pred: geos.Disjoint},
-	ast.StTouches:        &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StTouches, 2, 2}, pred: geos.Touches},
-	ast.StCrosses:        &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StCrosses, 2, 2}, pred: geos.Crosses},
-	ast.StOverlaps:       &geosRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StOverlaps, 2, 2}, pred: geos.Overlaps},
+	ast.StContains:       &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StContains, 2, 2}, pred: geomrel.Contains, setsSpatialFlag: true},
+	ast.StWithin:         &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StWithin, 2, 2}, pred: geomrel.Within, setsSpatialFlag: true},
+	ast.StIntersects:     &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StIntersects, 2, 2}, pred: geomrel.Intersects},
+	ast.StEquals:         &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StEquals, 2, 2}, pred: geomrel.Equals},
+	ast.StDisjoint:       &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDisjoint, 2, 2}, pred: geomrel.Disjoint},
+	ast.StTouches:        &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StTouches, 2, 2}, pred: geomrel.Touches},
+	ast.StCrosses:        &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StCrosses, 2, 2}, pred: geomrel.Crosses},
+	ast.StOverlaps:       &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StOverlaps, 2, 2}, pred: geomrel.Overlaps},
 	ast.StX:              &stXFunctionClass{baseFunctionClass{ast.StX, 1, 1}},
 	ast.StY:              &stYFunctionClass{baseFunctionClass{ast.StY, 1, 1}},
 	ast.StSRID:           &stSRIDFunctionClass{baseFunctionClass{ast.StSRID, 1, 1}},

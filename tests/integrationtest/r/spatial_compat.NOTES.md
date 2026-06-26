@@ -40,3 +40,11 @@ is now empty (PoC output identical to MySQL 8.0.46):
    ST_Touches/ST_Crosses/ST_Overlaps) now delegate to GEOS (libgeos, via
    `pkg/util/geos`), giving OGC boundary semantics that match MySQL. The
    hand-rolled ray-casting was removed.
+
+## UPDATE: GEOS replaced by pure-Go simplefeatures
+
+The relational predicates were migrated from go-geos (cgo/libgeos) to
+github.com/peterstace/simplefeatures (pure Go, same OGC Simple Feature Access
+spec as GEOS/JTS/PostGIS). The recorded result remains byte-identical to MySQL
+8.0.46 (`diff r/spatial_compat.result r/spatial_compat.result.mysql` is empty),
+so OGC boundary semantics still match — now with no cgo dependency.

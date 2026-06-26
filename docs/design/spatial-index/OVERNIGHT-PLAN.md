@@ -90,14 +90,14 @@ Then: **self-review → enumerate tests → benchmark → review again.**
 
 - `go build ./pkg/...` and all POC `go test` pass with CGO on (libgeos present).
   Integration `spatial_compat` is byte-identical to MySQL 8.0.46.
-- **Bazel/CI gap (libgeos):** since Item 2, pkg/expression transitively imports
-  pkg/util/geos -> go-geos -> system libgeos (cgo, `#cgo pkg-config: geos`). The
-  Bazel build cannot compile these without wiring libgeos into the cc toolchain
-  (a system-lib cc_library + headers; gazelle does not auto-generate this for a
-  pkg-config cgo dep). DEPS.bzl also needs the new Go deps (go-geos, golang/geo,
-  + transitive) as proxy-fetch entries like the go-geom family (commit
-  c3a546775f). This build-infra work is a follow-up best done against the CI
-  environment; the Go toolchain path is fully green.
+- **cgo/libgeos removed (resolved):** the GEOS predicates were migrated from
+  go-geos (cgo/libgeos) to github.com/peterstace/simplefeatures (pure Go, same
+  OGC spec). The whole spatial stack now builds with `CGO_ENABLED=0`, and the
+  compat suite is still byte-identical to MySQL 8.0.46. The earlier Bazel
+  libgeos cc-toolchain blocker is gone; Bazel now only needs the pure-Go deps
+  (simplefeatures, golang/geo, go-geom) added to DEPS.bzl as proxy-fetch entries
+  like the go-geom family already are (commit c3a546775f) — no cc wiring. That
+  DEPS.bzl/bazel_prepare step is the only remaining CI follow-up.
 - Pre-existing race (not ours): tidb-server startup races in grpc `SetLoggerV2`
   vs the channelz goroutine (logutil.InitLogger / metrics) appear under the race
   detector on master too.
