@@ -136,3 +136,43 @@ func TestCoverRectRangeCountBounded(t *testing.T) {
 		require.LessOrEqual(t, len(rs), 64, "level %d produced too many ranges: %d", level, len(rs))
 	}
 }
+
+// TestS2CoverCapNoFalseNegatives checks that the S2 cap covering includes the
+// leaf cell of every WGS 84 point within the radius (no false negatives).
+func TestS2CoverCapNoFalseNegatives(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	for q := 0; q < 200; q++ {
+		clng := rng.Float64()*360 - 180
+		clat := rng.Float64()*170 - 85
+		radiusM := 1000 + rng.Float64()*200000 // 1km..200km
+		ranges, err := CoverCapDegrees(clng, clat, radiusM)
+		require.NoError(t, err)
+		// sample points within the radius by small angular offsets
+		for p := 0; p < 100; p++ {
+			// random bearing/distance within radius
+			frac := rng.Float64()
+			dM := radiusM * frac
+			// approximate offset in degrees (small) along lat and lng
+			dLat := (dM / EarthRadiusMeters) * (180 / math.Pi) * (rng.Float64()*2 - 1)
+			dLng := (dM / EarthRadiusMeters) * (180 / math.Pi) * (rng.Float64()*2 - 1)
+			plat := clat + dLat
+			plng := clng + dLng
+			// only assert for points actually within the radius (great-circle)
+			if greatCircleMeters(clat, clng, plat, plng) > radiusM {
+				continue
+			}
+			key := EncodePointS2(plng, plat)
+			require.Truef(t, keyInRanges(key, ranges),
+				"false negative at center(%f,%f) r=%f point(%f,%f)", clat, clng, radiusM, plat, plng)
+		}
+	}
+}
+
+func greatCircleMeters(lat1, lng1, lat2, lng2 float64) float64 {
+	toRad := math.Pi / 180
+	la1, lo1, la2, lo2 := lat1*toRad, lng1*toRad, lat2*toRad, lng2*toRad
+	dLat := la2 - la1
+	dLng := lo2 - lo1
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(la1)*math.Cos(la2)*math.Sin(dLng/2)*math.Sin(dLng/2)
+	return EarthRadiusMeters * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}

@@ -81,15 +81,15 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 	added := make([]expression.Expression, 0, 1)
 
 	for _, cond := range sel.Conditions {
-		rect, geomColID, ok := recognizeSpatialPredicate(cond, evalCtx)
+		req, ok := recognizeSpatialPredicate(cond, evalCtx)
 		if !ok {
 			continue
 		}
-		hiddenCol, params, ok := s.findSpatialHiddenColumn(ds, geomColID)
+		hiddenCol, params, ok := s.findSpatialHiddenColumn(ds, req.geomColID)
 		if !ok {
 			continue
 		}
-		ranges, err := params.Coverer().CoverRect(0, rect)
+		ranges, err := req.ranges(params)
 		if err != nil || len(ranges) == 0 {
 			continue
 		}
@@ -228,16 +228,47 @@ func isSpatialHiddenColumn(col *model.ColumnInfo) bool {
 	return col.Hidden && strings.HasPrefix(col.GeneratedExprString, spatialKeyExprPrefix)
 }
 
+// coverKind selects the covering scheme for a recognized predicate.
+type coverKind int
+
+const (
+	coverPlanarRect coverKind = iota // SRID 0: cover a planar rectangle
+	coverSphereCap                   // SRID 4326: cover a spherical cap (ST_Distance_Sphere)
+	coverLatLngRect                  // SRID 4326: cover a lat/long rectangle (containment)
+)
+
+// coverRequest is a recognized spatial predicate, holding everything needed to
+// produce CellKey ranges for whichever scheme the indexed column uses.
+type coverRequest struct {
+	geomColID int64
+	kind      coverKind
+	rect      spatial.Rect // planar/lat-lng rectangle
+	cx, cy, r float64      // spherical cap centre (lng,lat) and radius (metres)
+}
+
+// ranges builds the covering CellKey ranges for this request, using the planar
+// params (from the index's generated expression) for the SRID 0 scheme.
+func (q coverRequest) ranges(params spatial.PlanarParams) ([]spatial.CellKeyRange, error) {
+	switch q.kind {
+	case coverSphereCap:
+		return spatial.CoverCapDegrees(q.cx, q.cy, q.r)
+	case coverLatLngRect:
+		return spatial.CoverLatLngRectDegrees(q.rect.MinX, q.rect.MinY, q.rect.MaxX, q.rect.MaxY)
+	default:
+		return params.Coverer().CoverRect(0, q.rect)
+	}
+}
+
 // recognizeSpatialPredicate matches the supported spatial predicates and returns
-// the query rectangle to cover and the indexed geometry column's ID.
-func recognizeSpatialPredicate(cond expression.Expression, evalCtx expression.EvalContext) (spatial.Rect, int64, bool) {
+// a covering request plus the indexed geometry column's ID.
+func recognizeSpatialPredicate(cond expression.Expression, evalCtx expression.EvalContext) (coverRequest, bool) {
 	sf, ok := cond.(*expression.ScalarFunction)
 	if !ok {
-		return spatial.Rect{}, 0, false
+		return coverRequest{}, false
 	}
 	switch sf.FuncName.L {
 	case ast.LE, ast.LT:
-		// ST_Distance(col, const_point) <= r
+		// ST_Distance(col, const) <= r  or  ST_Distance_Sphere(col, const) <= r
 		return recognizeDistancePredicate(sf, evalCtx)
 	case ast.StContains:
 		// ST_Contains(const_poly, col)
@@ -248,52 +279,80 @@ func recognizeSpatialPredicate(cond expression.Expression, evalCtx expression.Ev
 		args := sf.GetArgs()
 		return recognizeContainmentPredicate(args[1], args[0], evalCtx)
 	}
-	return spatial.Rect{}, 0, false
+	return coverRequest{}, false
 }
 
-// recognizeDistancePredicate handles ST_Distance(col, const_point) <= r.
-func recognizeDistancePredicate(cmp *expression.ScalarFunction, evalCtx expression.EvalContext) (spatial.Rect, int64, bool) {
+// recognizeDistancePredicate handles ST_Distance / ST_Distance_Sphere(col,
+// const_point) <= r. Planar distance covers the disc's bbox (SRID 0); spherical
+// distance covers an S2 cap (SRID 4326).
+func recognizeDistancePredicate(cmp *expression.ScalarFunction, evalCtx expression.EvalContext) (coverRequest, bool) {
 	args := cmp.GetArgs()
 	distSF, ok := args[0].(*expression.ScalarFunction)
-	if !ok || distSF.FuncName.L != ast.StDistance {
-		return spatial.Rect{}, 0, false
+	if !ok {
+		return coverRequest{}, false
+	}
+	sphere := distSF.FuncName.L == ast.StDistanceSphere
+	if distSF.FuncName.L != ast.StDistance && !sphere {
+		return coverRequest{}, false
 	}
 	radius, ok := evalConstFloat(args[1], evalCtx)
 	if !ok || radius < 0 {
-		return spatial.Rect{}, 0, false
+		return coverRequest{}, false
 	}
 	dargs := distSF.GetArgs()
 	geomCol, constGeom, ok := splitColAndConst(dargs[0], dargs[1])
 	if !ok {
-		return spatial.Rect{}, 0, false
+		return coverRequest{}, false
 	}
 	ewkb, ok := evalConstString(constGeom, evalCtx)
 	if !ok {
-		return spatial.Rect{}, 0, false
+		return coverRequest{}, false
 	}
 	srid, x, y, err := expression.DecodeEWKBPoint(ewkb)
-	if err != nil || srid != 0 {
-		return spatial.Rect{}, 0, false
+	if err != nil {
+		return coverRequest{}, false
 	}
-	return spatial.Rect{MinX: x - radius, MinY: y - radius, MaxX: x + radius, MaxY: y + radius}, geomCol.ID, true
+	if sphere {
+		if srid != spatial.SRID4326 {
+			return coverRequest{}, false
+		}
+		return coverRequest{geomColID: geomCol.ID, kind: coverSphereCap, cx: x, cy: y, r: radius}, true
+	}
+	if srid != 0 {
+		return coverRequest{}, false
+	}
+	return coverRequest{
+		geomColID: geomCol.ID,
+		kind:      coverPlanarRect,
+		rect:      spatial.Rect{MinX: x - radius, MinY: y - radius, MaxX: x + radius, MaxY: y + radius},
+	}, true
 }
 
 // recognizeContainmentPredicate handles a column / constant-polygon pair; the
-// query rectangle is the polygon's bounding box.
-func recognizeContainmentPredicate(colArg, polyArg expression.Expression, evalCtx expression.EvalContext) (spatial.Rect, int64, bool) {
+// query region is the polygon's bounding box (planar for SRID 0, lat/long for
+// SRID 4326).
+func recognizeContainmentPredicate(colArg, polyArg expression.Expression, evalCtx expression.EvalContext) (coverRequest, bool) {
 	geomCol, ok := colArg.(*expression.Column)
 	if !ok {
-		return spatial.Rect{}, 0, false
+		return coverRequest{}, false
 	}
 	ewkb, ok := evalConstString(polyArg, evalCtx)
 	if !ok {
-		return spatial.Rect{}, 0, false
+		return coverRequest{}, false
 	}
 	srid, minX, minY, maxX, maxY, err := expression.EWKBBounds(ewkb)
-	if err != nil || srid != 0 {
-		return spatial.Rect{}, 0, false
+	if err != nil {
+		return coverRequest{}, false
 	}
-	return spatial.Rect{MinX: minX, MinY: minY, MaxX: maxX, MaxY: maxY}, geomCol.ID, true
+	rect := spatial.Rect{MinX: minX, MinY: minY, MaxX: maxX, MaxY: maxY}
+	switch srid {
+	case 0:
+		return coverRequest{geomColID: geomCol.ID, kind: coverPlanarRect, rect: rect}, true
+	case spatial.SRID4326:
+		return coverRequest{geomColID: geomCol.ID, kind: coverLatLngRect, rect: rect}, true
+	default:
+		return coverRequest{}, false
+	}
 }
 
 // splitColAndConst returns (column, otherArg) if exactly one of a, b is an

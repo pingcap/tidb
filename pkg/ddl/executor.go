@@ -5091,8 +5091,8 @@ func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, inde
 	if !mysql.HasNotNullFlag(col.GetFlag()) {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
 	}
-	if col.Srid != 0 {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 in the POC, got SRID %d", col.Srid)
+	if col.Srid != 0 && col.Srid != 4326 {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 or 4326 in the POC, got SRID %d", col.Srid)
 	}
 
 	// Rewrite the column part into the expression tidb_spatial_key(`col`), so

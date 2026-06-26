@@ -67,6 +67,10 @@ func TestPOCCreateSpatialIndex(t *testing.T) {
 	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad1 (p)", "[ddl:8200]SPATIAL index requires a NOT NULL column")
 	tk.MustExec("CREATE TABLE bad2 (id int primary key, g GEOMETRY NOT NULL)")
 	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad2 (g)", "[ddl:8200]SPATIAL index is only supported on POINT columns in the POC")
-	tk.MustExec("CREATE TABLE bad3 (id int primary key, p POINT NOT NULL SRID 4326)")
-	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad3 (p)", "[ddl:8200]SPATIAL index only supports SRID 0 in the POC, got SRID 4326")
+	// SRID 4326 is now supported; an unsupported SRID (e.g. Web Mercator 3857) is rejected.
+	tk.MustExec("CREATE TABLE bad3 (id int primary key, p POINT NOT NULL SRID 3857)")
+	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad3 (p)", "[ddl:8200]SPATIAL index only supports SRID 0 or 4326 in the POC, got SRID 3857")
+	// A 4326 spatial index is accepted.
+	tk.MustExec("CREATE TABLE geo4326 (id int primary key, p POINT NOT NULL SRID 4326)")
+	tk.MustExec("CREATE SPATIAL INDEX g4326 ON geo4326 (p)")
 }

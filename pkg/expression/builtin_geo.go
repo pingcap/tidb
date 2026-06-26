@@ -40,6 +40,7 @@ var (
 	_ functionClass = &stGeomFromTextFunctionClass{}
 	_ functionClass = &stAsTextFunctionClass{}
 	_ functionClass = &stDistanceFunctionClass{}
+	_ functionClass = &stDistanceSphereFunctionClass{}
 	_ functionClass = &geosRelFunctionClass{}
 	_ functionClass = &stXFunctionClass{}
 	_ functionClass = &stYFunctionClass{}
@@ -51,6 +52,7 @@ var (
 	_ builtinFunc = &builtinStGeomFromTextSig{}
 	_ builtinFunc = &builtinStAsTextSig{}
 	_ builtinFunc = &builtinStDistanceSig{}
+	_ builtinFunc = &builtinStDistanceSphereSig{}
 	_ builtinFunc = &builtinGeosRelSig{}
 	_ builtinFunc = &builtinStXSig{}
 	_ builtinFunc = &builtinStYSig{}
@@ -286,6 +288,73 @@ func (b *builtinStDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 	dx := p1.X() - p2.X()
 	dy := p1.Y() - p2.Y()
 	return math.Sqrt(dx*dx + dy*dy), false, nil
+}
+
+type stDistanceSphereFunctionClass struct {
+	baseFunctionClass
+	expropt.SessionVarsPropReader
+}
+
+func (c *stDistanceSphereFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	if sv, svErr := c.GetSessionVars(ctx.GetEvalCtx()); svErr == nil {
+		sv.StmtCtx.SpatialFunctionIsUsed = true
+	}
+	return &builtinStDistanceSphereSig{bf}, nil
+}
+
+type builtinStDistanceSphereSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStDistanceSphereSig) Clone() builtinFunc {
+	newSig := &builtinStDistanceSphereSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalReal implements ST_Distance_Sphere(p1, p2): the great-circle distance in
+// metres between two WGS 84 points, using MySQL's default sphere radius.
+func (b *builtinStDistanceSphereSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	g1r, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	g2r, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g1, err := decodeEWKB(g1r)
+	if err != nil {
+		return 0, false, err
+	}
+	_, g2, err := decodeEWKB(g2r)
+	if err != nil {
+		return 0, false, err
+	}
+	p1, ok1 := g1.(*geom.Point)
+	p2, ok2 := g2.(*geom.Point)
+	if !ok1 || !ok2 {
+		return 0, false, errors.New("ST_Distance_Sphere: only POINT arguments are supported in the POC")
+	}
+	return greatCircleMeters(p1.X(), p1.Y(), p2.X(), p2.Y()), false, nil
+}
+
+// greatCircleMeters is the haversine distance in metres between two points given
+// as (x=longitude, y=latitude) degrees, using MySQL's sphere radius.
+func greatCircleMeters(lng1, lat1, lng2, lat2 float64) float64 {
+	const toRad = math.Pi / 180
+	la1, la2 := lat1*toRad, lat2*toRad
+	dLat := (lat2 - lat1) * toRad
+	dLng := (lng2 - lng1) * toRad
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(la1)*math.Cos(la2)*math.Sin(dLng/2)*math.Sin(dLng/2)
+	return spatial.EarthRadiusMeters * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
 
 // geosRelFunctionClass implements an OGC binary relational predicate
@@ -527,6 +596,10 @@ func (b *builtinTiDBSpatialKeySig) evalString(ctx EvalContext, row chunk.Row) (s
 	pt, ok := g.(*geom.Point)
 	if !ok {
 		return "", false, errors.New("tidb_spatial_key: only POINT geometries are supported in the POC")
+	}
+	// WGS 84 points use the S2 cell scheme; SRID 0 uses the planar quadtree.
+	if srid == spatial.SRID4326 {
+		return string(spatial.EncodePointS2(pt.X(), pt.Y())), false, nil
 	}
 	coverer := defaultPlanarCoverer
 	if len(b.args) == 6 {

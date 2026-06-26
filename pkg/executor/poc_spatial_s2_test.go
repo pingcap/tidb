@@ -1,0 +1,81 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
+)
+
+// TestPOCSpatialS2 exercises the SRID 4326 (S2) path: a lat/long points table
+// with a spatial index, queried by ST_Distance_Sphere within a radius. Results
+// must match a full scan (with and without forcing the index), including a
+// region near the antimeridian and one near a pole.
+func TestPOCSpatialS2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE places (id int primary key, p POINT NOT NULL SRID 4326)")
+
+	// A grid of lon/lat points covering tricky regions: around the prime
+	// meridian, the antimeridian (±180), and near the north pole.
+	var b strings.Builder
+	b.WriteString("INSERT INTO places VALUES ")
+	id := 0
+	add := func(lng, lat float64) {
+		if id > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "(%d, ST_GeomFromText('POINT(%g %g)',4326))", id, lng, lat)
+		id++
+	}
+	for lng := -180.0; lng <= 180.0; lng += 5 {
+		for lat := -80.0; lat <= 85.0; lat += 5 {
+			add(lng, lat)
+		}
+	}
+	tk.MustExec(b.String())
+
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON places (p)")
+
+	type q struct {
+		name             string
+		lng, lat, radius float64
+	}
+	queries := []q{
+		{"london", -0.13, 51.5, 600000},     // ~600 km around London
+		{"antimeridian", 179.5, 10, 400000}, // straddles ±180
+		{"near-pole", 20, 84, 800000},       // near the north pole
+	}
+	for _, qq := range queries {
+		where := fmt.Sprintf("ST_Distance_Sphere(p, ST_GeomFromText('POINT(%g %g)',4326)) <= %g", qq.lng, qq.lat, qq.radius)
+		base := tk.MustQuery("SELECT id FROM places WHERE " + where + " ORDER BY id").Rows()
+		require.NotEmptyf(t, base, "query %s returned no rows", qq.name)
+		// Forcing the index must return identical rows (proves S2 covering +
+		// refine equivalence, incl. antimeridian/pole).
+		tk.MustQuery("SELECT id FROM places FORCE INDEX (sidx) WHERE " + where + " ORDER BY id").Check(base)
+		t.Logf("query %s: %d rows", qq.name, len(base))
+	}
+
+	// Containment on 4326 via ST_Within against a lon/lat box.
+	const within = "SELECT id FROM places %s WHERE " +
+		"ST_Within(p, ST_GeomFromText('POLYGON((0 50,2 50,2 52,0 52,0 50))',4326)) ORDER BY id"
+	wantWithin := tk.MustQuery(fmt.Sprintf(within, "")).Rows()
+	tk.MustQuery(fmt.Sprintf(within, "FORCE INDEX (sidx)")).Check(wantWithin)
+}
