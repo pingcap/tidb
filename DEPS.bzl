@@ -118,8 +118,8 @@ def go_deps():
         name = "com_github_alecthomas_assert_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/assert/v2",
-        sum = "h1:jjRCHsj6hBJhkmhznrCzoNpbA3zqy0fYiUcYZP/GkPY=",
-        version = "v2.10.0",
+        sum = "h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=",
+        version = "v2.11.0",
     )
     go_repository(
         name = "com_github_alecthomas_chroma_v2",
@@ -158,8 +158,8 @@ def go_deps():
         name = "com_github_alecthomas_repr",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/repr",
-        sum = "h1:GhI2A8MACjfegCPVq9f1FLvIBS+DrQ2KQBFZP1iFzXc=",
-        version = "v0.4.0",
+        sum = "h1:SU73FTI9D1P5UNtvseffFSGmdNci/O6RsqzeXJtP0Qs=",
+        version = "v0.5.2",
     )
     go_repository(
         name = "com_github_alecthomas_units",
@@ -2912,6 +2912,13 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_golang_geo",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/golang/geo",
+        sum = "h1:KeIaDS/+VEy/bhDYjG3Z78dOyLAU4HXcVxmd0WYHJTE=",
+        version = "v0.0.0-20260625163123-7c0e84413537",
+    )
+    go_repository(
         name = "com_github_golang_glog",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/glog",
@@ -3207,6 +3214,13 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/google/go-querystring/com_github_google_go_querystring-v1.1.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/go-querystring/com_github_google_go_querystring-v1.1.0.zip",
         ],
+    )
+    go_repository(
+        name = "com_github_google_go_units",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/google/go-units",
+        sum = "h1:hM8xVjUr4Iv/iQIx4Jq1xckZkKlXu51Gqku5HlEpQAE=",
+        version = "v0.0.0-20250612230646-eddd77f68220",
     )
     go_repository(
         name = "com_github_google_gofuzz",
@@ -5467,6 +5481,13 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20250813065127-a731cc31b4fe.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20250813065127-a731cc31b4fe.zip",
         ],
+    )
+    go_repository(
+        name = "com_github_peterstace_simplefeatures",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/peterstace/simplefeatures",
+        sum = "h1:pmn+uh75K3CCGsJCLHnpBqgQmDECLYX3u5hfymVbqmQ=",
+        version = "v0.59.0",
     )
     go_repository(
         name = "com_github_phayes_freeport",
@@ -9305,11 +9326,11 @@ def go_deps():
         name = "org_golang_x_image",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/image",
-        sha256 = "4a44b498934a95e8f84e8374530de0cab38d81fcd558898d4880c3c5ce1efe47",
-        strip_prefix = "golang.org/x/image@v0.0.0-20190802002840-cff245a6509b",
+        sha256 = "2201f668d99bd26e0bc5c159521bff041a67e022d335f79cbb7bfc9da047d66a",
+        strip_prefix = "golang.org/x/image@v0.23.0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/image/org_golang_x_image-v0.23.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/image/org_golang_x_image-v0.23.0.zip",
         ],
     )
     go_repository(

@@ -71,9 +71,9 @@ func CoverCapDegrees(lng, lat, radiusMeters float64) ([]CellKeyRange, error) {
 	}
 	center := s2.PointFromLatLng(s2.LatLngFromDegrees(lat, lng))
 	angle := s1.Angle(radiusMeters / EarthRadiusMeters)
-	cap := s2.CapFromCenterAngle(center, angle)
+	region := s2.CapFromCenterAngle(center, angle)
 	rc := &s2.RegionCoverer{MaxLevel: 30, MaxCells: s2MaxCells}
-	return s2Ranges(rc.Covering(cap)), nil
+	return s2Ranges(rc.Covering(region)), nil
 }
 
 // CoverLatLngRectDegrees returns CellKey ranges covering a WGS 84 lat/long

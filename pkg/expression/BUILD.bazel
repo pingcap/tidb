@@ -119,6 +119,7 @@ go_library(
         "//pkg/util/disjointset",
         "//pkg/util/encrypt",
         "//pkg/util/generatedexpr",
+        "//pkg/util/geomrel",
         "//pkg/util/hack",
         "//pkg/util/intest",
         "//pkg/util/intset",
