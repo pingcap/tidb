@@ -21,6 +21,9 @@ package spatial
 
 import (
 	"encoding/binary"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 )
@@ -73,6 +76,63 @@ const DefaultLevel = 16
 // NewDefaultPlanarCoverer returns the SRID 0 coverer with the design defaults.
 func NewDefaultPlanarCoverer() *PlanarCoverer {
 	return NewPlanarCoverer(-DefaultDomainBound, -DefaultDomainBound, DefaultDomainBound, DefaultDomainBound, DefaultLevel)
+}
+
+// PlanarParams is the per-index tuning of the planar coverer (subdivision depth
+// and domain bounds). It is the single source of truth shared by the index
+// write path (the tidb_spatial_key builtin) and the query planner: both derive
+// the coverer from identical params, so stored keys and query ranges agree.
+//
+// Selectivity depends on these: a leaf cell is domainWidth/2^Level wide, so
+// matching the bounds to the data extent and choosing a Level that makes a leaf
+// small relative to typical queries is what turns the index from "scan the whole
+// cell then refine" into a genuinely selective scan.
+type PlanarParams struct {
+	Level                  uint
+	MinX, MinY, MaxX, MaxY float64
+}
+
+// DefaultPlanarParams returns the design-default planar tuning.
+func DefaultPlanarParams() PlanarParams {
+	return PlanarParams{
+		Level: DefaultLevel,
+		MinX:  -DefaultDomainBound, MinY: -DefaultDomainBound,
+		MaxX: DefaultDomainBound, MaxY: DefaultDomainBound,
+	}
+}
+
+// Coverer builds the planar coverer described by these params.
+func (p PlanarParams) Coverer() *PlanarCoverer {
+	return NewPlanarCoverer(p.MinX, p.MinY, p.MaxX, p.MaxY, p.Level)
+}
+
+// ParsePlanarParams parses the argument list (excluding the geometry, i.e. the
+// text after the first comma of tidb_spatial_key(geom, level, minX, minY, maxX,
+// maxY)) into PlanarParams. An empty list yields the defaults. The expected form
+// is exactly five numbers: level minX minY maxX maxY.
+func ParsePlanarParams(extraArgs []string) (PlanarParams, error) {
+	if len(extraArgs) == 0 {
+		return DefaultPlanarParams(), nil
+	}
+	if len(extraArgs) != 5 {
+		return PlanarParams{}, errors.Errorf("spatial: expected 0 or 5 cell params, got %d", len(extraArgs))
+	}
+	nums := make([]float64, 5)
+	for i, s := range extraArgs {
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return PlanarParams{}, errors.Errorf("spatial: invalid cell param %q: %v", s, err)
+		}
+		nums[i] = f
+	}
+	p := PlanarParams{Level: uint(nums[0]), MinX: nums[1], MinY: nums[2], MaxX: nums[3], MaxY: nums[4]}
+	if p.Level == 0 || p.Level > 31 {
+		return PlanarParams{}, errors.Errorf("spatial: cell level must be in [1,31], got %d", p.Level)
+	}
+	if p.MinX >= p.MaxX || p.MinY >= p.MaxY {
+		return PlanarParams{}, errors.Errorf("spatial: invalid bounds [%g,%g]x[%g,%g]", p.MinX, p.MaxX, p.MinY, p.MaxY)
+	}
+	return p, nil
 }
 
 // NewPlanarCoverer builds a planar coverer over the given domain and depth.
@@ -132,13 +192,41 @@ func (c *PlanarCoverer) CoverRect(srid uint32, r Rect) ([]CellKeyRange, error) {
 		r.MinY, r.MaxY = r.MaxY, r.MinY
 	}
 	var ranges []CellKeyRange
-	c.cover(0, 0, 0, r, &ranges)
+	c.cover(0, 0, 0, r, c.coverLevelFor(r), &ranges)
 	return mergeRanges(ranges), nil
 }
 
+// targetCellsAcross is roughly how many covering cells span the query rectangle
+// per axis. It caps the covering's cell (and therefore range) count so the
+// planner builds a small OR of index ranges instead of thousands. Larger =
+// tighter covering (fewer false positives) but more ranges.
+const targetCellsAcross = 8
+
+// coverLevelFor picks the quadtree depth to cover a rectangle at: deep enough
+// that a leaf is small relative to the rectangle (good selectivity), shallow
+// enough that the covering stays a bounded number of cells. It never exceeds the
+// coverer's leaf level, so emitted ranges always contain whole leaf cells.
+func (c *PlanarCoverer) coverLevelFor(r Rect) uint {
+	w := math.Max(r.MaxX-r.MinX, r.MaxY-r.MinY)
+	domainW := math.Max(c.maxX-c.minX, c.maxY-c.minY)
+	if w <= 0 || domainW <= 0 {
+		return c.level
+	}
+	// cellWidth(L) = domainW / 2^L; choose L so cellWidth ~= w/targetCellsAcross.
+	l := int(math.Floor(math.Log2(targetCellsAcross * domainW / w)))
+	if l < 1 {
+		l = 1
+	}
+	if uint(l) > c.level {
+		return c.level
+	}
+	return uint(l)
+}
+
 // cover walks the quadtree node at (level, col, row) given in that node's grid
-// resolution. It appends covering ranges (in Morton/leaf resolution) to out.
-func (c *PlanarCoverer) cover(level uint, col, row uint32, r Rect, out *[]CellKeyRange) {
+// resolution, descending no deeper than coverLevel. It appends covering ranges
+// (in Morton/leaf resolution) to out.
+func (c *PlanarCoverer) cover(level uint, col, row uint32, r Rect, coverLevel uint, out *[]CellKeyRange) {
 	// The node's domain extent at this level.
 	side := uint32(1) << level
 	cellW := (c.maxX - c.minX) / float64(side)
@@ -153,10 +241,10 @@ func (c *PlanarCoverer) cover(level uint, col, row uint32, r Rect, out *[]CellKe
 		return
 	}
 
-	// Fully contained, or a leaf: emit the contiguous Morton range of all leaf
-	// cells under this node.
+	// Fully contained, or as deep as we cover: emit the contiguous Morton range
+	// of all leaf cells under this node (over-covering at coverLevel < leaf).
 	fullyInside := nodeMinX >= r.MinX && nodeMaxX <= r.MaxX && nodeMinY >= r.MinY && nodeMaxY <= r.MaxY
-	if fullyInside || level == c.level {
+	if fullyInside || level >= coverLevel {
 		shift := 2 * (c.level - level) // 2 Morton bits per finer level
 		base := interleave(col, row) << shift
 		hi := base + (uint64(1) << shift) - 1
@@ -167,7 +255,7 @@ func (c *PlanarCoverer) cover(level uint, col, row uint32, r Rect, out *[]CellKe
 	// Otherwise descend into the four child quadrants.
 	for dx := range uint32(2) {
 		for dy := range uint32(2) {
-			c.cover(level+1, col*2+dx, row*2+dy, r, out)
+			c.cover(level+1, col*2+dx, row*2+dy, r, coverLevel, out)
 		}
 	}
 }

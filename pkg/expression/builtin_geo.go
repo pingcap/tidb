@@ -536,7 +536,16 @@ func (c *tidbSpatialKeyFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	// tidb_spatial_key(geom) or tidb_spatial_key(geom, level, minX, minY, maxX, maxY).
+	if len(args) != 1 && len(args) != 6 {
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	for range args[1:] {
+		argTps = append(argTps, types.ETReal)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -572,9 +581,37 @@ func (b *builtinTiDBSpatialKeySig) evalString(ctx EvalContext, row chunk.Row) (s
 	if !ok {
 		return "", false, errors.New("tidb_spatial_key: only POINT geometries are supported in the POC")
 	}
-	key, err := defaultPlanarCoverer.EncodePoint(srid, pt.X(), pt.Y())
+	coverer := defaultPlanarCoverer
+	if len(b.args) == 6 {
+		p, perr := b.planarParams(ctx, row)
+		if perr != nil {
+			return "", false, perr
+		}
+		coverer = p.Coverer()
+	}
+	key, err := coverer.EncodePoint(srid, pt.X(), pt.Y())
 	if err != nil {
 		return "", false, err
 	}
 	return string(key), false, nil
+}
+
+// planarParams reads the (level, minX, minY, maxX, maxY) tuning args.
+func (b *builtinTiDBSpatialKeySig) planarParams(ctx EvalContext, row chunk.Row) (spatial.PlanarParams, error) {
+	vals := make([]float64, 5)
+	for i := range vals {
+		v, isNull, err := b.args[i+1].EvalReal(ctx, row)
+		if err != nil {
+			return spatial.PlanarParams{}, err
+		}
+		if isNull {
+			return spatial.PlanarParams{}, errors.New("tidb_spatial_key: cell params must not be NULL")
+		}
+		vals[i] = v
+	}
+	p := spatial.PlanarParams{Level: uint(vals[0]), MinX: vals[1], MinY: vals[2], MaxX: vals[3], MaxY: vals[4]}
+	if p.Level == 0 || p.Level > 31 || p.MinX >= p.MaxX || p.MinY >= p.MaxY {
+		return spatial.PlanarParams{}, errors.Errorf("tidb_spatial_key: invalid cell params level=%d bounds=[%g,%g]x[%g,%g]", p.Level, p.MinX, p.MaxX, p.MinY, p.MaxY)
+	}
+	return p, nil
 }

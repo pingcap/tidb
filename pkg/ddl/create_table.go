@@ -49,6 +49,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/spatial"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -1307,6 +1308,46 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
 }
 
+// buildSpatialKeyExpr builds the generated expression for a spatial index's
+// hidden column: tidb_spatial_key(col), optionally tuned with per-index cell
+// parameters parsed from the index comment. The comment form is
+//
+//	spatial:<level>,<minX>,<minY>,<maxX>,<maxY>
+//
+// (e.g. COMMENT 'spatial:18,-180,-90,180,90'); without it the column uses the
+// default coverer. Baking the params into the expression args makes them the
+// single source of truth shared by the write path and the planner.
+func buildSpatialKeyExpr(colName ast.CIStr, comment string) (*ast.FuncCallExpr, error) {
+	args := []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}}
+	if params, ok, err := parseSpatialComment(comment); err != nil {
+		return nil, err
+	} else if ok {
+		args = append(args,
+			ast.NewValueExpr(int64(params.Level), "", ""),
+			ast.NewValueExpr(params.MinX, "", ""),
+			ast.NewValueExpr(params.MinY, "", ""),
+			ast.NewValueExpr(params.MaxX, "", ""),
+			ast.NewValueExpr(params.MaxY, "", ""),
+		)
+	}
+	return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TiDBSpatialKey), Args: args}, nil
+}
+
+// parseSpatialComment extracts per-index cell tuning from an index comment.
+func parseSpatialComment(comment string) (spatial.PlanarParams, bool, error) {
+	const prefix = "spatial:"
+	trimmed := strings.TrimSpace(comment)
+	if !strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+		return spatial.PlanarParams{}, false, nil
+	}
+	fields := strings.Split(trimmed[len(prefix):], ",")
+	p, err := spatial.ParsePlanarParams(fields)
+	if err != nil {
+		return spatial.PlanarParams{}, false, err
+	}
+	return p, true, nil
+}
+
 // rewriteSpatialConstraints validates each inline SPATIAL constraint and
 // rewrites it into an ordinary (expression) index on tidb_spatial_key(col),
 // mirroring the standalone CREATE SPATIAL INDEX path.
@@ -1332,10 +1373,15 @@ func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constrai
 		if col.Srid != 0 {
 			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index only supports SRID 0 in the POC, got SRID %d", col.Srid)
 		}
-		constr.Keys[0].Expr = &ast.FuncCallExpr{
-			FnName: ast.NewCIStr(ast.TiDBSpatialKey),
-			Args:   []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: col.Name}}},
+		comment := ""
+		if constr.Option != nil {
+			comment = constr.Option.Comment
 		}
+		keyExpr, err := buildSpatialKeyExpr(col.Name, comment)
+		if err != nil {
+			return err
+		}
+		constr.Keys[0].Expr = keyExpr
 		constr.Keys[0].Column = nil
 		constr.Keys[0].Length = types.UnspecifiedLength
 		constr.Tp = ast.ConstraintIndex

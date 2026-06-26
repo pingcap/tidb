@@ -105,3 +105,34 @@ func TestNon0SRIDRejected(t *testing.T) {
 	_, err = c.CoverRect(4326, Rect{})
 	require.Error(t, err)
 }
+
+// TestParsePlanarParams covers the param parsing shared by the builtin/planner.
+func TestParsePlanarParams(t *testing.T) {
+	d, err := ParsePlanarParams(nil)
+	require.NoError(t, err)
+	require.Equal(t, DefaultPlanarParams(), d)
+
+	p, err := ParsePlanarParams([]string{"12", "0", "0", "1", "1"})
+	require.NoError(t, err)
+	require.Equal(t, PlanarParams{Level: 12, MinX: 0, MinY: 0, MaxX: 1, MaxY: 1}, p)
+
+	_, err = ParsePlanarParams([]string{"12", "0", "0"})
+	require.Error(t, err)
+	_, err = ParsePlanarParams([]string{"0", "0", "0", "1", "1"}) // bad level
+	require.Error(t, err)
+	_, err = ParsePlanarParams([]string{"12", "1", "0", "0", "1"}) // minX>=maxX
+	require.Error(t, err)
+}
+
+// TestCoverRectRangeCountBounded confirms the cell cap keeps the covering to a
+// small number of ranges (so the planner builds a small OR), independent of how
+// deep the coverer's leaf level is.
+func TestCoverRectRangeCountBounded(t *testing.T) {
+	for _, level := range []uint{10, 16, 24, 31} {
+		c := NewPlanarCoverer(0, 0, 1, 1, level)
+		rs, err := c.CoverRect(0, Rect{MinX: 0.4, MinY: 0.4, MaxX: 0.6, MaxY: 0.6})
+		require.NoError(t, err)
+		require.NotEmpty(t, rs)
+		require.LessOrEqual(t, len(rs), 64, "level %d produced too many ranges: %d", level, len(rs))
+	}
+}

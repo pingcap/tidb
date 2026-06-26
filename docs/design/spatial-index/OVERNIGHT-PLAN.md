@@ -69,8 +69,43 @@ Then: **self-review → enumerate tests → benchmark → review again.**
 - Global partitioned index (skipped).
 - GEOS-backed overlay/buffer.
 
+## Update (user, mid-run)
+
+- **libgeos-dev is now installed** → use GEOS (github.com/twpayne/go-geos) for
+  OGC-correct geometry instead of hand-rolled go-geom ray-casting. This becomes
+  the engine for the Item-2 predicates AND fixes the boundary bug below. Watch
+  the Bazel/CI build (cgo + system libgeos in the sandbox) — may need WORKSPACE/CI
+  wiring; if it can't link there, gate or document.
+- **Two MySQL-8.0.46 compat divergences found** (see
+  `tests/integrationtest/r/spatial_compat.NOTES.md`), both in the geometry-function
+  layer — distances/accessors/SRID and BOTH spatial-index result sets match MySQL:
+  1. `ST_AsText` spacing: PoC `POINT (0 0)` vs MySQL `POINT(0 0)` (go-geom
+     wkt.Marshal default) — fix the formatter.
+  2. Boundary containment: PoC `ST_Within` is inconsistent on polygon corners
+     ((0,0)→1 but (10,10)→0; MySQL→0 for both, OGC boundary-not-within). Ray-cast
+     edge artifact. GEOS fixes this for free.
+  → Folded into Item 2: do it on GEOS, then re-record compat and diff vs MySQL.
+
 ## Progress log
 
 (Newest first. Each item: status, commits, surprises, what was verified.)
 
-- [in progress] Item 1 — Selectivity. Started.
+- [DONE] Item 1 — Selectivity.
+  - Per-index cell tuning via index COMMENT `spatial:level,minX,minY,maxX,maxY`,
+    baked into `tidb_spatial_key(geom, level, minX, minY, maxX, maxY)` args as the
+    single source of truth; planner re-derives the same coverer from the hidden
+    column's generated expression.
+  - Added a max-cells cap (`coverLevelFor`) so CoverRect emits a bounded number
+    of ranges (was 1228 for a fine-level query → now ≤ ~a few dozen) — the huge
+    OR was breaking index range building.
+  - Bug found+fixed: the re-added hidden column lacked `VirtualExpr`, so the
+    optimizer pushed the covering filter to the coprocessor, which can't evaluate
+    `tidb_spatial_key` on the unstored virtual column → 0 rows when a full scan
+    was chosen. Setting `VirtualExpr` keeps the filter at the TiDB root. Surfaced
+    only when a prior query loaded stats and flipped index→full-scan.
+  - SHOW CREATE now renders `SPATIAL KEY name (col) COMMENT 'spatial:...'`
+    (params in the comment, round-trips) instead of leaking the args.
+  - Verified: `TestPOCSpatialSelectivity` — index scans 169/10000 rows (1.7%) for
+    75 matches (2.25x false-positive ratio), identical rows vs full scan. Note:
+    automatic index *selection* over a full scan needs spatial stats/cost (Item:
+    spatial costs/stats); test forces the index to prove pruning.

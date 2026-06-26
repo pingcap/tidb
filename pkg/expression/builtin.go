@@ -1011,7 +1011,7 @@ var funcs = map[string]functionClass{
 	ast.StX:            &stXFunctionClass{baseFunctionClass{ast.StX, 1, 1}},
 	ast.StY:            &stYFunctionClass{baseFunctionClass{ast.StY, 1, 1}},
 	ast.StSRID:         &stSRIDFunctionClass{baseFunctionClass{ast.StSRID, 1, 1}},
-	ast.TiDBSpatialKey: &tidbSpatialKeyFunctionClass{baseFunctionClass{ast.TiDBSpatialKey, 1, 1}},
+	ast.TiDBSpatialKey: &tidbSpatialKeyFunctionClass{baseFunctionClass{ast.TiDBSpatialKey, 1, 6}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

@@ -5097,13 +5097,17 @@ func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, inde
 
 	// Rewrite the column part into the expression tidb_spatial_key(`col`), so
 	// the existing expression-index path creates the hidden generated column
-	// and a plain secondary index over it.
-	part.Expr = &ast.FuncCallExpr{
-		FnName: ast.NewCIStr(ast.TiDBSpatialKey),
-		Args: []ast.ExprNode{
-			&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: col.Name}},
-		},
+	// and a plain secondary index over it. Per-index cell tuning may be supplied
+	// via the index comment (see buildSpatialKeyExpr).
+	comment := ""
+	if indexOption != nil {
+		comment = indexOption.Comment
 	}
+	keyExpr, err := buildSpatialKeyExpr(col.Name, comment)
+	if err != nil {
+		return err
+	}
+	part.Expr = keyExpr
 	part.Column = nil
 	part.Length = types.UnspecifiedLength
 

@@ -18,6 +18,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,10 +34,6 @@ import (
 // spatialKeyExprPrefix identifies the hidden generated column that backs a
 // spatial index (its generated expression is tidb_spatial_key(<col>)).
 const spatialKeyExprPrefix = ast.TiDBSpatialKey + "("
-
-// defaultPlanarCovererForPlanner must match the coverer used by the
-// tidb_spatial_key builtin, so query ranges and stored keys share a curve.
-var defaultPlanarCovererForPlanner = spatial.NewDefaultPlanarCoverer()
 
 // SpatialIndexResolver recognizes spatial predicates (ST_Distance within a
 // radius, ST_Contains / ST_Within point-in-polygon) over a column that has a
@@ -87,11 +85,11 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 		if !ok {
 			continue
 		}
-		hiddenCol := s.findSpatialHiddenColumn(ds, geomColID)
-		if hiddenCol == nil {
+		hiddenCol, params, ok := s.findSpatialHiddenColumn(ds, geomColID)
+		if !ok {
 			continue
 		}
-		ranges, err := defaultPlanarCovererForPlanner.CoverRect(0, rect)
+		ranges, err := params.Coverer().CoverRect(0, rect)
 		if err != nil || len(ranges) == 0 {
 			continue
 		}
@@ -111,8 +109,10 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 }
 
 // findSpatialHiddenColumn returns the expression.Column of the hidden generated
-// column of a spatial index whose source column is geomColID, or nil.
-func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, geomColID int64) *expression.Column {
+// column of a spatial index whose source column is geomColID, together with the
+// coverer params parsed from that column's generated expression (so the planner
+// covers the query with the exact same cell scheme the rows were indexed under).
+func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, geomColID int64) (*expression.Column, spatial.PlanarParams, bool) {
 	tblInfo := ds.TableInfo
 	// Resolve the geometry column's name from its ID.
 	var geomColName string
@@ -123,7 +123,7 @@ func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, g
 		}
 	}
 	if geomColName == "" {
-		return nil
+		return nil, spatial.PlanarParams{}, false
 	}
 	for _, idx := range tblInfo.Indices {
 		if !idx.IsPublic() || len(idx.Columns) != 1 {
@@ -136,26 +136,90 @@ func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, g
 		if _, dep := hiddenColInfo.Dependences[geomColName]; !dep {
 			continue
 		}
+		params, err := parseSpatialKeyParams(hiddenColInfo.GeneratedExprString)
+		if err != nil {
+			continue
+		}
 		// The hidden column may have been pruned from the DataSource schema (it
 		// is not referenced by the original query). Reuse it if present, else add
 		// it back so the index becomes usable and the injected predicate has a
 		// column to reference.
 		for _, sc := range ds.Schema().Columns {
 			if sc.ID == hiddenColInfo.ID {
-				return sc
+				return sc, params, true
 			}
 		}
+		// Build the column's virtual expression tidb_spatial_key(geomCol, ...).
+		// Without it the planner treats the re-added column as real and may push
+		// the covering-range filter to the coprocessor, which cannot evaluate
+		// tidb_spatial_key on the (unstored) virtual column. Carrying VirtualExpr
+		// keeps such filters at the TiDB root (SplitSelCondsWithVirtualColumn),
+		// where the geometry column is available to compute the key.
+		virtualExpr := buildSpatialKeyVirtualExpr(ds, geomColID, params)
 		newCol := &expression.Column{
-			UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-			ID:       hiddenColInfo.ID,
-			RetType:  hiddenColInfo.FieldType.Clone(),
-			OrigName: hiddenColInfo.Name.L,
+			UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+			ID:          hiddenColInfo.ID,
+			RetType:     hiddenColInfo.FieldType.Clone(),
+			OrigName:    hiddenColInfo.Name.L,
+			VirtualExpr: virtualExpr,
 		}
 		ds.Columns = append(ds.Columns, hiddenColInfo)
 		ds.Schema().Append(newCol)
-		return newCol
+		return newCol, params, true
 	}
-	return nil
+	return nil, spatial.PlanarParams{}, false
+}
+
+// buildSpatialKeyVirtualExpr reconstructs the tidb_spatial_key(geomCol[, params])
+// expression that generates the hidden column, so the re-added column can carry
+// it as its VirtualExpr. Returns nil if the geometry column is not in the schema
+// (in which case the column is still usable for an index scan).
+func buildSpatialKeyVirtualExpr(ds *logicalop.DataSource, geomColID int64, params spatial.PlanarParams) expression.Expression {
+	var geomCol *expression.Column
+	for _, c := range ds.Schema().Columns {
+		if c.ID == geomColID {
+			geomCol = c
+			break
+		}
+	}
+	if geomCol == nil {
+		return nil
+	}
+	ctx := ds.SCtx().GetExprCtx()
+	args := []expression.Expression{geomCol}
+	// Only emit the tuning args when they differ from the defaults, matching how
+	// the DDL builds the expression (1-arg for defaults, 6-arg when tuned).
+	if params != spatial.DefaultPlanarParams() {
+		realTp := types.NewFieldType(mysql.TypeDouble)
+		mk := func(v float64) expression.Expression {
+			return &expression.Constant{Value: types.NewFloat64Datum(v), RetType: realTp}
+		}
+		args = append(args, mk(float64(params.Level)), mk(params.MinX), mk(params.MinY), mk(params.MaxX), mk(params.MaxY))
+	}
+	keyType := types.NewFieldType(mysql.TypeVarString)
+	keyType.SetCharset("binary")
+	keyType.SetCollate("binary")
+	keyType.SetFlen(8)
+	vexpr, err := expression.NewFunction(ctx, ast.TiDBSpatialKey, keyType, args...)
+	if err != nil {
+		return nil
+	}
+	return vexpr
+}
+
+// parseSpatialKeyParams reconstructs the coverer params from a hidden column's
+// generated expression string, e.g. "tidb_spatial_key(`p`, 18, -180, -90, 180,
+// 90)" or "tidb_spatial_key(`p`)" (defaults). The arguments contain no nested
+// commas, so a top-level split is sufficient.
+func parseSpatialKeyParams(genExpr string) (spatial.PlanarParams, error) {
+	inner := strings.TrimSpace(genExpr)
+	if !strings.HasPrefix(inner, spatialKeyExprPrefix) || !strings.HasSuffix(inner, ")") {
+		return spatial.PlanarParams{}, errors.Errorf("not a tidb_spatial_key expression: %q", genExpr)
+	}
+	inner = inner[len(spatialKeyExprPrefix) : len(inner)-1]
+	parts := strings.Split(inner, ",")
+	// parts[0] is the geometry column reference; the rest are the cell params.
+	return spatial.ParsePlanarParams(parts[1:])
 }
 
 // isSpatialHiddenColumn reports whether a column is the hidden generated column

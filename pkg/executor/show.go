@@ -1061,9 +1061,12 @@ func spatialIndexSourceColumn(idxInfo *model.IndexInfo, tableInfo *model.TableIn
 	if !col.Hidden || !strings.HasPrefix(col.GeneratedExprString, prefix) {
 		return "", false
 	}
-	// GeneratedExprString is e.g. "tidb_spatial_key(`p`)"; the inner text is the
-	// already-escaped source column reference.
+	// GeneratedExprString is e.g. "tidb_spatial_key(`p`)" or, when tuned,
+	// "tidb_spatial_key(`p`, 12, 0e+00, ...)". The first argument is the
+	// already-escaped source column; the tuning args (if any) are surfaced via
+	// the index comment instead.
 	inner := strings.TrimSuffix(strings.TrimPrefix(col.GeneratedExprString, prefix), ")")
+	inner = strings.TrimSpace(strings.SplitN(inner, ",", 2)[0])
 	if inner == "" {
 		return "", false
 	}
@@ -1254,6 +1257,11 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		// form so SHOW CREATE TABLE round-trips, hiding the implementation detail.
 		if spatialCol, ok := spatialIndexSourceColumn(idxInfo, tableInfo); ok {
 			fmt.Fprintf(buf, "  SPATIAL KEY %s (%s)", stringutil.Escape(idxInfo.Name.O, sqlMode), spatialCol)
+			// The cell-tuning lives in the index comment (e.g. 'spatial:...'), so
+			// rendering it keeps SHOW CREATE TABLE round-trippable.
+			if idxInfo.Comment != "" {
+				fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+			}
 			if idxInfo.Invisible {
 				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 			}
