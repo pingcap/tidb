@@ -28,6 +28,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -486,11 +487,21 @@ layers = {
   { sn = 2, content = [ compaction, deleteFiles, ... ] },
 */
 type MigrationExt struct {
-	s      storage.ExternalStorage
-	prefix string
+	s                storage.ExternalStorage
+	prefix           string
+	operationContext operation.Context
 	// The hooks used for tracking the execution.
 	// See the `Hooks` type for more details.
 	Hooks Hooks
+}
+
+// WithOperationContext tags locks created by mutating migration operations.
+// Callers that use GetReadLock, AppendMigration, or MergeAndMigrateTo must set
+// an initialized operation context so those methods can fail before creating an
+// unowned lock.
+func (m MigrationExt) WithOperationContext(ctx operation.Context) MigrationExt {
+	m.operationContext = ctx
+	return m
 }
 
 type Hooks interface {
@@ -654,7 +665,11 @@ type Migrations struct {
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
 func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (storage.RemoteLock, error) {
-	return storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint)
+	input, err := m.operationContext.LockMeta(operation.LockResourceMigrationRead, hint)
+	if err != nil {
+		return storage.RemoteLock{}, errors.Annotate(err, "failed to build migration read lock metadata")
+	}
+	return storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, input)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -758,9 +773,10 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 
 func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 	batchSelf := MigrationExt{
-		s:      storage.Batch(m.s),
-		prefix: m.prefix,
-		Hooks:  m.Hooks,
+		s:                storage.Batch(m.s),
+		prefix:           m.prefix,
+		operationContext: m.operationContext,
+		Hooks:            m.Hooks,
 	}
 	f(batchSelf)
 	return batchSelf.s.(*storage.Batched).ReadOnlyEffects()
@@ -771,15 +787,25 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 // 2. Acquire write lock on append path (prevents concurrent appends)
 func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
 	readLock, appendLock storage.RemoteLock, err error) {
-	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
-	readLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
+	readInput, err := m.operationContext.LockMeta(operation.LockResourceMigrationRead, hint+" (read)")
+	if err != nil {
+		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err,
+			"failed to build migration read lock metadata")
+	}
+	readLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, readInput)
 	if err != nil {
 		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
-	appendLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)")
+	appendInput, err := m.operationContext.LockMeta(operation.LockResourceMigrationAppend, hint+" (append)")
+	if err != nil {
+		readLock.UnlockOnCleanUp(ctx)
+		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err,
+			"failed to build migration append lock metadata")
+	}
+	appendLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteWrite, m.s, appendLockPrefix, appendInput)
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)
@@ -891,21 +917,25 @@ func (m MigrationExt) MergeAndMigrateTo(
 	ctx context.Context,
 	targetSpec int,
 	opts ...MergeAndMigrateToOpt,
-) (result MergeAndMigratedTo) {
+) (result MergeAndMigratedTo, err error) {
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
 		o(&config)
 	}
 
 	if !config.skipLockingInTest {
-		lock, err := storage.LockWithRetry(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix,
-			"StreamTruncation: MergeMigration")
+		input, err := m.operationContext.LockMeta(
+			operation.LockResourceMigrationWrite, "StreamTruncation: MergeMigration")
+		if err != nil {
+			return result, errors.Annotate(err, "failed to build migration write lock metadata")
+		}
+		lock, err := storage.LockWithRetry(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, input)
 		if err != nil {
 			result.MigratedTo = MigratedTo{
 				Warnings: []error{
 					errors.Annotate(err, "failed to get the lock, nothing will happen"),
 				}}
-			return
+			return result, nil
 		}
 		defer lock.UnlockOnCleanUp(ctx)
 	}
@@ -916,7 +946,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 			Warnings: []error{
 				errors.Annotate(err, "failed to load migrations, nothing will happen"),
 			}}
-		return
+		return result, nil
 	}
 	result.Base = migs.Base
 	for _, mig := range migs.Layers {
@@ -944,7 +974,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 
 	if config.interactiveCheck != nil && !config.interactiveCheck(ctx, newBase) {
 		result.Warnings = append(result.Warnings, errors.New("User aborted, nothing will happen"))
-		return
+		return result, nil
 	}
 
 	migTo := &result.MigratedTo
@@ -966,7 +996,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 		)
 		// Put the new BASE here anyway. The caller may want this.
 		result.NewBase = newBase
-		return
+		return result, nil
 	}
 
 	for _, mig := range result.Source {
@@ -988,7 +1018,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	if err != nil {
 		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to save the new base"))
 	}
-	return
+	return result, nil
 }
 
 type migrateToOpt func(*migToOpt)
