@@ -21,9 +21,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
@@ -194,7 +196,14 @@ func planAutoSplitPhysicalIndexRegions(
 	}
 	colStats := statsTbl.GetCol(leadingCol.ID)
 	if colStats == nil || !colStats.IsAnalyzed() || !colStats.IsFullLoad() {
-		return nil, "leading column stats missing or not fully loaded", nil
+		loadedColStats, err := storage.LoadColumnStatsFromStorage(sctx, physicalID, leadingCol, tblInfo.PKIsHandle, true, kv.PriorityNormal)
+		if err != nil {
+			return nil, "failed to load leading column stats from storage", err
+		}
+		colStats = loadedColStats
+		if colStats == nil || !colStats.IsAnalyzed() || !colStats.IsFullLoad() {
+			return nil, "leading column stats missing or not fully loaded", nil
+		}
 	}
 
 	splitKeys := make([][]byte, 0)
