@@ -115,13 +115,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_alecthomas_assert_v2",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/alecthomas/assert/v2",
-        sum = "h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=",
-        version = "v2.11.0",
-    )
-    go_repository(
         name = "com_github_alecthomas_chroma_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/chroma/v2",
@@ -153,13 +146,6 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.4.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.4.0.zip",
         ],
-    )
-    go_repository(
-        name = "com_github_alecthomas_repr",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/alecthomas/repr",
-        sum = "h1:SU73FTI9D1P5UNtvseffFSGmdNci/O6RsqzeXJtP0Qs=",
-        version = "v0.5.2",
     )
     go_repository(
         name = "com_github_alecthomas_units",
@@ -4643,8 +4629,8 @@ def go_deps():
         name = "com_github_lib_pq",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lib/pq",
-        sum = "h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=",
-        version = "v1.10.9",
+        sum = "h1:sJZmqHoEaY7f+NPP8pgLB/WxulyR3fewgCM2qaSlBb4=",
+        version = "v1.1.1",
     )
     go_repository(
         name = "com_github_linode_linodego",
@@ -6755,20 +6741,6 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/twmb/murmur3/com_github_twmb_murmur3-v1.1.6.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/twmb/murmur3/com_github_twmb_murmur3-v1.1.6.zip",
         ],
-    )
-    go_repository(
-        name = "com_github_twpayne_go_geom",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/twpayne/go-geom",
-        sum = "h1:iLE+Opv0Ihm/ABIcvQFGIiFBXd76oBIar9drAwHFhR4=",
-        version = "v1.6.1",
-    )
-    go_repository(
-        name = "com_github_twpayne_go_kml_v3",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/twpayne/go-kml/v3",
-        sum = "h1:xkTIJ7KMnHGKpHGf30e4XS3UT8o/5jD62hmdGJPf7Io=",
-        version = "v3.2.1",
     )
     go_repository(
         name = "com_github_uber_jaeger_client_go",

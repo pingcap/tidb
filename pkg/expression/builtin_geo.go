@@ -66,9 +66,11 @@ var defaultPlanarCoverer = spatial.NewDefaultPlanarCoverer()
 // encodeEWKB serializes a simplefeatures geometry with the given SRID into
 // TiDB's EWKB storage form (<srid_le_uint32><wkb>).
 func encodeEWKB(g geom.Geometry, srid uint32) string {
-	prefix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(prefix, srid)
-	return string(append(prefix, g.AsBinary()...))
+	wkbVal := g.AsBinary()
+	out := make([]byte, 4+len(wkbVal))
+	binary.LittleEndian.PutUint32(out, srid)
+	copy(out[4:], wkbVal)
+	return string(out)
 }
 
 // DecodeEWKBPoint decodes an EWKB POINT value into its SRID and coordinates.
