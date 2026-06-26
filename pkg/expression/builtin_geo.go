@@ -106,12 +106,19 @@ func EWKBBounds(ewkb string) (srid uint32, minX, minY, maxX, maxY float64, err e
 }
 
 // decodeEWKB parses TiDB's EWKB storage form back into an SRID and geometry.
+//
+// It skips simplefeatures' geometry validation (geom.NoValidate): stored values
+// were already validated when constructed (ST_GeomFromText), and decodeEWKB's
+// consumers only read coordinates, bounding boxes, or WKT — none of which need
+// topological validity. Validation is the dominant cost of UnmarshalWKB for
+// polygons (about 11x for a 50-vertex ring), so skipping it keeps the per-row
+// read path cheap; malformed/truncated bytes still error during structural parsing.
 func decodeEWKB(ewkb string) (uint32, geom.Geometry, error) {
 	if len(ewkb) < 4 {
 		return 0, geom.Geometry{}, errors.New("invalid geometry value: too short")
 	}
 	srid := binary.LittleEndian.Uint32([]byte(ewkb[:4]))
-	g, err := geom.UnmarshalWKB([]byte(ewkb[4:]))
+	g, err := geom.UnmarshalWKB([]byte(ewkb[4:]), geom.NoValidate{})
 	if err != nil {
 		return 0, geom.Geometry{}, errors.Trace(err)
 	}
