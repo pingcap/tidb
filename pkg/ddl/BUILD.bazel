@@ -157,6 +157,7 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/statistics",
         "//pkg/statistics/handle",
+        "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",
         "//pkg/store",
         "//pkg/store/driver/txn",
