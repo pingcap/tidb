@@ -65,10 +65,25 @@ func (t TableMode) CanTransitionTo(target TableMode) bool {
 // AlterTableModeTarget describes a table-mode change request and, after resolution,
 // the metadata needed to build an AlterTableMode job.
 type AlterTableModeTarget struct {
-	SchemaID    int64
-	SchemaName  ast.CIStr
-	TableID     int64
-	TableName   ast.CIStr
+	// SchemaID is required input for AlterTableMode requests. It identifies the
+	// schema containing the target table.
+	SchemaID int64
+	// SchemaName is required input for cross-keyspace AlterTableMode requests
+	// and is runtime-populated for local DDL requests. Resolvers validate it
+	// against metadata before building the job.
+	SchemaName ast.CIStr
+	// TableID is required input for AlterTableMode requests. It identifies the
+	// table whose mode should change.
+	TableID int64
+	// TableName is required input for cross-keyspace AlterTableMode requests and
+	// is runtime-populated for local DDL requests. Resolvers validate it against
+	// metadata before building the job.
+	TableName ast.CIStr
+	// CurrentMode is runtime-populated from table metadata during AlterTableMode
+	// resolution. It is required only for resolved targets passed to
+	// jobsubmit.BuildAlterTableModeJob.
 	CurrentMode TableMode
-	TargetMode  TableMode
+	// TargetMode is required input for AlterTableMode requests. It is the table
+	// mode requested by the caller.
+	TargetMode TableMode
 }

@@ -23,10 +23,25 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 )
 
-// Runtime is the runtime view for accessing a storage through KV or session.
+// Runtime is the runtime view for accessing a keyspace through KV/session and
+// for submitting table-mode DDL operations to that keyspace.
+//
+// TODO: Runtime is a historical name and no longer describes this interface
+// precisely after table-mode DDL submission was added. Keep the name for now to
+// avoid churn until a better keyspace-scoped abstraction is introduced.
 type Runtime interface {
 	Store() kv.Storage
 	SysSessionPool() util.DestroyableSessionPool
+	// AlterTableMode submits an internal table-mode DDL and waits for the result.
+	//
+	// SchemaID, TableID, and TargetMode are required caller inputs.
+	// Cross-keyspace callers must also provide SchemaName and TableName; the
+	// implementation validates them against resolved metadata. CurrentMode is
+	// resolved by the implementation from current metadata before building the DDL
+	// job. The current-keyspace implementation delegates to the local DDL
+	// executor, which re-resolves names by ID. ctx is honored by context-aware
+	// submit/wait paths, while the local DDL executor path does not currently
+	// honor cancellation after the call starts.
 	AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error
 }
 

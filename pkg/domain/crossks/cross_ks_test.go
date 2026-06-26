@@ -402,10 +402,14 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	targetTK.MustExec("use test")
 	targetTK.MustExec("create table t_mode(id int)")
 	targetTK.MustExec("create table t_mode_upgrade(id int)")
+	originalKeyspace := config.GetGlobalKeyspaceName()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = keyspace.System
 	})
 	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = originalKeyspace
+		})
 		sysKSDom.GetCrossKSMgr().CloseKS(targetKS)
 	})
 
@@ -421,6 +425,10 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	defer cancel()
 
 	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode", targetKS, req))
+	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
+	globalIDAfterImport := getGlobalID(t, targetStore)
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode-retry", targetKS, req))
+	require.Equal(t, globalIDAfterImport, getGlobalID(t, targetStore))
 	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
 
 	req.SchemaName = ast.NewCIStr("renamed_test")
@@ -551,4 +559,14 @@ func getTargetTableMode(t *testing.T, store kv.Storage, schemaID, tableID int64)
 		return nil
 	}))
 	return mode
+}
+
+func getGlobalID(t *testing.T, store kv.Storage) int64 {
+	var id int64
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		id, err = meta.NewReader(txn).GetGlobalID()
+		return err
+	}))
+	return id
 }

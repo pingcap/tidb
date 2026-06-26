@@ -305,7 +305,7 @@ func (*Manager) createSessionManager(
 	sysTblMgr := systable.NewManager(ddlSessPool)
 	minJobIDRefresher := systable.NewMinJobIDRefresher(sysTblMgr)
 	isSyncer.SetMinJobIDRefresher(minJobIDRefresher)
-	ddlClient := newDDLClient(store, etcdCli, jobsubmit.SubmitOptions{
+	ddlClient := newDDLClient(etcdCli, jobsubmit.SubmitOptions{
 		Store:             store,
 		SessPool:          ddlSessPool,
 		SysTblMgr:         sysTblMgr,
@@ -501,7 +501,6 @@ func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 	return m.sessPool
 }
 
-// alterTableMode implements sqlsvrapi.Runtime.
 func (m *SessionManager) alterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
 	return m.ddlClient.alterTableMode(ctx, target)
 }
@@ -515,7 +514,6 @@ func (m *SessionManager) close() {
 	ks := m.store.GetKeyspace()
 	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
 	logger.Info("close cross keyspace session manager")
-	m.ddlClient.Close()
 	m.sessPool.Close()
 	close(m.exitCh)
 	m.cancel()

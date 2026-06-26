@@ -82,7 +82,6 @@ func newRuntimeHandleTestSessionManager(targetStore *runtimeHandleTestStore, ses
 		etcdCli:         clientv3.NewCtxClient(context.Background()),
 		schemaVerSyncer: schemaver.NewMemSyncer(),
 		sessPool:        sessPool,
-		ddlClient:       &ddlClient{},
 	}
 }
 

@@ -33,20 +33,17 @@ import (
 const ddlHistoryPollInterval = 100 * time.Millisecond
 
 type ddlClient struct {
-	store     kv.Storage
 	etcdCli   *clientv3.Client
 	opts      jobsubmit.SubmitOptions
 	sampleLog *zap.Logger
 }
 
 func newDDLClient(
-	store kv.Storage,
 	etcdCli *clientv3.Client,
 	opts jobsubmit.SubmitOptions,
 ) *ddlClient {
-	sampleLog := logutil.SampleErrVerboseLoggerFactory(time.Minute, 3, zap.String("target-keyspace", store.GetKeyspace()))()
+	sampleLog := logutil.SampleErrVerboseLoggerFactory(time.Minute, 3, zap.String("target-keyspace", opts.Store.GetKeyspace()))()
 	return &ddlClient{
-		store:     store,
 		etcdCli:   etcdCli,
 		opts:      opts,
 		sampleLog: sampleLog,
@@ -70,6 +67,8 @@ func (c *ddlClient) alterTableMode(
 	if noop {
 		return nil
 	}
+	// SubmitBatch reads the cached server state to auto-pause user DDL when
+	// the cluster is upgrading, so refresh the cache immediately before enqueue.
 	if err = c.refreshServerState(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -81,8 +80,6 @@ func (c *ddlClient) alterTableMode(
 	jobsubmit.NotifyDDLOwnerByEtcd(ctx, c.etcdCli)
 	return errors.Trace(c.waitDDLFinished(ctx, job.ID))
 }
-
-func (*ddlClient) Close() {}
 
 func (c *ddlClient) buildAlterTableModeJob(
 	target model.AlterTableModeTarget,
@@ -112,7 +109,7 @@ func (c *ddlClient) resolveAlterTableModeTarget(
 		dbInfo  *model.DBInfo
 		tblInfo *model.TableInfo
 	)
-	err := kv.RunInNewTxn(ctx, c.store, false, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, c.opts.Store, false, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewReader(txn)
 		var err error
 		dbInfo, err = m.GetDatabase(req.SchemaID)
@@ -139,7 +136,7 @@ func (c *ddlClient) resolveAlterTableModeTarget(
 	}
 
 	// below checks shouldn't happen in normal execution path, but if we add a
-	// fallback restore table mode mechanism to end user, it might.
+	// fallback resetting table mode mechanism to end user, it might.
 	if req.SchemaName.L != dbInfo.Name.L {
 		return model.AlterTableModeTarget{}, errors.Errorf(
 			"expected schema name %s does not match target schema name %s",
@@ -161,7 +158,10 @@ func (c *ddlClient) resolveAlterTableModeTarget(
 	}, nil
 }
 
-// this method is a simplified version of wait logic inside DoDDLJobWrapper.
+// waitDDLFinished intentionally keeps only the terminal-state handling from
+// executor.DoDDLJobWrapper. The cross-KS submitter runs outside the target
+// keyspace's DDL executor, so it cannot reuse jobW.ResultCh and must poll the
+// target history table until an RPC-based remote notification path is available.
 func (c *ddlClient) waitDDLFinished(ctx context.Context, jobID int64) error {
 	ticker := time.NewTicker(ddlHistoryPollInterval)
 	defer ticker.Stop()
@@ -184,7 +184,8 @@ func (c *ddlClient) waitDDLFinished(ctx context.Context, jobID int64) error {
 			if historyJob.Error != nil {
 				return errors.Trace(historyJob.Error)
 			}
-			// should not happen.
+			// DDL should either move to synced state or report error after
+			// submit success, so we should not reach here.
 			return errors.Errorf("target DDL job %d finished in unexpected state %s", jobID, historyJob.State)
 		}
 	}
@@ -192,7 +193,7 @@ func (c *ddlClient) waitDDLFinished(ctx context.Context, jobID int64) error {
 
 func (c *ddlClient) getHistoryJob(ctx context.Context, jobID int64) (*model.Job, error) {
 	var job *model.Job
-	err := kv.RunInNewTxn(ctx, c.store, false, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, c.opts.Store, false, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		job, err = meta.NewReader(txn).GetHistoryDDLJob(jobID)
 		return errors.Trace(err)
