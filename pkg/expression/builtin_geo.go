@@ -56,6 +56,10 @@ var (
 	_ functionClass = &stLengthFunctionClass{}
 	_ functionClass = &stDimensionFunctionClass{}
 	_ functionClass = &stCentroidFunctionClass{}
+	_ functionClass = &stStartPointFunctionClass{}
+	_ functionClass = &stEndPointFunctionClass{}
+	_ functionClass = &stExteriorRingFunctionClass{}
+	_ functionClass = &stNumInteriorRingsFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
@@ -82,6 +86,9 @@ var (
 	_ builtinFunc = &builtinStLengthSig{}
 	_ builtinFunc = &builtinStDimensionSig{}
 	_ builtinFunc = &builtinStCentroidSig{}
+	_ builtinFunc = &builtinStEndpointSig{}
+	_ builtinFunc = &builtinStExteriorRingSig{}
+	_ builtinFunc = &builtinStNumInteriorRingsSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
@@ -1122,6 +1129,168 @@ func (b *builtinStCentroidSig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "", false, err
 	}
 	return encodeEWKB(g.Centroid().AsGeometry(), srid), false, nil
+}
+
+type stStartPointFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stStartPointFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStEndpointSig{baseBuiltinFunc: bf, start: true}
+	return sig, nil
+}
+
+type stEndPointFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stEndPointFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStEndpointSig{baseBuiltinFunc: bf, start: false}
+	return sig, nil
+}
+
+type builtinStEndpointSig struct {
+	baseBuiltinFunc
+	start bool
+}
+
+func (b *builtinStEndpointSig) Clone() builtinFunc {
+	newSig := &builtinStEndpointSig{start: b.start}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_StartPoint/ST_EndPoint(line) -> the first/last point,
+// or NULL when the argument is not a non-empty LINESTRING (MySQL semantics).
+func (b *builtinStEndpointSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	ls, ok := g.AsLineString()
+	if !ok || ls.IsEmpty() {
+		return "", true, nil
+	}
+	pt := ls.StartPoint()
+	if !b.start {
+		pt = ls.EndPoint()
+	}
+	return encodeEWKB(pt.AsGeometry(), srid), false, nil
+}
+
+type stExteriorRingFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stExteriorRingFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStExteriorRingSig{bf}
+	return sig, nil
+}
+
+type builtinStExteriorRingSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStExteriorRingSig) Clone() builtinFunc {
+	newSig := &builtinStExteriorRingSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_ExteriorRing(polygon) -> its outer ring as a
+// LINESTRING, or NULL when the argument is not a POLYGON (MySQL semantics).
+func (b *builtinStExteriorRingSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	p, ok := g.AsPolygon()
+	if !ok {
+		return "", true, nil
+	}
+	return encodeEWKB(p.ExteriorRing().AsGeometry(), srid), false, nil
+}
+
+type stNumInteriorRingsFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stNumInteriorRingsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStNumInteriorRingsSig{bf}
+	return sig, nil
+}
+
+type builtinStNumInteriorRingsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStNumInteriorRingsSig) Clone() builtinFunc {
+	newSig := &builtinStNumInteriorRingsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt implements ST_NumInteriorRings(polygon) -> the interior-ring count, or
+// NULL when the argument is not a POLYGON (MySQL semantics).
+func (b *builtinStNumInteriorRingsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	p, ok := g.AsPolygon()
+	if !ok {
+		return 0, true, nil
+	}
+	return int64(p.NumInteriorRings()), false, nil
 }
 
 type tidbSpatialKeysFunctionClass struct {

@@ -833,8 +833,10 @@ st_dimension
 st_disjoint
 st_distance
 st_distance_sphere
+st_endpoint
 st_envelope
 st_equals
+st_exteriorring
 st_geometrytype
 st_geomfromgeojson
 st_geomfromtext
@@ -843,8 +845,10 @@ st_intersects
 st_isempty
 st_isvalid
 st_length
+st_numinteriorrings
 st_overlaps
 st_srid
+st_startpoint
 st_touches
 st_within
 st_x

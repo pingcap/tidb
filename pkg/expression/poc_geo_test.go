@@ -86,6 +86,12 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT ST_Length(ST_GeomFromText('LINESTRING(0 0,3 4)'))").Check(testkit.Rows("5"))
 	tk.MustQuery("SELECT ST_Dimension(ST_GeomFromText('POINT(1 1)')), ST_Dimension(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))").Check(testkit.Rows("0 2"))
 	tk.MustQuery("SELECT ST_AsText(ST_Centroid(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))')))").Check(testkit.Rows("POINT(2 2)"))
+
+	// Component accessors (NULL when the argument is the wrong geometry type).
+	tk.MustQuery("SELECT ST_AsText(ST_StartPoint(ST_GeomFromText('LINESTRING(0 0,1 1,2 2)'))), ST_AsText(ST_EndPoint(ST_GeomFromText('LINESTRING(0 0,1 1,2 2)')))").Check(testkit.Rows("POINT(0 0) POINT(2 2)"))
+	tk.MustQuery("SELECT ST_StartPoint(ST_GeomFromText('POINT(1 1)')) IS NULL").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_AsText(ST_ExteriorRing(ST_GeomFromText('POLYGON((0 0,3 0,3 3,0 3,0 0),(1 1,2 1,2 2,1 2,1 1))')))").Check(testkit.Rows("LINESTRING(0 0,3 0,3 3,0 3,0 0)"))
+	tk.MustQuery("SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON((0 0,3 0,3 3,0 3,0 0),(1 1,2 1,2 2,1 2,1 1))'))").Check(testkit.Rows("1"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.
