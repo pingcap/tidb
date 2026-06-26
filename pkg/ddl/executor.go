@@ -5110,6 +5110,9 @@ func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, inde
 	geomPart.Expr = keyExpr
 	geomPart.Column = nil
 	geomPart.Length = types.UnspecifiedLength
+	// Carry the geometry's MBR as trailing numeric index columns for pre-lookup
+	// pruning (see buildSpatialBBoxKeyParts).
+	indexPartSpecifications = append(indexPartSpecifications, buildSpatialBBoxKeyParts(col.Name, isPoint)...)
 
 	return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, indexPartSpecifications, indexOption, ifNotExists)
 }

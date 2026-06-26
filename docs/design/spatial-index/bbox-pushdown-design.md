@@ -217,9 +217,26 @@ The same harness, run before/after each layer, is the acceptance evidence.
 
 ## 6. Sequencing
 
-1. **Benchmark** (baseline) — done first.
-2. **Layer A — bbox-in-index** (TiDB only): generated bbox/coord columns +
-   resolver bbox filter. Measurable single-node win, pushes to cop for free.
-3. **Layer A+ — point covering rewrite** (needs `ST_Point`).
-4. **tipb fork** + **TiDB pb wiring** + **unistore** validation (plumbing PoC).
-5. **TiKV** Rust predicate eval (separate session) — the network/CPU win.
+1. **Benchmark** (baseline) — DONE: `BenchmarkSpatialIndexLookups`
+   (169 lookups / 75 results).
+2. **Layer A — bbox-in-index** — DONE for the POINT index: ST_X/ST_Y hidden index
+   columns + resolver MBR filter. Verified: **169 candidates → 121 lookups** (48
+   pruned before the table lookup), results exact, asserted in
+   `TestPOCSpatialSelectivity`. Empirical caveats:
+   - **Latency is not measurable in unistore.** An in-memory "table lookup" is
+     ~free, so the bbox filter's per-candidate overhead (computing ST_X/ST_Y +
+     four comparisons) makes ns/op *rise*. The win is fewer random-read I/Os,
+     which only a real-storage benchmark can show. This is the *same* caveat as
+     Layer B / cop pushdown — both need real TiKV to show a time win.
+   - **Auto-selection regressed**: the extra bbox conditions tip the
+     statistics-free optimizer toward a full scan, so the index now needs
+     `FORCE INDEX`. → bumps "spatial cost/statistics" to a top priority.
+   - TODO: general-geometry (MVI) bbox columns; spherical-cap bbox for
+     ST_Distance_Sphere.
+3. **Real-storage benchmark** (next): so Layer A's and Layer B's latency wins are
+   measurable at all.
+4. **Layer A+ — point covering rewrite** (needs `ST_Point`): refine on index
+   `(x,y)` with zero table lookups.
+5. **tipb fork** (DONE: `~/repos/tipb` `spatial-pushdown`) + **TiDB pb wiring** +
+   **unistore** validation (plumbing PoC).
+6. **TiKV** Rust predicate eval (separate session) — the network/CPU win.

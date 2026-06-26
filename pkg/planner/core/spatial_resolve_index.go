@@ -103,6 +103,16 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 		if rangeExpr != nil {
 			added = append(added, rangeExpr)
 		}
+		// MBR pruning: if the point index carries ST_X/ST_Y bbox columns, conjoin a
+		// bounding-box-intersection filter on them. These are plain numeric
+		// comparisons on index columns, so the optimizer applies them during the
+		// index scan, before the table lookup — pruning the covering's false
+		// positives without a random read. The exact predicate still refines.
+		if rect, hasRect := req.bboxRect(); hasRect {
+			if xCol, yCol, ok := s.findSpatialBBoxColumns(ds, req.geomColID); ok {
+				added = append(added, buildBBoxConds(exprCtx, xCol, yCol, rect)...)
+			}
+		}
 	}
 
 	if len(added) == 0 {
@@ -135,12 +145,19 @@ func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, g
 		if !idx.IsPublic() || len(idx.Columns) == 0 {
 			continue
 		}
-		// The cell-key hidden column is the index's trailing column; any leading
-		// columns are ordinary prefix columns of a composite spatial index
-		// (e.g. (tenant_id, position)). The optimizer combines the prefix
-		// equality from the query with the injected cell ranges on this column.
-		hiddenColInfo := tblInfo.Columns[idx.Columns[len(idx.Columns)-1].Offset]
-		if !isSpatialHiddenColumn(hiddenColInfo) {
+		// Find the cell-key hidden column by its tidb_spatial_key marker. Any
+		// leading columns are ordinary prefix columns of a composite spatial index
+		// (e.g. (tenant_id, position)); any trailing columns are the ST_X/ST_Y
+		// bbox columns. The optimizer combines the prefix equality from the query
+		// with the injected cell ranges on the cell-key column.
+		var hiddenColInfo *model.ColumnInfo
+		for _, ic := range idx.Columns {
+			if c := tblInfo.Columns[ic.Offset]; isSpatialHiddenColumn(c) {
+				hiddenColInfo = c
+				break
+			}
+		}
+		if hiddenColInfo == nil {
 			continue
 		}
 		if _, dep := hiddenColInfo.Dependences[geomColName]; !dep {
@@ -267,6 +284,125 @@ func (q coverRequest) ranges(params spatial.PlanarParams) ([]spatial.CellKeyRang
 	default:
 		return params.Coverer().CoverRect(0, q.rect)
 	}
+}
+
+// bboxRect returns the query's minimum bounding rectangle for MBR pruning, when
+// one is available. The planar and lat/long requests already carry the query
+// MBR in rect; the spherical-cap request does not (its bbox would need a
+// lat/long projection of the cap), so it opts out of bbox pruning for now.
+func (q coverRequest) bboxRect() (spatial.Rect, bool) {
+	switch q.kind {
+	case coverPlanarRect, coverLatLngRect:
+		return q.rect, true
+	default:
+		return spatial.Rect{}, false
+	}
+}
+
+// findSpatialBBoxColumns returns the hidden ST_X/ST_Y index columns generated for
+// the point spatial index on geomColID, re-adding them to the DataSource schema
+// if they were pruned (they carry no VirtualExpr: their values are materialized
+// in the index, so the bbox filter can be applied at the index scan). Returns
+// ok=false when the index has no bbox columns (e.g. a general-geometry MVI).
+func (*SpatialIndexResolver) findSpatialBBoxColumns(ds *logicalop.DataSource, geomColID int64) (xCol, yCol *expression.Column, ok bool) {
+	tblInfo := ds.TableInfo
+	var geomColName string
+	for _, c := range tblInfo.Columns {
+		if c.ID == geomColID {
+			geomColName = c.Name.L
+			break
+		}
+	}
+	if geomColName == "" {
+		return nil, nil, false
+	}
+	var xInfo, yInfo *model.ColumnInfo
+	for _, c := range tblInfo.Columns {
+		if !c.Hidden {
+			continue
+		}
+		if _, dep := c.Dependences[geomColName]; !dep {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(c.GeneratedExprString, ast.StX+"("):
+			xInfo = c
+		case strings.HasPrefix(c.GeneratedExprString, ast.StY+"("):
+			yInfo = c
+		}
+	}
+	if xInfo == nil || yInfo == nil {
+		return nil, nil, false
+	}
+	reAdd := func(info *model.ColumnInfo, fn string) *expression.Column {
+		for _, sc := range ds.Schema().Columns {
+			if sc.ID == info.ID {
+				return sc
+			}
+		}
+		newCol := &expression.Column{
+			UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+			ID:       info.ID,
+			RetType:  info.FieldType.Clone(),
+			OrigName: info.Name.L,
+			// ST_X/ST_Y are virtual expression-index columns (materialized only in
+			// the index). Carry the generating expression so the value is available
+			// when not read straight from the index.
+			VirtualExpr: buildBBoxVirtualExpr(ds, geomColID, fn),
+		}
+		ds.Columns = append(ds.Columns, info)
+		ds.Schema().Append(newCol)
+		return newCol
+	}
+	return reAdd(xInfo, ast.StX), reAdd(yInfo, ast.StY), true
+}
+
+// buildBBoxVirtualExpr reconstructs ST_X(geomCol) / ST_Y(geomCol) for a re-added
+// bbox column's VirtualExpr. Returns nil if the geometry column is not in the
+// schema (the column is still usable straight from the index).
+func buildBBoxVirtualExpr(ds *logicalop.DataSource, geomColID int64, fn string) expression.Expression {
+	var geomCol *expression.Column
+	for _, c := range ds.Schema().Columns {
+		if c.ID == geomColID {
+			geomCol = c
+			break
+		}
+	}
+	if geomCol == nil {
+		return nil
+	}
+	retType := types.NewFieldType(mysql.TypeDouble)
+	vexpr, err := expression.NewFunction(ds.SCtx().GetExprCtx(), fn, retType, geomCol)
+	if err != nil {
+		return nil
+	}
+	return vexpr
+}
+
+// buildBBoxConds builds the four MBR-intersection comparisons for a point index:
+// x >= minX, x <= maxX, y >= minY, y <= maxY. Returned as separate conditions so
+// the optimizer can apply each as an independent index filter.
+func buildBBoxConds(ctx expression.BuildContext, xCol, yCol *expression.Column, rect spatial.Rect) []expression.Expression {
+	boolType := types.NewFieldType(mysql.TypeLonglong)
+	realType := types.NewFieldType(mysql.TypeDouble)
+	cmp := func(fn string, col *expression.Column, v float64) expression.Expression {
+		c := &expression.Constant{Value: types.NewFloat64Datum(v), RetType: realType}
+		e, err := expression.NewFunction(ctx, fn, boolType, col, c)
+		if err != nil {
+			return nil
+		}
+		return e
+	}
+	conds := []expression.Expression{
+		cmp(ast.GE, xCol, rect.MinX), cmp(ast.LE, xCol, rect.MaxX),
+		cmp(ast.GE, yCol, rect.MinY), cmp(ast.LE, yCol, rect.MaxY),
+	}
+	for _, c := range conds {
+		if c == nil {
+			return nil
+		}
+	}
+	return conds
 }
 
 // sridMatchesColumn reports whether the indexed column's declared SRID is the

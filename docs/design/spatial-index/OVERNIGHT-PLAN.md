@@ -65,16 +65,28 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   compatibility/ergonomics item (so e.g. `ST_Within(g, POLYGON((...)))` works
   instead of only `ST_Within(g, ST_GeomFromText('POLYGON((...))'))`). Today they
   parse but resolve to "function does not exist".
-- **Performance (primary): bounding-box-in-index → coprocessor pushdown.** See
-  `bbox-pushdown-design.md`. Today the refine runs at the TiDB root and every
-  covering false positive is table-looked-up first (baseline: 169 lookups for 75
-  results, fp_ratio 2.25, via `BenchmarkSpatialIndexLookups`). Layer A stores the
-  MBR (and point coords) in the index and injects a bbox-intersection filter that
-  prunes before the table lookup and **pushes to the coprocessor for free**
-  (numeric comparisons) — the main single-node win. Layer B pushes the exact
-  `ST_*` refine to TiKV (needs the tipb fork + a Rust cop evaluator); unistore is
-  the plumbing-only PoC for it.
-- Spatial cost/statistics + ANALYZE (Hilbert/Morton linearization).
+- **Spatial cost/statistics + ANALYZE (now a top priority).** Without spatial
+  stats the optimizer can't reliably pick the spatial index over a full scan, so
+  POC tests `FORCE INDEX`. Layer A (below) made this sharper: the extra bbox
+  conditions tip the statistics-free cost estimate toward a full scan, so a query
+  that previously auto-selected the index now needs `FORCE INDEX`. Needed for the
+  index to be usable without hints and to credit the bbox selectivity.
+- **Performance: bounding-box-in-index → coprocessor pushdown.** See
+  `bbox-pushdown-design.md`. Layer A (bbox-in-index) is **implemented for the
+  POINT index**: ST_X/ST_Y are carried as hidden index columns and the resolver
+  injects an MBR-intersection filter that the optimizer applies during the index
+  scan, before the table lookup. Verified pruning: on the radius benchmark it
+  cuts **169 candidates → 121 table lookups** (48 pruned), results exact, invariant
+  `lookups <= candidates`. CAVEATS learned: (1) the **latency** win is invisible
+  in unistore — an in-memory "table lookup" is ~free, so the filter's overhead
+  outweighs it; the real win is fewer **random-read I/Os**, only measurable on
+  real storage (needs a real-TiKV/disk benchmark). (2) auto-selection regressed
+  (see the stats item above). TODO: general-geometry (MVI) bbox columns; the
+  point covering-index rewrite (`ST_Point(x,y)` refine on index data); Layer B
+  exact-refine pushdown to TiKV (tipb fork + Rust cop evaluator; unistore = a
+  plumbing-only PoC, no perf).
+- Stand up a **real-storage (TiKV/disk) benchmark** so the Layer A and pushdown
+  latency wins can actually be measured (the mock store only shows lookup-count).
 - `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.
 - Dumpling/Lightning round-trips; KNN (`ORDER BY ST_Distance LIMIT k`).
 - Docs, system variables, compatibility matrix.

@@ -1347,6 +1347,28 @@ func buildSpatialKeyExpr(colName ast.CIStr, comment string, isPoint bool) (ast.E
 	return &ast.FuncCastExpr{Expr: keysCall, Tp: castType, FunctionType: ast.CastFunction}, nil
 }
 
+// buildSpatialBBoxKeyParts returns extra index part specifications that carry the
+// geometry's minimum bounding rectangle as ordinary numeric index columns, so the
+// planner can prune candidates by MBR intersection *during the index scan, before
+// the table lookup* (the coverer cells are coarse and produce false positives).
+// For a POINT the MBR is the point itself, so the columns are ST_X(col)/ST_Y(col).
+// General-geometry bbox columns are a later increment (returns nil here).
+func buildSpatialBBoxKeyParts(colName ast.CIStr, isPoint bool) []*ast.IndexPartSpecification {
+	if !isPoint {
+		return nil
+	}
+	mkPart := func(fn string) *ast.IndexPartSpecification {
+		return &ast.IndexPartSpecification{
+			Expr: &ast.FuncCallExpr{
+				FnName: ast.NewCIStr(fn),
+				Args:   []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}},
+			},
+			Length: types.UnspecifiedLength,
+		}
+	}
+	return []*ast.IndexPartSpecification{mkPart(ast.StX), mkPart(ast.StY)}
+}
+
 // spatialKeyHexLen is the CHAR width of a hex-encoded cell key (8 bytes).
 const spatialKeyHexLen = 16
 
@@ -1427,6 +1449,9 @@ func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constrai
 		geomKey.Expr = keyExpr
 		geomKey.Column = nil
 		geomKey.Length = types.UnspecifiedLength
+		// Carry the geometry's MBR as trailing numeric index columns for pre-lookup
+		// pruning (see buildSpatialBBoxKeyParts).
+		constr.Keys = append(constr.Keys, buildSpatialBBoxKeyParts(col.Name, isPoint)...)
 		constr.Tp = ast.ConstraintIndex
 	}
 	return nil

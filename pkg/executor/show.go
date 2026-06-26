@@ -1054,7 +1054,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 // or cast(tidb_spatial_keys(col, ...) as ... array) for general geometries) and,
 // if so, returns the back-quoted source column for SHOW CREATE TABLE rendering.
 func spatialIndexSourceColumn(idxInfo *model.IndexInfo, tableInfo *model.TableInfo) (string, bool) {
-	if len(idxInfo.Columns) != 1 {
+	// The cell-key is the leading index column; for a point index it is followed
+	// by the hidden ST_X/ST_Y bbox columns (a composite spatial index instead has
+	// real prefix columns first, so its leading column is not hidden and falls
+	// through to the normal KEY rendering).
+	if len(idxInfo.Columns) == 0 {
 		return "", false
 	}
 	col := tableInfo.Columns[idxInfo.Columns[0].Offset]

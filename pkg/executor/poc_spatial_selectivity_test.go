@@ -108,6 +108,17 @@ func TestPOCSpatialSelectivity(t *testing.T) {
 		act, len(want), id, float64(act)/float64(len(want)), 100*float64(act)/float64(id))
 	require.Less(t, act, 2000, "index should prune to a small fraction of the 10000 rows")
 	require.GreaterOrEqual(t, act, len(want), "candidate set must be a superset of the matches")
+
+	// Layer A (bbox-in-index): the MBR filter on the hidden ST_X/ST_Y columns
+	// prunes covering false positives during the index scan, before the table
+	// lookup. The invariant is lookups <= candidates (the filter never adds
+	// lookups); for this query, whose covering overshoots the query's bounding
+	// box, the lookups are strictly fewer.
+	lookups, ok := opActRows(t, tk, forced, "TableRowIDScan")
+	require.True(t, ok, "expected a TableRowIDScan in EXPLAIN ANALYZE")
+	require.LessOrEqual(t, lookups, act, "bbox filter must not increase table lookups")
+	require.Less(t, lookups, act, "bbox filter should prune some candidates before the lookup")
+	t.Logf("bbox pruning: %d candidates -> %d table lookups (%d pruned before lookup)", act, lookups, act-lookups)
 }
 
 // opActRows pulls the actRows of the first EXPLAIN ANALYZE operator whose name
