@@ -609,13 +609,14 @@ func recognizeSpatialPredicate(cond expression.Expression, evalCtx expression.Ev
 	case ast.LE, ast.LT:
 		// ST_Distance(col, const) <= r  or  ST_Distance_Sphere(col, const) <= r
 		return recognizeDistancePredicate(sf, evalCtx)
-	case ast.StContains, ast.StWithin:
-		// ST_Contains(const_poly, col) / ST_Within(col, const_poly): one argument is
-		// the indexed column, the other the constant query region. The covering is
-		// the same either way (the row's cells must overlap the region's cells), so
-		// the argument order does not matter here.
+	case ast.StContains, ast.StWithin, ast.StIntersects:
+		// ST_Contains / ST_Within / ST_Intersects of a column and a constant
+		// geometry: one argument is the indexed column, the other the constant query
+		// region. For all three, a matching row's geometry overlaps the region, so
+		// its covering cells overlap the region's cells — the same covering serves
+		// every predicate, and the argument order does not matter here.
 		args := sf.GetArgs()
-		return recognizeContainmentPredicate(args[0], args[1], evalCtx)
+		return recognizeRegionPredicate(args[0], args[1], evalCtx)
 	}
 	return coverRequest{}, false
 }
@@ -666,10 +667,10 @@ func recognizeDistancePredicate(cmp *expression.ScalarFunction, evalCtx expressi
 	}, true
 }
 
-// recognizeContainmentPredicate handles a column / constant-polygon pair; the
-// query region is the polygon's bounding box (planar for SRID 0, lat/long for
-// SRID 4326).
-func recognizeContainmentPredicate(arg0, arg1 expression.Expression, evalCtx expression.EvalContext) (coverRequest, bool) {
+// recognizeRegionPredicate handles a column / constant-geometry pair (the
+// ST_Contains / ST_Within / ST_Intersects family); the query region is the
+// constant geometry's bounding box (planar for SRID 0, lat/long for SRID 4326).
+func recognizeRegionPredicate(arg0, arg1 expression.Expression, evalCtx expression.EvalContext) (coverRequest, bool) {
 	geomCol, polyArg, ok := splitColAndConst(arg0, arg1)
 	if !ok {
 		return coverRequest{}, false

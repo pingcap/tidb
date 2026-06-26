@@ -245,8 +245,8 @@ The same harness, run before/after each layer, is the acceptance evidence.
    - **Auto-selection regressed**: the extra bbox conditions tip the
      statistics-free optimizer toward a full scan, so the index now needs
      `FORCE INDEX`. → bumps "spatial cost/statistics" to a top priority.
-   - TODO: spherical-cap bbox for ST_Distance_Sphere; `ST_Intersects` recognition
-     for the MVI auto-injection (`ST_Within`/`ST_Contains` done).
+   - TODO: spherical-cap bbox for ST_Distance_Sphere (the `ST_Intersects`/
+     `ST_Within`/`ST_Contains` auto-injection is done).
 3. **Real-storage benchmark** (next): so Layer A's and Layer B's latency wins are
    measurable at all.
 4. **Layer A+ — point covering rewrite** (needs `ST_Point`): refine on index

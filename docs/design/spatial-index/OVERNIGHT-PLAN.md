@@ -98,8 +98,8 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   + unistore round-trip validation (no perf, plumbing only).
 - Stand up a **real-storage (TiKV/disk) benchmark** so the Layer A and pushdown
   latency wins can actually be measured (the mock store only shows lookup-count).
-- `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path (done for
-  `ST_Within`/`ST_Contains`; `ST_Intersects` recognition is the remaining piece).
+- `ST_Intersects`/`ST_Within`/`ST_Contains` → covering auto-rewrite (cell ranges
+  for a point, `json_overlaps` for the MVI): DONE for all three.
 - Dumpling/Lightning round-trips; KNN (`ORDER BY ST_Distance LIMIT k`).
 - Docs, system variables, compatibility matrix.
 

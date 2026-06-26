@@ -129,4 +129,19 @@ func TestPOCSpatialMVIAutoInjectAndBBox(t *testing.T) {
 	require.LessOrEqual(t, lookups, rawCells, "bbox filter must not increase lookups")
 	require.Less(t, lookups, rawCells, "bbox filter should prune covering false positives before the lookup")
 	t.Logf("MVI bbox pruning: %d covering candidates -> %d table lookups -> %d results", rawCells, lookups, len(want))
+
+	// ST_Intersects auto-injects through the same path (the covering serves every
+	// region predicate): it also auto-selects the MVI and returns the same rows as
+	// a full scan. Intersection matches more rows than containment (boundary-only
+	// overlaps count), so it is a distinct check.
+	const ipred = "ST_Intersects(geom, ST_GeomFromText('POLYGON((10 10,13 10,13 13,10 13,10 10))',0))"
+	iwant := tk.MustQuery("SELECT id FROM g IGNORE INDEX (sidx) WHERE " + ipred + " ORDER BY id").Rows()
+	require.Greater(t, len(iwant), len(want), "ST_Intersects should match more rows than ST_Within")
+	iforced := "SELECT id FROM g FORCE INDEX (sidx) WHERE " + ipred + " ORDER BY id"
+	tk.MustQuery(iforced).Check(iwant)
+	var isb strings.Builder
+	for _, r := range tk.MustQuery("EXPLAIN " + iforced).Rows() {
+		isb.WriteString(fmt.Sprintf("%v ", r[0]))
+	}
+	require.Contains(t, isb.String(), "IndexMerge", "ST_Intersects should auto-select the MVI via IndexMerge")
 }

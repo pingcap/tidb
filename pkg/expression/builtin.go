@@ -1010,7 +1010,7 @@ var funcs = map[string]functionClass{
 	ast.StDistanceSphere:   &stDistanceSphereFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDistanceSphere, 2, 2}},
 	ast.StContains:         &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StContains, 2, 2}, pred: geomrel.Contains, setsSpatialFlag: true},
 	ast.StWithin:           &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StWithin, 2, 2}, pred: geomrel.Within, setsSpatialFlag: true},
-	ast.StIntersects:       &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StIntersects, 2, 2}, pred: geomrel.Intersects},
+	ast.StIntersects:       &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StIntersects, 2, 2}, pred: geomrel.Intersects, setsSpatialFlag: true},
 	ast.StEquals:           &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StEquals, 2, 2}, pred: geomrel.Equals},
 	ast.StDisjoint:         &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDisjoint, 2, 2}, pred: geomrel.Disjoint},
 	ast.StTouches:          &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StTouches, 2, 2}, pred: geomrel.Touches},
