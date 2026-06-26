@@ -1080,6 +1080,11 @@ unaffected:
 SPATIAL KEY `geom_idx` (`geom`) /*T![spatial] S2_MAX_CELLS = 8 */
 ```
 
+A third option, used by the PoC, is to carry tuning in the index **COMMENT**
+(`COMMENT 'spatial:level,minX,minY,maxX,maxY'`): it needs no grammar change, round-trips
+through SHOW CREATE, and reuses MySQL's existing index-option idiom. See "Proof-of-concept
+validation".
+
 ### Composite (prefix-column) spatial indexes (very late, not for release)
 
 A composite index prepends scalar equality-prefix columns before the geometry, e.g.
@@ -1119,6 +1124,57 @@ for the parameter *vocabulary* (`s2_max_cells`, etc.), since it is the only main
 cell-covering index. Oracle and SQL Server use proprietary spatial-index syntax that does
 not map to this design and are not followed.
 
+## Proof-of-concept validation (`spatial-index-poc`, 2026-06)
+
+An autonomous proof-of-concept (branch `spatial-index-poc`, ~20 commits, Phases A-E plus
+extensions) implemented the design end to end and confirmed the core choices. It
+independently arrived at the same architecture: cell-covering over the MVI, `CellKey
+[]byte` (`type CellKey []byte` in `pkg/util/spatial/coverer.go`, not `int64`), planar
+quadtree for SRID 0 + S2 for SRID 4326, the hidden-generated-column `tidb_spatial_key(col)`
+expression index (a scalar plain index for points, MVI for general geometry),
+MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY` with a SHOW CREATE round-trip, out-of-domain
+coordinates clamped to the boundary cell, and the NOT NULL + SRID-restriction. It also went
+beyond the points MVP into general-geometry MVI and composite (prefix-column) indexes.
+These are PoC measurements, not production numbers.
+
+- **Selectivity and cost** (100k uniform random points, 0.05x0.05 window query, 35 true
+  matches): level 16 (default) scanned ~169 candidates, a ~2.25x false-positive ratio.
+  Deeper levels tighten the candidate set but emit more cell ranges; level 16 balanced
+  precision against range count. Coverer microbenchmarks: ~50 ns/op to cover a query
+  rectangle, ~40 ns/op to encode a point, negligible per-row overhead.
+- **Exact predicates -> GEOS**: hand-rolled ray-casting gave wrong OGC boundary semantics
+  (e.g. polygon-corner containment), so the PoC adopted **GEOS** via
+  `github.com/twpayne/go-geos` (cgo) for the relate predicates (Within/Contains/Intersects/
+  Touches/Crosses/Overlaps/Equals/Disjoint), matching MySQL's OGC DE-9IM. Pure-Go
+  `simplefeatures` was not tried for parity; GEOS is the validated choice, at the cost of a
+  cgo/libgeos build dependency. (Updates the "Geometry library" recommendation above.)
+- **MySQL compatibility**: two output divergences found and fixed, WKT spacing
+  (`POINT(0 0)`, no space) and boundary containment; the `spatial_compat` integration test
+  is then byte-identical to MySQL 8.0.46.
+- **SRID 4326 / S2 defaults**: maxLevel 30, maxCells 16, `EarthRadiusMeters = 6370986` (the
+  same radius for covering and refine so they agree). Antimeridian and poles are handled
+  natively by S2, no special-casing.
+- **Cell tuning surface**: the PoC stored per-index tuning in the index **COMMENT**
+  (`COMMENT 'spatial:level,minX,minY,maxX,maxY'`) rather than new grammar; it round-trips
+  through SHOW CREATE and uses MySQL's existing index-option idiom. This is a viable
+  alternative to the deferred bare `NAME=value` options (see "Non-default cell tuning").
+- **Index value contents**: the PoC does not store a per-row bbox in the index value; cell
+  overlap plus the exact refine sufficed for correctness. So bbox-in-value (Sunny's review)
+  is confirmed as an optional selectivity optimization, not a requirement.
+- **Self-review caught three real bugs** before the PoC settled: unbounded general-geometry
+  covering at insert (capped at 8192 cells), a GEOS panic on invalid geometry, and
+  mixed-SRID silent wrong results in `ST_Distance_Sphere` (now SRID-validated).
+- **Open build gap**: the Go toolchain builds and tests green, but `libgeos` is not yet
+  wired into the Bazel/CI build (needs a `cc_library` plus mirroring the new Go deps). This
+  is the main unfinished piece and a prerequisite for landing GEOS-backed predicates.
+- **Dependencies confirmed**: `twpayne/go-geom v1.6.1` (storage/EWKB), `twpayne/go-geos`
+  (exact predicates, cgo), `github.com/golang/geo` (S2). MVI proved to be exactly the right
+  primitive (no new distributed read/write code), and the coverer package is engine-agnostic
+  (encouraging for future TiFlash reuse).
+
+The PoC also keeps its own execution log at `docs/design/spatial-index/OVERNIGHT-PLAN.md` on
+that branch.
+
 ## Open research questions and risks
 
 - **Cell depth and covering tightness**: max level (precision) and max cells per
@@ -1140,7 +1196,9 @@ not map to this design and are not followed.
 - **`go-geom` predicate gaps**: exact `ST_Intersects`/`ST_Contains` may need code
   beyond `go-geom`; verify coverage before committing the refine step to it. Candidates
   if so: `peterstace/simplefeatures` (pure-Go OGC/DE-9IM predicates) or GEOS via cgo
-  (see "Geometry library" above).
+  (see "Geometry library" above). The PoC settled this empirically: hand-rolled ray-casting
+  was OGC-incorrect, so it adopted GEOS (`go-geos`) for MySQL-identical results; the open
+  cost is wiring `libgeos` into the Bazel/CI build (see "Proof-of-concept validation").
 - **Statistics**: MVI row/NDV counts can exceed table row count due to fan-out
   (already noted in `pkg/statistics/analyze.go`); the optimizer's cost model for the
   spatial access path needs to account for the candidate-superset behavior.
