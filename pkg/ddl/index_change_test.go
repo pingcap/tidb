@@ -126,6 +126,34 @@ func TestIndexChange(t *testing.T) {
 	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
+func TestAddIndexAutoSplitLoadsLeadingColumnStatsFromStorage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = 1")
+	tk.MustExec("create table t_auto_split(a int primary key, b int)")
+	tk.MustExec("insert into t_auto_split values " +
+		"(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)," +
+		"(11,11),(12,12),(13,13),(14,14),(15,15),(16,16),(17,17),(18,18),(19,19),(20,20)")
+
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	h.SetLease(time.Millisecond)
+	defer h.SetLease(originLease)
+
+	tk.MustExec("analyze table t_auto_split all columns with 2 topn, 2 buckets")
+
+	var capturedKeys [][]byte
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(5)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
+		capturedKeys = append(capturedKeys, splitKeys...)
+	})
+
+	tk.MustExec("alter table t_auto_split add index idx_b(b)")
+	require.NotEmpty(t, capturedKeys)
+}
+
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
 	idx := tbl.Indices()[0]
 	txn, err := ctx.Txn(true)

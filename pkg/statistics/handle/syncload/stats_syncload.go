@@ -438,14 +438,16 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
-	var hg *statistics.Histogram
 	var err error
-	isIndexFlag := int64(0)
-	hg, statsVer, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	if item.IsIndex {
+		w.idx, err = storage.LoadIndexStatsFromStorage(sctx, item.TableID, w.idxInfo, fullLoad, kv.PriorityHigh)
+	} else {
+		w.col, err = storage.LoadColumnStatsFromStorage(sctx, item.TableID, w.colInfo, isPkIsHandle, fullLoad, kv.PriorityHigh)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if hg == nil {
+	if (item.IsIndex && w.idx == nil) || (!item.IsIndex && w.col == nil) {
 		statslogutil.StatsSampleLogger().Warn(
 			"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
 			zap.Int64("tableID", item.TableID),
@@ -453,64 +455,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			zap.Bool("isIndex", item.IsIndex),
 		)
 		return nil, errGetHistMeta
-	}
-	if item.IsIndex {
-		isIndexFlag = 1
-	}
-	var cms *statistics.CMSketch
-	var topN *statistics.TopN
-	if fullLoad {
-		if item.IsIndex {
-			hg, err = storage.HistogramFromStorageWithPriority(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
-			hg, err = storage.HistogramFromStorageWithPriority(sctx, item.TableID, item.ID, &w.colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		cms, topN, err = storage.CMSketchAndTopNFromStorageWithHighPriority(sctx, item.TableID, isIndexFlag, item.ID, statsVer)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if item.IsIndex {
-		idxHist := &statistics.Index{
-			Histogram:  *hg,
-			CMSketch:   cms,
-			TopN:       topN,
-			Info:       w.idxInfo,
-			StatsVer:   statsVer,
-			PhysicalID: item.TableID,
-		}
-		if statsVer != statistics.Version0 {
-			if fullLoad {
-				idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			} else {
-				idxHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			}
-		}
-		w.idx = idxHist
-	} else {
-		colHist := &statistics.Column{
-			PhysicalID: item.TableID,
-			Histogram:  *hg,
-			Info:       w.colInfo,
-			CMSketch:   cms,
-			TopN:       topN,
-			IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()),
-			StatsVer:   statsVer,
-		}
-		if colHist.StatsAvailable() {
-			if fullLoad {
-				colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			} else {
-				colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			}
-		}
-		w.col = colHist
 	}
 	return w, nil
 }
