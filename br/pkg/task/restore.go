@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -66,12 +68,20 @@ const (
 	FlagMergeRegionKeyCount = "merge-region-key-count"
 	// FlagPDConcurrency controls concurrency pd-relative operations like split & scatter.
 	FlagPDConcurrency = "pd-concurrency"
+	// FlagRegionScanConcurrency controls max in-flight region scan requests to PD during restore.
+	FlagRegionScanConcurrency = "region-scan-concurrency"
+	// FlagSplitRegionIndexStep controls the split-key index step used by rough split during snapshot restore.
+	FlagSplitRegionIndexStep = "split-region-index-step"
+	// FlagCoarseScatter controls whether only rough split regions are scattered during snapshot restore.
+	FlagCoarseScatter = "coarse-scatter"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
 	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
 	FlagDdlBatchSize = "ddl-batch-size"
+	// FlagTxnTotalSizeLimit controls the total size limit of a transaction
+	FlagTxnTotalSizeLimit = "txn-total-size-limit"
 	// FlagWithPlacementPolicy corresponds to tidb config with-tidb-placement-mode
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
@@ -81,27 +91,33 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
+	// FlagRestorePhase is used for the restore phase of PITR
+	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRAddIndexSQLStorage is used for PITR to output add index SQLs instead of rebuilding indexes.
+	FlagPiTRAddIndexSQLStorage = "pitr-add-index-sql-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
+	// FlagRetainLatestMVCCVersion controls whether restore keeps only newest MVCC version from compacted SSTs.
+	FlagRetainLatestMVCCVersion = "retain-latest-mvcc-version"
 
 	FlagResetSysUsers = "reset-sys-users"
 
-	defaultPiTRBatchCount     = 8
-	defaultPiTRBatchSize      = 16 * 1024 * 1024
-	defaultRestoreConcurrency = 128
-	defaultPiTRConcurrency    = 16
-	defaultPDConcurrency      = 1
-	defaultStatsConcurrency   = 12
-	defaultBatchFlushInterval = 16 * time.Second
-	defaultFlagDdlBatchSize   = 128
-	resetSpeedLimitRetryTimes = 3
+	defaultPiTRBatchCount        = 8
+	defaultPiTRBatchSize         = 16 * 1024 * 1024
+	defaultRestoreConcurrency    = 128
+	defaultPiTRConcurrency       = 16
+	defaultPDConcurrency         = 1
+	defaultRegionScanConcurrency = 256
+	defaultStatsConcurrency      = 12
+	defaultBatchFlushInterval    = 16 * time.Second
+	defaultFlagDdlBatchSize      = 128
 )
 
 const (
@@ -162,12 +178,15 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"(deprecated) concurrency pd-relative operations like split & scatter.")
+	flags.Uint(FlagRegionScanConcurrency, defaultRegionScanConcurrency,
+		"max in-flight region scan requests to PD during restore. Set to 0 for unlimited.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tables once.")
+	flags.Uint64(FlagTxnTotalSizeLimit, 0, "the total size limit of a transaction when restoring system tables")
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
@@ -229,19 +248,28 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
-	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
-	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
-	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
-	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
-	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
+	NoSchema              bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats             bool          `json:"load-stats" toml:"load-stats"`
+	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
+	RegionScanConcurrency uint          `json:"region-scan-concurrency" toml:"region-scan-concurrency"`
+	SplitRegionIndexStep  uint          `json:"split-region-index-step" toml:"split-region-index-step"`
+	CoarseScatter         bool          `json:"coarse-scatter" toml:"coarse-scatter"`
+	StatsConcurrency      uint          `json:"stats-concurrency" toml:"stats-concurrency"`
+	BatchFlushInterval    time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
+
+	TxnTotalSizeLimit uint64 `json:"txn-total-size-limit" toml:"txn-total-size-limit"`
 
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 
 	// FullBackupStorage is used to  run `restore full` before `restore log`.
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
+
+	// PiTRAddIndexSQLStorage is the external storage used to output add index SQLs instead of rebuilding indexes.
+	PiTRAddIndexSQLStorage string                  `json:"pitr-add-index-sql-storage" toml:"pitr-add-index-sql-storage"`
+	AddIndexSQLStorage     storage.ExternalStorage `json:"-" toml:"-"`
 
 	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
 	// In this restore mode, the restore will not perform timestamp rewrite on the incremental data.
@@ -255,10 +283,16 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
+	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
 	UseCheckpoint     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
 	upstreamClusterID uint64 `json:"-" toml:"-"`
 	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+
+	// for phased PITR restore
+	RestorePhase   uint64 `json:"restore-phase" toml:"restore-phase"`
+	RestoreInPhase bool   `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -287,11 +321,17 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
+	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
+
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
 		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
+	flags.Uint(FlagSplitRegionIndexStep, restoresplit.DefaultRegionIndexStep,
+		"number of split-key indexes between two rough split keys during snapshot restore.")
+	_ = flags.MarkHidden(FlagSplitRegionIndexStep)
+	flags.Bool(FlagCoarseScatter, false, "only scatter regions from rough split during snapshot restore")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -304,9 +344,16 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().String(FlagPiTRAddIndexSQLStorage, "", "specify the external storage url where PITR add index SQLs are saved. "+
+		"When set, PITR drops incomplete indexes but does not rebuild them automatically; the SQLs are written to add-index.sql under this storage.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().Bool(
+		FlagRetainLatestMVCCVersion,
+		false,
+		"restore compacted SSTs by retaining only the newest MVCC version, and require no user DML log files",
+	)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -329,6 +376,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.PiTRAddIndexSQLStorage, err = flags.GetString(FlagPiTRAddIndexSQLStorage); err != nil {
+		return errors.Trace(err)
+	}
 
 	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
@@ -342,6 +392,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -382,6 +435,21 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagPDConcurrency)
 	}
+	cfg.RegionScanConcurrency, err = flags.GetUint(FlagRegionScanConcurrency)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagRegionScanConcurrency)
+	}
+	cfg.SplitRegionIndexStep, err = flags.GetUint(FlagSplitRegionIndexStep)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSplitRegionIndexStep)
+	}
+	if cfg.SplitRegionIndexStep == 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%s must be greater than 0", FlagSplitRegionIndexStep)
+	}
+	cfg.CoarseScatter, err = flags.GetBool(FlagCoarseScatter)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagCoarseScatter)
+	}
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagStatsConcurrency)
@@ -394,6 +462,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.DdlBatchSize, err = flags.GetUint(FlagDdlBatchSize)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
+	}
+	cfg.TxnTotalSizeLimit, err = flags.GetUint64(FlagTxnTotalSizeLimit)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagTxnTotalSizeLimit)
 	}
 	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
 	if err != nil {
@@ -416,6 +488,19 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
+	}
+	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
+	}
+	cfg.RestoreInPhase = flags.Changed(FlagRestorePhase) || cfg.RestorePhase > 0
+	if cfg.RestoreInPhase && cfg.RestorePhase != 1 && cfg.RestorePhase != 2 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
+			FlagRestorePhase)
+	}
+	if cfg.RestoreInPhase && !cfg.UseCheckpoint {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
+			FlagRestorePhase, flagUseCheckpoint)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -505,6 +590,7 @@ func (cfg *RestoreConfig) Adjust() {
 	if cfg.PDConcurrency == 0 {
 		cfg.PDConcurrency = defaultPDConcurrency
 	}
+	cfg.SplitRegionIndexStep = restoresplit.NormalizeRegionIndexStep(cfg.SplitRegionIndexStep)
 	if cfg.StatsConcurrency == 0 {
 		cfg.StatsConcurrency = defaultStatsConcurrency
 	}
@@ -533,15 +619,23 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
+	if cfg.ConcurrencyPerStore.Value > 0 {
+		log.Info("set restore compacted sst files concurrency per store",
+			zap.Int("concurrency", int(cfg.ConcurrencyPerStore.Value)))
+	}
 }
 
 func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
+	client.SetSplitRegionIndexStep(cfg.SplitRegionIndexStep)
+	client.SetCoarseScatter(cfg.CoarseScatter)
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
+	client.SetTxnTotalSizeLimit(cfg.TxnTotalSizeLimit)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
@@ -710,6 +804,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
+		// For restore phase 1, we intentionally keep restore registration
+		// and checkpoint data for the subsequent phase 2 run.
+		if IsStreamRestore(cmdName) && cfg.RestorePhase == 1 {
+			log.Info("restore phase 1 finished, paused restore task and kept checkpoint data")
+			return nil
+		}
 		se, err := g.CreateSession(mgr.GetStorage())
 		if err != nil {
 			log.Warn("failed to remove checkpoint data", zap.Error(err))
@@ -720,12 +820,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 				}
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+				}
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
 			} else {
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
@@ -766,8 +870,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	// set to cfg so that restoreStream can use it.
+	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	err := configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -803,7 +909,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -819,7 +925,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
@@ -885,7 +991,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 	if !client.IsIncremental() && checkpointFirstRun && cfg.CheckRequirements {
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+		if err := checkTableExistence(ctx, mgr, tables); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
 		}
@@ -1094,6 +1200,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), idFrom, idEnd)
+	onProgress := func(n int64) {
+		if n == 0 {
+			updateCh.Inc()
+			return
+		}
+		updateCh.IncBy(n)
+	}
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
@@ -1103,6 +1216,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
 		compactProtectStartKey, compactProtectEndKey,
 		updateCh,
+		onProgress,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -1127,25 +1241,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	finish := dropToBlackhole(ctx, postHandleCh, errCh)
-
-	// Reset speed limit. ResetSpeedLimit must be called after client.LoadSchemaIfNeededAndInitClient has been called.
-	defer func() {
-		var resetErr error
-		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-		for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
-			resetErr = client.ResetSpeedLimit(ctx)
-			if resetErr != nil {
-				log.Warn("failed to reset speed limit, retry it",
-					zap.Int("retry time", retry), logutil.ShortError(resetErr))
-				time.Sleep(time.Duration(retry+3) * time.Second)
-				continue
-			}
-			break
-		}
-		if resetErr != nil {
-			log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-		}
-	}()
 
 	select {
 	case err = <-errCh:
@@ -1324,7 +1419,7 @@ func Exhaust(ec <-chan error) []error {
 	}
 }
 
-func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table) error {
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {

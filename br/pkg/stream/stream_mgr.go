@@ -18,9 +18,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"regexp"
-	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -44,20 +44,6 @@ const (
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
-
-// metaPattern is a regular expression used to match backup metadata filenames.
-// The expected filename format is:
-//
-//	{flushTs}-{minDefaultTs}-{minTs}-{maxTs}.meta
-//
-// where each part is a hexadecimal string (0-9, a-f, A-F).
-// Example:
-//
-//	0000000000000001-0000000000003039-065CCFF1D8AC0000-065CCFF1D8AC0006.meta
-//
-// The pattern captures all four parts as separate groups.
-// Leading zeros are necessary for the pattern to match.
-var metaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -170,6 +156,7 @@ func BuildObserveMetaRange() *kv.KeyRange {
 }
 
 type ContentRef struct {
+	mu       sync.Mutex
 	init_ref int
 	ref      int
 	data     []byte
@@ -178,6 +165,7 @@ type ContentRef struct {
 // MetadataHelper make restore/truncate compatible with metadataV1 and metadataV2.
 type MetadataHelper struct {
 	cache             map[string]*ContentRef
+	cacheMu           sync.RWMutex
 	decoder           *zstd.Decoder
 	encryptionManager *encryption.Manager
 }
@@ -208,6 +196,8 @@ func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
 	if ref <= 0 {
 		return
 	}
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	m.cache[path] = &ContentRef{
 		init_ref: ref,
 		ref:      ref,
@@ -215,12 +205,16 @@ func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
 	}
 }
 
-func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backuppb.CompressionType) ([]byte, error) {
+func (m *MetadataHelper) decodeCompressedData(
+	data []byte,
+	rawLength uint64,
+	compressionType backuppb.CompressionType,
+) ([]byte, error) {
 	switch compressionType {
 	case backuppb.CompressionType_UNKNOWN:
 		return data, nil
 	case backuppb.CompressionType_ZSTD:
-		return m.decoder.DecodeAll(data, nil)
+		return m.decoder.DecodeAll(data, make([]byte, 0, rawLength))
 	}
 	return nil, errors.Errorf(
 		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
@@ -260,12 +254,15 @@ func (m *MetadataHelper) ReadFile(
 	path string,
 	offset uint64,
 	length uint64,
+	rawLength uint64,
 	compressionType backuppb.CompressionType,
 	storage storage.ExternalStorage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
+	m.cacheMu.RLock()
 	cref, exist := m.cache[path]
+	m.cacheMu.RUnlock()
 	if !exist {
 		// Only files from metaV2 are cached,
 		// so the file should be from metaV1.
@@ -282,29 +279,34 @@ func (m *MetadataHelper) ReadFile(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return m.decodeCompressedData(decryptedData, compressionType)
+		return m.decodeCompressedData(decryptedData, rawLength, compressionType)
 	}
 
+	// unlock as soon as possible because the data slice is read only.
+	cref.mu.Lock()
 	cref.ref -= 1
 
 	if len(cref.data) == 0 {
 		cref.data, err = storage.ReadFile(ctx, path)
 		if err != nil {
+			cref.mu.Unlock()
 			return nil, errors.Trace(err)
 		}
 	}
-	// decrypt if needed
-	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, cref.data[offset:offset+length], encryptionInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buf, err := m.decodeCompressedData(decryptedData, compressionType)
-
+	data := cref.data[offset : offset+length]
 	if cref.ref <= 0 {
 		// need reset reference information.
 		cref.data = nil
 		cref.ref = cref.init_ref
 	}
+	cref.mu.Unlock()
+
+	// decrypt if needed
+	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, data, encryptionInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buf, err := m.decodeCompressedData(decryptedData, rawLength, compressionType)
 
 	return buf, errors.Trace(err)
 }
@@ -312,7 +314,7 @@ func (m *MetadataHelper) ReadFile(
 func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error) {
 	meta := &backuppb.Metadata{}
 	err := meta.Unmarshal(rawMetaData)
-	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+	if meta.MetaVersion == backuppb.MetaVersion_V1 && len(meta.FileGroups) == 0 {
 		group := &backuppb.DataFileGroup{
 			// For MetaDataV2, file's path is stored in it.
 			Path: "",
@@ -332,7 +334,7 @@ func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, 
 func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metadata, error) {
 	meta := &backuppb.Metadata{}
 	err := meta.Unmarshal(rawMetaData)
-	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+	if meta.MetaVersion == backuppb.MetaVersion_V1 && len(meta.FileGroups) == 0 {
 		groups := make([]*backuppb.DataFileGroup, 0, len(meta.Files))
 		for _, d := range meta.Files {
 			groups = append(groups, &backuppb.DataFileGroup{
@@ -382,35 +384,28 @@ func (m *MetadataHelper) Close() {
 }
 
 func FilterPathByTs(path string, left, right uint64) string {
-	filename := strings.TrimSuffix(path, ".meta")
+	filename := strings.TrimSuffix(path, metaSuffix)
 	filename = filename[strings.LastIndex(filename, "/")+1:]
+	metaFile, err := backupmetas.ParseName(filename)
+	if err != nil {
+		// keep consistency with old behaviour, tolerate future file path changes.
+		return path
+	}
 
-	if metaPattern.MatchString(filename) {
-		matches := metaPattern.FindStringSubmatch(filename)
-		if len(matches) < 5 {
-			log.Warn("invalid meta file name format", zap.String("file", path))
-			// consider compatible with future file path change
-			return path
-		}
+	minBeginTsInDefaultCf := metaFile.MinBeginTsInDefaultCf
+	if minBeginTsInDefaultCf == 0 || minBeginTsInDefaultCf > metaFile.MinTS {
+		log.Warn("minBeginTsInDefaultCf is not correct, won't filter out this file",
+			zap.String("file", path),
+			zap.Uint64("flushTs", metaFile.FlushTS),
+			zap.Uint64("storeID", metaFile.StoreID),
+			zap.Uint64("minTs", metaFile.MinTS),
+			zap.Uint64("minBeginTsInDefaultCf", minBeginTsInDefaultCf),
+		)
+		return path
+	}
 
-		flushTs, _ := strconv.ParseUint(matches[1], 16, 64)
-		minDefaultTs, _ := strconv.ParseUint(matches[2], 16, 64)
-		minTs, _ := strconv.ParseUint(matches[3], 16, 64)
-		maxTs, _ := strconv.ParseUint(matches[4], 16, 64)
-
-		if minDefaultTs == 0 || minDefaultTs > minTs {
-			log.Warn("minDefaultTs is not correct, fallback to minTs",
-				zap.String("file", path),
-				zap.Uint64("flushTs", flushTs),
-				zap.Uint64("minTs", minTs),
-				zap.Uint64("minDefaultTs", minDefaultTs),
-			)
-			minDefaultTs = minTs
-		}
-
-		if right < minDefaultTs || maxTs < left {
-			return ""
-		}
+	if right < minBeginTsInDefaultCf || metaFile.MaxTS < left {
+		return ""
 	}
 
 	// keep consistency with old behaviour
@@ -425,6 +420,7 @@ func FastUnmarshalMetaData(
 	startTS uint64,
 	endTS uint64,
 	metaDataWorkerPoolSize uint,
+	skipCondition func(filename string) bool,
 	fn func(path string, rawMetaData []byte) error,
 ) error {
 	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
@@ -442,6 +438,9 @@ func FastUnmarshalMetaData(
 				zap.Uint64("startTs", startTS),
 				zap.Uint64("endTs", endTS),
 			)
+			return nil
+		}
+		if skipCondition(path) {
 			return nil
 		}
 		pool.ApplyOnErrorGroup(eg, func() error {

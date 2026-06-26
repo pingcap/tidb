@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -18,6 +20,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -25,8 +28,20 @@ import (
 	"go.uber.org/zap"
 )
 
+var TotalEntryCount int64
+
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
+
+type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+
+type MetaName struct {
+	meta Meta
+	name string
+}
+
+// MetaNameIter is the type of iterator of metadata files' content with name.
+type MetaNameIter = iter.TryNextor[*MetaName]
 
 type LogDataFileInfo struct {
 	*backuppb.DataFileInfo
@@ -34,6 +49,18 @@ type LogDataFileInfo struct {
 	OffsetInMetaGroup   int
 	OffsetInMergedGroup int
 }
+
+// GroupIndex is the type of physical data file with index from metadata.
+type GroupIndex = iter.Indexed[*backuppb.DataFileGroup]
+
+// GroupIndexIter is the type of iterator of physical data file with index from metadata.
+type GroupIndexIter = iter.TryNextor[GroupIndex]
+
+// FileIndex is the type of logical data file with index from physical data file.
+type FileIndex = iter.Indexed[*backuppb.DataFileInfo]
+
+// FileIndexIter is the type of iterator of logical data file with index from physical data file.
+type FileIndexIter = iter.TryNextor[FileIndex]
 
 // LogIter is the type of iterator of each log files' meta information.
 type LogIter = iter.TryNextor[*LogDataFileInfo]
@@ -54,6 +81,7 @@ type streamMetadataHelper interface {
 		path string,
 		offset uint64,
 		length uint64,
+		rawLength uint64,
 		compressionType backuppb.CompressionType,
 		storage storage.ExternalStorage,
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
@@ -78,7 +106,12 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
+	withMigraionBuilder *WithMigrationsBuilder
+	withMigrations      *WithMigrations
+
 	metadataDownloadBatchSize uint
+
+	Stats *logFilesStatistic
 }
 
 // LogFileManagerInit is the config needed for initializing the log file manager.
@@ -87,6 +120,8 @@ type LogFileManagerInit struct {
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
 
+	MigrationsBuilder         *WithMigrationsBuilder
+	Migrations                *WithMigrations
 	MetadataDownloadBatchSize uint
 	EncryptionManager         *encryption.Manager
 }
@@ -100,10 +135,12 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:   init.StartTS,
-		restoreTS: init.RestoreTS,
-		storage:   init.Storage,
-		helper:    stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		startTS:             init.StartTS,
+		restoreTS:           init.RestoreTS,
+		storage:             init.Storage,
+		helper:              stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		withMigraionBuilder: init.MigrationsBuilder,
+		withMigrations:      init.Migrations,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -112,6 +149,11 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 		return nil, err
 	}
 	return fm, nil
+}
+
+func (rc *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
+	w := rc.withMigraionBuilder.Build(migs)
+	rc.withMigrations = &w
 }
 
 func (rc *LogFileManager) ShiftTS() uint64 {
@@ -130,15 +172,37 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		// use start ts to calculate shift start ts
 		rc.startTS,
 		rc.restoreTS,
-		rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
+		rc.metadataDownloadBatchSize,
+		func(filename string) bool {
+			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
+			if err != nil {
+				return false
+			}
+			ts, status := parsedName.CalculateShiftTS(rc.startTS, rc.restoreTS)
+			switch status {
+			case backupmetas.ShiftTSFound:
+			case backupmetas.ShiftTSNotFound:
+				return true
+			default:
+				return false
+			}
+			shiftTS.Lock()
+			if !shiftTS.exists || shiftTS.value > ts {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+			return true
+		},
+		func(filename string, raw []byte) error {
 			m, err := rc.helper.ParseToMetadata(raw)
 			if err != nil {
 				return err
 			}
-			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+			log.Info("read meta from storage and parse", zap.String("path", filename), zap.Uint64("min-ts", m.MinTs),
 				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-			ts, ok := stream.UpdateShiftTS(m, rc.startTS, rc.restoreTS)
+			ts, ok := stream.UpdateShiftTSFromMetadata(m, rc.startTS, rc.restoreTS)
 			shiftTS.Lock()
 			if ok && (!shiftTS.exists || shiftTS.value > ts) {
 				shiftTS.value = ts
@@ -153,28 +217,30 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	}
 	if !shiftTS.exists {
 		rc.shiftStartTS = rc.startTS
+		rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 		return nil
 	}
-	rc.shiftStartTS = shiftTS.value
+	rc.shiftStartTS = min(rc.startTS, shiftTS.value)
+	rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 	return nil
 }
 
-func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaIter, error) {
-	return rc.streamingMetaByTS(ctx, rc.restoreTS)
+func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
+	return rc.streamingMetaByTS(ctx, func(_ string) bool { return true })
 }
 
-func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaIter, error) {
-	it, err := rc.createMetaIterOver(ctx, rc.storage)
+func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, cond func(path string) bool) (MetaNameIter, error) {
+	it, err := rc.createMetaIterOver(ctx, rc.storage, cond)
 	if err != nil {
 		return nil, err
 	}
-	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
-		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.shiftStartTS
+	filtered := iter.FilterOut(it, func(metaname *MetaName) bool {
+		return rc.restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < rc.shiftStartTS
 	})
 	return filtered, nil
 }
 
-func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaIter, error) {
+func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage, cond func(path string) bool) (MetaNameIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
@@ -182,7 +248,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 			return nil
 		}
 		newPath := stream.FilterPathByTs(path, rc.shiftStartTS, rc.restoreTS)
-		if len(newPath) > 0 {
+		if len(newPath) > 0 && cond(newPath) {
 			names = append(names, newPath)
 		}
 		return nil
@@ -191,7 +257,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		return nil, err
 	}
 	namesIter := iter.FromSlice(names)
-	readMeta := func(ctx context.Context, name string) (*backuppb.Metadata, error) {
+	readMeta := func(ctx context.Context, name string) (*MetaName, error) {
 		f, err := s.ReadFile(ctx, name)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed during reading file %s", name)
@@ -200,38 +266,41 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to parse metadata of file %s", name)
 		}
-		return meta, nil
+		return &MetaName{meta: meta, name: name}, nil
 	}
 	// TODO: maybe we need to be able to adjust the concurrency to download files,
 	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
+		iter.WithBufferSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
 	return reader, nil
 }
 
-func (rc *LogFileManager) FilterDataFiles(ms MetaIter) LogIter {
-	return iter.FlatMap(ms, func(m *backuppb.Metadata) LogIter {
-		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*backuppb.DataFileGroup]) LogIter {
-			return iter.Map(
-				iter.FilterOut(iter.Enumerate(iter.FromSlice(gi.Item.DataFilesInfo)), func(di iter.Indexed[*backuppb.DataFileInfo]) bool {
+func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
+	ms := rc.withMigrations.Metas(m)
+	return iter.FlatMap(ms, func(m *MetaWithMigrations) LogIter {
+		gs := m.Physicals(iter.Enumerate(iter.FromSlice(m.meta.FileGroups)))
+		return iter.FlatMap(gs, func(gim *PhysicalWithMigrations) LogIter {
+			fs := iter.FilterOut(
+				gim.Logicals(iter.Enumerate(iter.FromSlice(gim.physical.Item.DataFilesInfo))),
+				func(di FileIndex) bool {
 					// Modify the data internally, a little hacky.
-					if m.MetaVersion > backuppb.MetaVersion_V1 {
-						di.Item.Path = gi.Item.Path
+					if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
+						di.Item.Path = gim.physical.Item.Path
 					}
 					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
-				}),
-				func(di iter.Indexed[*backuppb.DataFileInfo]) *LogDataFileInfo {
-					return &LogDataFileInfo{
-						DataFileInfo: di.Item,
+				})
+			return iter.Map(fs, func(di FileIndex) *LogDataFileInfo {
+				return &LogDataFileInfo{
+					DataFileInfo: di.Item,
 
-						// Since there is a `datafileinfo`, the length of `m.FileGroups`
-						// must be larger than 0. So we use the first group's name as
-						// metadata's unique key.
-						MetaDataGroupName:   m.FileGroups[0].Path,
-						OffsetInMetaGroup:   gi.Index,
-						OffsetInMergedGroup: di.Index,
-					}
-				},
+					// Since there is a `datafileinfo`, the length of `m.FileGroups`
+					// must be larger than 0. So we use the first group's name as
+					// metadata's unique key.
+					MetaDataGroupName:   m.meta.FileGroups[0].Path,
+					OffsetInMetaGroup:   gim.physical.Index,
+					OffsetInMergedGroup: di.Index,
+				}
+			},
 			)
 		})
 	})
@@ -248,14 +317,17 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 	ctx context.Context,
 	files MetaGroupIter,
 ) ([]Log, error) {
+	start := time.Now()
+	log.Info("start to collect all ddl files")
 	fs := iter.CollectAll(ctx, files)
 	if fs.Err != nil {
 		return nil, errors.Annotatef(fs.Err, "failed to collect from files")
 	}
+	log.Info("finish to collect all ddl files", zap.Duration("take", time.Since(start)))
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
-		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
+		rc.helper.InitCacheEntry(g.Path, countReadableMetaKVFiles(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
 	}
 
@@ -263,23 +335,17 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 }
 
 // LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
-// At the same time, if the `counter` isn't nil, counting the DML file needs to be restored into `counter`.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, counter *int) ([]Log, error) {
-	m, err := rc.streamingMeta(ctx)
+func (rc *LogFileManager) LoadDDLFiles(ctx context.Context) ([]Log, error) {
+	m, err := rc.streamingMetaByTS(ctx, func(path string) bool {
+		parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(path)
+		if err != nil {
+			return true
+		}
+		return parsedName.HasDDLFiles()
+	})
 	if err != nil {
 		return nil, err
-	}
-	if counter != nil {
-		m = iter.Tap(m, func(m Meta) {
-			for _, fg := range m.FileGroups {
-				for _, f := range fg.DataFilesInfo {
-					if !f.IsMeta && !rc.ShouldFilterOut(f) {
-						*counter += 1
-					}
-				}
-			}
-		})
 	}
 	mg := rc.FilterMetaFiles(m)
 
@@ -294,19 +360,29 @@ func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 		return nil, err
 	}
 
-	mg := rc.FilterDataFiles(m)
-	return mg, nil
+	l := rc.FilterDataFiles(m)
+	return l, nil
 }
 
-func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
-	return iter.FlatMap(ms, func(m Meta) MetaGroupIter {
-		return iter.Map(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
+func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
+	return iter.FlatMap(ms, func(m *MetaName) MetaGroupIter {
+		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
 			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d Log) bool {
 				// Modify the data internally, a little hacky.
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
+				if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
-				return !d.IsMeta || rc.ShouldFilterOut(d)
+				if rc.ShouldFilterOut(d) {
+					return true
+				}
+				// count the progress
+				// count the progress
+				if rc.Stats != nil {
+					atomic.AddInt64(&rc.Stats.NumEntries, d.NumberOfEntries)
+					atomic.AddUint64(&rc.Stats.NumFiles, 1)
+					atomic.AddUint64(&rc.Stats.Size, d.Length)
+				}
+				return !d.IsMeta
 			})
 			return DDLMetaGroup{
 				Path: g.Path,
@@ -314,6 +390,13 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 				FileMetas: iter.CollectAll(context.Background(), metas).Item,
 			}
 		})
+	})
+}
+
+// Fetch compactions that may contain file less than the TS.
+func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
+		return &CompactedSSTs{c}
 	})
 }
 
@@ -342,7 +425,7 @@ func (rc *LogFileManager) ReadAllEntries(
 	kvEntries := make([]*KvEntryWithTS, 0)
 	nextKvEntries := make([]*KvEntryWithTS, 0)
 
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
+	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.Length, file.CompressionType,
 		rc.storage, file.FileEncryptionInfo)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -399,4 +482,24 @@ func (rc *LogFileManager) ReadAllEntries(
 	}
 
 	return kvEntries, nextKvEntries, nil
+}
+
+func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage, shiftStartTS, restoredTS uint64) SubCompactionIter {
+	return iter.FlatMap(storage.UnmarshalDir(
+		ctx,
+		&storage.WalkOption{SubDir: prefix},
+		s,
+		func(t *backuppb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
+	), func(subcs *backuppb.LogFileSubcompactions) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+		return iter.MapFilter(iter.FromSlice(subcs.Subcompactions), func(subc *backuppb.LogFileSubcompaction) (*backuppb.LogFileSubcompaction, bool) {
+			if subc.Meta.InputMaxTs < shiftStartTS || subc.Meta.InputMinTs > restoredTS {
+				return nil, true
+			}
+			return subc, false
+		})
+	})
+}
+
+func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.Migration] {
+	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

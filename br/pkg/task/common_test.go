@@ -9,10 +9,12 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -57,6 +59,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://bucket/prefix/",
 		},
 		{
+			inputName:     FlagPiTRAddIndexSQLStorage,
+			expectedName:  "pitr-add-index-sql-storage",
+			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/pitr/add-index",
+		},
+		{
 			inputName:     flagFullBackupCipherKey,
 			expectedName:  "crypter.key",
 			inputValue:    "537570657253656372657456616C7565",
@@ -95,6 +103,16 @@ func TestUrlNoQuery(t *testing.T) {
 		}
 		require.Equal(t, tc.expectedValue, field.String, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
 	}
+}
+
+func TestParseStreamRestoreFlagsPiTRAddIndexSQLStorage(t *testing.T) {
+	command := &cobra.Command{}
+	DefineStreamRestoreFlags(command)
+	require.NoError(t, command.Flags().Set(FlagPiTRAddIndexSQLStorage, "local:///tmp/pitr-add-index"))
+
+	cfg := RestoreConfig{}
+	require.NoError(t, cfg.ParseStreamRestoreFlags(command.Flags()))
+	require.Equal(t, "local:///tmp/pitr-add-index", cfg.PiTRAddIndexSQLStorage)
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {
@@ -310,14 +328,16 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"}},
-		NoSchema:            false,
-		LoadStats:           true,
-		PDConcurrency:       0x1,
-		StatsConcurrency:    0xc,
-		BatchFlushInterval:  16000000000,
-		DdlBatchSize:        0x80,
-		WithPlacementPolicy: "STRICT",
-		UseCheckpoint:       true,
+		NoSchema:              false,
+		LoadStats:             true,
+		PDConcurrency:         0x1,
+		StatsConcurrency:      0xc,
+		BatchFlushInterval:    16000000000,
+		DdlBatchSize:          0x80,
+		RegionScanConcurrency: 256,
+		SplitRegionIndexStep:  restoresplit.DefaultRegionIndexStep,
+		WithPlacementPolicy:   "STRICT",
+		UseCheckpoint:         true,
 	}
 }
 

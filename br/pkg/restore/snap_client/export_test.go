@@ -20,8 +20,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -46,15 +50,26 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 }
 
 // Mock the call of setSpeedLimit function
-func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
+func MockCallSetSpeedLimit(ctx context.Context, stores []*metapb.Store, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
 	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
-	rc.hasSpeedLimited = false
-	rc.fileImporter, err = NewSnapFileImporter(ctx, nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
+	setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
+	var createCallBacks []func(*SnapFileImporter) error
+	var closeCallBacks []func(*SnapFileImporter) error
+
+	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+		return setFn(importer, rc.rateLimit)
+	})
+	closeCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+		return setFn(importer, 0)
+	})
+	opt := NewSnapFileImporterOptions(nil, nil, fakeImportClient, nil, rc.rewriteMode, nil, 128, 128, false, createCallBacks, closeCallBacks)
+	fileImporter, err := NewSnapFileImporter(ctx, kvrpcpb.APIVersion(0), TiDBFull, opt)
+	rc.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return rc.setSpeedLimit(ctx, rc.rateLimit)
+	return nil
 }
 
 // CreateTables creates multiple tables, and returns their rewrite rules.
@@ -86,4 +101,28 @@ func (rc *SnapClient) CreateTablesTest(
 		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 	return rewriteRules, newTables, nil
+}
+
+func (options *SnapFileImporterOptions) SetRegionScanConcurrency(concurrency uint) {
+	options.scanConcurrency = concurrency
+}
+
+func NewSnapFileImporterOptionsForTest(
+	splitClient split.SplitClient,
+	importClient importclient.ImporterClient,
+	tikvStores []*metapb.Store,
+	rewriteMode RewriteMode,
+	concurrencyPerStore uint,
+) *SnapFileImporterOptions {
+	return &SnapFileImporterOptions{
+		metaClient:          splitClient,
+		importClient:        importClient,
+		tikvStores:          tikvStores,
+		rewriteMode:         rewriteMode,
+		concurrencyPerStore: concurrencyPerStore,
+	}
+}
+
+func (importer *SnapFileImporter) PaginateScanRegionForTest(ctx context.Context, startKey, endKey []byte) ([]*split.RegionInfo, error) {
+	return importer.paginateScanRegion(ctx, startKey, endKey)
 }
