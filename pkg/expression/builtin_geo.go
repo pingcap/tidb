@@ -65,6 +65,9 @@ var (
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 	_ functionClass = &tidbSpatialBBoxFunctionClass{}
+	_ functionClass = &geomPointFunctionClass{}
+	_ functionClass = &geomLineStringFunctionClass{}
+	_ functionClass = &geomPolygonFunctionClass{}
 )
 
 var (
@@ -97,6 +100,9 @@ var (
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 	_ builtinFunc = &builtinTiDBSpatialBBoxSig{}
+	_ builtinFunc = &builtinGeomPointSig{}
+	_ builtinFunc = &builtinGeomLineStringSig{}
+	_ builtinFunc = &builtinGeomPolygonSig{}
 )
 
 // defaultPlanarCoverer is the SRID 0 coverer used by tidb_spatial_key and the
@@ -1641,4 +1647,158 @@ func (b *builtinTiDBSpatialKeySig) planarParams(ctx EvalContext, row chunk.Row) 
 		return spatial.PlanarParams{}, errors.Errorf("tidb_spatial_key: invalid cell params level=%d bounds=[%g,%g]x[%g,%g]", p.Level, p.MinX, p.MaxX, p.MinY, p.MaxY)
 	}
 	return p, nil
+}
+
+// setGeometryResultType marks a builtin's result as GEOMETRY (evaluated as a
+// binary EWKB string), matching how ST_GeomFromText types its result.
+func setGeometryResultType(bf baseBuiltinFunc) {
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+}
+
+// geomPointFunctionClass implements the MySQL POINT(x, y) constructor.
+type geomPointFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *geomPointFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
+	setGeometryResultType(bf)
+	return &builtinGeomPointSig{bf}, nil
+}
+
+type builtinGeomPointSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGeomPointSig) Clone() builtinFunc {
+	newSig := &builtinGeomPointSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGeomPointSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	x, isNull, err := b.args[0].EvalReal(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	y, isNull, err := b.args[1].EvalReal(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return encodeEWKB(geom.NewPointXY(x, y).AsGeometry(), 0), false, nil
+}
+
+// geomLineStringFunctionClass implements MySQL LineString(pt, pt, ...).
+type geomLineStringFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *geomLineStringFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, len(args))
+	for i := range argTps {
+		argTps[i] = types.ETString
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	setGeometryResultType(bf)
+	return &builtinGeomLineStringSig{bf}, nil
+}
+
+type builtinGeomLineStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGeomLineStringSig) Clone() builtinFunc {
+	newSig := &builtinGeomLineStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGeomLineStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	xys := make([]float64, 0, len(b.args)*2)
+	for _, a := range b.args {
+		ewkb, isNull, err := a.EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+		_, g, err := decodeEWKB(ewkb)
+		if err != nil {
+			return "", false, err
+		}
+		pt, ok := g.AsPoint()
+		if !ok {
+			return "", false, errors.New("LineString: each argument must be a POINT")
+		}
+		xy, ok := pt.XY()
+		if !ok {
+			return "", false, errors.New("LineString: empty POINT argument")
+		}
+		xys = append(xys, xy.X, xy.Y)
+	}
+	return encodeEWKB(geom.NewLineStringXY(xys...).AsGeometry(), 0), false, nil
+}
+
+// geomPolygonFunctionClass implements MySQL Polygon(ring, ...) where each ring is
+// a LINESTRING (the first is the exterior, the rest are holes).
+type geomPolygonFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *geomPolygonFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, len(args))
+	for i := range argTps {
+		argTps[i] = types.ETString
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	setGeometryResultType(bf)
+	return &builtinGeomPolygonSig{bf}, nil
+}
+
+type builtinGeomPolygonSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGeomPolygonSig) Clone() builtinFunc {
+	newSig := &builtinGeomPolygonSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGeomPolygonSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	rings := make([]geom.LineString, 0, len(b.args))
+	for _, a := range b.args {
+		ewkb, isNull, err := a.EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+		_, g, err := decodeEWKB(ewkb)
+		if err != nil {
+			return "", false, err
+		}
+		ls, ok := g.AsLineString()
+		if !ok {
+			return "", false, errors.New("Polygon: each argument must be a LINESTRING ring")
+		}
+		rings = append(rings, ls)
+	}
+	return encodeEWKB(geom.NewPolygon(rings).AsGeometry(), 0), false, nil
 }

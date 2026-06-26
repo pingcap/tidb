@@ -739,6 +739,7 @@ left
 leftshift
 length
 like
+linestring
 ln
 load_file
 localtime
@@ -779,6 +780,8 @@ period_add
 period_diff
 pi
 plus
+point
+polygon
 position
 pow
 power

@@ -413,6 +413,11 @@ const (
 	StNumInteriorRings = "st_numinteriorrings"
 	StNumPoints        = "st_numpoints"
 	StPointN           = "st_pointn"
+	// Geometry constructor functions (MySQL): build a geometry (SRID 0) from
+	// coordinates / sub-geometries. POINT(x,y), LineString(pt, ...), Polygon(ring, ...).
+	GeomPoint      = "point"
+	GeomLineString = "linestring"
+	GeomPolygon    = "polygon"
 	// TiDBSpatialKey is an internal function: it maps a POINT to its
 	// order-preserving spatial index CellKey. It backs the hidden generated
 	// column of a points-only spatial index and is not intended for direct use.

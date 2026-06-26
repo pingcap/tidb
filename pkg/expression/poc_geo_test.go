@@ -109,6 +109,14 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON((0 0,3 0,3 3,0 3,0 0),(1 1,2 1,2 2,1 2,1 1))'))").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT ST_NumPoints(ST_GeomFromText('LINESTRING(0 0,1 1,2 2)')), ST_AsText(ST_PointN(ST_GeomFromText('LINESTRING(0 0,1 1,2 2)'), 2))").Check(testkit.Rows("3 POINT(1 1)"))
 	tk.MustQuery("SELECT ST_PointN(ST_GeomFromText('LINESTRING(0 0,1 1)'), 5) IS NULL").Check(testkit.Rows("1"))
+
+	// Geometry constructors (MySQL): POINT/LineString/Polygon build geometries
+	// (SRID 0) and compose, so e.g. ST_Within with a constructed polygon works.
+	tk.MustQuery("SELECT ST_AsText(POINT(1,2))").Check(testkit.Rows("POINT(1 2)"))
+	tk.MustQuery("SELECT ST_AsText(LineString(POINT(0,0),POINT(1,1),POINT(2,0)))").Check(testkit.Rows("LINESTRING(0 0,1 1,2 0)"))
+	tk.MustQuery("SELECT ST_AsText(Polygon(LineString(POINT(0,0),POINT(4,0),POINT(4,4),POINT(0,4),POINT(0,0))))").Check(testkit.Rows("POLYGON((0 0,4 0,4 4,0 4,0 0))"))
+	tk.MustQuery("SELECT ST_Within(POINT(2,2), Polygon(LineString(POINT(0,0),POINT(4,0),POINT(4,4),POINT(0,4),POINT(0,0))))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_Within(POINT(9,9), Polygon(LineString(POINT(0,0),POINT(4,0),POINT(4,4),POINT(0,4),POINT(0,0))))").Check(testkit.Rows("0"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.

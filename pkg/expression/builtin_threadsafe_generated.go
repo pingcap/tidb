@@ -1075,6 +1075,21 @@ func (s *builtinGTVectorFloat32Sig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomLineStringSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomPointSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomPolygonSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinGetDecimalVarSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
