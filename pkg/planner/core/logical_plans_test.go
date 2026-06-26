@@ -2245,9 +2245,11 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	// Shared access condition column so accessResult = 0 (comparable, equal).
 	sharedColMap := util.Col2Len{1: -1}
 
+	// ExpectedCnt 52 sits between LHS.CountAfterAccess (50, the winner fits) and RHS's worst-case
+	// row count (max(50, 55) = 55, the loser overshoots), so the limit-aware rule fires.
 	propWithLimit := &property.PhysicalProperty{
 		SortItems:   []property.SortItem{{Col: col1}},
-		ExpectedCnt: 100,
+		ExpectedCnt: 52,
 	}
 
 	// LHS: matches the sort and its CountAfterAccess fits the limit, but it carries the HIGHER
@@ -2267,8 +2269,8 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	}
 
 	// RHS: does NOT match the sort, has the LOWER risk ratio and CountAfterAccess <= LHS (so LHS
-	// loses the risk dimension), yet its worst case overshoots the limit (50 + 55 = 105 > 100) --
-	// the exact condition the limit-aware rule keys on.
+	// loses the risk dimension), yet its worst-case row count overshoots the limit
+	// (max(50, 55) = 55 > 52) -- the exact condition the limit-aware rule keys on.
 	rhs := &candidatePath{
 		path: &util.AccessPath{
 			CountAfterAccess:    50,
@@ -2283,15 +2285,26 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	result, _ := compareCandidates(sctx, nil, propWithLimit, lhs, rhs, false)
 	// LHS wins specifically via the limit-aware rule: leftDidNotLose is false (lost risk),
 	// totalSum > 0 (matchResult=1), matchResult > 0, ExpectedCnt in (0, MaxFloat64), LHS has no
-	// residual filters, lhs.CountAfterAccess (50) <= 100, rhs.CountAfterAccess+Max (105) > 100.
+	// residual filters, lhs.CountAfterAccess (50) <= 52, max(rhs.CountAfterAccess, Max) (55) > 52.
 	require.Equal(t, 1, result, "ordered candidate fitting the limit should win via the limit-aware rule")
 
 	// Symmetric: swap lhs/rhs, RHS should win.
 	result, _ = compareCandidates(sctx, nil, propWithLimit, rhs, lhs, false)
 	require.Equal(t, -1, result, "symmetric: ordered candidate should win when on rhs")
 
+	// Control (pins the worst-case semantics, not a sum): with ExpectedCnt 100 the loser's worst
+	// case max(50, 55) = 55 comfortably fits, so the rule must NOT fire. The buggy form that summed
+	// CountAfterAccess + MaxCountAfterAccess (50 + 55 = 105 > 100) would have wrongly returned 1
+	// here, pruning a non-ordered path whose worst case still satisfies the limit.
+	propFitsWorstCase := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 100,
+	}
+	result, _ = compareCandidates(sctx, nil, propFitsWorstCase, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire when the loser's worst case fits the limit")
+
 	// Control: prove it is the limit-aware rule doing the work. With a larger limit the
-	// non-ordered RHS no longer overshoots (105 <= 200), so the rule's overshoot condition
+	// non-ordered RHS no longer overshoots (55 <= 200), so the rule's overshoot condition
 	// fails; LHS still lost the risk dimension, so no rule produces a winner -> 0.
 	propLooseLimit := &property.PhysicalProperty{
 		SortItems:   []property.SortItem{{Col: col1}},
@@ -2308,6 +2321,37 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	}
 	result, _ = compareCandidates(sctx, nil, propNoLimit, lhs, rhs, false)
 	require.Equal(t, 0, result, "limit-aware rule must not fire without a limit")
+
+	// Control: exercises the !orderRatioMayPenalize guard. Same firing setup as propWithLimit, but
+	// the ordered winner now carries a residual table filter. tidb_opt_ordering_index_selectivity_ratio
+	// penalizes such a path at cost time, so the rule must DEFER (return 0) instead of preempting it.
+	// Without the guard this would still return 1. (Within compareCandidates, TableFilters is read
+	// only by orderRatioMayPenalize, so adding it does not perturb any other dimension.)
+	lhsWithFilter := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess:    50,
+			MaxCountAfterAccess: 70,
+			IsIntHandlePath:     true,
+			TableFilters:        []expression.Expression{col1},
+		},
+		accessCondsColMap: sharedColMap,
+		matchPropResult:   property.PropMatched,
+		isFullRange:       true,
+	}
+	result, _ = compareCandidates(sctx, nil, propWithLimit, lhsWithFilter, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must defer when the ordered winner carries residual filters")
+
+	// Control: an unbounded request (no LIMIT, ExpectedCnt == MaxFloat64) produces no winner. Note
+	// this pins the observable behavior, not the explicit prop.ExpectedCnt < MaxFloat64 bound in
+	// isolation: that bound is belt-and-suspenders with the overshoot check, since a finite row
+	// count can never satisfy max(CountAfterAccess, MaxCountAfterAccess) > MaxFloat64. The bound is
+	// kept for self-documentation and consistency with the cacheSortPropSkyline gate.
+	propUnbounded := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: math.MaxFloat64,
+	}
+	result, _ = compareCandidates(sctx, nil, propUnbounded, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire for an unbounded (MaxFloat64) request")
 }
 
 // TestOrderRatioMayPenalize guards the residual-filter predicate that de-conflicts the
@@ -2322,6 +2366,39 @@ func TestOrderRatioMayPenalize(t *testing.T) {
 	// Residual index/table filters -> ratio penalizes at cost time -> rule must defer.
 	require.True(t, orderRatioMayPenalize(&util.AccessPath{IndexFilters: []expression.Expression{col}}))
 	require.True(t, orderRatioMayPenalize(&util.AccessPath{TableFilters: []expression.Expression{col}}))
+}
+
+// TestCrossCacheDedupByExpectedCnt pins that skylineCrossCache entries are keyed by BOTH sort
+// items and ExpectedCnt. Identical (ORDER BY, LIMIT) requests are deduplicated, but the same
+// ORDER BY with a different LIMIT is stored as a separate dominator rather than being silently
+// dropped -- otherwise the first-seen limit would govern every later cross-prune and pruning
+// would depend on exploration order. Also covers the per-DataSource entry cap.
+func TestCrossCacheDedupByExpectedCnt(t *testing.T) {
+	col1 := &expression.Column{UniqueID: 1}
+	mkProp := func(cnt float64) *property.PhysicalProperty {
+		return &property.PhysicalProperty{
+			SortItems:   []property.SortItem{{Col: col1}},
+			ExpectedCnt: cnt,
+		}
+	}
+	cache := &skylineCrossCache{}
+
+	// First (items, cnt=5) entry is added.
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(5)))
+	require.Len(t, cache.entries, 1)
+	// Same (items, cnt=5) is deduplicated.
+	require.False(t, cache.addEntryIfAbsent(nil, mkProp(5)))
+	require.Len(t, cache.entries, 1)
+	// Same ORDER BY but a different LIMIT is a distinct dominator -> separate entry.
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(100)))
+	require.Len(t, cache.entries, 2)
+
+	// Entry cap: fill up to maxCrossCacheEntries with further distinct limits, then reject extras.
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(200)))
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(300)))
+	require.Len(t, cache.entries, maxCrossCacheEntries)
+	require.False(t, cache.addEntryIfAbsent(nil, mkProp(400)))
+	require.Len(t, cache.entries, maxCrossCacheEntries)
 }
 
 func TestCrossSkylinePrune(t *testing.T) {
@@ -2416,8 +2493,13 @@ func TestCrossSkylinePrune(t *testing.T) {
 		accessCondsColMap: util.Col2Len{1: -1},
 		matchPropResult:   property.PropNotMatched,
 	}
-	result = crossSkylinePrune(ds, []*candidatePath{tiflashCandidate}, cache)
+	// Pair the protected candidate with a genuinely prunable one (currentUnordered) so the
+	// empty-result safety fallback cannot mask a regression: if the TiFlash skip were removed,
+	// BOTH would be pruned and the fallback would return the original set (Len 2). With the skip,
+	// only currentUnordered is removed, so result is exactly [tiflashCandidate].
+	result = crossSkylinePrune(ds, []*candidatePath{tiflashCandidate, currentUnordered}, cache)
 	require.Len(t, result, 1)
+	require.Same(t, tiflashCandidate, result[0])
 
 	// Test 3: nil/empty cache returns candidates unchanged.
 	result = crossSkylinePrune(ds, []*candidatePath{currentUnordered}, nil)
@@ -2448,7 +2530,10 @@ func TestCrossSkylinePrune(t *testing.T) {
 		accessCondsColMap: util.Col2Len{1: -1},
 		matchPropResult:   property.PropNotMatched,
 	}
-	result = crossSkylinePrune(ds, []*candidatePath{forcedCandidate}, cache)
+	// Pair with a prunable candidate (see Test 2): without the Forced skip both would be pruned and
+	// the fallback would return the original set (Len 2), so this distinguishes the skip from the
+	// fallback rather than passing tautologically on a single candidate.
+	result = crossSkylinePrune(ds, []*candidatePath{forcedCandidate, currentUnordered}, cache)
 	require.Len(t, result, 1)
 	require.Same(t, forcedCandidate, result[0])
 

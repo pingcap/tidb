@@ -974,7 +974,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// Require a finite, positive limit (0 < ExpectedCnt < MaxFloat64): this rule only protects an
 	// ordered path when a bounded number of rows is needed. The explicit < MaxFloat64 bound makes
 	// the "no limit" exclusion self-evident and consistent with the cacheSortPropSkyline gate,
-	// instead of relying on the CountAfterAccess sum below staying finite.
+	// instead of relying on the worst-case row-count comparison below staying finite.
+	//
+	// The winner is protected only when the loser's worst-case row count overshoots the limit, i.e.
+	// max(CountAfterAccess, MaxCountAfterAccess) > ExpectedCnt. MaxCountAfterAccess is an absolute
+	// upper bound on CountAfterAccess (0 when no risk was identified), so the max collapses to the
+	// point estimate for risk-free paths and rises to the risk bound otherwise -- it is NOT a sum of
+	// the two (which would double-count the bound and prune a loser whose worst case still fits).
 	//
 	// Also require the winning ordered path to carry no residual filters (see orderRatioMayPenalize):
 	// when it does, tidb_opt_ordering_index_selectivity_ratio inflates that path's row count at cost
@@ -999,13 +1005,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
 		!orderRatioMayPenalize(lhs.path) &&
 		lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
-		rhs.path.CountAfterAccess+rhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
+		max(rhs.path.CountAfterAccess, rhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
 	if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
 		!orderRatioMayPenalize(rhs.path) &&
 		rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
-		lhs.path.CountAfterAccess+lhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
+		max(lhs.path.CountAfterAccess, lhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
@@ -1846,7 +1852,7 @@ type skylineCrossCacheEntry struct {
 // for a DataSource. When multiple sort properties are evaluated (e.g., different ORDER BY
 // clauses from different parent operators), each gets its own entry. Empty-property calls
 // cross-prune against all entries, so pruning is not dependent on evaluation order.
-// Entries are deduplicated by sort items and capped at maxCrossCacheEntries.
+// Entries are deduplicated by (sort items, ExpectedCnt) and capped at maxCrossCacheEntries.
 type skylineCrossCache struct {
 	entries []skylineCrossCacheEntry
 }
@@ -1872,11 +1878,21 @@ func sameSortItems(a, b *property.PhysicalProperty) bool {
 	return true
 }
 
-// addEntryIfAbsent appends a cache entry for prop unless an entry with identical sort items
-// already exists or the per-DataSource entry cap is reached. Returns true if an entry was added.
+// addEntryIfAbsent appends a cache entry for prop unless an entry with the same sort items AND
+// the same ExpectedCnt already exists, or the per-DataSource entry cap is reached. Returns true
+// if an entry was added.
+//
+// ExpectedCnt is part of the key on purpose: the cross-prune limit-aware rule keys on
+// entry.sortProp.ExpectedCnt, so two requests sharing an ORDER BY but carrying different LIMITs
+// (different row budgets) are genuinely distinct dominators. Deduplicating on sort items alone
+// would keep only the first-seen limit and let it govern every later cross-prune, making pruning
+// depend on the order in which the parent explores the limits. Keying on ExpectedCnt keeps each
+// limit's skyline as its own entry so the cached set is independent of exploration order (subject
+// to the entry cap). An empty-property result shared across consumers with different limits is
+// then pruned if it is dominated under any cached limit.
 func (c *skylineCrossCache) addEntryIfAbsent(candidates []*candidatePath, prop *property.PhysicalProperty) bool {
 	for _, entry := range c.entries {
-		if sameSortItems(entry.sortProp, prop) {
+		if sameSortItems(entry.sortProp, prop) && entry.sortProp.ExpectedCnt == prop.ExpectedCnt {
 			return false
 		}
 	}
@@ -1907,8 +1923,9 @@ func (c *skylineCrossCache) addEntryIfAbsent(candidates []*candidatePath, prop *
 //     later empty-property call. This is the established "a Limit is present" signal (see
 //     compareCandidates).
 //
-// Multiple sort properties accumulate (deduped by sort items, capped at maxCrossCacheEntries) so
-// cross-pruning does not depend on the order in which properties are explored.
+// Multiple sort properties accumulate (deduped by sort items and ExpectedCnt, capped at
+// maxCrossCacheEntries) so cross-pruning does not depend on the order in which properties are
+// explored.
 func cacheSortPropSkyline(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidates []*candidatePath, producedValidTask bool) {
 	if !producedValidTask || prop.IsSortItemEmpty() || prop.PartialOrderInfo != nil ||
 		prop.ExpectedCnt == math.MaxFloat64 {
@@ -2428,7 +2445,17 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	// This prevents a non-ordered candidate from surviving the empty-property skyline
 	// (where matchResult is dead) and producing a task that beats an ordered plan on
 	// potentially underestimated cost.
-	if prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil {
+	//
+	// Restrict to RootTaskType. Both the cache-populating sort call (getPhysLimits) and the
+	// empty-property call this protects against (getPhysTopN) are enumerated for every task type
+	// (cop single/double read, root). The Limit-vs-TopN cost arbitration the rule exists to guard
+	// is decided on the fully built root tasks, so pruning at root is sufficient. Pruning a cop
+	// task call is also unsafe: compareCandidates ignores task-type feasibility, so a cached
+	// ordered dominator can prune the only candidate that yields a valid task for prop.TaskTp
+	// (e.g. the sole double-read index under CopMultiReadTaskType, where a table scan or covering
+	// index returns InvalidTask), and the wipeout fallbacks in crossSkylinePrune do not catch that
+	// partial over-pruning.
+	if prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil && prop.TaskTp == property.RootTaskType {
 		if cache, ok := ds.CrossSkylineCache.(*skylineCrossCache); ok {
 			candidates = crossSkylinePrune(ds, candidates, cache)
 		}
