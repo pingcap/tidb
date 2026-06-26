@@ -59,6 +59,22 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   `ST_Centroid`, `ST_Perimeter`, `ST_PointN`/`ST_NumPoints`/ring accessors
   (pure-Go-able), `ST_Buffer`/`ST_ConvexHull`/overlay (GEOS).
 
+## Known limitations (POC)
+
+- Geometry builtins are typed as binary strings, not `mysql.TypeGeometry`. As a
+  result a regular B-tree functional index over a geometry-returning expression
+  (e.g. `KEY ((ST_GeomFromText(x)))`) is wrongly *accepted* instead of being
+  rejected with `ErrFunctionalIndexOnJSONOrGeometryFunction` — the DDL guard in
+  `pkg/ddl/index.go` only checks `TypeJSON`, and the column's inferred type is a
+  string, so neither condition fires. This surfaces as the `expression_index`
+  mysql-test divergence. Proper fix (deferred): type the geometry builtins as
+  `TypeGeometry` and extend the index guard to reject `TypeGeometry` too.
+- `POLYGON()` / `LINESTRING()` / etc. parse as function calls but are not
+  implemented (resolve to "function does not exist"); `ST_SRID` on a
+  non-geometry argument returns a generic "invalid geometry value" error rather
+  than MySQL's `ER_CANNOT_CONVERT_STRING`. The internal mysql-test expectations
+  are aligned to this POC behavior on a separate tidb-test branch.
+
 ## Deferred / backlog (not this run unless time remains)
 
 - KNN operator (`ORDER BY ST_Distance LIMIT k` without a radius) via
