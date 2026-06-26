@@ -11,6 +11,66 @@ coverer + `tidb_spatial_key`, `CREATE SPATIAL INDEX` (standalone + inline) with
 a `SpatialIndexResolver` planner rule (covering-cell ranges + retained refine
 filter), MySQL-compat integration test, Bazel/nogo clean.
 
+## Roadmap / status
+
+### Implemented (working today)
+
+- **Types & storage**: geometry column types parse (`POINT`, `LINESTRING`,
+  `POLYGON`, `MULTI*`, `GEOMETRYCOLLECTION`) + per-column `SRID`; EWKB storage
+  (`<srid_le_u32><wkb>`), MySQL-compatible. Pure-Go geometry stack
+  (`simplefeatures` + `golang/geo` S2) — no cgo/libgeos.
+- **ST_ functions**: `ST_GeomFromText`, `ST_AsText`; `ST_X`/`ST_Y`/`ST_SRID`
+  (getter); `ST_Distance` (planar), `ST_Distance_Sphere` (4326); DE-9IM
+  predicates `ST_Within/Contains/Intersects/Equals/Disjoint/Touches/Crosses/
+  Overlaps` (OGC-correct via simplefeatures).
+- **Index**: `CREATE SPATIAL INDEX` (standalone + inline), `SHOW CREATE` renders
+  `SPATIAL KEY`. Point index → scalar plain index on hidden `tidb_spatial_key`;
+  general-geometry index → multi-valued index on `tidb_spatial_keys` (one row →
+  many covering cells, IndexMerge); composite `(prefix…, geom)`. SRID dispatch:
+  planar Morton quadtree (SRID 0) vs S2 (SRID 4326). `SpatialIndexResolver`
+  injects covering-cell ranges + keeps the ST_ predicate as a refine filter.
+  Per-index cell-level tuning via index `COMMENT`.
+- **Proven**: selectivity benchmark, MySQL-byte-identical compat test, pure-Go +
+  Bazel/nogo build.
+
+### Left for a complete MVP
+
+- Fix the geometry-functional-index correctness bug (see Known limitations).
+- DML maintenance verified for general geometry (UPDATE/DELETE re-covering), not
+  just points.
+- I/O + accessor breadth: `ST_GeomFromWKB`, `ST_AsBinary`/`ST_AsWKB`,
+  `ST_GeometryType`, `ST_IsValid`, `ST_IsEmpty`, `ST_Envelope`, `ST_SRID` setter.
+- MySQL error parity for the POC divergences (`ST_SRID`, constructors).
+
+### First release (MySQL surface + planner integration)
+
+- **Geometry constructor functions** (`POINT()`, `POLYGON()`, `LineString()`, …)
+  actually implemented. NOTE: these are **not** required for the general-geometry
+  index — a geometry value is constructed from text/binary via `ST_GeomFromText`
+  (and, on the MVP list, `ST_GeomFromWKB`), and the index operates on the stored
+  EWKB regardless of how it was produced (the MVI test inserts/queries polygons
+  via `ST_GeomFromText`). The constructors are a MySQL query-surface
+  compatibility/ergonomics item (so e.g. `ST_Within(g, POLYGON((...)))` works
+  instead of only `ST_Within(g, ST_GeomFromText('POLYGON((...))'))`). Today they
+  parse but resolve to "function does not exist".
+- `ST_Covers`/`ST_CoveredBy`; GeoJSON I/O.
+- Spatial cost/statistics + ANALYZE (Hilbert/Morton linearization).
+- Coprocessor pushdown of the refine predicate (unistore first, then TiKV).
+- `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.
+- Dumpling/Lightning round-trips; KNN (`ORDER BY ST_Distance LIMIT k`).
+- Docs, system variables, compatibility matrix.
+
+### Future improvements & optimizations
+
+- GEOS-gated advanced ops (`ST_Buffer`/`ST_Union`/`ST_Intersection`/
+  `ST_ConvexHull`/`ST_Area`/`ST_Length`/`ST_Centroid`).
+- Bounding-box-in-value to skip full-geometry decode in refine.
+- Cost-based / adaptive cell-level selection; multi-resolution covering; true
+  Hilbert ordering.
+- Global spatial index for partitioned tables.
+- Geography type + full SRID catalog/validation; 3D/measured (Z/M) coords.
+- TiFlash/columnar spatial; coverer tuning for skewed data.
+
 ## Execution order (this run)
 
 1. **Selectivity** — make the index actually prune, and measure it.
