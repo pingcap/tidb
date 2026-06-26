@@ -126,10 +126,14 @@ func (*SpatialIndexResolver) findSpatialHiddenColumn(ds *logicalop.DataSource, g
 		return nil, spatial.PlanarParams{}, false
 	}
 	for _, idx := range tblInfo.Indices {
-		if !idx.IsPublic() || len(idx.Columns) != 1 {
+		if !idx.IsPublic() || len(idx.Columns) == 0 {
 			continue
 		}
-		hiddenColInfo := tblInfo.Columns[idx.Columns[0].Offset]
+		// The cell-key hidden column is the index's trailing column; any leading
+		// columns are ordinary prefix columns of a composite spatial index
+		// (e.g. (tenant_id, position)). The optimizer combines the prefix
+		// equality from the query with the injected cell ranges on this column.
+		hiddenColInfo := tblInfo.Columns[idx.Columns[len(idx.Columns)-1].Offset]
 		if !isSpatialHiddenColumn(hiddenColInfo) {
 			continue
 		}

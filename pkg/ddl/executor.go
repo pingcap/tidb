@@ -5070,27 +5070,32 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 // expression is tidb_spatial_key(...)).
 func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-	if len(indexPartSpecifications) != 1 {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires exactly one column in the POC")
-	}
-	part := indexPartSpecifications[0]
-	if part.Column == nil {
+	if len(indexPartSpecifications) == 0 {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
 	}
 	_, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col := table.FindCol(t.Cols(), part.Column.Name.L)
+	// The trailing column is the geometry; any preceding columns are ordinary
+	// prefix columns (a composite spatial index, e.g. (tenant_id, position)).
+	geomPart := indexPartSpecifications[len(indexPartSpecifications)-1]
+	if geomPart.Column == nil {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+	}
+	col := table.FindCol(t.Cols(), geomPart.Column.Name.L)
 	if col == nil {
-		return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(part.Column.Name)
+		return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(geomPart.Column.Name)
 	}
 	isPoint, err := validateSpatialColumn(col)
 	if err != nil {
 		return err
 	}
+	if len(indexPartSpecifications) > 1 && !isPoint {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("composite SPATIAL index requires the geometry column to be a POINT in the POC")
+	}
 
-	// Rewrite the column part into the spatial key expression (a scalar
+	// Rewrite the geometry part into the spatial key expression (a scalar
 	// tidb_spatial_key for POINTs -> plain index, or CAST(tidb_spatial_keys(...)
 	// AS CHAR ARRAY) for general geometries -> multi-valued index), reusing the
 	// expression-index path. Per-index cell tuning comes from the index comment.
@@ -5102,9 +5107,9 @@ func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, inde
 	if err != nil {
 		return err
 	}
-	part.Expr = keyExpr
-	part.Column = nil
-	part.Length = types.UnspecifiedLength
+	geomPart.Expr = keyExpr
+	geomPart.Column = nil
+	geomPart.Length = types.UnspecifiedLength
 
 	return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, indexPartSpecifications, indexOption, ifNotExists)
 }

@@ -1396,17 +1396,25 @@ func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constrai
 		if constr.Tp != ast.ConstraintSpatial {
 			continue
 		}
-		if len(constr.Keys) != 1 || constr.Keys[0].Column == nil {
-			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires exactly one column in the POC")
+		if len(constr.Keys) == 0 {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
 		}
-		colName := constr.Keys[0].Column.Name.L
-		col := table.FindCol(cols, colName)
+		// The trailing key is the geometry; preceding keys are ordinary prefix
+		// columns (composite spatial index).
+		geomKey := constr.Keys[len(constr.Keys)-1]
+		if geomKey.Column == nil {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+		}
+		col := table.FindCol(cols, geomKey.Column.Name.L)
 		if col == nil {
-			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(constr.Keys[0].Column.Name)
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(geomKey.Column.Name)
 		}
 		isPoint, err := validateSpatialColumn(col)
 		if err != nil {
 			return err
+		}
+		if len(constr.Keys) > 1 && !isPoint {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("composite SPATIAL index requires the geometry column to be a POINT in the POC")
 		}
 		comment := ""
 		if constr.Option != nil {
@@ -1416,9 +1424,9 @@ func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constrai
 		if err != nil {
 			return err
 		}
-		constr.Keys[0].Expr = keyExpr
-		constr.Keys[0].Column = nil
-		constr.Keys[0].Length = types.UnspecifiedLength
+		geomKey.Expr = keyExpr
+		geomKey.Column = nil
+		geomKey.Length = types.UnspecifiedLength
 		constr.Tp = ast.ConstraintIndex
 	}
 	return nil
