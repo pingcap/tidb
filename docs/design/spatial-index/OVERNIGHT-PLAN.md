@@ -118,7 +118,8 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
    planner SRID dispatch, antimeridian/pole correctness.
 4. **Full GEOMETRY support via MVI** — non-point columns (POLYGON/LINESTRING/…),
    one row → many covering cells through the multi-valued-index write path;
-   generalized `ST_Intersects`/`ST_Contains`/`ST_Within`. Includes bbox-in-value.
+   generalized `ST_Intersects`/`ST_Contains`/`ST_Within`. Includes bbox-in-index
+   (the MBR carried as hidden index columns; see Layer A).
 5. **Composite spatial index `(tenant_id, position)`** — prefix ordinary
    column(s) before the hidden cell-key column; planner matches
    `tenant_id = X AND <spatial predicate>`.

@@ -45,6 +45,13 @@ carries the geometry's MBR (and, for points, its exact coordinates):
   array)), minx, miny, maxx, maxy)` with the four bbox columns generated from
   `g` (one MBR per row, replicated across the row's cell-key array entries).
 
+The MBR therefore lives in the index **key** (TiDB encodes every secondary-index
+column into the key; the value holds only the row handle). It is *not* an
+"include columns in the value" feature — TiDB has no such mechanism. The bbox
+columns trail the cell key, so they cannot narrow the range scan (range building
+stops at the first non-equality column, the cell key) but are decoded from the
+key and applied as index filters before the table lookup.
+
 The `SpatialIndexResolver` then injects, alongside the existing cell-range
 predicate, a **bbox-intersection filter on the index columns**:
 
