@@ -53,13 +53,6 @@ const (
 	diffNewRowPrefix    = "__mvd_n_"
 )
 
-// HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has a usable key layout
-// for MIN/MAX full-update lookup: either PK-is-handle on the single group key, or a public visible
-// index whose leading columns cover all group-by columns without prefix length.
-func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	return mviewutil.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
-}
-
 // FindVisibleIndexWithPrefixCoveringColumns returns the usable key layout for MIN/MAX full-update lookup.
 func FindVisibleIndexWithPrefixCoveringColumns(
 	baseTableInfo *model.TableInfo,

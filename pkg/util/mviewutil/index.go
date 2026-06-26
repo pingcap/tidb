@@ -21,15 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-// HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has
-// a public visible key layout usable by MIN/MAX materialized-view refresh:
-// either PK-is-handle on the single group key, or an index whose leading
-// columns cover all group-by columns without prefix length.
-func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	_, ok := FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
-	return ok
-}
-
 // FindVisibleIndexWithPrefixCoveringColumns returns the public visible key layout
 // usable by MIN/MAX materialized-view refresh.
 func FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) (string, bool) {
