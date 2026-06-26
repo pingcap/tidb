@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -96,21 +95,9 @@ func getTableImporter(
 	}
 
 	failpoint.Inject("createTableImporterForTest", func() {
-		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), &tableImporterStoreHelper{store: store}))
+		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
 	})
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
-}
-
-type tableImporterStoreHelper struct {
-	store tidbkv.Storage
-}
-
-func (*tableImporterStoreHelper) GetTS(context.Context) (physical, logical int64, err error) {
-	return 0, 0, nil
-}
-
-func (h *tableImporterStoreHelper) GetTiKVCodec() tikv.Codec {
-	return h.store.GetCodec()
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
