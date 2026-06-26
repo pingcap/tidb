@@ -15,22 +15,18 @@
 package geomrel
 
 import (
-	"encoding/binary"
 	"sync"
 	"testing"
 
+	"github.com/peterstace/simplefeatures/geom"
 	"github.com/stretchr/testify/require"
-	"github.com/twpayne/go-geom/encoding/wkb"
-	"github.com/twpayne/go-geom/encoding/wkt"
 )
 
 // ewkb builds the POC EWKB form (<srid_le><wkb>) from a WKT literal.
 func ewkb(t *testing.T, wktStr string) string {
-	g, err := wkt.Unmarshal(wktStr)
+	g, err := geom.UnmarshalWKT(wktStr)
 	require.NoError(t, err)
-	b, err := wkb.Marshal(g, binary.LittleEndian)
-	require.NoError(t, err)
-	return string(append([]byte{0, 0, 0, 0}, b...))
+	return string(append([]byte{0, 0, 0, 0}, g.AsBinary()...))
 }
 
 func TestRelateOGCSemantics(t *testing.T) {
@@ -83,13 +79,20 @@ func TestRelateConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-// TestRelateInvalidGeometryNoPanic confirms a GEOS topology exception on an
-// invalid (self-intersecting) polygon is returned as an error, not a panic.
+// TestRelateInvalidGeometryNoPanic confirms an invalid (self-intersecting)
+// polygon is handled by returning an error, not by panicking. simplefeatures
+// validates by default, so the invalid input is rejected at WKB decode.
 func TestRelateInvalidGeometryNoPanic(t *testing.T) {
-	bowtie := ewkb(t, "POLYGON((0 0,2 2,2 0,0 2,0 0))") // self-intersecting
+	// Build the self-intersecting "bowtie" without validation, then encode it.
+	g, err := geom.UnmarshalWKT("POLYGON((0 0,2 2,2 0,0 2,0 0))", geom.NoValidate{})
+	require.NoError(t, err)
+	bowtie := string(append([]byte{0, 0, 0, 0}, g.AsBinary()...))
 	pt := ewkb(t, "POINT(1 1)")
 	require.NotPanics(t, func() {
-		_, _ = Relate(Within, pt, bowtie)
-		_, _ = Relate(Overlaps, bowtie, bowtie)
+		_, err1 := Relate(Within, pt, bowtie)
+		_, err2 := Relate(Overlaps, bowtie, bowtie)
+		// The invalid geometry is rejected at decode with an error (not a panic).
+		require.Error(t, err1)
+		require.Error(t, err2)
 	})
 }

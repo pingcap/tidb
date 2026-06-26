@@ -15,21 +15,17 @@
 package expression
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"math"
-	"strings"
 
+	"github.com/peterstace/simplefeatures/geom"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/geomrel"
 	"github.com/pingcap/tidb/pkg/util/spatial"
-	"github.com/twpayne/go-geom"
-	"github.com/twpayne/go-geom/encoding/wkb"
-	"github.com/twpayne/go-geom/encoding/wkt"
 )
 
 // Geometry values are stored as EWKB: a 4-byte little-endian SRID prefix
@@ -67,18 +63,12 @@ var (
 // planner hook. It is immutable, so a single shared instance is safe.
 var defaultPlanarCoverer = spatial.NewDefaultPlanarCoverer()
 
-// encodeEWKB serializes a go-geom value with the given SRID into TiDB's
-// EWKB storage form (<srid_le_uint32><wkb_le>).
-func encodeEWKB(g geom.T, srid uint32) (string, error) {
-	wkbVal, err := wkb.Marshal(g, binary.LittleEndian)
-	if err != nil {
-		return "", err
-	}
-	buf := new(bytes.Buffer)
-	if err := binary.Write(buf, binary.LittleEndian, srid); err != nil {
-		return "", err
-	}
-	return string(append(buf.Bytes(), wkbVal...)), nil
+// encodeEWKB serializes a simplefeatures geometry with the given SRID into
+// TiDB's EWKB storage form (<srid_le_uint32><wkb>).
+func encodeEWKB(g geom.Geometry, srid uint32) string {
+	prefix := make([]byte, 4)
+	binary.LittleEndian.PutUint32(prefix, srid)
+	return string(append(prefix, g.AsBinary()...))
 }
 
 // DecodeEWKBPoint decodes an EWKB POINT value into its SRID and coordinates.
@@ -88,11 +78,15 @@ func DecodeEWKBPoint(ewkb string) (srid uint32, x, y float64, err error) {
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	pt, ok := g.(*geom.Point)
+	pt, ok := g.AsPoint()
 	if !ok {
 		return 0, 0, 0, errors.New("expected a POINT geometry")
 	}
-	return s, pt.X(), pt.Y(), nil
+	xy, ok := pt.XY()
+	if !ok {
+		return 0, 0, 0, errors.New("empty POINT")
+	}
+	return s, xy.X, xy.Y, nil
 }
 
 // EWKBBounds returns the SRID and 2D bounding box of an EWKB geometry.
@@ -102,21 +96,34 @@ func EWKBBounds(ewkb string) (srid uint32, minX, minY, maxX, maxY float64, err e
 	if err != nil {
 		return 0, 0, 0, 0, 0, err
 	}
-	b := g.Bounds()
-	return s, b.Min(0), b.Min(1), b.Max(0), b.Max(1), nil
+	mn, mx, ok := g.Envelope().MinMaxXYs()
+	if !ok {
+		return 0, 0, 0, 0, 0, errors.New("empty geometry has no bounding box")
+	}
+	return s, mn.X, mn.Y, mx.X, mx.Y, nil
 }
 
 // decodeEWKB parses TiDB's EWKB storage form back into an SRID and geometry.
-func decodeEWKB(ewkb string) (uint32, geom.T, error) {
+func decodeEWKB(ewkb string) (uint32, geom.Geometry, error) {
 	if len(ewkb) < 4 {
-		return 0, nil, errors.New("invalid geometry value: too short")
+		return 0, geom.Geometry{}, errors.New("invalid geometry value: too short")
 	}
 	srid := binary.LittleEndian.Uint32([]byte(ewkb[:4]))
-	g, err := wkb.Unmarshal([]byte(ewkb[4:]))
+	g, err := geom.UnmarshalWKB([]byte(ewkb[4:]))
 	if err != nil {
-		return 0, nil, err
+		return 0, geom.Geometry{}, errors.Trace(err)
 	}
 	return srid, g, nil
+}
+
+// pointXY decodes an EWKB POINT to its coordinates.
+func pointXY(g geom.Geometry) (x, y float64, ok bool) {
+	pt, ok := g.AsPoint()
+	if !ok {
+		return 0, 0, false
+	}
+	xy, ok := pt.XY()
+	return xy.X, xy.Y, ok
 }
 
 type stGeomFromTextFunctionClass struct {
@@ -164,15 +171,11 @@ func (b *builtinStGeomFromTextSig) evalString(ctx EvalContext, row chunk.Row) (s
 			return "", isNull, err
 		}
 	}
-	g, err := wkt.Unmarshal(wktVal)
+	g, err := geom.UnmarshalWKT(wktVal)
 	if err != nil {
-		return "", false, err
+		return "", false, errors.Trace(err)
 	}
-	out, err := encodeEWKB(g, uint32(srid))
-	if err != nil {
-		return "", false, err
-	}
-	return out, false, nil
+	return encodeEWKB(g, uint32(srid)), false, nil
 }
 
 type stAsTextFunctionClass struct {
@@ -211,21 +214,8 @@ func (b *builtinStAsTextSig) evalString(ctx EvalContext, row chunk.Row) (string,
 	if err != nil {
 		return "", false, err
 	}
-	wktVal, err := wkt.Marshal(g)
-	if err != nil {
-		return "", false, err
-	}
-	return mysqlWKT(wktVal), false, nil
-}
-
-// mysqlWKT reshapes go-geom's WKT into MySQL's spacing: no space between the
-// geometry type and its opening paren, and no space after coordinate-separating
-// commas (e.g. "POINT (3 4)" -> "POINT(3 4)", "POLYGON ((0 0, 1 1))" ->
-// "POLYGON((0 0,1 1))"). The space between a coordinate's X and Y is preserved.
-func mysqlWKT(w string) string {
-	w = strings.ReplaceAll(w, " (", "(")
-	w = strings.ReplaceAll(w, ", ", ",")
-	return w
+	// simplefeatures' WKT already uses MySQL's spacing (e.g. "POINT(3 4)").
+	return g.AsText(), false, nil
 }
 
 type stDistanceFunctionClass struct {
@@ -283,13 +273,13 @@ func (b *builtinStDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 	if s1 != 0 {
 		return 0, false, errors.New("ST_Distance: only SRID 0 is supported in the POC")
 	}
-	p1, ok1 := g1.(*geom.Point)
-	p2, ok2 := g2.(*geom.Point)
+	x1, y1, ok1 := pointXY(g1)
+	x2, y2, ok2 := pointXY(g2)
 	if !ok1 || !ok2 {
 		return 0, false, errors.New("ST_Distance: only POINT arguments are supported in the POC")
 	}
-	dx := p1.X() - p2.X()
-	dy := p1.Y() - p2.Y()
+	dx := x1 - x2
+	dy := y1 - y2
 	return math.Sqrt(dx*dx + dy*dy), false, nil
 }
 
@@ -350,12 +340,12 @@ func (b *builtinStDistanceSphereSig) evalReal(ctx EvalContext, row chunk.Row) (f
 	if s1 != spatial.SRID4326 {
 		return 0, false, errors.New("ST_Distance_Sphere: only SRID 4326 is supported in the POC")
 	}
-	p1, ok1 := g1.(*geom.Point)
-	p2, ok2 := g2.(*geom.Point)
+	x1, y1, ok1 := pointXY(g1)
+	x2, y2, ok2 := pointXY(g2)
 	if !ok1 || !ok2 {
 		return 0, false, errors.New("ST_Distance_Sphere: only POINT arguments are supported in the POC")
 	}
-	return greatCircleMeters(p1.X(), p1.Y(), p2.X(), p2.Y()), false, nil
+	return greatCircleMeters(x1, y1, x2, y2), false, nil
 }
 
 // greatCircleMeters is the haversine distance in metres between two points given
@@ -512,11 +502,11 @@ func evalPointXY(ctx EvalContext, arg Expression, row chunk.Row) (x, y float64, 
 	if err != nil {
 		return 0, 0, false, err
 	}
-	pt, ok := g.(*geom.Point)
+	x, y, ok := pointXY(g)
 	if !ok {
 		return 0, 0, false, errors.New("ST_X/ST_Y: argument must be a POINT")
 	}
-	return pt.X(), pt.Y(), false, nil
+	return x, y, false, nil
 }
 
 type stSRIDFunctionClass struct {
@@ -609,9 +599,13 @@ func (b *builtinTiDBSpatialKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (ty
 		}
 		params = spatial.PlanarParams{Level: uint(vals[0]), MinX: vals[1], MinY: vals[2], MaxX: vals[3], MaxY: vals[4]}
 	}
-	bnd := g.Bounds()
+	mn, mx, ok := g.Envelope().MinMaxXYs()
+	if !ok {
+		// An empty geometry covers no cells.
+		return types.CreateBinaryJSON([]any{}), false, nil
+	}
 	cells, err := params.Coverer().CoverFixedLevelCells(spatial.Rect{
-		MinX: bnd.Min(0), MinY: bnd.Min(1), MaxX: bnd.Max(0), MaxY: bnd.Max(1),
+		MinX: mn.X, MinY: mn.Y, MaxX: mx.X, MaxY: mx.Y,
 	})
 	if err != nil {
 		return types.BinaryJSON{}, false, err
@@ -684,13 +678,13 @@ func (b *builtinTiDBSpatialKeySig) evalString(ctx EvalContext, row chunk.Row) (s
 	if err != nil {
 		return "", false, err
 	}
-	pt, ok := g.(*geom.Point)
+	x, y, ok := pointXY(g)
 	if !ok {
 		return "", false, errors.New("tidb_spatial_key: only POINT geometries are supported in the POC")
 	}
 	// WGS 84 points use the S2 cell scheme; SRID 0 uses the planar quadtree.
 	if srid == spatial.SRID4326 {
-		return string(spatial.EncodePointS2(pt.X(), pt.Y())), false, nil
+		return string(spatial.EncodePointS2(x, y)), false, nil
 	}
 	coverer := defaultPlanarCoverer
 	if len(b.args) == 6 {
@@ -700,7 +694,7 @@ func (b *builtinTiDBSpatialKeySig) evalString(ctx EvalContext, row chunk.Row) (s
 		}
 		coverer = p.Coverer()
 	}
-	key, err := coverer.EncodePoint(srid, pt.X(), pt.Y())
+	key, err := coverer.EncodePoint(srid, x, y)
 	if err != nil {
 		return "", false, err
 	}
