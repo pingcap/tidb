@@ -82,10 +82,12 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   indexes to that same independent index-scan analyze (`getModifiedIndexesInfoForAnalyze`
   + `isGeometryDerivedIndex` in `planbuilder.go`). Result: the index now gets a real
   histogram (156 buckets) and `estRows` moves `1.00 → 159.9` vs actual 169
-  (`TestPOCSpatialIndexAnalyzeStats`). REMAINING: independent `x`/`y` histograms so
-  the bbox selectivity (`sel(x)·sel(y)`) is available — needs a benchmark across
-  data distributions to confirm it improves accuracy (uniform vs clustered/skewed),
-  and to keep the scan-cost estimate (entries scanned) distinct from the
+  (`TestPOCSpatialIndexAnalyzeStats`). NEXT (higher priority): with real stats,
+  verify the index now auto-selects without `FORCE INDEX`. FUTURE OPTIMIZATION
+  (low priority): independent `x`/`y` histograms so the bbox selectivity
+  (`sel(x)·sel(y)`) is available — must be benchmarked across data distributions
+  first (uniform vs clustered/skewed; the independence assumption breaks under
+  correlation), and keep the scan-cost estimate (entries scanned) distinct from the
   output-cardinality estimate (entries matched) — the former drives single-table
   cost, the latter drives join planning.
 - **Performance: bounding-box-in-index → coprocessor pushdown.** See

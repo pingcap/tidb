@@ -295,6 +295,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"tidb_parse_tso",
 		"tidb_parse_tso_logical",
 		"tidb_shard",
+		"tidb_spatial_bbox",
 		"tidb_spatial_key",
 		"tidb_spatial_keys",
 		"time",
