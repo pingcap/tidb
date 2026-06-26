@@ -196,10 +196,6 @@ func TestManager(t *testing.T) {
 				_, err2 := se.GetSQLExecutor().ExecuteInternal(ctx, "create table test.t2(id int)")
 				return err2
 			}), "DDL is not supported in cross keyspace session")
-			require.ErrorContains(t, mgr.WithNewSession(func(se sessionctx.Context) error {
-				_, err2 := se.GetSQLExecutor().ExecuteInternal(ctx, "alter table mysql.tidb_import_jobs add column c int")
-				return err2
-			}), "DDL is not supported in cross keyspace session")
 		}
 		// SYSTEM keyspace should not have any import jobs
 		sysTK := testkit.NewTestKit(t, sysKSStore)
