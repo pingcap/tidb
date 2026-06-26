@@ -2340,8 +2340,12 @@ func TestRepairIngestIndexOutputAddIndexSQL(t *testing.T) {
 	tk.MustExec("CREATE TABLE test.repair_index_export_t(id int, a int, b int, key i1(id), unique key i2(a));")
 	g := gluetidb.New()
 	ctx := context.Background()
-	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
 	client.SetUseCheckpoint()
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+	defer tk.MustExec("DROP DATABASE IF EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
 
 	fakeJob := func(
 		schemaName string,
