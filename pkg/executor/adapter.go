@@ -1871,7 +1871,10 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 }
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
-	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
+	source := kv.GetInternalSourceType(a.GoCtx)
+	// Analyze and other statistics maintenance use these request sources.
+	// Filter both so plan replayer capture skips all internal statistics work.
+	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsMaintenance {
 		return
 	}
 	se := a.Ctx
