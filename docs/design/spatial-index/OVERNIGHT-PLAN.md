@@ -49,8 +49,8 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
 
 ### Left for a complete MVP
 
-- DML maintenance verified for general geometry (UPDATE/DELETE re-covering), not
-  just points.
+- DONE: DML maintenance verified for point and general-geometry MVI (UPDATE/DELETE
+  re-cover the index; ADMIN CHECK consistent) — `TestPOCSpatialDMLMaintenance`.
 - The ST_ function surface is now broad (see Implemented); remaining accessors
   are niche (`ST_NumGeometries`/`ST_GeometryN`, `ST_InteriorRingN`,
   `ST_Perimeter`, GeoJSON options).
@@ -61,15 +61,12 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
 
 ### First release (MySQL surface + planner integration)
 
-- **Geometry constructor functions** (`POINT()`, `POLYGON()`, `LineString()`, …)
-  actually implemented. NOTE: these are **not** required for the general-geometry
-  index — a geometry value is constructed from text/binary via `ST_GeomFromText`
-  (and, on the MVP list, `ST_GeomFromWKB`), and the index operates on the stored
-  EWKB regardless of how it was produced (the MVI test inserts/queries polygons
-  via `ST_GeomFromText`). The constructors are a MySQL query-surface
-  compatibility/ergonomics item (so e.g. `ST_Within(g, POLYGON((...)))` works
-  instead of only `ST_Within(g, ST_GeomFromText('POLYGON((...))'))`). Today they
-  parse but resolve to "function does not exist".
+- **Geometry constructor functions** — `POINT()`/`LineString()`/`Polygon()`
+  implemented (compose; build EWKB SRID 0), so `ST_Within(g, POLYGON(...))` works
+  inline instead of only via `ST_GeomFromText('POLYGON((...))')`. They are a MySQL
+  query-surface ergonomics item, not required for the index (the MVI operates on
+  the stored EWKB however produced). Remaining: the Multi*/GeometryCollection
+  constructors and the `ST_*FromText`/`*FromWKB` typed aliases.
 - **Spatial cost/statistics + ANALYZE (top priority; ANALYZE fix landed).**
   Root cause found: `ANALYZE` produced a 0-bucket histogram for the point spatial
   index, pinning the cell-range estimate at the `estRows=1` floor. The point index
@@ -85,7 +82,9 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   (`TestPOCSpatialIndexAnalyzeStats`). Auto-selection now works hint-free: with
   real stats the optimizer picks the index for selective queries and falls back to
   a full scan when most of the table matches (radius sweep over the 10k-point grid:
-  index at ~13/81/317 results, full scan at ~2.8k/10k). VERIFY (needs a real
+  index at ~13/81/317 results, full scan at ~2.8k/10k). The POC tests now drop the
+  `FORCE INDEX` hint where they ANALYZE (`TestPOCSpatialAutoSelect`,
+  `TestPOCSpatialIndexEquivalence`). VERIFY (needs a real
   TiKV cluster): that the index↔full-scan **cut-off point is accurate** — the
   unistore cost model uses in-memory costs, so the true cross-over (random-read
   index lookups vs sequential full scan) can only be measured on real storage;
@@ -195,14 +194,13 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   non-geometry argument returns a generic "invalid geometry value" error rather
   than MySQL's `ER_CANNOT_CONVERT_STRING`. The internal mysql-test expectations
   are aligned to this POC behavior on a separate tidb-test branch.
-- FIXED: `INSERT ... SELECT` of a geometry column nulled the value (failed a
-  `NOT NULL` column). Root cause was *not* vectorization — `chunk.Row.GetDatum`
-  had no `TypeGeometry` case, so building the insert row datums from the source
-  chunk returned a NULL datum. Reading geometry as a binary string fixed it
-  (`pkg/util/chunk/row.go`; regression in `TestPOCGeoFunctions`). This is the same
-  family as the ANALYZE-codec gap (`TypeGeometry` missing from a core type switch);
-  a broader audit of `pkg/util/codec` + `chunk` switches for `TypeGeometry` is
-  worthwhile.
+- FIXED (TypeGeometry type-switch audit): ~28 operations exercised (GROUP BY,
+  hash/merge join, DISTINCT, ORDER BY, UPDATE/DELETE/REPLACE, window, …) — all work
+  except two gaps, now fixed: `INSERT ... SELECT` nulled the geometry
+  (`chunk.Row.GetDatum` had no `TypeGeometry` case) and `UNION` asserted in the
+  cast-string flen setup (`builtin_cast.go`). Both now read geometry as a binary
+  string. Regressions in `TestPOCGeoFunctions`. (The `pkg/util/codec` hash-encode
+  default for type 255 is *not* reached — hash agg/join on geometry work.)
 
 ## Deferred / backlog (not this run unless time remains)
 
