@@ -14,11 +14,11 @@ insert into pts (id, p) values
 select id, ST_AsText(p) as wkt, ST_X(p) as x, ST_Y(p) as y, ST_SRID(p) as srid
 from pts order by id;
 id	wkt	x	y	srid
-1	POINT (0 0)	0	0	0
-2	POINT (3 4)	3	4	0
-3	POINT (10 10)	10	10	0
-4	POINT (5 5)	5	5	0
-5	POINT (1 1)	1	1	0
+1	POINT(0 0)	0	0	0
+2	POINT(3 4)	3	4	0
+3	POINT(10 10)	10	10	0
+4	POINT(5 5)	5	5	0
+5	POINT(1 1)	1	1	0
 # === section 2: planar distance (SRID 0) ===
 select a.id as aid, b.id as bid,
 cast(ST_Distance(a.p, b.p) as decimal(20,6)) as dist
@@ -41,7 +41,7 @@ ST_Within(p,   ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))',0)) as withi
 ST_Contains(ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))',0), p) as box_contains
 from pts order by id;
 id	within_box	box_contains
-1	1	1
+1	0	0
 2	1	1
 3	0	0
 4	1	1

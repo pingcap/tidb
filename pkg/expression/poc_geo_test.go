@@ -27,23 +27,36 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustExec("use test")
 
 	// WKT round-trip.
-	tk.MustQuery("SELECT ST_AsText(ST_GeomFromText('POINT(1 2)'))").Check(testkit.Rows("POINT (1 2)"))
+	tk.MustQuery("SELECT ST_AsText(ST_GeomFromText('POINT(1 2)'))").Check(testkit.Rows("POINT(1 2)"))
 	tk.MustQuery("SELECT ST_SRID(ST_GeomFromText('POINT(1 2)', 4326))").Check(testkit.Rows("4326"))
 	tk.MustQuery("SELECT ST_X(ST_GeomFromText('POINT(3 4)')), ST_Y(ST_GeomFromText('POINT(3 4)'))").Check(testkit.Rows("3 4"))
 
 	// Planar distance: (0,0) to (3,4) = 5.
 	tk.MustQuery("SELECT ST_Distance(ST_GeomFromText('POINT(0 0)'), ST_GeomFromText('POINT(3 4)'))").Check(testkit.Rows("5"))
 
-	// Point in polygon.
-	tk.MustQuery("SELECT ST_Contains(ST_GeomFromText('POLYGON((0 0,0 10,10 10,10 0,0 0))'), ST_GeomFromText('POINT(5 5)'))").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT ST_Contains(ST_GeomFromText('POLYGON((0 0,0 10,10 10,10 0,0 0))'), ST_GeomFromText('POINT(15 5)'))").Check(testkit.Rows("0"))
-	tk.MustQuery("SELECT ST_Within(ST_GeomFromText('POINT(5 5)'), ST_GeomFromText('POLYGON((0 0,0 10,10 10,10 0,0 0))'))").Check(testkit.Rows("1"))
+	// Point in polygon (GEOS / OGC semantics, matching MySQL).
+	box := "ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))')"
+	tk.MustQuery("SELECT ST_Contains(" + box + ", ST_GeomFromText('POINT(5 5)'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_Contains(" + box + ", ST_GeomFromText('POINT(15 5)'))").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT ST_Within(ST_GeomFromText('POINT(5 5)'), " + box + ")").Check(testkit.Rows("1"))
+	// Boundary points are NOT within / contained (OGC boundary-not-interior).
+	// Both corners agree, fixing the earlier ray-cast inconsistency.
+	tk.MustQuery("SELECT ST_Within(ST_GeomFromText('POINT(0 0)'), " + box + ")").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT ST_Within(ST_GeomFromText('POINT(10 10)'), " + box + ")").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT ST_Contains(" + box + ", ST_GeomFromText('POINT(0 0)'))").Check(testkit.Rows("0"))
+
+	// Other relational predicates via GEOS.
+	tk.MustQuery("SELECT ST_Intersects(" + box + ", ST_GeomFromText('POINT(0 0)'))").Check(testkit.Rows("1")) // boundary touch
+	tk.MustQuery("SELECT ST_Intersects(" + box + ", ST_GeomFromText('POINT(15 5)'))").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT ST_Disjoint(" + box + ", ST_GeomFromText('POINT(15 5)'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_Equals(ST_GeomFromText('POINT(1 1)'), ST_GeomFromText('POINT(1 1)'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_Equals(ST_GeomFromText('POINT(1 1)'), ST_GeomFromText('POINT(2 2)'))").Check(testkit.Rows("0"))
 
 	// Table storage round-trip: store geometry, read back, query by distance.
 	tk.MustExec("CREATE TABLE locs (id int primary key, p POINT NOT NULL SRID 0)")
 	tk.MustExec("INSERT INTO locs VALUES (1, ST_GeomFromText('POINT(0 0)', 0)), (2, ST_GeomFromText('POINT(3 4)', 0)), (3, ST_GeomFromText('POINT(10 10)', 0))")
 	tk.MustQuery("SELECT id, ST_AsText(p) FROM locs ORDER BY id").Check(testkit.Rows(
-		"1 POINT (0 0)", "2 POINT (3 4)", "3 POINT (10 10)"))
+		"1 POINT(0 0)", "2 POINT(3 4)", "3 POINT(10 10)"))
 	// Within radius 6 of origin: ids 1 and 2.
 	tk.MustQuery("SELECT id FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(0 0)', 0)) <= 6 ORDER BY id").Check(testkit.Rows("1", "2"))
 }

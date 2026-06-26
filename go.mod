@@ -128,6 +128,7 @@ require (
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/twpayne/go-geom v1.6.1
+	github.com/twpayne/go-geos v0.20.4
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
