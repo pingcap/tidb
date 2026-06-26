@@ -77,4 +77,10 @@ func TestPOCCreateSpatialIndex(t *testing.T) {
 	// A 4326 spatial index is accepted.
 	tk.MustExec("CREATE TABLE geo4326 (id int primary key, p POINT NOT NULL SRID 4326)")
 	tk.MustExec("CREATE SPATIAL INDEX g4326 ON geo4326 (p)")
+
+	// A plain B-tree functional index over a geometry-returning expression is
+	// rejected: ST_GeomFromText is typed as GEOMETRY, so it cannot be an
+	// ordinary index key (it needs a SPATIAL index instead).
+	tk.MustGetErrMsg("CREATE TABLE geofuncidx (x VARCHAR(100), KEY ((ST_GeomFromText(x))))",
+		"[ddl:3753]Cannot create an expression index on a function that returns a JSON or GEOMETRY value")
 }

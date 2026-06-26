@@ -22,6 +22,7 @@ import (
 	"github.com/peterstace/simplefeatures/geom"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/geomrel"
@@ -153,6 +154,12 @@ func (c *stGeomFromTextFunctionClass) getFunction(ctx BuildContext, args []Expre
 		return nil, err
 	}
 	types.SetBinChsClnFlag(bf.tp)
+	// Type the result as GEOMETRY (still evaluated as a binary string, since
+	// TypeGeometry maps to ETString). This lets the type system recognize the
+	// value as geometry — e.g. so a plain B-tree functional index over it is
+	// rejected like MySQL, rather than silently indexing the EWKB bytes.
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
 	sig := &builtinStGeomFromTextSig{bf}
 	return sig, nil
 }
