@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1392,6 +1393,57 @@ func TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation(t *testing.T) {
 
 	// The default estimate is 0.8 * 100 = 80, while the topN assisted estimate should be around 5, which is much closer to the actual row count.
 	require.Less(t, math.Abs(topNAssistedEstimate-actualRows), math.Abs(defaultEstimate-actualRows))
+}
+
+func TestStringMatchSelectivityDoesNotRestoreTransientHistogramBoundsSelection(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnableVectorizedExpression = true
+
+	tp := types.NewFieldType(mysql.TypeVarchar)
+	hist := statistics.NewHistogram(1, 6, 0, 0, tp, 3, 0)
+	appendBucket := func(lower, upper string, count, repeat int64) {
+		lowerDatum := types.NewStringDatum(lower)
+		upperDatum := types.NewStringDatum(upper)
+		hist.AppendBucket(&lowerDatum, &upperDatum, count, repeat)
+	}
+	appendBucket("BRASS", "BRASS", 2, 1)
+	appendBucket("IRON", "IRON", 4, 1)
+	appendBucket("STEEL", "STEEL", 6, 1)
+
+	colStats := &statistics.Column{
+		Info: &model.ColumnInfo{
+			ID:        1,
+			Name:      ast.NewCIStr("a"),
+			FieldType: *tp,
+		},
+		Histogram:         *hist,
+		TopN:              &statistics.TopN{},
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          statistics.Version2,
+	}
+	coll := statistics.NewHistColl(1, 6, 0, 1, 0)
+	coll.SetCol(1, colStats)
+
+	filter, err := expression.NewFunction(
+		sctx,
+		ast.Like,
+		types.NewFieldType(mysql.TypeLonglong),
+		&expression.Column{UniqueID: 1, RetType: tp},
+		&expression.Constant{Value: types.NewStringDatum("%R%"), RetType: tp},
+		&expression.Constant{Value: types.NewIntDatum('\\'), RetType: types.NewFieldType(mysql.TypeLonglong)},
+	)
+	require.NoError(t, err)
+
+	// Simulate a concurrent VecEvalBool call that temporarily narrowed the
+	// shared cached histogram bounds chunk to unrelated rows.
+	transientSel := []int{4, 5}
+	colStats.Bounds.SetSel(transientSel)
+
+	ok, selectivity, err := cardinality.GetSelectivityByFilter(sctx, coll, filter)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.InEpsilon(t, 2.0/3.0, selectivity, 1e-12)
+	require.Equal(t, transientSel, colStats.Bounds.Sel())
 }
 
 func getTableReaderEstRows(t *testing.T, tk *testkit.TestKit, query string) float64 {
