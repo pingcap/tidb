@@ -833,6 +833,8 @@ st_geometrytype
 st_geomfromtext
 st_geomfromwkb
 st_intersects
+st_isempty
+st_isvalid
 st_overlaps
 st_srid
 st_touches

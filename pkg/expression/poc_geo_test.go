@@ -68,6 +68,11 @@ func TestPOCGeoFunctions(t *testing.T) {
 	// ST_GeomFromWKB(ST_AsBinary(g)) round-trips; ST_AsWKB is an alias of ST_AsBinary.
 	tk.MustQuery("SELECT ST_AsText(ST_GeomFromWKB(ST_AsBinary(ST_GeomFromText('POINT(5 6)'))))").Check(testkit.Rows("POINT(5 6)"))
 	tk.MustQuery("SELECT ST_AsWKB(ST_GeomFromText('POINT(0 0)')) = ST_AsBinary(ST_GeomFromText('POINT(0 0)'))").Check(testkit.Rows("1"))
+
+	// ST_IsValid / ST_IsEmpty, and the ST_SRID(g, srid) setter form.
+	tk.MustQuery("SELECT ST_IsValid(ST_GeomFromText('POINT(1 1)'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_IsEmpty(ST_GeomFromText('POINT(1 1)')), ST_IsEmpty(ST_GeomFromText('GEOMETRYCOLLECTION EMPTY'))").Check(testkit.Rows("0 1"))
+	tk.MustQuery("SELECT ST_SRID(ST_SRID(ST_GeomFromText('POINT(1 1)', 0), 4326))").Check(testkit.Rows("4326"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.

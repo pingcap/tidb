@@ -48,6 +48,8 @@ var (
 	_ functionClass = &stAsBinaryFunctionClass{}
 	_ functionClass = &stGeomFromWKBFunctionClass{}
 	_ functionClass = &stEnvelopeFunctionClass{}
+	_ functionClass = &stIsValidFunctionClass{}
+	_ functionClass = &stIsEmptyFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
@@ -65,6 +67,9 @@ var (
 	_ builtinFunc = &builtinStAsBinarySig{}
 	_ builtinFunc = &builtinStGeomFromWKBSig{}
 	_ builtinFunc = &builtinStEnvelopeSig{}
+	_ builtinFunc = &builtinStSRIDSetSig{}
+	_ builtinFunc = &builtinStIsValidSig{}
+	_ builtinFunc = &builtinStIsEmptySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
@@ -542,12 +547,51 @@ func (c *stSRIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	if len(args) == 2 {
+		// ST_SRID(g, srid) is the setter form: return a copy of g with its SRID
+		// replaced. The result is a GEOMETRY (evaluated as a binary string).
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+		types.SetBinChsClnFlag(bf.tp)
+		bf.tp.SetType(mysql.TypeGeometry)
+		bf.tp.SetFlen(types.UnspecifiedLength)
+		return &builtinStSRIDSetSig{bf}, nil
+	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
 	sig := &builtinStSRIDSig{bf}
 	return sig, nil
+}
+
+type builtinStSRIDSetSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStSRIDSetSig) Clone() builtinFunc {
+	newSig := &builtinStSRIDSetSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_SRID(geom, srid) -> geom with its SRID set to srid.
+func (b *builtinStSRIDSetSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	return encodeEWKB(g, uint32(srid)), false, nil
 }
 
 type builtinStSRIDSig struct {
@@ -736,6 +780,90 @@ func (b *builtinStEnvelopeSig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "", false, err
 	}
 	return encodeEWKB(g.Envelope().AsGeometry(), srid), false, nil
+}
+
+type stIsValidFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stIsValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStIsValidSig{bf}
+	return sig, nil
+}
+
+type builtinStIsValidSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStIsValidSig) Clone() builtinFunc {
+	newSig := &builtinStIsValidSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt implements ST_IsValid(geom) -> 1 if the geometry is OGC-valid, else 0.
+func (b *builtinStIsValidSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	if g.Validate() != nil {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type stIsEmptyFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stIsEmptyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStIsEmptySig{bf}
+	return sig, nil
+}
+
+type builtinStIsEmptySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStIsEmptySig) Clone() builtinFunc {
+	newSig := &builtinStIsEmptySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt implements ST_IsEmpty(geom) -> 1 if the geometry is empty, else 0.
+func (b *builtinStIsEmptySig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	if g.IsEmpty() {
+		return 1, false, nil
+	}
+	return 0, false, nil
 }
 
 type tidbSpatialKeysFunctionClass struct {

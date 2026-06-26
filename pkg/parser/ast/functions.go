@@ -397,6 +397,8 @@ const (
 	StAsWKB          = "st_aswkb"
 	StGeomFromWKB    = "st_geomfromwkb"
 	StEnvelope       = "st_envelope"
+	StIsValid        = "st_isvalid"
+	StIsEmpty        = "st_isempty"
 	// TiDBSpatialKey is an internal function: it maps a POINT to its
 	// order-preserving spatial index CellKey. It backs the hidden generated
 	// column of a points-only spatial index and is not intended for direct use.

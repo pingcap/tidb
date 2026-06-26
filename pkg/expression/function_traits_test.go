@@ -254,6 +254,8 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"st_geomfromtext",
 		"st_geomfromwkb",
 		"st_intersects",
+		"st_isempty",
+		"st_isvalid",
 		"st_overlaps",
 		"st_srid",
 		"st_touches",
