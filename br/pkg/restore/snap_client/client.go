@@ -797,34 +797,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-<<<<<<< HEAD
-		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
-		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-			return setFn(importer, rc.rateLimit)
-		})
-		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
-			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-			var resetErr error
-			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
-				resetErr = setFn(importer, 0)
-				if resetErr != nil {
-					log.Warn("failed to reset speed limit, retry it",
-						zap.Int("retry time", retry), logutil.ShortError(resetErr))
-					time.Sleep(time.Duration(retry+3) * time.Second)
-					continue
-				}
-				break
-			}
-			if resetErr != nil {
-				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-			}
-			return resetErr
-		})
-=======
 		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
 		createCallBacks = append(createCallBacks, createCallBack)
 		closeCallBacks = append(closeCallBacks, closeCallBack)
->>>>>>> b1d4142f99a (br: set ratelimit for log restore (#64357))
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
