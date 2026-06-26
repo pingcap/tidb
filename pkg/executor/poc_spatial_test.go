@@ -60,20 +60,18 @@ func TestPOCSpatialIndexEquivalence(t *testing.T) {
 	require.NotEmpty(t, wantDist)
 	require.NotEmpty(t, wantContain)
 
-	// Create the spatial index.
+	// Create the spatial index and ANALYZE so the optimizer has real statistics.
 	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p)")
+	tk.MustExec("ANALYZE TABLE locs")
 
-	// Same results when the index is used. The index is FORCE'd: automatically
-	// preferring the spatial index over a full scan needs spatial cost/statistics
-	// (tracked as a follow-up; see OVERNIGHT-PLAN.md).
-	const distForced = "SELECT id FROM locs FORCE INDEX (sidx) WHERE " + distPred + " ORDER BY id"
-	const containForced = "SELECT id FROM locs FORCE INDEX (sidx) WHERE " + containPred + " ORDER BY id"
-	tk.MustQuery(distForced).Check(wantDist)
-	tk.MustQuery(containForced).Check(wantContain)
+	// Same results with the index present — and these selective queries auto-select
+	// the index with no FORCE INDEX hint (the spatial-stats ANALYZE fix).
+	tk.MustQuery(distQuery).Check(wantDist)
+	tk.MustQuery(containQuery).Check(wantContain)
 
 	// EXPLAIN shows an index range scan on the spatial index plus a refine
 	// Selection carrying the original ST_Distance predicate.
-	explain := tk.MustQuery("EXPLAIN " + distForced).Rows()
+	explain := tk.MustQuery("EXPLAIN " + distQuery).Rows()
 	var planText strings.Builder
 	for _, row := range explain {
 		for _, c := range row {
@@ -118,4 +116,41 @@ func TestPOCSpatialDMLMaintenance(t *testing.T) {
 	tk.MustExec("ADMIN CHECK TABLE pg")
 	tk.MustExec("ADMIN CHECK INDEX pg gi")
 	tk.MustQuery("SELECT id FROM pg FORCE INDEX (gi) WHERE ST_Intersects(g, ST_GeomFromText('POLYGON((39 39,43 39,43 43,39 43,39 39))',0))").Check(testkit.Rows("1"))
+}
+
+// TestPOCSpatialAutoSelect proves the spatial index is selected WITHOUT a FORCE
+// INDEX hint once ANALYZE has built real statistics (see the ANALYZE-stats fix):
+// the cost model picks the index for a selective query and falls back to a full
+// scan when most of the table matches.
+func TestPOCSpatialAutoSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE locs (id int primary key, p POINT NOT NULL SRID 0)")
+	id := 0
+	for i := 0; i < 100; i++ {
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO locs VALUES ")
+		for j := 0; j < 100; j++ {
+			if j > 0 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, ST_GeomFromText('POINT(%d %d)',0))", id, i, j)
+			id++
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p) COMMENT 'spatial:12,0,0,100,100'")
+	tk.MustExec("ANALYZE TABLE locs")
+
+	usesIndex := func(radius int) bool {
+		q := fmt.Sprintf("SELECT id FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(50 50)',0)) <= %d", radius)
+		var sb strings.Builder
+		for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
+			sb.WriteString(fmt.Sprintf("%v ", r[0]))
+		}
+		return strings.Contains(sb.String(), "IndexRangeScan")
+	}
+	require.True(t, usesIndex(5), "selective spatial query (no hint) should auto-select the index")
+	require.False(t, usesIndex(70), "unselective spatial query should fall back to a full scan")
 }
