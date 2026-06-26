@@ -19,14 +19,18 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
   `POLYGON`, `MULTI*`, `GEOMETRYCOLLECTION`) + per-column `SRID`; EWKB storage
   (`<srid_le_u32><wkb>`), MySQL-compatible. Pure-Go geometry stack
   (`simplefeatures` + `golang/geo` S2) — no cgo/libgeos.
-- **ST_ functions**: I/O `ST_GeomFromText`/`ST_AsText`, `ST_GeomFromWKB`/
-  `ST_AsBinary`(`ST_AsWKB`); accessors `ST_X`/`ST_Y`/`ST_SRID` (getter and
-  `ST_SRID(g, srid)` setter), `ST_GeometryType`, `ST_Envelope`, `ST_IsValid`,
-  `ST_IsEmpty`; `ST_Distance` (planar), `ST_Distance_Sphere` (4326); DE-9IM
-  predicates `ST_Within/Contains/Intersects/Equals/Disjoint/Touches/Crosses/
-  Overlaps` (OGC-correct via simplefeatures).
-  Geometry-returning builtins are typed `GEOMETRY`, so a plain B-tree functional
-  index over them is correctly rejected.
+- **ST_ functions** (comprehensive, via pure-Go simplefeatures):
+  - I/O: `ST_GeomFromText`/`ST_AsText`, `ST_GeomFromWKB`/`ST_AsBinary`(`ST_AsWKB`),
+    `ST_GeomFromGeoJSON`/`ST_AsGeoJSON`.
+  - Accessors: `ST_X`/`ST_Y`, `ST_SRID` (getter + `ST_SRID(g, srid)` setter),
+    `ST_GeometryType`, `ST_Envelope`, `ST_IsValid`, `ST_IsEmpty`, `ST_Dimension`,
+    `ST_StartPoint`/`ST_EndPoint`, `ST_ExteriorRing`, `ST_NumInteriorRings`.
+  - Measurement: `ST_Area`, `ST_Length`, `ST_Centroid`, `ST_Distance` (planar),
+    `ST_Distance_Sphere` (4326).
+  - DE-9IM predicates: `ST_Within/Contains/Intersects/Equals/Disjoint/Touches/
+    Crosses/Overlaps/Covers/CoveredBy` (OGC-correct).
+  - Geometry-returning builtins are typed `GEOMETRY`, so a plain B-tree
+    functional index over them is correctly rejected.
 - **Index**: `CREATE SPATIAL INDEX` (standalone + inline), `SHOW CREATE` renders
   `SPATIAL KEY`. Point index → scalar plain index on hidden `tidb_spatial_key`;
   general-geometry index → multi-valued index on `tidb_spatial_keys` (one row →
@@ -41,9 +45,9 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
 
 - DML maintenance verified for general geometry (UPDATE/DELETE re-covering), not
   just points.
-- Remaining I/O: GeoJSON (`ST_AsGeoJSON`/`ST_GeomFromGeoJSON`). (`ST_GeomFromWKB`/
-  `ST_AsBinary`/`ST_GeometryType`/`ST_Envelope`/`ST_IsValid`/`ST_IsEmpty`/
-  `ST_SRID` setter done.)
+- The ST_ function surface is now broad (see Implemented); remaining accessors
+  are niche (`ST_NumPoints`/`ST_PointN`, `ST_NumGeometries`/`ST_GeometryN`,
+  `ST_InteriorRingN`, GeoJSON options).
 - MySQL error parity for the POC divergences (`ST_SRID`, constructors).
 
 Done since the initial plan: the geometry-functional-index correctness bug is
@@ -60,7 +64,6 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   compatibility/ergonomics item (so e.g. `ST_Within(g, POLYGON((...)))` works
   instead of only `ST_Within(g, ST_GeomFromText('POLYGON((...))'))`). Today they
   parse but resolve to "function does not exist".
-- `ST_Covers`/`ST_CoveredBy`; GeoJSON I/O.
 - Spatial cost/statistics + ANALYZE (Hilbert/Morton linearization).
 - Coprocessor pushdown of the refine predicate (unistore first, then TiKV).
 - `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.
@@ -122,9 +125,12 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   `ST_SRID(g,srid)` setter, `ST_AsGeoJSON`/`ST_GeomFromGeoJSON`.
 - **P2 (DE-9IM family):** `ST_Equals`, `ST_Disjoint`, `ST_Touches`,
   `ST_Crosses`, `ST_Overlaps`, `ST_Covers`/`ST_CoveredBy`.
-- **P3 (measurement/derived — GEOS-gated, deferred):** `ST_Length`, `ST_Area`,
-  `ST_Centroid`, `ST_Perimeter`, `ST_PointN`/`ST_NumPoints`/ring accessors
-  (pure-Go-able), `ST_Buffer`/`ST_ConvexHull`/overlay (GEOS).
+- **P3 (measurement/derived):** `ST_Length`/`ST_Area`/`ST_Centroid` DONE natively
+  via simplefeatures (not GEOS-gated, contrary to the original assumption);
+  `ST_StartPoint`/`ST_EndPoint`/`ST_ExteriorRing`/`ST_NumInteriorRings` DONE.
+  Remaining pure-Go-able: `ST_Perimeter`, `ST_PointN`/`ST_NumPoints`,
+  `ST_NumGeometries`/`ST_GeometryN`. Still GEOS-gated:
+  `ST_Buffer`/`ST_ConvexHull`/overlay.
 
 ## Known limitations (POC)
 
