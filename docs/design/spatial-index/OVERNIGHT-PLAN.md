@@ -82,8 +82,15 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   indexes to that same independent index-scan analyze (`getModifiedIndexesInfoForAnalyze`
   + `isGeometryDerivedIndex` in `planbuilder.go`). Result: the index now gets a real
   histogram (156 buckets) and `estRows` moves `1.00 → 159.9` vs actual 169
-  (`TestPOCSpatialIndexAnalyzeStats`). NEXT (higher priority): with real stats,
-  verify the index now auto-selects without `FORCE INDEX`. FUTURE OPTIMIZATION
+  (`TestPOCSpatialIndexAnalyzeStats`). Auto-selection now works hint-free: with
+  real stats the optimizer picks the index for selective queries and falls back to
+  a full scan when most of the table matches (radius sweep over the 10k-point grid:
+  index at ~13/81/317 results, full scan at ~2.8k/10k). VERIFY (needs a real
+  TiKV cluster): that the index↔full-scan **cut-off point is accurate** — the
+  unistore cost model uses in-memory costs, so the true cross-over (random-read
+  index lookups vs sequential full scan) can only be measured on real storage;
+  confirm the optimizer switches at the selectivity where actual latency crosses
+  over, and tune the cost factors if not. FUTURE OPTIMIZATION
   (low priority): independent `x`/`y` histograms so the bbox selectivity
   (`sel(x)·sel(y)`) is available — must be benchmarked across data distributions
   first (uniform vs clustered/skewed; the independence assumption breaks under
@@ -188,16 +195,14 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   non-geometry argument returns a generic "invalid geometry value" error rather
   than MySQL's `ER_CANNOT_CONVERT_STRING`. The internal mysql-test expectations
   are aligned to this POC behavior on a separate tidb-test branch.
-- **BUG — `ST_GeomFromText` nulls out on the set-based insert path.** A
-  `INSERT ... SELECT ST_GeomFromText(CONCAT('POINT(',a.n,' ',b.n,')'),0) FROM ...`
-  inserts NULL geometries (fails a `NOT NULL` column with "Column 'p' cannot be
-  null"), even though the *identical* expression in a plain `SELECT` returns the
-  correct points and the row-by-row multi-row `VALUES` form works. Symptom of a
-  missing/incorrect **vectorized eval** for `ST_GeomFromText` (the batched
-  insert path takes the vectorized branch). Found while building the spatial
-  stats repro (`docs/design/spatial-index/repro-stats-gap.sql` uses the working
-  multi-row `VALUES` form as a workaround). Fix: implement/verify `vecEvalString`
-  for `builtinStGeomFromTextSig` (and audit the other ST_ constructors).
+- FIXED: `INSERT ... SELECT` of a geometry column nulled the value (failed a
+  `NOT NULL` column). Root cause was *not* vectorization — `chunk.Row.GetDatum`
+  had no `TypeGeometry` case, so building the insert row datums from the source
+  chunk returned a NULL datum. Reading geometry as a binary string fixed it
+  (`pkg/util/chunk/row.go`; regression in `TestPOCGeoFunctions`). This is the same
+  family as the ANALYZE-codec gap (`TypeGeometry` missing from a core type switch);
+  a broader audit of `pkg/util/codec` + `chunk` switches for `TypeGeometry` is
+  worthwhile.
 
 ## Deferred / backlog (not this run unless time remains)
 

@@ -61,6 +61,14 @@ func TestPOCGeoFunctions(t *testing.T) {
 	// Within radius 6 of origin: ids 1 and 2.
 	tk.MustQuery("SELECT id FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(0 0)', 0)) <= 6 ORDER BY id").Check(testkit.Rows("1", "2"))
 
+	// Regression: INSERT ... SELECT of a geometry column must preserve the value.
+	// chunk.Row.GetDatum had no TypeGeometry case, so set-based inserts read the
+	// geometry as a NULL datum and failed the NOT NULL column.
+	tk.MustExec("CREATE TABLE locs2 (id int primary key, p POINT NOT NULL SRID 0)")
+	tk.MustExec("INSERT INTO locs2 SELECT id, p FROM locs")
+	tk.MustQuery("SELECT id, ST_AsText(p) FROM locs2 ORDER BY id").Check(testkit.Rows(
+		"1 POINT(0 0)", "2 POINT(3 4)", "3 POINT(10 10)"))
+
 	// Accessors: ST_GeometryType, ST_Envelope, and the WKB I/O round-trip.
 	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POINT(1 2)'))").Check(testkit.Rows("POINT"))
 	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))").Check(testkit.Rows("POLYGON"))
