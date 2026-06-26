@@ -24,7 +24,8 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
     `ST_GeomFromGeoJSON`/`ST_AsGeoJSON`.
   - Accessors: `ST_X`/`ST_Y`, `ST_SRID` (getter + `ST_SRID(g, srid)` setter),
     `ST_GeometryType`, `ST_Envelope`, `ST_IsValid`, `ST_IsEmpty`, `ST_Dimension`,
-    `ST_StartPoint`/`ST_EndPoint`, `ST_ExteriorRing`, `ST_NumInteriorRings`.
+    `ST_StartPoint`/`ST_EndPoint`, `ST_ExteriorRing`, `ST_NumInteriorRings`,
+    `ST_NumPoints`, `ST_PointN`.
   - Measurement: `ST_Area`, `ST_Length`, `ST_Centroid`, `ST_Distance` (planar),
     `ST_Distance_Sphere` (4326).
   - DE-9IM predicates: `ST_Within/Contains/Intersects/Equals/Disjoint/Touches/
@@ -46,8 +47,8 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
 - DML maintenance verified for general geometry (UPDATE/DELETE re-covering), not
   just points.
 - The ST_ function surface is now broad (see Implemented); remaining accessors
-  are niche (`ST_NumPoints`/`ST_PointN`, `ST_NumGeometries`/`ST_GeometryN`,
-  `ST_InteriorRingN`, GeoJSON options).
+  are niche (`ST_NumGeometries`/`ST_GeometryN`, `ST_InteriorRingN`,
+  `ST_Perimeter`, GeoJSON options).
 - MySQL error parity for the POC divergences (`ST_SRID`, constructors).
 
 Done since the initial plan: the geometry-functional-index correctness bug is
@@ -127,8 +128,8 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   `ST_Crosses`, `ST_Overlaps`, `ST_Covers`/`ST_CoveredBy`.
 - **P3 (measurement/derived):** `ST_Length`/`ST_Area`/`ST_Centroid` DONE natively
   via simplefeatures (not GEOS-gated, contrary to the original assumption);
-  `ST_StartPoint`/`ST_EndPoint`/`ST_ExteriorRing`/`ST_NumInteriorRings` DONE.
-  Remaining pure-Go-able: `ST_Perimeter`, `ST_PointN`/`ST_NumPoints`,
+  `ST_StartPoint`/`ST_EndPoint`/`ST_ExteriorRing`/`ST_NumInteriorRings`/
+  `ST_NumPoints`/`ST_PointN` DONE. Remaining pure-Go-able: `ST_Perimeter`,
   `ST_NumGeometries`/`ST_GeometryN`. Still GEOS-gated:
   `ST_Buffer`/`ST_ConvexHull`/overlay.
 
