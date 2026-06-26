@@ -69,6 +69,13 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT id, ST_AsText(p) FROM locs2 ORDER BY id").Check(testkit.Rows(
 		"1 POINT(0 0)", "2 POINT(3 4)", "3 POINT(10 10)"))
 
+	// Regression: set/aggregate operations over a geometry column must not hit a
+	// missing TypeGeometry type switch (UNION previously asserted in the cast-flen
+	// setup; GROUP BY / DISTINCT exercise the hash path).
+	tk.MustQuery("SELECT count(*) FROM (SELECT p FROM locs UNION SELECT p FROM locs2) t").Check(testkit.Rows("3"))
+	tk.MustQuery("SELECT count(*) FROM (SELECT p FROM locs GROUP BY p) t").Check(testkit.Rows("3"))
+	tk.MustQuery("SELECT count(DISTINCT p) FROM locs").Check(testkit.Rows("3"))
+
 	// Accessors: ST_GeometryType, ST_Envelope, and the WKB I/O round-trip.
 	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POINT(1 2)'))").Check(testkit.Rows("POINT"))
 	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))").Check(testkit.Rows("POLYGON"))

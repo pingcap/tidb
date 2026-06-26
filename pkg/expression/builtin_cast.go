@@ -499,7 +499,8 @@ func adjustRetFtForCastString(retFt, argFt *types.FieldType) {
 				retFt.SetFlen(castBlobFlen)
 			case mysql.TypeMediumBlob:
 				retFt.SetFlen(castMediumBlobFlen)
-			case mysql.TypeLongBlob:
+			case mysql.TypeLongBlob, mysql.TypeGeometry:
+				// Geometry is stored as a binary blob (EWKB); size it like a long blob.
 				retFt.SetFlen(maxLongBlobSize)
 			default:
 				intest.Assert(false, "unknown type %d for String", argFt.GetType())
