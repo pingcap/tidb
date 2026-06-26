@@ -56,8 +56,8 @@ var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 
-	// StatsCtx is used to mark the request is from stats module.
-	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// StatsCtx is used to mark the request as internal stats maintenance.
+	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
 )
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.

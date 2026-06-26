@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -169,6 +170,32 @@ func TestPlanReplayerCapture(t *testing.T) {
 	tk.MustExec("execute stmt using @number,@number")
 	task := dom.GetPlanReplayerHandle().DrainTask()
 	require.NotNil(t, task)
+
+	statsSQL := "select * from t where id = 1"
+	normalSQL := "select count(*) from t where id = 2"
+	tk.MustQuery(statsSQL)
+	_, statsSQLDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, statsPlanDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+
+	tk.MustQuery(normalSQL)
+	_, normalSQLDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, normalPlanDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", statsSQLDigest.String(), statsPlanDigest.String()))
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", normalSQLDigest.String(), normalPlanDigest.String()))
+	err = dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
+	require.NoError(t, err)
+
+	statsStmt, err := tk.Session().Parse(context.Background(), statsSQL)
+	require.NoError(t, err)
+	statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	rs, err := tk.Session().ExecuteStmt(statsCtx, statsStmt[0])
+	require.NoError(t, err)
+	tk.ResultSetToResultWithCtx(statsCtx, rs, statsSQL).Check(testkit.Rows())
+
+	tk.MustQuery(normalSQL)
+	task = dom.GetPlanReplayerHandle().DrainTask()
+	require.Equal(t, normalSQLDigest.String(), task.SQLDigest)
 }
 
 func TestPlanReplayerContinuesCapture(t *testing.T) {

@@ -106,7 +106,7 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 }
 
 func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
 	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -389,7 +389,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Co
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -425,7 +425,7 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -599,7 +599,6 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
 	// Query to find table_ids that have buckets in the given range
 	// Keep the USE_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
-	// TODO: Figure out if HIGH_PRIORITY is working as intended here.
 	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
 		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
@@ -611,7 +610,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 	}
 	defer terror.Call(rc.Close)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	tablesWithBuckets := make(map[int64]struct{})
@@ -656,7 +655,7 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -789,7 +788,7 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {

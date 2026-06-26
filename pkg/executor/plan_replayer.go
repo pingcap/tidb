@@ -164,7 +164,7 @@ func isPlanReplayerDownloadURL(token string) bool {
 }
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
@@ -183,7 +183,7 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 }
 
 func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
 	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.Ctx(), e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		return err
