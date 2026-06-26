@@ -880,6 +880,7 @@ tidb_parse_tso
 tidb_parse_tso_logical
 tidb_row_checksum
 tidb_shard
+tidb_spatial_bbox
 tidb_spatial_key
 tidb_spatial_keys
 tidb_version

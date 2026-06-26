@@ -421,6 +421,12 @@ const (
 	// JSON array of fixed-level cell keys covering it, backing the multi-valued
 	// (general-geometry) spatial index. Not intended for direct user use.
 	TiDBSpatialKeys = "tidb_spatial_keys"
+	// TiDBSpatialBBox is an internal function: it returns one component of a
+	// geometry's minimum bounding rectangle (0=minX, 1=minY, 2=maxX, 3=maxY). It
+	// backs the hidden MBR index columns of a general-geometry spatial index, so
+	// candidates can be pruned by bbox intersection before the table lookup. Not
+	// intended for direct user use.
+	TiDBSpatialBBox = "tidb_spatial_bbox"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"

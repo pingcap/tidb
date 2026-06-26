@@ -1352,21 +1352,29 @@ func buildSpatialKeyExpr(colName ast.CIStr, comment string, isPoint bool) (ast.E
 // planner can prune candidates by MBR intersection *during the index scan, before
 // the table lookup* (the coverer cells are coarse and produce false positives).
 // For a POINT the MBR is the point itself, so the columns are ST_X(col)/ST_Y(col).
-// General-geometry bbox columns are a later increment (returns nil here).
+// For a general geometry the four columns are tidb_spatial_bbox(col, 0..3) =
+// minX, minY, maxX, maxY, appended after the cell-key array (multi-valued) column.
 func buildSpatialBBoxKeyParts(colName ast.CIStr, isPoint bool) []*ast.IndexPartSpecification {
-	if !isPoint {
-		return nil
+	colExpr := func() ast.ExprNode {
+		return &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}
 	}
-	mkPart := func(fn string) *ast.IndexPartSpecification {
-		return &ast.IndexPartSpecification{
-			Expr: &ast.FuncCallExpr{
-				FnName: ast.NewCIStr(fn),
-				Args:   []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}},
-			},
-			Length: types.UnspecifiedLength,
+	part := func(expr ast.ExprNode) *ast.IndexPartSpecification {
+		return &ast.IndexPartSpecification{Expr: expr, Length: types.UnspecifiedLength}
+	}
+	call := func(fn string, args ...ast.ExprNode) ast.ExprNode {
+		return &ast.FuncCallExpr{FnName: ast.NewCIStr(fn), Args: args}
+	}
+	if isPoint {
+		return []*ast.IndexPartSpecification{
+			part(call(ast.StX, colExpr())),
+			part(call(ast.StY, colExpr())),
 		}
 	}
-	return []*ast.IndexPartSpecification{mkPart(ast.StX), mkPart(ast.StY)}
+	parts := make([]*ast.IndexPartSpecification, 4)
+	for i := range parts {
+		parts[i] = part(call(ast.TiDBSpatialBBox, colExpr(), ast.NewValueExpr(int64(i), "", "")))
+	}
+	return parts
 }
 
 // spatialKeyHexLen is the CHAR width of a hex-encoded cell key (8 bytes).

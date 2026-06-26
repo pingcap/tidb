@@ -16,6 +16,8 @@ package executor_test
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -69,4 +71,62 @@ func TestPOCSpatialMVIGeneralGeometry(t *testing.T) {
 	// A window over shape 2's area selects only shape 2.
 	win2 := "POLYGON((45 45,55 45,55 55,45 55,45 45))"
 	tk.MustQuery(fmt.Sprintf(qfmt, "", cells(win2), win2)).Check(testkit.Rows("2"))
+}
+
+// TestPOCSpatialMVIAutoInjectAndBBox covers the automatic general-geometry path:
+// a plain ST_Within(geom, const_poly) (no manual json_overlaps) is auto-rewritten
+// by SpatialIndexResolver to a json_overlaps over the query's covering cells, so
+// the MVI is used via IndexMerge; and the MBR bbox columns prune covering false
+// positives during the partial index scans, before the table lookup.
+func TestPOCSpatialMVIAutoInjectAndBBox(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE g (id int primary key, geom GEOMETRY NOT NULL SRID 0)")
+	for i := 0; i < 60; i++ {
+		for j := 0; j < 60; j++ {
+			w := fmt.Sprintf("POLYGON((%d %d,%d %d,%d %d,%d %d,%d %d))", i, j, i+1, j, i+1, j+1, i, j+1, i, j)
+			tk.MustExec(fmt.Sprintf("INSERT INTO g VALUES (%d, ST_GeomFromText('%s',0))", i*60+j, w))
+		}
+	}
+	// Coarse cells (8-unit) so the covering overflows the query's bounding box and
+	// the bbox filter has false positives to prune.
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON g (geom) COMMENT 'spatial:3,0,0,64,64'")
+
+	const pred = "ST_Within(geom, ST_GeomFromText('POLYGON((10 10,13 10,13 13,10 13,10 10))',0))"
+	want := tk.MustQuery("SELECT id FROM g IGNORE INDEX (sidx) WHERE " + pred + " ORDER BY id").Rows()
+	require.NotEmpty(t, want)
+
+	// Plain predicate (no FORCE, no manual json_overlaps) is auto-rewritten to use
+	// the MVI, and returns the same rows as the full scan.
+	forced := "SELECT id FROM g FORCE INDEX (sidx) WHERE " + pred + " ORDER BY id"
+	tk.MustQuery(forced).Check(want)
+
+	re := regexp.MustCompile(`^\s*(\d+)`)
+	sum := func(query, opSubstr string) int {
+		total := 0
+		for _, r := range tk.MustQuery("EXPLAIN ANALYZE " + query).Rows() {
+			if !strings.Contains(fmt.Sprintf("%v", r[0]), opSubstr) {
+				continue
+			}
+			if m := re.FindStringSubmatch(fmt.Sprintf("%v", r[2])); m != nil {
+				n, _ := strconv.Atoi(m[1])
+				total += n
+			}
+		}
+		return total
+	}
+	plan := tk.MustQuery("EXPLAIN " + forced).Rows()
+	var sb strings.Builder
+	for _, r := range plan {
+		sb.WriteString(fmt.Sprintf("%v ", r[0]))
+	}
+	require.Contains(t, sb.String(), "IndexMerge", "ST_Within should auto-select the MVI via IndexMerge")
+
+	rawCells := sum(forced, "IndexRangeScan") // candidates from the cell covering
+	lookups := sum(forced, "TableRowIDScan")  // table lookups after the bbox filter
+	require.Positive(t, rawCells)
+	require.LessOrEqual(t, lookups, rawCells, "bbox filter must not increase lookups")
+	require.Less(t, lookups, rawCells, "bbox filter should prune covering false positives before the lookup")
+	t.Logf("MVI bbox pruning: %d covering candidates -> %d table lookups -> %d results", rawCells, lookups, len(want))
 }

@@ -64,6 +64,7 @@ var (
 	_ functionClass = &stPointNFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
+	_ functionClass = &tidbSpatialBBoxFunctionClass{}
 )
 
 var (
@@ -95,6 +96,7 @@ var (
 	_ builtinFunc = &builtinStPointNSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
+	_ builtinFunc = &builtinTiDBSpatialBBoxSig{}
 )
 
 // defaultPlanarCoverer is the SRID 0 coverer used by tidb_spatial_key and the
@@ -1477,6 +1479,64 @@ func (b *builtinTiDBSpatialKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (ty
 		elems[i] = hex.EncodeToString(k)
 	}
 	return types.CreateBinaryJSON(elems), false, nil
+}
+
+type tidbSpatialBBoxFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbSpatialBBoxFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	// tidb_spatial_bbox(geom, component) -> one MBR component as a double.
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	return &builtinTiDBSpatialBBoxSig{bf}, nil
+}
+
+type builtinTiDBSpatialBBoxSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBSpatialBBoxSig) Clone() builtinFunc {
+	newSig := &builtinTiDBSpatialBBoxSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalReal returns one component of the geometry's minimum bounding rectangle:
+// 0=minX, 1=minY, 2=maxX, 3=maxY. An empty geometry (no bbox) yields NULL, which
+// the MBR-intersection filter treats as non-matching; the retained refine stays
+// exact.
+func (b *builtinTiDBSpatialBBoxSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	comp, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, minX, minY, maxX, maxY, err := EWKBBounds(ewkb)
+	if err != nil {
+		// Empty geometry (or otherwise no bounding box).
+		return 0, true, nil
+	}
+	switch comp {
+	case 0:
+		return minX, false, nil
+	case 1:
+		return minY, false, nil
+	case 2:
+		return maxX, false, nil
+	case 3:
+		return maxY, false, nil
+	default:
+		return 0, false, errors.Errorf("tidb_spatial_bbox: invalid component %d", comp)
+	}
 }
 
 func (b *builtinStSRIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {

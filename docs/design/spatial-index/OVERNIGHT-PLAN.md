@@ -37,8 +37,13 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
   general-geometry index → multi-valued index on `tidb_spatial_keys` (one row →
   many covering cells, IndexMerge); composite `(prefix…, geom)`. SRID dispatch:
   planar Morton quadtree (SRID 0) vs S2 (SRID 4326). `SpatialIndexResolver`
-  injects covering-cell ranges + keeps the ST_ predicate as a refine filter.
-  Per-index cell-level tuning via index `COMMENT`.
+  auto-injects the covering predicate (cell ranges for a point; a `json_overlaps`
+  over the query's covering cells for a general-geometry MVI — so a plain
+  `ST_Within`/`ST_Contains` uses the MVI via IndexMerge with no manual
+  `json_overlaps`) and keeps the ST_ predicate as a refine filter. Both index
+  shapes carry the geometry's MBR as bbox index columns (`ST_X/ST_Y` for a point,
+  `tidb_spatial_bbox(g,0..3)` for a general geometry) that prune covering false
+  positives before the table lookup. Per-index cell-level tuning via index `COMMENT`.
 - **Proven**: selectivity benchmark, MySQL-byte-identical compat test, pure-Go +
   Bazel/nogo build.
 
@@ -81,7 +86,10 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   in unistore — an in-memory "table lookup" is ~free, so the filter's overhead
   outweighs it; the real win is fewer **random-read I/Os**, only measurable on
   real storage (needs a real-TiKV/disk benchmark). (2) auto-selection regressed
-  (see the stats item above). TODO: general-geometry (MVI) bbox columns; the
+  (see the stats item above). General-geometry (MVI) bbox columns are now
+  implemented too (`tidb_spatial_bbox`, pruned on the cop Build side of the
+  IndexMerge — e.g. 81 covering candidates → 25 lookups → 9 results in
+  `TestPOCSpatialMVIAutoInjectAndBBox`). TODO: the
   point covering-index rewrite (`ST_Point(x,y)` refine on index data); Layer B
   exact-refine pushdown to TiKV. The **tipb protocol part is DONE** (`~/repos/tipb`
   branch `spatial-pushdown`: ScalarFuncSig 7100-7109). The **TiKV contract +
@@ -90,7 +98,8 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   + unistore round-trip validation (no perf, plumbing only).
 - Stand up a **real-storage (TiKV/disk) benchmark** so the Layer A and pushdown
   latency wins can actually be measured (the mock store only shows lookup-count).
-- `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.
+- `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path (done for
+  `ST_Within`/`ST_Contains`; `ST_Intersects` recognition is the remaining piece).
 - Dumpling/Lightning round-trips; KNN (`ORDER BY ST_Distance LIMIT k`).
 - Docs, system variables, compatibility matrix.
 
@@ -115,7 +124,8 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
    planner SRID dispatch, antimeridian/pole correctness.
 4. **Full GEOMETRY support via MVI** — non-point columns (POLYGON/LINESTRING/…),
    one row → many covering cells through the multi-valued-index write path;
-   generalized `ST_Intersects`/`ST_Contains`/`ST_Within`. Includes bbox-in-value.
+   generalized `ST_Intersects`/`ST_Contains`/`ST_Within`. Includes bbox-in-index
+   (the MBR carried as hidden index columns; the value stays empty).
 5. **Composite spatial index `(tenant_id, position)`** — prefix ordinary
    column(s) before the hidden cell-key column; planner matches
    `tenant_id = X AND <spatial predicate>`.
