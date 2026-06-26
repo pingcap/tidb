@@ -20,10 +20,11 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
   (`<srid_le_u32><wkb>`), MySQL-compatible. Pure-Go geometry stack
   (`simplefeatures` + `golang/geo` S2) — no cgo/libgeos.
 - **ST_ functions**: I/O `ST_GeomFromText`/`ST_AsText`, `ST_GeomFromWKB`/
-  `ST_AsBinary`(`ST_AsWKB`); accessors `ST_X`/`ST_Y`/`ST_SRID` (getter),
-  `ST_GeometryType`, `ST_Envelope`; `ST_Distance` (planar),
-  `ST_Distance_Sphere` (4326); DE-9IM predicates `ST_Within/Contains/Intersects/
-  Equals/Disjoint/Touches/Crosses/Overlaps` (OGC-correct via simplefeatures).
+  `ST_AsBinary`(`ST_AsWKB`); accessors `ST_X`/`ST_Y`/`ST_SRID` (getter and
+  `ST_SRID(g, srid)` setter), `ST_GeometryType`, `ST_Envelope`, `ST_IsValid`,
+  `ST_IsEmpty`; `ST_Distance` (planar), `ST_Distance_Sphere` (4326); DE-9IM
+  predicates `ST_Within/Contains/Intersects/Equals/Disjoint/Touches/Crosses/
+  Overlaps` (OGC-correct via simplefeatures).
   Geometry-returning builtins are typed `GEOMETRY`, so a plain B-tree functional
   index over them is correctly rejected.
 - **Index**: `CREATE SPATIAL INDEX` (standalone + inline), `SHOW CREATE` renders
@@ -40,8 +41,9 @@ filter), MySQL-compat integration test, Bazel/nogo clean.
 
 - DML maintenance verified for general geometry (UPDATE/DELETE re-covering), not
   just points.
-- Remaining I/O/accessors: `ST_IsValid`, `ST_IsEmpty`, `ST_SRID` setter form,
-  GeoJSON. (`ST_GeomFromWKB`/`ST_AsBinary`/`ST_GeometryType`/`ST_Envelope` done.)
+- Remaining I/O: GeoJSON (`ST_AsGeoJSON`/`ST_GeomFromGeoJSON`). (`ST_GeomFromWKB`/
+  `ST_AsBinary`/`ST_GeometryType`/`ST_Envelope`/`ST_IsValid`/`ST_IsEmpty`/
+  `ST_SRID` setter done.)
 - MySQL error parity for the POC divergences (`ST_SRID`, constructors).
 
 Done since the initial plan: the geometry-functional-index correctness bug is
