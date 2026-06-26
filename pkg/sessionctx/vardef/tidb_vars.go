@@ -540,10 +540,6 @@ const (
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
 	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
-	// When non-zero, TiKV stops scanning a page once accumulated response bytes
-	// reach this limit. Setting a non-zero value implicitly enables row-count
-	// paging if it is not already enabled, because the TiKV paging protocol
-	// requires it.
 	// 0 means disabled (no byte-budget paging).
 	TiDBPagingSizeBytes = "tidb_paging_size_bytes"
 

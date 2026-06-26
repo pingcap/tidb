@@ -702,30 +702,6 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
 }
 
-func TestPagingBytesEligible(t *testing.T) {
-	// Eligible: TiKV + DAG + RC-capped group.
-	req := &kv.Request{
-		Tp:        kv.ReqTypeDAG,
-		StoreType: kv.TiKV,
-	}
-	req.Paging.RCNonBurstable = true
-	require.True(t, pagingBytesEligible(req))
-
-	// Not eligible: TiFlash.
-	req2 := &kv.Request{Tp: kv.ReqTypeDAG, StoreType: kv.TiFlash}
-	req2.Paging.RCNonBurstable = true
-	require.False(t, pagingBytesEligible(req2))
-
-	// Not eligible: non-DAG.
-	req3 := &kv.Request{Tp: kv.ReqTypeAnalyze, StoreType: kv.TiKV}
-	req3.Paging.RCNonBurstable = true
-	require.False(t, pagingBytesEligible(req3))
-
-	// Not eligible: RC disabled or current group is burstable/unlimited.
-	req4 := &kv.Request{Tp: kv.ReqTypeDAG, StoreType: kv.TiKV}
-	require.False(t, pagingBytesEligible(req4))
-}
-
 func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
@@ -742,12 +718,7 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	defer cache.Close()
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
-	req := &kv.Request{}
-	req.Paging.Enable = true
-	req.Paging.MinPagingSize = paging.MinPagingSize
-	req.Paging.RCNonBurstable = true
-
-	// With pagingSizeBytes set, tasks should carry the byte budget.
+	req := &kv.Request{KeepOrder: true}
 	tasks, err := buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
 		req:             req,
 		cache:           cache,
@@ -757,10 +728,13 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
-	require.True(t, tasks[0].paging)
+	require.False(t, tasks[0].paging)
+	require.Equal(t, uint64(0), tasks[0].pagingSize)
 	require.Equal(t, uint64(4*1024*1024), tasks[0].pagingSizeBytes)
+	require.Equal(t, 18, cap(tasks[0].respChan))
 
-	// When small limit disables paging, pagingSizeBytes should also be cleared.
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
 	req.LimitSize = 1
 	tasks, err = buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
 		req:             req,
@@ -771,7 +745,9 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.False(t, tasks[0].paging)
-	require.Equal(t, uint64(0), tasks[0].pagingSizeBytes)
+	require.Equal(t, uint64(0), tasks[0].pagingSize)
+	require.Equal(t, uint64(4*1024*1024), tasks[0].pagingSizeBytes)
+	require.Equal(t, 18, cap(tasks[0].respChan))
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {

@@ -25,6 +25,11 @@ import (
 )
 
 func TestBuildCacheKey(t *testing.T) {
+	const (
+		bytePagingSize = 0x0102030405060708
+		rowPagingSize  = 0x1112131415161718
+	)
+
 	req := coprocessor.Request{
 		Tp:      0xAB,
 		StartTs: 0xAABBCC,
@@ -56,6 +61,23 @@ func TestBuildCacheKey(t *testing.T) {
 	expectKey += "\x03\x00"                         // 2 bytes EndKey len
 	expectKey += "\x01\x01\x03"                     // EndKey
 	require.EqualValues(t, []byte(expectKey), key)
+
+	req.PagingSizeBytes = bytePagingSize
+	key, err = coprCacheBuildKey(&req)
+	require.NoError(t, err)
+	require.EqualValues(t, []byte(expectKey+"\x00\x00\x00\x00\x00\x00\x00\x00\x08\x07\x06\x05\x04\x03\x02\x01"), key)
+
+	req.PagingSize = bytePagingSize
+	req.PagingSizeBytes = 0
+	key, err = coprCacheBuildKey(&req)
+	require.NoError(t, err)
+	require.EqualValues(t, []byte(expectKey+"\x08\x07\x06\x05\x04\x03\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00"), key)
+
+	req.PagingSize = rowPagingSize
+	req.PagingSizeBytes = bytePagingSize
+	key, err = coprCacheBuildKey(&req)
+	require.NoError(t, err)
+	require.EqualValues(t, []byte(expectKey+"\x18\x17\x16\x15\x14\x13\x12\x11\x08\x07\x06\x05\x04\x03\x02\x01"), key)
 
 	req = coprocessor.Request{
 		Tp:      0xABCC, // Tp too big
@@ -208,6 +230,21 @@ func TestGetSet(t *testing.T) {
 	v = cache.Get([]byte("foo"))
 	require.NotNil(t, v)
 	require.EqualValues(t, []byte("bar"), v.Data)
+
+	t.Run("paging size bytes cache hit keeps range", func(t *testing.T) {
+		worker := &copIteratorWorker{req: &kv.Request{}}
+		task := &copTask{pagingSizeBytes: 1024}
+		resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
+		cacheValue := &coprCacheValue{
+			Data:      []byte("cached"),
+			PageStart: []byte("m"),
+			PageEnd:   []byte("z"),
+		}
+		require.NoError(t, worker.handleCopCache(task, resp, nil, cacheValue))
+		require.EqualValues(t, []byte("cached"), resp.pbResp.Data)
+		require.Equal(t, []byte("m"), resp.pbResp.GetRange().GetStart())
+		require.Equal(t, []byte("z"), resp.pbResp.GetRange().GetEnd())
+	})
 }
 
 func TestIssue24118(t *testing.T) {

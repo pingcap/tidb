@@ -124,6 +124,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	eventCb := option.EventCb
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging.Enable = false
+		req.Paging.PagingSizeBytes = 0
 	})
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
@@ -133,25 +134,12 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
-	// Byte-budget paging: if the request is eligible and has a byte budget,
-	// ensure paging is enabled so each page's scanned bytes are bounded.
-	// The TiKV coprocessor protocol requires paging to be enabled for the
-	// PagingSizeBytes field to take effect. When force-enabling paging, we
-	// use minimal row-count parameters so the byte budget becomes the
-	// dominant page-break signal.
-	// This must happen before checkStoreBatchCopr, which disables batch copr
-	// when paging is enabled.
-	pagingSizeBytes := uint64(0)
-	if pagingBytesEligible(req) && req.Paging.PagingSizeBytes > 0 {
-		if !req.Paging.Enable {
-			req.Paging.Enable = true
-			req.Paging.MinPagingSize = paging.MinPagingSize
-			req.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
-		}
+	var pagingSizeBytes uint64
+	if req.StoreType == kv.TiKV && req.Tp == kv.ReqTypeDAG && req.Paging.PagingSizeBytes > 0 {
 		pagingSizeBytes = req.Paging.PagingSizeBytes
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
-		if req.Paging.Enable {
+		if req.Paging.Enable || pagingSizeBytes > 0 {
 			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
@@ -390,9 +378,7 @@ type buildCopTaskOpt struct {
 	skipBuckets bool
 	// exceedsBoundRetry propagates bounded retry attempts to generated tasks.
 	exceedsBoundRetry int
-	// pagingSizeBytes is the byte budget per page.
-	// 0 means no byte-based limit.
-	pagingSizeBytes uint64
+	pagingSizeBytes   uint64
 }
 
 const (
@@ -662,7 +648,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	chanSize := 2
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
-	if req.Paging.Enable {
+	if req.Paging.Enable || opt.pagingSizeBytes > 0 {
 		chanSize = 18
 	}
 
@@ -744,7 +730,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 					// disable paging for small limit.
 					task.paging = false
 					task.pagingSize = 0
-					task.pagingSizeBytes = 0
 				} else {
 					pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
 				}
@@ -1729,7 +1714,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	})
 
-	if task.paging {
+	if task.paging || task.pagingSizeBytes > 0 {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
@@ -2134,6 +2119,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			respChan:                    false,
 			eventCb:                     task.eventCb,
 			ignoreTiKVClientReadTimeout: true,
+			pagingSizeBytes:             task.pagingSizeBytes,
 		})
 		if err != nil {
 			return nil, err
@@ -2194,6 +2180,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 					ignoreTiKVClientReadTimeout: true,
 					skipBuckets:                 true,
 					exceedsBoundRetry:           task.exceedsBoundRetry + 1,
+					pagingSizeBytes:             task.pagingSizeBytes,
 				})
 				if err != nil {
 					return nil, err
@@ -2227,6 +2214,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				ignoreTiKVClientReadTimeout: true,
 				skipBuckets:                 true,
 				exceedsBoundRetry:           task.exceedsBoundRetry + 1,
+				pagingSizeBytes:             task.pagingSizeBytes,
 			})
 			if err != nil {
 				return nil, err
@@ -2381,6 +2369,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				ignoreTiKVClientReadTimeout: true,
 				skipBuckets:                 task.skipBuckets,
 				exceedsBoundRetry:           task.exceedsBoundRetry,
+				pagingSizeBytes:             task.pagingSizeBytes,
 			})
 			if err != nil {
 				return batchRespList, nil, err
@@ -2566,7 +2555,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
 		data := slices.Clone(cacheValue.Data)
 		resp.pbResp.Data = data
-		if worker.req.Paging.Enable {
+		if worker.req.Paging.Enable || task.pagingSizeBytes > 0 {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
 				start = slices.Clone(cacheValue.PageStart)
@@ -3021,24 +3010,6 @@ func optRowHint(req *kv.Request) bool {
 	return opt
 }
 
-// pagingBytesEligible checks whether byte-budget paging should be applied.
-// Only DAG requests on TiKV bound to a Resource Control group whose
-// BurstLimit is non-negative (hard-capped at RU_PER_SEC) are eligible:
-// for burstable/unlimited groups (or when RC is disabled) the per-page
-// byte break adds RPC overhead without bounding any token budget.
-func pagingBytesEligible(req *kv.Request) bool {
-	if req.StoreType != kv.TiKV {
-		return false
-	}
-	if req.Tp != kv.ReqTypeDAG {
-		return false
-	}
-	if !req.Paging.RCNonBurstable {
-		return false
-	}
-	return true
-}
-
 func checkStoreBatchCopr(req *kv.Request) bool {
 	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
 		return false
@@ -3048,8 +3019,8 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 		// Disable batch copr for follower read
 		return false
 	}
-	// Disable batch copr when paging is enabled.
-	if req.Paging.Enable {
+	// Disable batch copr for paged requests.
+	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		return false
 	}
 	// Disable it for internal requests to avoid regression.

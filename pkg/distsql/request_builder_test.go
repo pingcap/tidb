@@ -655,7 +655,6 @@ func TestRequestBuilderKeepsPagingSizeBytesWhenPagingDisabled(t *testing.T) {
 	dctx := NewDistSQLContextForTest()
 	dctx.EnablePaging = false
 	dctx.PagingSizeBytes = 4 * 1024 * 1024
-	dctx.RCNonBurstable = true
 
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(dctx).
@@ -663,7 +662,6 @@ func TestRequestBuilderKeepsPagingSizeBytesWhenPagingDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, actual.Paging.Enable)
 	require.Equal(t, uint64(4*1024*1024), actual.Paging.PagingSizeBytes)
-	require.True(t, actual.Paging.RCNonBurstable)
 }
 
 func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
