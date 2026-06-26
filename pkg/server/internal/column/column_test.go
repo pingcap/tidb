@@ -54,6 +54,30 @@ func TestDumpColumn(t *testing.T) {
 	require.Equal(t, mysql.TypeBit, dumpType(mysql.TypeBit))
 }
 
+func BenchmarkDumpColumn(b *testing.B) {
+	info := Info{
+		Schema:       "testSchema",
+		Table:        "testTable",
+		OrgTable:     "testOrgTable",
+		Name:         "testName",
+		OrgName:      "testOrgName",
+		ColumnLength: 1,
+		Charset:      106,
+		Flag:         0,
+		Decimal:      1,
+		Type:         14,
+		DefaultValue: "test",
+	}
+	encoder := NewResultEncoder(charset.CharsetUTF8MB4)
+	buffer := make([]byte, 0, 1024)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		buffer = info.DumpWithDefault(buffer[:0], encoder)
+	}
+}
+
 func TestDumpColumnWithDefault(t *testing.T) {
 	info := Info{
 		Schema:       "testSchema",
