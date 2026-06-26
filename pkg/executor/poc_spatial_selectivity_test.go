@@ -109,3 +109,72 @@ func TestPOCSpatialSelectivity(t *testing.T) {
 	require.Less(t, act, 2000, "index should prune to a small fraction of the 10000 rows")
 	require.GreaterOrEqual(t, act, len(want), "candidate set must be a superset of the matches")
 }
+
+// opActRows pulls the actRows of the first EXPLAIN ANALYZE operator whose name
+// contains opSubstr (e.g. "IndexRangeScan", "TableRowIDScan").
+func opActRows(tb testing.TB, tk *testkit.TestKit, query, opSubstr string) (int, bool) {
+	rows := tk.MustQuery("EXPLAIN ANALYZE " + query).Rows()
+	re := regexp.MustCompile(`^\s*(\d+)`)
+	for _, r := range rows {
+		if !strings.Contains(fmt.Sprintf("%v", r[0]), opSubstr) {
+			continue
+		}
+		m := re.FindStringSubmatch(fmt.Sprintf("%v", r[2]))
+		if m == nil {
+			return 0, false
+		}
+		n, err := strconv.Atoi(m[1])
+		require.NoError(tb, err)
+		return n, true
+	}
+	return 0, false
+}
+
+// BenchmarkSpatialIndexLookups is the baseline for the bbox-in-index / coprocessor
+// pushdown work (see docs/design/spatial-index/bbox-pushdown-design.md). It
+// reports, alongside ns/op: the candidate set the index returns (== table
+// lookups performed today), the true result count, and the false-positive ratio
+// (candidates/results) — the wasted random reads that bbox-in-index removes.
+func BenchmarkSpatialIndexLookups(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE locs (id int primary key, p POINT NOT NULL SRID 0)")
+	const side = 100 // 10000 points over the [0,1]x[0,1] box
+	var sb strings.Builder
+	id := 0
+	for i := 0; i < side; i++ {
+		sb.Reset()
+		sb.WriteString("INSERT INTO locs VALUES ")
+		for j := 0; j < side; j++ {
+			if j > 0 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, ST_GeomFromText('POINT(%g %g)',0))",
+				id, float64(i)/float64(side), float64(j)/float64(side))
+			id++
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p) COMMENT 'spatial:12,0,0,1,1'")
+	tk.MustExec("ANALYZE TABLE locs")
+	const query = "SELECT id FROM locs FORCE INDEX (sidx) WHERE " +
+		"ST_Distance(p, ST_GeomFromText('POINT(0.5 0.5)',0)) <= 0.05"
+	cand, _ := opActRows(b, tk, query, "IndexRangeScan")
+	lookups, _ := opActRows(b, tk, query, "TableRowIDScan")
+	res := len(tk.MustQuery(query).Rows())
+	b.ReportMetric(float64(cand), "candidates")
+	b.ReportMetric(float64(lookups), "lookups")
+	b.ReportMetric(float64(res), "results")
+	ratio := 0.0
+	if res > 0 {
+		ratio = float64(cand) / float64(res)
+		b.ReportMetric(ratio, "fp_ratio")
+	}
+	fmt.Printf("BBOX_BASELINE candidates=%d lookups=%d results=%d fp_ratio=%.2f\n",
+		cand, lookups, res, ratio)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustQuery(query)
+	}
+}
