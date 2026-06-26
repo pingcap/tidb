@@ -4,12 +4,7 @@ go_test(
     name = "importintotest3_test",
     timeout = "moderate",
     srcs = [
-<<<<<<< HEAD
-=======
         "cleanup_on_error_test.go",
-        "cross_ks_test.go",
-        "extra_param_test.go",
->>>>>>> 8e961f7a741 (importinto: ensure engine cleanup on import error (#65663))
         "file_compression_test.go",
         "from_server_test.go",
         "main_test.go",
@@ -23,15 +18,9 @@ go_test(
         "//pkg/disttask/importinto",
         "//pkg/kv",
         "//pkg/lightning/mydump",
-<<<<<<< HEAD
-=======
-        "//pkg/objstore",
-        "//pkg/planner/core",
-        "//pkg/sessionctx/vardef",
-        "//pkg/store",
         "//pkg/store/driver/error",
->>>>>>> 8e961f7a741 (importinto: ensure engine cleanup on import error (#65663))
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_snappy//:snappy",
