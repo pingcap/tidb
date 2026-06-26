@@ -597,6 +597,51 @@ func (hint *HintedTable) Match(other *HintedTable) bool {
 			hint.DBName.L == "*" || other.DBName.L == "*") // for cross-db bindings, e.g. *.t
 }
 
+// SelectBlockAlias records the visibility information of a derived-table alias.
+// For a derived SELECT whose QueryBlockOffset is SelectOffset, its alias is
+// visible in the enclosing query block VisibleOffset.
+//
+// Example:
+//
+//	select * from t1 join (select a,b from (select a,b from t2 limit 100) d2) dt ...
+//	// sel_2 (the "select a,b from (...) d2" block) is visible in sel_1 as "dt"
+//	// sel_3 (the innermost block) is visible in sel_2 as "d2"
+//	alias[2] = {SelectOffset: 2, VisibleOffset: 1, TableName: "dt"}
+//	alias[3] = {SelectOffset: 3, VisibleOffset: 2, TableName: "d2"}
+type SelectBlockAlias struct {
+	SelectOffset  int
+	VisibleOffset int
+	DBName        ast.CIStr
+	TableName     ast.CIStr
+}
+
+// ResolveSelectBlockAlias walks the visibility chain from startOffset outward
+// until it finds an alias visible in targetOffset. It returns the resolved
+// alias and true on success, or zero value and false if no alias in the chain
+// is visible in targetOffset.
+//
+// Example: alias[3]={VisibleOffset:2, TableName:"d2"}, alias[2]={VisibleOffset:1, TableName:"dt"}
+// ResolveSelectBlockAlias(alias, 3, 1) walks 3->2(d2, visible in 2, not 1)->1(dt, visible in 1, match) => "dt", true
+// ResolveSelectBlockAlias(alias, 3, 2) walks 3->2(d2, visible in 2, match) => "d2", true
+func ResolveSelectBlockAlias(aliases []SelectBlockAlias, startOffset, targetOffset int) (SelectBlockAlias, bool) {
+	cur := startOffset
+	for cur > 0 && cur < len(aliases) {
+		entry := aliases[cur]
+		if entry.TableName.L == "" {
+			return SelectBlockAlias{}, false
+		}
+		if entry.VisibleOffset == targetOffset {
+			return entry, true
+		}
+		cur = entry.VisibleOffset
+		if cur <= 0 || cur >= startOffset {
+			// chain exhausted or going backwards, avoid infinite loop
+			break
+		}
+	}
+	return SelectBlockAlias{}, false
+}
+
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
 	DBName         ast.CIStr      // the database name

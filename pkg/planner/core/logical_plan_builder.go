@@ -561,7 +561,18 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			// (e.g. leading()) can emit the qualified form `db`.`alias`.  The output field
 			// names themselves carry DBName="" to keep error messages (only_full_group_by etc.)
 			// in the standard "alias.col" form instead of "db.alias.col".
-			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB), TableName: p.OutputNames()[0].TblName}
+			aliasName := p.OutputNames()[0].TblName
+			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB), TableName: aliasName}
+			// Also record the visibility chain: this derived SELECT (p.QueryBlockOffset())
+			// is visible in the enclosing query block (b.getSelectOffset()) as aliasName.
+			if aliasInfo := b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+				(*aliasInfo)[p.QueryBlockOffset()] = h.SelectBlockAlias{
+					SelectOffset:  p.QueryBlockOffset(),
+					VisibleOffset: b.getSelectOffset(),
+					DBName:        ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB),
+					TableName:     aliasName,
+				}
+			}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -5575,15 +5586,19 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	originHintProcessor := b.hintProcessor
 	originHintState := b.hintState
 	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
+	originPlannerSelectBlockAliasInfo := b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load()
 	b.hintProcessor = hintProcessor
 	b.hintState = hintState
 	newPlannerSelectBlockAsName := make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
+	newPlannerSelectBlockAliasInfo := make([]h.SelectBlockAlias, hintProcessor.MaxSelectStmtOffset()+1)
+	b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&newPlannerSelectBlockAliasInfo)
 	defer func() {
 		b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 		b.hintProcessor = originHintProcessor
 		b.hintState = originHintState
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+		b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(originPlannerSelectBlockAliasInfo)
 	}()
 	// Only relax truncate handling while folding constant predicates in this
 	// view expansion. Keep the outer statement semantics unchanged.

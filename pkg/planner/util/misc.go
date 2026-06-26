@@ -352,11 +352,20 @@ func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTa
 			walk(child)
 		}
 		if !ambiguous && found != nil {
+			// Try to resolve the alias visible at parentOffset by walking the
+			// visibility chain (handles nested derived tables like dt/d2).
+			tblName := found.TableName
 			dbName := found.DBName
+			if aliasInfo := p.SCtx().GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+				if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, foundQbOff, parentOffset); ok {
+					tblName = resolved.TableName
+					dbName = resolved.DBName
+				}
+			}
 			if dbName.L == "" {
 				dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 			}
-			return &h.HintedTable{DBName: dbName, TblName: found.TableName, SelectOffset: parentOffset}
+			return &h.HintedTable{DBName: dbName, TblName: tblName, SelectOffset: parentOffset}
 		}
 	}
 	return ExtractTableAlias(p, parentOffset)

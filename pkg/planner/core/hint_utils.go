@@ -487,7 +487,17 @@ func genHintTblForSingleJoinNode(
 			return -1, false, nil
 		}
 		hintTable := blockAsNames[qbOffset]
-		dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
+		if parentOffset >= 0 {
+			if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+				if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, selfOffset, parentOffset); ok {
+					dbName, tableName = &resolved.DBName, &resolved.TableName
+				}
+			}
+		}
+		if tableName == nil || tableName.L == "" {
+			dbName, tableName = &hintTable.DBName, &hintTable.TableName
+		}
+		qbOffset = parentOffset
 		// Current join reorder will break QB offset of the join operator by setting them to -1. In this case, we will
 		// get qbOffset == parentOffset == -1 when it comes here.
 		// For this case, we add a temporary fix to guess the QB offset based on the parent offset. The idea is simple,
@@ -580,9 +590,16 @@ func extractHintTableByBlockOffset(
 	if ambiguous || found == nil {
 		return -1, nil, nil
 	}
+	// Try to resolve the alias visible at parentOffset by walking the visibility chain.
+	// This handles nested derived tables: e.g. if foundQbOff=3 (inner "d2"), but the
+	// hint is for parentOffset=1 (outer), we want "dt" (visible in sel_1) not "d2".
 	if parentOffset >= 0 {
-		// The alias may be discovered from an inner block, but the generated hint item
-		// is attached to the current outer join group.
+		if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+			if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, foundQbOff, parentOffset); ok {
+				return parentOffset, &resolved.DBName, &resolved.TableName
+			}
+		}
+		// Fallback: use the discovered alias directly (pre-existing behavior).
 		return parentOffset, &found.DBName, &found.TableName
 	}
 	return -1, &found.DBName, &found.TableName

@@ -374,6 +374,11 @@ func FindAndRemovePlanByAstHint[T any](
 	// Do this before direct table-name matching so hint reading follows the same
 	// derived-table alias precedence used when generating hints.
 	matchIdx := -1
+	targetOff := -1
+	if astTbl.QBName.L != "" {
+		targetOff = extractSelectOffset(astTbl.QBName.L)
+	}
+	aliasInfo := ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load()
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
 		blockOffset := plan.QueryBlockOffset()
@@ -381,13 +386,28 @@ func FindAndRemovePlanByAstHint[T any](
 			blockName := queryBlockNames[blockOffset]
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
 			tableMatch := astTbl.TableName.L == blockName.TableName.L
-			if dbMatch && tableMatch {
-				if matchIdx != -1 {
-					intest.Assert(false, "leading subquery alias matches multiple join groups")
-					return zero, plans, false
+			if !dbMatch || !tableMatch {
+				// The current join group may belong to a nested derived table whose
+				// visible alias in the hint target block is different. Resolve the
+				// alias chain when the hint explicitly names a query block.
+				if aliasInfo == nil || targetOff <= 0 {
+					continue
 				}
-				matchIdx = i
+				resolved, ok := hint.ResolveSelectBlockAlias(*aliasInfo, blockOffset, targetOff)
+				if !ok {
+					continue
+				}
+				dbMatch = astTbl.DBName.L == "" || astTbl.DBName.L == resolved.DBName.L
+				tableMatch = astTbl.TableName.L == resolved.TableName.L
+				if !dbMatch || !tableMatch {
+					continue
+				}
 			}
+			if matchIdx != -1 {
+				intest.Assert(false, "leading subquery alias matches multiple join groups")
+				return zero, plans, false
+			}
+			matchIdx = i
 		}
 	}
 	if matchIdx != -1 {

@@ -522,9 +522,12 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
+		sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&[]hint.SelectBlockAlias{})
 	} else {
 		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
+		newAliasInfo := make([]hint.SelectBlockAlias, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&newAliasInfo)
 	}
 
 	b.ctx = sctx
