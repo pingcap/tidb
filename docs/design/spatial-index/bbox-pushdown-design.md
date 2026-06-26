@@ -42,8 +42,16 @@ carries the geometry's MBR (and, for points, its exact coordinates):
 - **Point index** (scalar): `INDEX (tidb_spatial_key(p), x, y)` where `x`,`y` are
   hidden generated columns `ST_X(p)`, `ST_Y(p)`. The MBR of a point is the point.
 - **General-geometry index** (MVI): `INDEX ((cast(tidb_spatial_keys(g,…) as char
-  array)), minx, miny, maxx, maxy)` with the four bbox columns generated from
-  `g` (one MBR per row, replicated across the row's cell-key array entries).
+  array)), minx, miny, maxx, maxy)` with the four bbox columns
+  (`tidb_spatial_bbox(g, 0..3)`) generated from `g` (one MBR per row, replicated
+  across the row's cell-key array entries).
+
+The MBR therefore lives in the index **key** (TiDB encodes every secondary-index
+column into the key; the value holds only the row handle). It is *not* an
+"include columns in the value" feature — TiDB has no such mechanism. The bbox
+columns trail the cell key, so they cannot narrow the range scan (range building
+stops at the first non-equality column, the cell key) but are decoded from the
+key and applied as index filters before the table lookup.
 
 The `SpatialIndexResolver` then injects, alongside the existing cell-range
 predicate, a **bbox-intersection filter on the index columns**:
@@ -219,10 +227,16 @@ The same harness, run before/after each layer, is the acceptance evidence.
 
 1. **Benchmark** (baseline) — DONE: `BenchmarkSpatialIndexLookups`
    (169 lookups / 75 results).
-2. **Layer A — bbox-in-index** — DONE for the POINT index: ST_X/ST_Y hidden index
-   columns + resolver MBR filter. Verified: **169 candidates → 121 lookups** (48
-   pruned before the table lookup), results exact, asserted in
-   `TestPOCSpatialSelectivity`. Empirical caveats:
+2. **Layer A — bbox-in-index** — DONE for the POINT index (ST_X/ST_Y hidden index
+   columns + resolver MBR filter; **169 candidates → 121 lookups**, results exact,
+   `TestPOCSpatialSelectivity`) and for the **general-geometry MVI**
+   (`tidb_spatial_bbox(g,0..3)` columns + the MVI json_overlaps auto-injection;
+   the MBR-intersection filter is applied on the cop Build side of the IndexMerge —
+   **81 covering candidates → 25 lookups → 9 results**, exact,
+   `TestPOCSpatialMVIAutoInjectAndBBox`). The MBR lives in the index **key** (as
+   ordinary index columns); the value stays empty — TiDB has no index-value/INCLUDE
+   mechanism, and the columns trail the cell key so they act as index filters, not
+   range narrowers. Empirical caveats:
    - **Latency is not measurable in unistore.** An in-memory "table lookup" is
      ~free, so the bbox filter's per-candidate overhead (computing ST_X/ST_Y +
      four comparisons) makes ns/op *rise*. The win is fewer random-read I/Os,
@@ -231,8 +245,8 @@ The same harness, run before/after each layer, is the acceptance evidence.
    - **Auto-selection regressed**: the extra bbox conditions tip the
      statistics-free optimizer toward a full scan, so the index now needs
      `FORCE INDEX`. → bumps "spatial cost/statistics" to a top priority.
-   - TODO: general-geometry (MVI) bbox columns; spherical-cap bbox for
-     ST_Distance_Sphere.
+   - TODO: spherical-cap bbox for ST_Distance_Sphere; `ST_Intersects` recognition
+     for the MVI auto-injection (`ST_Within`/`ST_Contains` done).
 3. **Real-storage benchmark** (next): so Layer A's and Layer B's latency wins are
    measurable at all.
 4. **Layer A+ — point covering rewrite** (needs `ST_Point`): refine on index
