@@ -86,6 +86,22 @@ Then: **self-review → enumerate tests → benchmark → review again.**
      edge artifact. GEOS fixes this for free.
   → Folded into Item 2: do it on GEOS, then re-record compat and diff vs MySQL.
 
+## Build & CI status (end of run)
+
+- `go build ./pkg/...` and all POC `go test` pass with CGO on (libgeos present).
+  Integration `spatial_compat` is byte-identical to MySQL 8.0.46.
+- **Bazel/CI gap (libgeos):** since Item 2, pkg/expression transitively imports
+  pkg/util/geos -> go-geos -> system libgeos (cgo, `#cgo pkg-config: geos`). The
+  Bazel build cannot compile these without wiring libgeos into the cc toolchain
+  (a system-lib cc_library + headers; gazelle does not auto-generate this for a
+  pkg-config cgo dep). DEPS.bzl also needs the new Go deps (go-geos, golang/geo,
+  + transitive) as proxy-fetch entries like the go-geom family (commit
+  c3a546775f). This build-infra work is a follow-up best done against the CI
+  environment; the Go toolchain path is fully green.
+- Pre-existing race (not ours): tidb-server startup races in grpc `SetLoggerV2`
+  vs the channelz goroutine (logutil.InitLogger / metrics) appear under the race
+  detector on master too.
+
 ## Progress log
 
 (Newest first. Each item: status, commits, surprises, what was verified.)
