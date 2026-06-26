@@ -33,7 +33,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const crossKSDDLHistoryPollInterval = 100 * time.Millisecond
+const ddlHistoryPollInterval = 100 * time.Millisecond
 
 type ddlClient struct {
 	store   kv.Storage
@@ -169,7 +169,7 @@ func (c *ddlClient) resolveAlterTableModeTarget(
 
 // this method is a simplified version of wait logic inside DoDDLJobWrapper.
 func (c *ddlClient) waitDDLFinished(ctx context.Context, jobID int64) error {
-	ticker := time.NewTicker(crossKSDDLHistoryPollInterval)
+	ticker := time.NewTicker(ddlHistoryPollInterval)
 	defer ticker.Stop()
 
 	for {
