@@ -392,6 +392,11 @@ const (
 	StX              = "st_x"
 	StY              = "st_y"
 	StSRID           = "st_srid"
+	StGeometryType   = "st_geometrytype"
+	StAsBinary       = "st_asbinary"
+	StAsWKB          = "st_aswkb"
+	StGeomFromWKB    = "st_geomfromwkb"
+	StEnvelope       = "st_envelope"
 	// TiDBSpatialKey is an internal function: it maps a POINT to its
 	// order-preserving spatial index CellKey. It backs the hidden generated
 	// column of a points-only spatial index and is not intended for direct use.

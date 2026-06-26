@@ -60,6 +60,14 @@ func TestPOCGeoFunctions(t *testing.T) {
 		"1 POINT(0 0)", "2 POINT(3 4)", "3 POINT(10 10)"))
 	// Within radius 6 of origin: ids 1 and 2.
 	tk.MustQuery("SELECT id FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(0 0)', 0)) <= 6 ORDER BY id").Check(testkit.Rows("1", "2"))
+
+	// Accessors: ST_GeometryType, ST_Envelope, and the WKB I/O round-trip.
+	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POINT(1 2)'))").Check(testkit.Rows("POINT"))
+	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))").Check(testkit.Rows("POLYGON"))
+	tk.MustQuery("SELECT ST_AsText(ST_Envelope(ST_GeomFromText('LINESTRING(0 0,2 3)')))").Check(testkit.Rows("POLYGON((0 0,0 3,2 3,2 0,0 0))"))
+	// ST_GeomFromWKB(ST_AsBinary(g)) round-trips; ST_AsWKB is an alias of ST_AsBinary.
+	tk.MustQuery("SELECT ST_AsText(ST_GeomFromWKB(ST_AsBinary(ST_GeomFromText('POINT(5 6)'))))").Check(testkit.Rows("POINT(5 6)"))
+	tk.MustQuery("SELECT ST_AsWKB(ST_GeomFromText('POINT(0 0)')) = ST_AsBinary(ST_GeomFromText('POINT(0 0)'))").Check(testkit.Rows("1"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.

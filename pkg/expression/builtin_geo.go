@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"math"
+	"strings"
 
 	"github.com/peterstace/simplefeatures/geom"
 	"github.com/pingcap/errors"
@@ -43,6 +44,10 @@ var (
 	_ functionClass = &stXFunctionClass{}
 	_ functionClass = &stYFunctionClass{}
 	_ functionClass = &stSRIDFunctionClass{}
+	_ functionClass = &stGeometryTypeFunctionClass{}
+	_ functionClass = &stAsBinaryFunctionClass{}
+	_ functionClass = &stGeomFromWKBFunctionClass{}
+	_ functionClass = &stEnvelopeFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
@@ -56,6 +61,10 @@ var (
 	_ builtinFunc = &builtinStXSig{}
 	_ builtinFunc = &builtinStYSig{}
 	_ builtinFunc = &builtinStSRIDSig{}
+	_ builtinFunc = &builtinStGeometryTypeSig{}
+	_ builtinFunc = &builtinStAsBinarySig{}
+	_ builtinFunc = &builtinStGeomFromWKBSig{}
+	_ builtinFunc = &builtinStEnvelopeSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
@@ -549,6 +558,184 @@ func (b *builtinStSRIDSig) Clone() builtinFunc {
 	newSig := &builtinStSRIDSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+type stGeometryTypeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stGeometryTypeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(64)
+	sig := &builtinStGeometryTypeSig{bf}
+	return sig, nil
+}
+
+type builtinStGeometryTypeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStGeometryTypeSig) Clone() builtinFunc {
+	newSig := &builtinStGeometryTypeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_GeometryType(geom) -> the OGC type name (e.g. POINT).
+func (b *builtinStGeometryTypeSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	// MySQL reports the type in upper case (POINT, LINESTRING, ...).
+	return strings.ToUpper(g.Type().String()), false, nil
+}
+
+type stAsBinaryFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stAsBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinStAsBinarySig{bf}
+	return sig, nil
+}
+
+type builtinStAsBinarySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStAsBinarySig) Clone() builtinFunc {
+	newSig := &builtinStAsBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_AsBinary/ST_AsWKB(geom) -> standard WKB (the EWKB
+// storage form with its 4-byte SRID prefix stripped).
+func (b *builtinStAsBinarySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	if len(ewkb) < 4 {
+		return "", false, errors.New("invalid geometry value: too short")
+	}
+	return ewkb[4:], false, nil
+}
+
+type stGeomFromWKBFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stGeomFromWKBFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	if len(args) >= 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStGeomFromWKBSig{bf}
+	return sig, nil
+}
+
+type builtinStGeomFromWKBSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStGeomFromWKBSig) Clone() builtinFunc {
+	newSig := &builtinStGeomFromWKBSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_GeomFromWKB(wkb[, srid]) -> EWKB geometry.
+func (b *builtinStGeomFromWKBSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	wkbVal, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	var srid int64
+	if len(b.args) >= 2 {
+		srid, isNull, err = b.args[1].EvalInt(ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+	}
+	g, err := geom.UnmarshalWKB([]byte(wkbVal))
+	if err != nil {
+		return "", false, errors.Trace(err)
+	}
+	return encodeEWKB(g, uint32(srid)), false, nil
+}
+
+type stEnvelopeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stEnvelopeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStEnvelopeSig{bf}
+	return sig, nil
+}
+
+type builtinStEnvelopeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStEnvelopeSig) Clone() builtinFunc {
+	newSig := &builtinStEnvelopeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_Envelope(geom) -> the minimum bounding rectangle as a
+// geometry, preserving the input SRID.
+func (b *builtinStEnvelopeSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	return encodeEWKB(g.Envelope().AsGeometry(), srid), false, nil
 }
 
 type tidbSpatialKeysFunctionClass struct {
