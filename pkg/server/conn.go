@@ -40,10 +40,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	goerr "errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/user"
 	"runtime"
 	"runtime/pprof"
@@ -59,6 +61,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -92,6 +95,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -103,11 +107,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/errmsg"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -167,6 +171,7 @@ type clientConn struct {
 	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
+	tlsConnState *tls.ConnectionState    // forwarded TLS state from gateway when starter mode is enabled.
 	server       *Server                 // a reference of server instance.
 	capability   uint32                  // client capability affects the way server handles client request.
 	connectionID uint64                  // atomically allocated by a global variable, unique in process scope.
@@ -223,6 +228,17 @@ func (cc *clientConn) SetCtx(ctx *TiDBContext) {
 	cc.ctx.Lock()
 	cc.ctx.TiDBContext = ctx
 	cc.ctx.Unlock()
+}
+
+func (cc *clientConn) getTLSState() *tls.ConnectionState {
+	if cc.tlsConnState != nil {
+		return cc.tlsConnState
+	}
+	if cc.tlsConn == nil {
+		return nil
+	}
+	tlsState := cc.tlsConn.ConnectionState()
+	return &tlsState
 }
 
 func (cc *clientConn) String() string {
@@ -386,6 +402,7 @@ func (cc *clientConn) Close() error {
 
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
+	cc.server.notifyGracefulShutdownCondIfNeededLocked()
 	cc.server.rwlock.Unlock()
 	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
@@ -424,8 +441,10 @@ func closeConn(cc *clientConn) error {
 	return err
 }
 
+// closeWithoutLock removes cc from the server connection map. The caller must hold server.rwlock.
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
+	cc.server.notifyGracefulShutdownCondIfNeededLocked()
 	return closeConn(cc)
 }
 
@@ -623,12 +642,6 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
-	} else if tlsutil.RequireSecureTransport.Load() && !cc.isUnixSocket {
-		// If it's not a socket connection, we should reject the connection
-		// because TLS is required.
-		err := servererr.ErrSecureTransportRequired.FastGenByArgs()
-		terror.Log(err)
-		return err
 	}
 
 	// Read the remaining part of the packet.
@@ -636,6 +649,29 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if err != nil {
 		terror.Log(err)
 		return err
+	}
+
+	if resp.Capability&mysql.ClientSSL == 0 {
+		gatewaySecureConn := false
+		if deploymode.IsStarter() {
+			if attrKey := os.Getenv("GATEWAY_SECURECONN_ATTR_KEY"); attrKey != "" {
+				if attrValue := resp.Attrs[attrKey]; attrValue != "" {
+					var tlsState tls.ConnectionState
+					if jsonErr := json.Unmarshal([]byte(attrValue), &tlsState); jsonErr == nil &&
+						tlsState.Version != 0 && tlsState.CipherSuite != 0 {
+						cc.tlsConnState = &tlsState
+						gatewaySecureConn = true
+					}
+				}
+			}
+		}
+		if tlsutil.RequireSecureTransport.Load() && !cc.isUnixSocket && !gatewaySecureConn {
+			// If it's not a socket connection, we should reject the connection
+			// because TLS is required.
+			err := servererr.ErrSecureTransportRequired.FastGenByArgs()
+			terror.Log(err)
+			return err
+		}
 	}
 
 	cc.capability = resp.Capability & cc.server.capability
@@ -801,12 +837,7 @@ func (cc *clientConn) SessionStatusToString() string {
 }
 
 func (cc *clientConn) openSession() error {
-	var tlsStatePtr *tls.ConnectionState
-	if cc.tlsConn != nil {
-		tlsState := cc.tlsConn.ConnectionState()
-		tlsStatePtr = &tlsState
-	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, cc.getTLSState(), cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -863,6 +894,43 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	return nil
 }
 
+func (*clientConn) checkUserVariantMismatch(ctx context.Context, user string) error {
+	policy := keyspace.GetUsernamePolicy()
+	if policy.ValidateUsername(user) != nil && policy.ValidateUsernameFormat(user) {
+		logutil.Logger(ctx).Warn("username variants mismatch",
+			zap.String("user", user),
+			zap.String("assigned-keyspace", keyspace.GetKeyspaceNameBySettings()),
+		)
+		return servererr.ErrUserPrefixMismatch
+	}
+	return nil
+}
+
+func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host string) (*auth.UserIdentity, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
+		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
+		if err != nil {
+			if errors.Cause(err) != sessionapi.ErrIdentityNotFound {
+				return nil, err
+			}
+			continue
+		}
+
+		logutil.Logger(ctx).Info("found user identity with variants",
+			zap.String("user", cc.user),
+			zap.String("matched-user", variant),
+			zap.String("host", host),
+		)
+		cc.user = variant
+		return identity, nil
+	}
+
+	if mismatchErr := cc.checkUserVariantMismatch(ctx, cc.user); mismatchErr != nil {
+		return nil, mismatchErr
+	}
+	return nil, errors.Wrapf(sessionapi.ErrIdentityNotFound, "could not find matching username variant: %s, %s", cc.user, host)
+}
+
 // mockOSUserForAuthSocketTest should only be used in test
 var mockOSUserForAuthSocketTest atomic.Pointer[string]
 
@@ -891,9 +959,20 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		return nil, err
 	}
 	// Find the identity of the user based on username and peer host.
-	identity, err := cc.ctx.MatchIdentity(ctx, cc.user, host)
-	if err != nil {
-		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	var identity *auth.UserIdentity
+	if deploymode.IsStarter() {
+		identity, err = cc.matchIdentityWithVariants(ctx, host)
+		if err != nil {
+			if errors.Cause(err) != sessionapi.ErrIdentityNotFound {
+				return nil, err
+			}
+		}
+	}
+	if identity == nil {
+		identity, err = cc.ctx.MatchIdentity(ctx, cc.user, host)
+		if err != nil {
+			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
 	}
 	// Get the plugin for the identity.
 	userplugin, err := cc.ctx.AuthPluginForUser(ctx, identity)
@@ -1284,8 +1363,7 @@ func errStrForLog(err error, redactMode string) string {
 
 // Per connection metrics
 func (cc *clientConn) addConnMetrics() {
-	if cc.tlsConn != nil {
-		connState := cc.tlsConn.ConnectionState()
+	if connState := cc.getTLSState(); connState != nil {
 		metrics.TLSVersion.WithLabelValues(
 			tlsutil.VersionName(connState.Version),
 		).Inc()
@@ -1638,6 +1716,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
 	}
+	errmsg.Extend(m)
 
 	cc.lastCode = m.Code
 	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
@@ -2091,61 +2170,30 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 }
 
 // setSQLKillerConnectionAlive installs a connection-liveness probe on the
-// session SQLKiller and starts a background monitor for the current statement.
-// The returned cleanup is idempotent and must be called when the statement is
-// done to stop the monitor and clear the probe.
+// session SQLKiller for execution checkpoints such as HandleSignal and the
+// slow pre-commit backstop. It intentionally does not start a background
+// monitor, so short statements do not pay goroutine, ticker, or channel costs.
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			// IsAlive returns 0 only when the connection is known dead. Treat
-			// unknown states as alive so we do not interrupt queries
-			// conservatively when the liveness check itself cannot run.
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
-	stopMonitor := make(chan struct{})
-	doneMonitor := make(chan struct{})
-	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
+	sessVars := cc.ctx.GetSessionVars()
+	isAlive := cc.isConnectionAlive
+	sessVars.SQLKiller.IsConnectionAlive.Store(&isAlive)
 
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
-			close(stopMonitor)
-			<-doneMonitor
-			cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+			sessVars.SQLKiller.IsConnectionAlive.CompareAndSwap(&isAlive, nil)
 		})
 	}
 }
 
-func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}, done chan<- struct{}) {
-	defer close(done)
-	checkInterval := time.Second
-	failpoint.Inject("mockConnectionAliveMonitorInterval", func(val failpoint.Value) {
-		if interval, ok := val.(int); ok {
-			checkInterval = time.Duration(interval) * time.Millisecond
-		}
-	})
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if !isAlive() {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				cc.ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-				cc.cancelDispatch()
-				return
-			}
-		case <-stop:
-			return
-		}
+func (cc *clientConn) isConnectionAlive() bool {
+	if cc.bufReadConn != nil {
+		// IsAlive returns 0 only when the connection is known dead. Treat
+		// unknown states as alive so we do not interrupt queries
+		// conservatively when the liveness check itself cannot run.
+		return cc.bufReadConn.IsAlive() != 0
 	}
+	return true
 }
 
 func (cc *clientConn) cancelDispatch() {
@@ -2157,7 +2205,7 @@ func (cc *clientConn) cancelDispatch() {
 	}
 }
 
-func shouldMonitorConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
 		return false
 	}
@@ -2199,8 +2247,8 @@ func (cc *clientConn) handleStmt(
 	}
 
 	clearConnectionAlive := func() {}
-	monitoringConnectionAlive := shouldMonitorConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
-	if monitoringConnectionAlive {
+	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
+	if checkingConnectionAlive {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 		defer clearConnectionAlive()
 	}
@@ -2238,7 +2286,7 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
-		if !monitoringConnectionAlive {
+		if !checkingConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}
@@ -2699,6 +2747,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	}
 	cc.setConn(tlsConn)
 	cc.tlsConn = tlsConn
+	cc.tlsConnState = nil
 	return nil
 }
 
@@ -2770,12 +2819,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
-	var tlsStatePtr *tls.ConnectionState
-	if cc.tlsConn != nil {
-		tlsState := cc.tlsConn.ConnectionState()
-		tlsStatePtr = &tlsState
-	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, cc.getTLSState(), cc.extensions)
 	if err != nil {
 		return err
 	}

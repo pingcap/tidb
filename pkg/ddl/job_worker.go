@@ -988,7 +988,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddColumn:
 		ver, err = w.onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(jobCtx, job)
+		ver, err = w.onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(jobCtx, job)
 	case model.ActionSetDefaultValue:
@@ -1014,7 +1014,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(jobCtx, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(jobCtx, job)
+		ver, err = w.onRenameTable(jobCtx, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(jobCtx, job)
 	case model.ActionModifyTableComment:
@@ -1044,11 +1044,17 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(jobCtx, job)
 	case model.ActionRenameTables:
-		ver, err = onRenameTables(jobCtx, job)
+		ver, err = w.onRenameTables(jobCtx, job)
 	case model.ActionAlterTableAttributes:
 		ver, err = onAlterTableAttributes(jobCtx, job)
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(jobCtx, job)
+	case model.ActionCreateMaskingPolicy:
+		ver, err = w.onCreateMaskingPolicy(jobCtx, job)
+	case model.ActionAlterMaskingPolicy:
+		ver, err = w.onAlterMaskingPolicy(jobCtx, job)
+	case model.ActionDropMaskingPolicy:
+		ver, err = w.onDropMaskingPolicy(jobCtx, job)
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(jobCtx, job)
 	case model.ActionDropPlacementPolicy:

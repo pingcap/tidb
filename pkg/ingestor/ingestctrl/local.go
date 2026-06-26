@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -136,7 +137,7 @@ var (
 		return tikvclient.NewRPCClient(opts...)
 	}
 	newTiKVStore = tikvclient.NewKVStore
-	newPDClient  = pd.NewClientWithContext
+	newPDClient  = pd.NewClientWithAPIContext
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -486,6 +487,8 @@ type BackendConfig struct {
 	ResourceGroupName         string
 	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
+	// DisablePDClientRouterClient uses legacy PD region RPCs for callers that must work with older PD clusters.
+	DisablePDClientRouterClient bool
 	// whether disable automatic compactions of pebble db of engine.
 	// deduplicate pebble db is not affected by this option.
 	// see DisableAutomaticCompactions of pebble.Options for more details.
@@ -843,7 +846,12 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 	// we have to build a separate PD client for tikv, as KVStore will manage
 	// the lifecycle of input PD client, while the PD client inside this is
 	// managed outside.
-	pdCliForTiKV, err := newPDClient(ctx, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	apiContext := keyspace.BuildAPIContext(local.KeyspaceName)
+	pdClientOptions := PDClientOptions()
+	if local.DisablePDClientRouterClient {
+		pdClientOptions = append(pdClientOptions, opt.WithEnableRouterClient(false))
+	}
+	pdCliForTiKV, err := newPDClient(ctx, apiContext, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), pdClientOptions...)
 	if err != nil {
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
@@ -1218,17 +1226,20 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
-					// we need to increase the ref count before sending jobs to
-					// jobToWorkerCh, in case some job finished quickly and decrease
-					// the ref count to zero and cause the data being released.
+					// All jobs must be ref'd before sending any job to jobToWorkerCh.
+					// Jobs run asynchronously after they are sent. If an earlier job finishes
+					// before later jobs increase their refs, the ingest data can be released
+					// when its ref count drops to zero.
 					for _, job := range jobs {
 						job.ref(jobWg)
 					}
-					for _, job := range jobs {
+					for i, job := range jobs {
 						select {
 						case <-egCtx.Done():
-							// this job is not put into jobToWorkerCh
-							job.done(jobWg)
+							for _, unsentJob := range jobs[i:] {
+								// These jobs are not put into jobToWorkerCh.
+								unsentJob.done(jobWg)
+							}
 							// if the context is canceled, it means worker has error.
 							return nil
 						case jobToWorkerCh <- job:
@@ -1692,7 +1703,9 @@ func (local *Backend) doImport(
 		// Close the pool, as well as the channel.
 		wctx.Cancel()
 		pool.Release()
-		return nil
+		// The worker may set operator error after jobWg.Wait() is unblocked. Re-check
+		// here to avoid losing worker errors due to cancellation ordering.
+		return wctx.OperatorErr()
 	})
 
 	err := workGroup.Wait()

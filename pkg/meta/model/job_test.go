@@ -448,4 +448,32 @@ func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("normalize scheduler names", func(t *testing.T) {
+		job := &Job{
+			SchemaName: "TestDB",
+			TableName:  "T1",
+			InvolvingSchemaInfo: []InvolvingSchemaInfo{
+				{Database: "TestDB", Table: "T1"},
+				{Database: "AnotherDB", Table: InvolvingAll},
+				{Database: InvolvingAll, Table: InvolvingAll},
+				{Database: InvolvingNone, Table: InvolvingNone},
+				{Policy: "PolicyName"},
+				{ResourceGroup: "ResourceGroupName"},
+			},
+		}
+
+		job.NormalizeInvolvingSchemaInfo()
+
+		require.Equal(t, "testdb", job.SchemaName)
+		require.Equal(t, "t1", job.TableName)
+		require.Equal(t, []InvolvingSchemaInfo{
+			{Database: "testdb", Table: "t1"},
+			{Database: "anotherdb", Table: InvolvingAll},
+			{Database: InvolvingAll, Table: InvolvingAll},
+			{Database: InvolvingNone, Table: InvolvingNone},
+			{Policy: "policyname"},
+			{ResourceGroup: "resourcegroupname"},
+		}, job.InvolvingSchemaInfo)
+	})
 }

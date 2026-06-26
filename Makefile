@@ -348,11 +348,11 @@ failpoint-disable: tools/bin/failpoint-ctl
 
 .PHONY: bazel-failpoint-enable
 bazel-failpoint-enable:
-	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
+	BAZEL_GLOBAL_CONFIG="$(BAZEL_GLOBAL_CONFIG)" BAZEL_CMD_CONFIG="$(BAZEL_CMD_CONFIG)" ./tools/check/failpoint-state.sh enable bazel
 
 .PHONY: bazel-failpoint-disable
 bazel-failpoint-disable:
-	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+	BAZEL_GLOBAL_CONFIG="$(BAZEL_GLOBAL_CONFIG)" BAZEL_CMD_CONFIG="$(BAZEL_CMD_CONFIG)" ./tools/check/failpoint-state.sh disable bazel
 
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
@@ -579,6 +579,9 @@ gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3like PrefixClient > pkg/objstore/s3like/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Server > pkg/domain/sqlsvrapi/mock/server_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Runtime > pkg/domain/sqlsvrapi/mock/runtime_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi KSRuntimeHandle > pkg/domain/sqlsvrapi/mock/ksruntime_mock.go
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
@@ -705,16 +708,23 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+BAZEL_BEP_BACKEND ?= grpcs://beplessproxy.channel9.ai
+BAZEL_BEP_RESULTS_URL ?= https://bepless.hawkingrei.com/
+BAZEL_BEP_BASE_FLAGS = \
+	--bes_backend=$(BAZEL_BEP_BACKEND) \
+	--bes_results_url=$(BAZEL_BEP_RESULTS_URL) \
+	--experimental_remote_build_event_upload=all
+
 .PHONY: bazel_ci_test
 bazel_ci_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) $(BAZEL_BEP_BASE_FLAGS) $$(./build/print-bazel-bep-flags.sh) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_ci_test_ddlargsv1
 bazel_ci_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) $(BAZEL_BEP_BASE_FLAGS) $$(./build/print-bazel-bep-flags.sh) --build_tests_only --test_keep_going=false \
 		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
@@ -795,6 +805,12 @@ bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
 bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/sessiontest/...
+
+.PHONY: startertest
+startertest: failpoint-enable bazel_ci_simple_prepare
+	# Starter mode needs an external tidb-server process, so this wrapper
+	# intentionally invokes the starter shell runner instead of bazel test.
+	STARTER_KEYSPACE_NAME=startertest STARTER_RUN_EXIT_WAIT_TEST=1 tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh --under-cluster startertest 40m -count=1
 
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare

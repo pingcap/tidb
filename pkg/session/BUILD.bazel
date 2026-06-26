@@ -22,6 +22,7 @@ go_library(
     deps = [
         "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/placement",
@@ -190,6 +191,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+        "//pkg/store",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/teststore",
         "//pkg/table/tblsession",

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -3945,7 +3946,7 @@ func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string
 		return user, nil
 	}
 	// This error will not be returned to the user, access denied will be instead
-	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
+	return nil, errors.Wrapf(sessionapi.ErrIdentityNotFound, "could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
@@ -4306,12 +4307,14 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
 	if kv.IsUserKS(store) {
+		targetVer := currentBootstrapVersion
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
-		} else if ver > systemKSVer {
-			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace",
-				zap.Int64("user", ver), zap.Int64("system", systemKSVer))
+		} else if targetVer > systemKSVer {
+			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace. if you are upgrading user keyspace, please make sure to upgrade SYSTEM keyspace first",
+				zap.Int64("userCurr", ver), zap.Int64("userTarget", targetVer),
+				zap.Int64("system", systemKSVer))
 		}
 	}
 
@@ -5645,6 +5648,13 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		return false
 	}
 	if stmtCtx.IsReadOnly {
+		return false
+	}
+	// The Starter deploy mode schedules background workloads on separate worker
+	// instances that do not support the pipelined protocol, so fall back to the
+	// standard path there.
+	if deploymode.IsStarter() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML is not supported in this deployment. Fallback to standard mode"))
 		return false
 	}
 	vars := s.GetSessionVars()

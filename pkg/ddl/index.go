@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -81,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -90,7 +92,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	pdHttp "github.com/tikv/pd/client/http"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -555,8 +557,18 @@ func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType, colInfo.ID), nil
 }
 
+func checkFullTextSupportedInStarter() error {
+	if !deploymode.IsStarter() {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index is only supported in starter deployment mode")
+	}
+	return nil
+}
+
 func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo) (*model.FullTextIndexInfo, error) {
+	if err := checkFullTextSupportedInStarter(); err != nil {
+		return nil, err
+	}
 	if len(indexPartSpecifications) != 1 {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index only support one column")
 	}
@@ -1060,6 +1072,26 @@ func (w *worker) checkColumnarIndexProcess(jobCtx *jobContext, tbl table.Table, 
 	return nil
 }
 
+// checkColumnarIndexProcessFromTiKV checks the backfill process of a columnar index from TiKV.
+func (*worker) checkColumnarIndexProcessFromTiKV(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
+	tikvStats, err := infosync.GetTiFlashStoresStat(jobCtx.stepCtx)
+	if err != nil {
+		return false, 0, err
+	}
+	tikvStores := make(map[int64]pdhttp.StoreInfo)
+	for _, store := range tikvStats.Stores {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			continue
+		}
+		tikvStores[store.Store.ID] = store
+	}
+	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, tikvStores)
+	if err != nil {
+		return false, 0, err
+	}
+	return progress >= 1.0, 0, nil
+}
+
 // checkColumnarIndexProcessOnce checks the backfill process of a columnar index from TiFlash once.
 func (w *worker) checkColumnarIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (
 	isDone bool, notAddedIndexCnt, addedIndexCnt int64, err error) {
@@ -1076,6 +1108,24 @@ func (w *worker) checkColumnarIndexProcessOnce(jobCtx *jobContext, tbl table.Tab
 		}
 	})
 
+	var done = true
+
+	columnarEnabled := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
+	// If columnar store is enabled, we check the columnar index process from TiKV.
+	if columnarEnabled {
+		done, _, err = w.checkColumnarIndexProcessFromTiKV(jobCtx, tbl, indexID)
+		if err != nil {
+			return false, 0, 0, errors.Trace(err)
+		}
+	}
+
+	// If TiFlash is not enabled, we return the result directly.
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return done, 0, 0, nil
+	}
+
+	// TODO: Support partition table
 	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
 		tbl.Meta().ID, indexID)
 	rows, err := w.sess.Execute(jobCtx.stepCtx, sql, "add_vector_index_check_result")
@@ -3393,7 +3443,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	start, end := hStore.GetCodec().EncodeRegionRange(sk, ek)
 	// We use the second region to prevent the influence of the front and back tables.
 	regionLimit := 3
-	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(start, end), regionLimit)
+	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), regionLimit)
 	if err != nil {
 		return 0, err
 	}
@@ -3896,6 +3946,12 @@ func renameIndexes(tblInfo *model.TableInfo, from, to ast.CIStr) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}
+	}
+	renameExpressionIndexColumnRefs(tblInfo, from, to)
+}
+
+func renameExpressionIndexColumnRefs(tblInfo *model.TableInfo, from, to ast.CIStr) {
+	for _, idx := range tblInfo.Indices {
 		for _, col := range idx.Columns {
 			originalCol := tblInfo.Columns[col.Offset]
 			if originalCol.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
@@ -3904,6 +3960,13 @@ func renameIndexes(tblInfo *model.TableInfo, from, to ast.CIStr) {
 			}
 		}
 	}
+}
+
+// RenameExpressionIndexColumns renames hidden column definitions in tblInfo and their column-name
+// entries in each index column list. It does not rename the index itself.
+func RenameExpressionIndexColumns(tblInfo *model.TableInfo, from, to ast.CIStr) {
+	renameExpressionIndexColumnRefs(tblInfo, from, to)
+	renameHiddenColumns(tblInfo, from, to)
 }
 
 func renameHiddenColumns(tblInfo *model.TableInfo, from, to ast.CIStr) {

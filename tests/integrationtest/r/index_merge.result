@@ -906,12 +906,12 @@ analyze table t_im_in;
 # Case 1: a=1 keeps order directly, b IN (1,2) needs merge sort
 explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
 id	estRows	task	access object	operator info
-IndexMerge_29	5.00	root		type: union, limit embedded(offset:0, count:5)
-├─Limit_27(Build)	2.44	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan_24	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true
-├─Limit_28(Build)	4.27	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan_25	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
-└─TableRowIDScan_26(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+IndexMerge_35	5.00	root		type: union, limit embedded(offset:0, count:5)
+├─Limit_33(Build)	2.44	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_30	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true
+├─Limit_34(Build)	4.27	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_31	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
+└─TableRowIDScan_32(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
 id	a	b	c	padding
 8	1	1	5	row8
@@ -922,12 +922,12 @@ id	a	b	c	padding
 # Case 2: Both partial paths need merge sort
 explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a in (1, 2) or b in (1, 2) order by c limit 5;
 id	estRows	task	access object	operator info
-IndexMerge_29	5.00	root		type: union, limit embedded(offset:0, count:5)
-├─Limit_27(Build)	3.85	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan_24	3.85	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], [2,2], keep order:true
-├─Limit_28(Build)	3.85	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan_25	3.85	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
-└─TableRowIDScan_26(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+IndexMerge_35	5.00	root		type: union, limit embedded(offset:0, count:5)
+├─Limit_33(Build)	3.85	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_30	3.85	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], [2,2], keep order:true
+├─Limit_34(Build)	3.85	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_31	3.85	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
+└─TableRowIDScan_32(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in) */ * from t_im_in where a in (1, 2) or b in (1, 2) order by c limit 5;
 id	a	b	c	padding
 8	1	1	5	row8
@@ -938,12 +938,12 @@ id	a	b	c	padding
 # Case 3: DESC ordering with IN condition
 explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c desc limit 5;
 id	estRows	task	access object	operator info
-IndexMerge_29	5.00	root		type: union, limit embedded(offset:0, count:5)
-├─Limit_27(Build)	2.44	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan_24	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true, desc
-├─Limit_28(Build)	4.27	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan_25	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, desc
-└─TableRowIDScan_26(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+IndexMerge_35	5.00	root		type: union, limit embedded(offset:0, count:5)
+├─Limit_33(Build)	2.44	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_30	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true, desc
+├─Limit_34(Build)	4.27	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_31	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, desc
+└─TableRowIDScan_32(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c desc limit 5;
 id	a	b	c	padding
 7	3	2	70	row7

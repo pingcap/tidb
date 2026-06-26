@@ -638,7 +638,7 @@ found data conflict records in table %s, primary key is '%s', row data is '%s'
 
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
-found duplicate key '%s', value '%s'
+found duplicate key '%x', value '%x'
 '''
 
 ["Lightning:Restore:ErrFoundIndexConflictRecords"]
@@ -974,6 +974,11 @@ Key part '%-.192s' length cannot be 0
 ["ddl:1452"]
 error = '''
 Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
+["ddl:1468"]
+error = '''
+User name must start with `%s.` (use `%s.%s` instead)
 '''
 
 ["ddl:1470"]
@@ -2346,6 +2351,11 @@ error = '''
 masking policy doesn't exist
 '''
 
+["meta:8275"]
+error = '''
+masking policy expression can only reference the target column '%-.64s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
@@ -3099,6 +3109,11 @@ Access denied for user '%-.48s'@'%-.255s'
 ["server:1820"]
 error = '''
 You must reset your password using ALTER USER statement before executing this statement
+'''
+
+["server:20003"]
+error = '''
+User name prefix does not match the assigned keyspace.
 '''
 
 ["server:3159"]

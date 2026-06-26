@@ -24,9 +24,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -115,6 +120,34 @@ func newExecStmtWithStmtStatsForTest(goCtx context.Context, t *testing.T) (*Exec
 		},
 		GoCtx: goCtx,
 	}, stats
+}
+
+func newFinishedRecordSetForTest() *recordSet {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	return &recordSet{
+		schema: expression.NewSchema(&expression.Column{RetType: ft}),
+		stmt:   &ExecStmt{Ctx: mock.NewContext()},
+	}
+}
+
+func TestRecordSetNewChunkAfterFinish(t *testing.T) {
+	rs := newFinishedRecordSetForTest()
+
+	req := rs.NewChunk(nil)
+	require.NotNil(t, req)
+	require.Equal(t, 1, req.NumCols())
+
+	req = rs.NewChunk(chunk.NewAllocator())
+	require.NotNil(t, req)
+	require.Equal(t, 1, req.NumCols())
+}
+
+func TestRecordSetNextAfterFinish(t *testing.T) {
+	rs := newFinishedRecordSetForTest()
+
+	err := rs.Next(context.Background(), chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1))
+	require.Error(t, err)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
 }
 
 func ruKeyForStmt(t *testing.T, stmt *ExecStmt) stmtstats.RUKey {

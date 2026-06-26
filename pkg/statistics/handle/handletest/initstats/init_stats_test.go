@@ -78,10 +78,17 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 	session.MustExec(t, se, "create table t1( id int, a int, b int, index idx(id, a));")
 	session.MustExec(t, se, "create table t2( id int, a int, b int, index idx(id, a));")
 	session.MustExec(t, se, "create table t3( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table dropped_t( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, `create table partitioned_t(id int, a int, b int, index idx(id, a))
+		partition by range (id) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
 	session.MustExec(t, se, "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
 	session.MustExec(t, se, "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
 	session.MustExec(t, se, "insert into t3 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
-	session.MustExec(t, se, "analyze table t1, t2, t3 all columns;")
+	session.MustExec(t, se, "insert into dropped_t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into partitioned_t values (1, 1, 1), (11, 11, 11);")
+	session.MustExec(t, se, "analyze table t1, t2, t3, dropped_t, partitioned_t all columns;")
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -89,6 +96,18 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 	require.NoError(t, err)
 	tbl3, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
+	droppedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("dropped_t"))
+	require.NoError(t, err)
+	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partitioned_t"))
+	require.NoError(t, err)
+	partitionInfo := partitionedTbl.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	partitionIDs := make([]int64, 0, len(partitionInfo.Definitions))
+	for _, def := range partitionInfo.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	session.MustExec(t, se, "drop table dropped_t")
+	droppedTableID := droppedTbl.Meta().ID
 
 	dom.Close()
 
@@ -98,7 +117,7 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 		h := dom.StatsHandle()
 		_, ok := h.Get(tbl1.Meta().ID)
 		require.False(t, ok)
-		require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID))
+		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema(), tbl1.Meta().ID))
 		_, ok = h.Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		_, ok = h.Get(tbl2.Meta().ID)
@@ -107,7 +126,7 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 		require.False(t, ok)
 
 		// Make sure it can be loaded multiple times.
-		require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID, tbl2.Meta().ID))
+		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema(), tbl1.Meta().ID, tbl2.Meta().ID))
 		_, ok = h.Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		_, ok = h.Get(tbl2.Meta().ID)
@@ -115,13 +134,19 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 		_, ok = h.Get(tbl3.Meta().ID)
 		require.False(t, ok)
 
-		require.NoError(t, h.InitStatsLite(context.Background()))
+		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 		_, ok = h.Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		_, ok = h.Get(tbl2.Meta().ID)
 		require.True(t, ok)
 		_, ok = h.Get(tbl3.Meta().ID)
 		require.True(t, ok)
+		_, ok = h.Get(droppedTableID)
+		require.False(t, ok)
+		for _, partitionID := range partitionIDs {
+			_, ok = h.Get(partitionID)
+			require.True(t, ok)
+		}
 
 		dom.Close()
 	})
@@ -296,17 +321,49 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t( id int, a int, b int, index idx(id, a));")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("analyze table t all columns;")
-	tk.MustExec("drop table t")
-	h := dom.StatsHandle()
+	tk.MustExec("create table dropped_t( id int, a int, b int, index idx(id, a));")
+	tk.MustExec("create table kept_t( id int, a int, b int, index idx(id, a));")
+	tk.MustExec(`create table partitioned_t(id int, a int, b int, index idx(id, a))
+		partition by range (id) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
+	tk.MustExec("insert into dropped_t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into kept_t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("insert into partitioned_t values (1, 1, 1), (11, 11, 11);")
+	tk.MustExec("analyze table dropped_t, kept_t, partitioned_t all columns;")
 	is := dom.InfoSchema()
+	droppedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("dropped_t"))
+	require.NoError(t, err)
+	keptTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("kept_t"))
+	require.NoError(t, err)
+	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partitioned_t"))
+	require.NoError(t, err)
+	partitionInfo := partitionedTbl.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	partitionIDs := make([]int64, 0, len(partitionInfo.Definitions))
+	for _, def := range partitionInfo.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	droppedTableID := droppedTbl.Meta().ID
+	keptTableID := keptTbl.Meta().ID
+	tk.MustExec("drop table dropped_t")
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta where table_id = %d", droppedTableID)).Check(testkit.Rows("1"))
+	h := dom.StatsHandle()
+	h.Clear()
+	is = dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
+	_, ok := h.Get(droppedTableID)
+	require.False(t, ok)
+	_, ok = h.Get(keptTableID)
+	require.True(t, ok)
+	for _, partitionID := range partitionIDs {
+		_, ok = h.Get(partitionID)
+		require.True(t, ok)
+	}
 }
 
 func TestSkipStatsInitWithSkipInitStats(t *testing.T) {

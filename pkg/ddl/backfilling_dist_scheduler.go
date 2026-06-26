@@ -40,10 +40,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -106,6 +106,11 @@ func (sch *LitBackfillScheduler) Close() {
 func (*LitBackfillScheduler) OnTick(_ context.Context, _ *proto.Task) {
 }
 
+// OnPrepare implements scheduler.Extension interface.
+func (*LitBackfillScheduler) OnPrepare(context.Context, diststorage.TaskHandle, *proto.Task) error {
+	return nil
+}
+
 // OnNextSubtasksBatch generate batch of next step's plan.
 func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
@@ -137,7 +142,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	store, tbl, err := getUserStoreAndTable(ctx, sch.d, sch.d.store, task.Keyspace, job)
+	store := sch.TaskRuntime.Store()
+	tbl, err := getUserTableFromTaskStore(ctx, store, job)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -184,36 +190,21 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 }
 
-func getUserStoreAndTable(
+func getUserTableFromTaskStore(
 	ctx context.Context,
-	d *ddl,
-	schStore kv.Storage,
-	taskKeyspace string,
+	taskStore kv.Storage,
 	job *model.Job,
-) (kv.Storage, table.Table, error) {
-	store := schStore
-	if taskKeyspace != d.store.GetKeyspace() {
-		taskMgr, err := diststorage.GetTaskManager()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
-			store, err = se.GetSQLServer().GetKSStore(taskKeyspace)
-			return err
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	tblInfo, err := getTblInfo(ctx, store, job)
+) (table.Table, error) {
+	tblInfo, err := getTblInfo(ctx, taskStore, job)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
+	// we don't touch table data during add-index, a fake Allocators is enough.
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return store, tbl, nil
+	return tbl, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.

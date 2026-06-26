@@ -486,6 +486,9 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
+	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
+	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
+	AlternativeLogicalPlanSemiJoinRewrite bool
 	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
 	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
 	// false (the default, matching Alt-disabled behavior) the rewriter emits
@@ -507,16 +510,14 @@ type StatementContext struct {
 	// uses this to enable the fts-like-fallback round for cost competition even
 	// when round 1's native plan is executable.
 	AlternativeLogicalPlanHasPredicateContextMatch bool
+	// FTSFunctionIsUsed indicates that FTS_MATCH_WORD() appears in the current
+	// statement, allowing the optimizer to run FTS-specific validation and
+	// rewrite rules only when needed.
+	FTSFunctionIsUsed bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
-	// InsertRowsAsRUV2Recorded tracks whether the statement-level insert-row RUv2 cost has already been
-	// applied to RUV2Metrics. This must stay idempotent because EXPLAIN ANALYZE INSERT snapshots RU before
-	// FinishExecuteStmt runs, while FinishExecuteStmt still needs to reuse the same accounting path for the
-	// final slow-log and resource-group reporting.
-	InsertRowsAsRUV2Recorded bool
-
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
 
@@ -689,6 +690,8 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanFTSLikeFallback = false
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
+	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.FTSFunctionIsUsed = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -714,6 +717,12 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
 // the correlate-to-Apply alternative.
 func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 	sc.AlternativeLogicalPlanPreferCorrelate = true
+}
+
+// MarkAlternativeLogicalPlanSemiJoinRewrite records that the current first round
+// found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
+	sc.AlternativeLogicalPlanSemiJoinRewrite = true
 }
 
 // CtxID returns the context id of the statement

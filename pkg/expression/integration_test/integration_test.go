@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -129,7 +130,15 @@ import (
 // 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
 // }
 
+func skipIfNotStarterForFTS(t *testing.T) {
+	if !deploymode.IsStarter() {
+		t.Skip("full text search is only supported in starter deployment mode")
+	}
+}
+
 func TestFTSParser(t *testing.T) {
+	skipIfNotStarterForFTS(t)
+
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -178,6 +187,8 @@ func TestFTSParser(t *testing.T) {
 }
 
 func TestFTSSyntax(t *testing.T) {
+	skipIfNotStarterForFTS(t)
+
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -217,6 +228,8 @@ func TestFTSSyntax(t *testing.T) {
 }
 
 func TestFTSIndexSyntax(t *testing.T) {
+	skipIfNotStarterForFTS(t)
+
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4317,6 +4330,23 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// other plans
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
+}
+
+func TestIssue66661(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table table1 (active bit)")
+	tk.MustExec("insert into table1 values (1)")
+
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select hex(cast(any_value(active) as char)) from table1").Check(testkit.Rows("01"))
+		tk.MustQuery("select str_to_date(any_value(active), '%h:%i:%s') from table1").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00")
+		tk.MustQuery("select max(active) as c0 from table1 where str_to_date(any_value(active), '%h:%i:%s')").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00")
+	}
 }
 
 func TestIssue43527(t *testing.T) {

@@ -1154,6 +1154,7 @@ const (
 	ErrForbiddenDDL                       = 8267
 	ErrMaskingPolicyExists                = 8268
 	ErrMaskingPolicyNotExists             = 8269
+	ErrMaskingPolicyExprInvalidColumn     = 8275
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1190,4 +1191,5 @@ const (
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
 	ErrTiFlashBackfillIndex      = 9014
+	ErrUserPrefixMismatch        = 20003
 )

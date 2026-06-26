@@ -1150,6 +1150,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 	ErrMaskingPolicyExists:             mysql.Message("masking policy already exists", nil),
 	ErrMaskingPolicyNotExists:          mysql.Message("masking policy doesn't exist", nil),
+	ErrMaskingPolicyExprInvalidColumn:  mysql.Message("masking policy expression can only reference the target column '%-.64s'", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
@@ -1200,4 +1201,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
+	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
 }

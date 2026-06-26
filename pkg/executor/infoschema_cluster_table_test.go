@@ -230,11 +230,12 @@ type mockStore struct {
 	host string
 }
 
-func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
-func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
-func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
-func (s *mockStore) Name() string                 { return "mockStore" }
-func (s *mockStore) Describe() string             { return "" }
+func (s *mockStore) EtcdAddrs() ([]string, error)  { return []string{s.host}, nil }
+func (s *mockStore) GetPDAddrs() ([]string, error) { return []string{s.host}, nil }
+func (s *mockStore) TLSConfig() *tls.Config        { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error          { panic("not implemented") }
+func (s *mockStore) Name() string                  { return "mockStore" }
+func (s *mockStore) Describe() string              { return "" }
 
 func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
 	originIP := config.GetGlobalConfig().AdvertiseAddress

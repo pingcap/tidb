@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -75,9 +77,11 @@ const initialMaxCores uint64 = 10000
 
 var (
 	// the old ref of optRuleList for downgrading to old optimizing routine.
-	logicalRuleList = optRuleList
+	logicalRuleList  = optRuleList
+	logicalRuleFlags = optRuleFlags
 	// the new normalizeRuleList is special for prev-phase of memo, which is for always-good rules.
-	normalizeRuleList = optRuleList
+	normalizeRuleList  = optRuleList
+	normalizeRuleFlags = optRuleFlags
 	// note this two list will differ when some trade-off rules is moved out of norm phase for cascades.
 )
 
@@ -93,6 +97,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ProjectionEliminator{},
 	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
+	&FullTextIndexResolverWhere{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
@@ -103,6 +108,8 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&FullTextIndexResolverTopN{},
+	&FullTextIndexResolverProjection{},
 	&rule.OrderAwareJoinReorder{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
@@ -112,7 +119,46 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
+	&FullTextIndexResolverRejectRemaining{},
 	&ResolveExpand{},
+}
+
+var optRuleFlags = []uint64{
+	rule.FlagGcSubstitute,
+	rule.FlagPruneColumns,
+	rule.FlagStabilizeResults,
+	rule.FlagBuildKeyInfo,
+	rule.FlagDecorrelate,
+	rule.FlagSemiJoinRewrite,
+	rule.FlagEliminateAgg,
+	rule.FlagSkewDistinctAgg,
+	rule.FlagEliminateProjection,
+	rule.FlagMaxMinEliminate,
+	rule.FlagConstantPropagation,
+	rule.FlagFullTextIndexResolveWhere,
+	rule.FlagConvertOuterToInnerJoin,
+	rule.FlagPredicatePushDown,
+	rule.FlagJoinKeyTypeCast,
+	rule.FlagEliminateOuterJoin,
+	rule.FlagPartitionProcessor,
+	rule.FlagCollectPredicateColumnsPoint,
+	rule.FlagPushDownAgg,
+	rule.FlagDeriveTopNFromWindow,
+	rule.FlagPredicateSimplification,
+	rule.FlagPushDownTopN,
+	rule.FlagFullTextIndexResolveTopN,
+	rule.FlagFullTextIndexResolveProjection,
+	rule.FlagOrderAwareJoinReorder,
+	rule.FlagSyncWaitStatsLoadPoint,
+	rule.FlagJoinReOrder,
+	rule.FlagOuterJoinToSemiJoin,
+	rule.FlagCorrelate,
+	rule.FlagPruneColumnsAgain,
+	rule.FlagPushDownSequence,
+	rule.FlagEliminateUnionAllDualItem,
+	rule.FlagEmptySelectionEliminator,
+	rule.FlagFullTextIndexResolveReject,
+	rule.FlagResolveExpand,
 }
 
 // Interaction Rule List
@@ -353,6 +399,12 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed && deploymode.IsStarter() {
+		flag |= rule.FlagFullTextIndexResolveWhere
+		flag |= rule.FlagFullTextIndexResolveTopN
+		flag |= rule.FlagFullTextIndexResolveProjection
+		flag |= rule.FlagFullTextIndexResolveReject
 	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
@@ -634,6 +686,21 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 	h.plans = append(h.plans, p)
 }
 
+func splitTiFlashLogicalCoreCache(serversInfo []infoschema.ServerInfo) (serversNeedingRefresh []infoschema.ServerInfo, minLogicalCores uint64) {
+	minLogicalCores = initialMaxCores
+	for _, info := range serversInfo {
+		mppServerInfo := copr.GlobalMPPServerInfoManager.Get(info.Address)
+		// TiFlash may restart with a different CPU configuration while keeping the same
+		// address, so refresh the cached logical core count when StartTimestamp changes.
+		if mppServerInfo == nil || mppServerInfo.StartTimestamp != info.StartTimestamp {
+			serversNeedingRefresh = append(serversNeedingRefresh, info)
+			continue
+		}
+		minLogicalCores = min(minLogicalCores, mppServerInfo.LogicalCPUCount)
+	}
+	return
+}
+
 func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
@@ -647,19 +714,28 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 		// if there are any network jitters, this could take a long time.
 		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
 	}(time.Now())
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-	if err != nil {
-		return false, 0
-	}
-	var minLogicalCores = initialMaxCores // set to a large enough value here
-	for _, row := range rows {
-		if row[4].GetString() == "cpu-logical-cores" {
-			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 {
-				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+
+	serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache(serversInfo)
+
+	if len(serversNeedingRefresh) > 0 {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversNeedingRefresh, diagnosticspb.ServerInfoType_HardwareInfo, false)
+		for _, info := range infos {
+			for _, row := range info.Rows {
+				if row[4].GetString() == "cpu-logical-cores" {
+					logicalCpus, err := strconv.Atoi(row[5].GetString())
+					if err == nil && logicalCpus > 0 {
+						copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+							Address:         serversNeedingRefresh[info.Idx].Address,
+							LogicalCPUCount: uint64(logicalCpus),
+							StartTimestamp:  serversNeedingRefresh[info.Idx].StartTimestamp,
+						})
+						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+					}
+				}
 			}
 		}
 	}
+
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	return true, minLogicalCores
 }
@@ -983,10 +1059,9 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
-		// The order of flags is same as the order of optRule in the list.
-		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
-		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		// The rule list defines the execution order. The parallel flag list
+		// maps each rule to its stable bitmask value.
+		if flag&normalizeRuleFlags[i] == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
 		logic, _, err = rule.Optimize(ctx, logic)
@@ -1005,10 +1080,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
-		// The order of flags is same as the order of optRule in the list.
-		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
-		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		// The rule list defines the execution order. The parallel flag list
+		// maps each rule to its stable bitmask value.
+		if flag&logicalRuleFlags[i] == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
 		var planChanged bool

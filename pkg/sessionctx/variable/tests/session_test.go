@@ -385,6 +385,20 @@ func TestSlowLogFormat(t *testing.T) {
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				SlowLogField: "Keyspace_meta_slow_a",
+			}},
+		}
+		require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_a": "value_a"}))
+	})
+	logString = seVar.SlowLogFormat(logItems)
+	require.Equal(t, resultFields+"\n"+"# Keyspace_meta_slow_a: value_a\n"+sql, logString)
+
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
@@ -481,6 +495,7 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
 			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
 			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			WriteKeys:               cfg.RUV2.WriteKeys,
 			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
 			TxnCnt:                  cfg.RUV2.TxnCnt,
 		}, variable.NewSessionVars(nil).RUV2Weights())
