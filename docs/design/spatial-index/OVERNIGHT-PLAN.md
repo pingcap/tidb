@@ -83,8 +83,11 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   real storage (needs a real-TiKV/disk benchmark). (2) auto-selection regressed
   (see the stats item above). TODO: general-geometry (MVI) bbox columns; the
   point covering-index rewrite (`ST_Point(x,y)` refine on index data); Layer B
-  exact-refine pushdown to TiKV (tipb fork + Rust cop evaluator; unistore = a
-  plumbing-only PoC, no perf).
+  exact-refine pushdown to TiKV. The **tipb protocol part is DONE** (`~/repos/tipb`
+  branch `spatial-pushdown`: ScalarFuncSig 7100-7109). The **TiKV contract +
+  correctness corpus** is in `tikv-pushdown-handoff.md` (ready for parallel TiKV
+  work). Remaining: TiDB pb wiring (`setPbCode`/`PBToExpr`/allow-list/dep bump)
+  + unistore round-trip validation (no perf, plumbing only).
 - Stand up a **real-storage (TiKV/disk) benchmark** so the Layer A and pushdown
   latency wins can actually be measured (the mock store only shows lookup-count).
 - `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.
