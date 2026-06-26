@@ -233,8 +233,11 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
 				return nil
 			}
-		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+		case mysql.TypeSet, mysql.TypeUnspecified:
 			return nil
+		// TypeGeometry columns are pushable: the spatial-index refine predicates
+		// (ST_Within/ST_Contains/...) are evaluated at the coprocessor over the
+		// stored EWKB bytes (see docs/design/spatial-index/tikv-pushdown-handoff.md).
 		case mysql.TypeEnum:
 			if !IsPushDownEnabled("enum", kv.UnSpecified) {
 				return nil

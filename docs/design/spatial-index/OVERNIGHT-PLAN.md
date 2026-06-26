@@ -82,12 +82,15 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   outweighs it; the real win is fewer **random-read I/Os**, only measurable on
   real storage (needs a real-TiKV/disk benchmark). (2) auto-selection regressed
   (see the stats item above). TODO: general-geometry (MVI) bbox columns; the
-  point covering-index rewrite (`ST_Point(x,y)` refine on index data); Layer B
-  exact-refine pushdown to TiKV. The **tipb protocol part is DONE** (`~/repos/tipb`
-  branch `spatial-pushdown`: ScalarFuncSig 7100-7109). The **TiKV contract +
-  correctness corpus** is in `tikv-pushdown-handoff.md` (ready for parallel TiKV
-  work). Remaining: TiDB pb wiring (`setPbCode`/`PBToExpr`/allow-list/dep bump)
-  + unistore round-trip validation (no perf, plumbing only).
+  point covering-index rewrite (`ST_Point(x,y)` refine on index data). Layer B
+  exact-refine pushdown to TiKV: the **tipb protocol** (`~/repos/tipb` branch
+  `spatial-pushdown`: ScalarFuncSig 7100-7109) and the **TiDB pb wiring** are
+  DONE (TiDB branch `spatial-pushdown`: `setPbCode`/`getSignatureByPB`/allow-list/
+  `TypeGeometry` column pushdown/tipb dep). **unistore-validated** end to end
+  (`TestPOCSpatialRefinePushdown`: `ST_Within` evaluated at `cop[tikv]`, results
+  exact). Remaining: the native **TiKV Rust evaluator** (parallel session; see
+  `tikv-pushdown-handoff.md` for the contract + corpus). Note: unistore reuses
+  TiDB's Go evaluator, so the latency win still needs real TiKV (per below).
 - Stand up a **real-storage (TiKV/disk) benchmark** so the Layer A and pushdown
   latency wins can actually be measured (the mock store only shows lookup-count).
 - `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.

@@ -87,3 +87,46 @@ func TestPOCSpatialIndexEquivalence(t *testing.T) {
 	require.Contains(t, plan, "IndexRangeScan", "expected an index range scan, not a full scan")
 	require.Contains(t, strings.ToLower(plan), "st_distance", "expected ST_Distance retained as a refine filter")
 }
+
+// TestPOCSpatialRefinePushdown verifies Layer B: the exact spatial refine
+// predicate (ST_Within) is pushed to the coprocessor and evaluated there over the
+// stored EWKB, returning the same rows as a root/full-scan evaluation. unistore
+// reuses TiDB's Go evaluator via the pb round-trip (geomRelPbCode/getSignatureByPB).
+func TestPOCSpatialRefinePushdown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE locs (id int primary key, p POINT NOT NULL SRID 0)")
+	for i := 0; i < 20; i++ {
+		for j := 0; j < 20; j++ {
+			tk.MustExec(fmt.Sprintf("INSERT INTO locs VALUES (%d, ST_GeomFromText('POINT(%d %d)',0))", i*20+j, i, j))
+		}
+	}
+	const pred = "ST_Within(p, ST_GeomFromText('POLYGON((5 5,5 10,10 10,10 5,5 5))',0))"
+	want := tk.MustQuery("SELECT id FROM locs IGNORE INDEX (primary) WHERE " + pred + " ORDER BY id").Rows()
+	require.NotEmpty(t, want)
+
+	// copSelectionHas reports whether the plan pushes a Selection carrying needle
+	// to a cop[tikv] task.
+	copSelectionHas := func(query, needle string) bool {
+		for _, r := range tk.MustQuery("EXPLAIN " + query).Rows() {
+			op, task := fmt.Sprintf("%v", r[0]), fmt.Sprintf("%v", r[2])
+			info := strings.ToLower(fmt.Sprintf("%v", r[4]))
+			if strings.Contains(op, "Selection") && strings.Contains(task, "cop") && strings.Contains(info, needle) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Table scan: ST_Within is pushed to the coprocessor, results unchanged.
+	tableQuery := "SELECT id FROM locs IGNORE INDEX (primary) WHERE " + pred + " ORDER BY id"
+	require.True(t, copSelectionHas(tableQuery, "st_within"), "ST_Within should push to the coprocessor on a table scan")
+	tk.MustQuery(tableQuery).Check(want)
+
+	// Spatial index: the refine is pushed to the cop on the table (probe) side.
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p)")
+	idxQuery := "SELECT id FROM locs FORCE INDEX (sidx) WHERE " + pred + " ORDER BY id"
+	require.True(t, copSelectionHas(idxQuery, "st_within"), "ST_Within refine should push to the coprocessor under the index lookup")
+	tk.MustQuery(idxQuery).Check(want)
+}

@@ -23,11 +23,13 @@ import (
 	"github.com/peterstace/simplefeatures/geom"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/geomrel"
 	"github.com/pingcap/tidb/pkg/util/spatial"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Geometry values are stored as EWKB: a 4-byte little-endian SRID prefix
@@ -437,7 +439,67 @@ func (c *geomRelFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			sv.StmtCtx.SpatialFunctionIsUsed = true
 		}
 	}
-	return &builtinGeomRelSig{baseBuiltinFunc: bf, pred: c.pred, funcName: c.funcName}, nil
+	sig := &builtinGeomRelSig{baseBuiltinFunc: bf, pred: c.pred, funcName: c.funcName}
+	// A pb code lets the predicate be pushed to the coprocessor (the spatial-index
+	// refine filter), where it is evaluated over the stored EWKB.
+	sig.setPbCode(geomRelPbCode(c.pred))
+	return sig, nil
+}
+
+// geomRelPbCode maps a geometry relational predicate to its coprocessor
+// ScalarFuncSig (see tipb branch spatial-pushdown / tikv-pushdown-handoff.md).
+func geomRelPbCode(p geomrel.Predicate) tipb.ScalarFuncSig {
+	switch p {
+	case geomrel.Within:
+		return tipb.ScalarFuncSig_StWithin
+	case geomrel.Contains:
+		return tipb.ScalarFuncSig_StContains
+	case geomrel.Intersects:
+		return tipb.ScalarFuncSig_StIntersects
+	case geomrel.Equals:
+		return tipb.ScalarFuncSig_StEquals
+	case geomrel.Disjoint:
+		return tipb.ScalarFuncSig_StDisjoint
+	case geomrel.Touches:
+		return tipb.ScalarFuncSig_StTouches
+	case geomrel.Crosses:
+		return tipb.ScalarFuncSig_StCrosses
+	case geomrel.Overlaps:
+		return tipb.ScalarFuncSig_StOverlaps
+	case geomrel.Covers:
+		return tipb.ScalarFuncSig_StCovers
+	case geomrel.CoveredBy:
+		return tipb.ScalarFuncSig_StCoveredBy
+	default:
+		return tipb.ScalarFuncSig_Unspecified
+	}
+}
+
+// geomRelFromPbCode is the inverse of geomRelPbCode: it rebuilds the predicate and
+// function name from a pushed-down ScalarFuncSig (the coprocessor / distsql path).
+func geomRelFromPbCode(sig tipb.ScalarFuncSig) (geomrel.Predicate, string) {
+	switch sig {
+	case tipb.ScalarFuncSig_StContains:
+		return geomrel.Contains, ast.StContains
+	case tipb.ScalarFuncSig_StIntersects:
+		return geomrel.Intersects, ast.StIntersects
+	case tipb.ScalarFuncSig_StEquals:
+		return geomrel.Equals, ast.StEquals
+	case tipb.ScalarFuncSig_StDisjoint:
+		return geomrel.Disjoint, ast.StDisjoint
+	case tipb.ScalarFuncSig_StTouches:
+		return geomrel.Touches, ast.StTouches
+	case tipb.ScalarFuncSig_StCrosses:
+		return geomrel.Crosses, ast.StCrosses
+	case tipb.ScalarFuncSig_StOverlaps:
+		return geomrel.Overlaps, ast.StOverlaps
+	case tipb.ScalarFuncSig_StCovers:
+		return geomrel.Covers, ast.StCovers
+	case tipb.ScalarFuncSig_StCoveredBy:
+		return geomrel.CoveredBy, ast.StCoveredBy
+	default: // StWithin
+		return geomrel.Within, ast.StWithin
+	}
 }
 
 type builtinGeomRelSig struct {
