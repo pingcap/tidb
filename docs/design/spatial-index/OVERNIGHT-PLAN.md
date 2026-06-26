@@ -65,8 +65,16 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   compatibility/ergonomics item (so e.g. `ST_Within(g, POLYGON((...)))` works
   instead of only `ST_Within(g, ST_GeomFromText('POLYGON((...))'))`). Today they
   parse but resolve to "function does not exist".
+- **Performance (primary): bounding-box-in-index → coprocessor pushdown.** See
+  `bbox-pushdown-design.md`. Today the refine runs at the TiDB root and every
+  covering false positive is table-looked-up first (baseline: 169 lookups for 75
+  results, fp_ratio 2.25, via `BenchmarkSpatialIndexLookups`). Layer A stores the
+  MBR (and point coords) in the index and injects a bbox-intersection filter that
+  prunes before the table lookup and **pushes to the coprocessor for free**
+  (numeric comparisons) — the main single-node win. Layer B pushes the exact
+  `ST_*` refine to TiKV (needs the tipb fork + a Rust cop evaluator); unistore is
+  the plumbing-only PoC for it.
 - Spatial cost/statistics + ANALYZE (Hilbert/Morton linearization).
-- Coprocessor pushdown of the refine predicate (unistore first, then TiKV).
 - `ST_Intersects` → `json_overlaps` auto-rewrite for the MVI path.
 - Dumpling/Lightning round-trips; KNN (`ORDER BY ST_Distance LIMIT k`).
 - Docs, system variables, compatibility matrix.
@@ -75,7 +83,8 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
 
 - GEOS-gated advanced ops (`ST_Buffer`/`ST_Union`/`ST_Intersection`/
   `ST_ConvexHull`/`ST_Area`/`ST_Length`/`ST_Centroid`).
-- Bounding-box-in-value to skip full-geometry decode in refine.
+- (bbox-in-index + pushdown moved up to the primary performance item above; see
+  `bbox-pushdown-design.md`.)
 - Cost-based / adaptive cell-level selection; multi-resolution covering; true
   Hilbert ordering.
 - Global spatial index for partitioned tables.
