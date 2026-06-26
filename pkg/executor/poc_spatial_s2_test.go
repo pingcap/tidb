@@ -78,4 +78,17 @@ func TestPOCSpatialS2(t *testing.T) {
 		"ST_Within(p, ST_GeomFromText('POLYGON((0 50,2 50,2 52,0 52,0 50))',4326)) ORDER BY id"
 	wantWithin := tk.MustQuery(fmt.Sprintf(within, "")).Rows()
 	tk.MustQuery(fmt.Sprintf(within, "FORCE INDEX (sidx)")).Check(wantWithin)
+
+	// The ST_X/ST_Y bbox columns prune SRID-4326 distance queries too (away from
+	// the antimeridian/poles): the resolver injects the spherical cap's lat/long
+	// MBR as a Selection on the bbox columns. (TestPOCSpatialS2's distance loop
+	// already proved the bbox is conservative — no false negatives.)
+	const london = "ST_Distance_Sphere(p, ST_GeomFromText('POINT(-0.13 51.5)',4326)) <= 600000"
+	var sel strings.Builder
+	for _, r := range tk.MustQuery("EXPLAIN format='brief' SELECT id FROM places FORCE INDEX (sidx) WHERE " + london).Rows() {
+		if strings.Contains(fmt.Sprintf("%v", r[0]), "Selection") {
+			sel.WriteString(fmt.Sprintf("%v|", r[4]))
+		}
+	}
+	require.Contains(t, sel.String(), "_v$_sidx", "expected the bbox columns in a cop Selection (spherical-cap bbox pruning)")
 }

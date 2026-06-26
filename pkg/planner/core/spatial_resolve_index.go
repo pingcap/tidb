@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"encoding/hex"
+	"math"
 	"strconv"
 	"strings"
 
@@ -425,6 +426,32 @@ func (q coverRequest) bboxRect() (spatial.Rect, bool) {
 	switch q.kind {
 	case coverPlanarRect, coverLatLngRect:
 		return q.rect, true
+	case coverSphereCap:
+		// Lat/long bounding box of the spherical cap (angular radius theta around
+		// centre lng=cx, lat=cy), so the ST_X/ST_Y bbox columns prune SRID-4326
+		// distance queries too. Slightly widened to stay conservative against
+		// float error (the exact ST_Distance_Sphere refine removes the surplus).
+		theta := q.r / spatial.EarthRadiusMeters // angular radius, radians
+		const margin = 1 + 1e-9
+		dLat := theta * margin * 180 / math.Pi
+		minLat, maxLat := q.cy-dLat, q.cy+dLat
+		// Cap reaches a pole: every longitude is within range.
+		if minLat <= -90 || maxLat >= 90 {
+			return spatial.Rect{MinX: -180, MinY: math.Max(minLat, -90), MaxX: 180, MaxY: math.Min(maxLat, 90)}, true
+		}
+		// Max longitude deviation of the cap at the centre latitude.
+		ratio := math.Sin(theta) / math.Cos(q.cy*math.Pi/180)
+		if ratio >= 1 {
+			return spatial.Rect{MinX: -180, MinY: minLat, MaxX: 180, MaxY: maxLat}, true
+		}
+		dLng := math.Asin(ratio) * margin * 180 / math.Pi
+		minLng, maxLng := q.cx-dLng, q.cx+dLng
+		// A single BETWEEN cannot express an antimeridian wrap; skip the bbox there
+		// (the cell covering still applies and the refine stays exact).
+		if minLng < -180 || maxLng > 180 {
+			return spatial.Rect{}, false
+		}
+		return spatial.Rect{MinX: minLng, MinY: minLat, MaxX: maxLng, MaxY: maxLat}, true
 	default:
 		return spatial.Rect{}, false
 	}
