@@ -125,28 +125,31 @@ TiDB-specific forms (tuning, composite) are emitted in `SHOW CREATE TABLE` insid
 ### Index entry layout
 
 For a table `t` (table id `T`) with a spatial index (index id `I`) on a geometry column,
-each covering cell of a row's geometry produces one entry (the value is a single encoded
-object, shown in braces):
+each covering cell of a row's geometry produces one index entry. The geometry's bounding
+box (and, for a point, its exact coordinates) are carried as **trailing index columns**
+(hidden generated columns), so they live in the index **key**, after the cell key and
+before the handle; the value is empty:
 
-    t{T}_i{I}_{cell_key}_{clustered_pk} -> { minX, minY, maxX, maxY,
-                                             [optional geometry summary],
-                                             [optional EWKB if covering index] }
+    -- general geometry (MVI):
+    t{T}_i{I}_{cell_key}_{minX}_{minY}_{maxX}_{maxY}_{handle} -> {}
+    -- point (one cell, plain index): the bbox degenerates to the coordinates
+    t{T}_i{I}_{cell_key}_{x}_{y}_{handle}                     -> {}
 
 - `cell_key` is the space-filling-curve cell id (encodes level and Hilbert/cell
-  position). The entries are therefore ordered by the curve.
-- `clustered_pk` is the row handle, appended for uniqueness (as for any non-unique
-  index).
-- The value stores the geometry's bounding box, enabling a cheap pre-lookback filter
-  (intersect the stored bbox against the query box using only the index entry, before
-  fetching the row). This recovers part of an R-tree's MBR pruning inside the flat MVI
-  without maintaining a tree. Optionally it stores a simplified geometry summary, or the
-  full EWKB to make the index covering (refine without any row fetch).
-- The common (non-partitioned) case needs nothing more. A global index on a partitioned
-  table (a later phase, see Partitioned tables) additionally carries the `partition_id`
-  (the `PARTITION BY` physical partition id, not the primary key) so the lookback finds the
-  row's partition. It reuses TiDB's existing global-index encoding verbatim, which places
-  the partition id in the key for non-unique non-clustered indexes (the global-index V2
-  work, #65289), not a bespoke value-only scheme.
+  position); entries are ordered by the curve, so it is the leading index column.
+- `minX,minY,maxX,maxY` (for a point, `x,y`) are extra index columns after the cell key,
+  generated from the geometry. Putting the bbox in the **key** (not the value) is what lets
+  TiDB's existing index-filter machinery push the bbox-intersection pre-filter to the
+  coprocessor and apply it *during the index scan, before the row lookup* (see Query path),
+  recovering R-tree-style MBR pruning with no new operator and no value decode.
+- `handle` is the row handle, appended for uniqueness (as for any non-unique index).
+- The value is empty in the common case. A *covering* index may optionally store the full
+  EWKB in the value to refine without any row fetch (a size-vs-speed choice). A global
+  index on a partitioned table (a later phase, see Partitioned tables) carries the
+  `partition_id` (the `PARTITION BY` physical partition id, not the primary key) so the
+  lookback finds the row's partition, encoded exactly as TiDB's existing global-index does
+  (partition id in the key for non-unique non-clustered indexes, the V2 work #65289), not a
+  bespoke value-only scheme.
 
 A **point** is contained in exactly one cell, so a point geometry produces exactly one
 entry (no fan-out); MVI machinery is then unnecessary and a plain secondary index entry
@@ -209,20 +212,30 @@ Index maintenance is transactional with the row, identical to any TiDB secondary
    cap on the sphere) from the predicate's constant arguments.
 2. `CoverQuery` the region into cell ranges.
 3. Range-scan those ranges over the index.
-4. Apply the bbox stored in the index value as a cheap pre-filter.
+4. Apply the bbox-intersection filter on the index's bbox columns (`minX <= q_maxX AND
+   maxX >= q_minX AND minY <= q_maxY AND maxY >= q_minY`; for a point index it degenerates
+   to `x BETWEEN q_minX AND q_maxX AND y BETWEEN q_minY AND q_maxY`). These are index
+   columns, so TiDB pushes this filter to the coprocessor and applies it during the scan,
+   before the row lookup.
 5. Deduplicate candidate handles (a polygon matched via several cells appears once per
    cell).
-6. Look the surviving rows up by handle (skipped if a covering index stores the
-   geometry).
+6. Look the surviving rows up by handle. A point index can skip the lookup for the filter
+   by reconstructing the point from its `x,y` index columns (`ST_Within(ST_Point(x, y), q)`),
+   a covering access; a covering index that stores the EWKB in the value also skips it.
 7. Apply the exact predicate (`ST_Intersects`/`ST_Contains`/exact distance) to produce
    the final result.
 
-Steps 4 and 6 are the **optimized** path: applying the in-value bbox before the lookback,
-and skipping the lookback for a covering index, both require decoding the spatial index
-value during the scan. The baseline (Phases 1-2) omits step 4 and always performs the
-lookback, so it needs no new executor operator, a plain or multi-valued index scan with
-the predicate retained in a `Selection`. The bbox pre-filter and covering-index skip are a
-later `SpatialIndexLookup` contract (see Compatibility -> Executor).
+Two pushdown layers exist. **Layer A (bbox-in-index)** is step 4: because the bbox lives in
+index columns, the existing index-filter machinery pushes it to the storage node and prunes
+false positives *before the random read*, the dominant cost, with no new operator, no value
+decode, and no protocol change (it works on unistore and TiKV alike); the PoC measured the
+bbox filter pruning 169 candidate index rows to 121 table lookups (48 false positives
+removed before the random read), with a point covering rewrite able to remove the filter
+lookups entirely. **Layer B (exact-refine pushdown)** is pushing
+step 7's exact `ST_*` predicate to the coprocessor; that needs new tipb sigs and a
+TiKV/TiFlash evaluator and is a later, optional increment (see Compatibility -> Executor and
+`research.md` -> "Exact refine location and coprocessor pushdown"). The baseline runs step 7
+at the TiDB root as a retained `Selection`, so Phases 1-2 need no new executor operator.
 
 For **prepared/parameterized** queries the query region and its cell ranges depend on the
 parameter values, so the ranges are rebuilt at execution from the parameters (as for any
@@ -251,13 +264,14 @@ cells hugging the diagonal edge. For `T` that is one size-2 cell plus six size-1
     0310 0311 0312       (size 1, lower-right edge)
     0320 0321 0322       (size 1, upper-left edge)
 
-Storage: row `id=42` writes one entry per covering cell, all sharing the handle and the
-encoded bbox object, differing only in `cell_key`:
+Storage: row `id=42` writes one entry per covering cell. The bbox `(4,4,8,8)` rides in the
+key as trailing index columns after the `cell_key` (so it pre-filters during the scan); the
+entries share the bbox and handle, differing only in `cell_key`; the value is empty:
 
-    t{T}_i{I}_030_42  -> {4,4,8,8}
-    t{T}_i{I}_0310_42 -> {4,4,8,8}
+    t{T}_i{I}_030_4_4_8_8_42  -> {}
+    t{T}_i{I}_0310_4_4_8_8_42 -> {}
     ...
-    t{T}_i{I}_0322_42 -> {4,4,8,8}
+    t{T}_i{I}_0322_4_4_8_8_42 -> {}
 
 These multiple keys are the MVI fan-out: an MVI is one row writing multiple index keys
 (as for JSON-array columns), not multiple values under one key. A point would write a
@@ -266,8 +280,8 @@ single entry and need no MVI.
 Search covers the query region into cells, then for each query cell finds stored cells
 that are it, an ancestor, or a descendant: a finer query matches a coarser stored cell
 via ancestor prefixes (a few point lookups); a coarser query matches finer stored cells
-via a descendant range scan; the stored bbox cheaply rejects non-overlaps before the row
-fetch; and the exact predicate removes the over-cover of partial cells (a point in `0311`
+via a descendant range scan; the bbox index columns cheaply reject non-overlaps (pushed
+down, before the row fetch); and the exact predicate removes the over-cover of partial cells (a point in `0311`
 just past the hypotenuse passes the bbox but fails `ST_Contains`).
 
 ### Partitioned tables: global vs local
@@ -277,8 +291,8 @@ spatial-specific. What is spatial-specific is that a pure spatial predicate cons
 the geometry, never the (non-spatial) partition key, so it cannot drive partition
 pruning. Therefore a **local** (per-partition) spatial index fans out to all partitions
 by default, while a **global** spatial index (one Hilbert-ordered namespace across all
-partitions, `partition_id` in the value) keeps fanout proportional to the query's
-spatial extent. The exception is a workload whose queries always co-constrain the
+partitions, `partition_id` in the key per the existing global-index V2 encoding) keeps
+fanout proportional to the query's spatial extent. The exception is a workload whose queries always co-constrain the
 partition key (e.g. multi-tenant partitioned by `tenant_id`, queried `WHERE tenant_id =
 N`), where a local index prunes and is preferable. Range-partitioning a table on the
 Hilbert value to gain pruning is redundant with TiKV's automatic Region range-
@@ -300,9 +314,10 @@ machinery (`docs/design/2020-08-04-global-index.md`).
    queried through **IndexMerge** (`json_overlaps` against the query cells) with handle
    dedup and the exact refine. This rides the existing JSON-array MVI + IndexMerge path
    rather than generalizing `getIndexedValue` or relying on a direct multi-valued
-   `IndexReader` (whose duplicate-handle assumptions the planner avoids). The optional
-   bbox-in-value pre-filter and covering-index lookup-skip layer on top via the
-   `SpatialIndexLookup` contract.
+   `IndexReader` (whose duplicate-handle assumptions the planner avoids). The bbox columns
+   (`minx,miny,maxx,maxy`) are appended to the index key so the bbox pre-filter pushes to
+   the coprocessor via the existing index-filter machinery (no new operator), as for the
+   point index.
 3. **Phase 3, partitioned tables**: global spatial index, reusing TiDB's existing
    global-index encoding (partition id in the key for non-unique non-clustered indexes,
    per the V2 work #65289), not a spatial-specific scheme.
@@ -341,12 +356,14 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
   range-count cap. A diagnostic surface, a function or `EXPLAIN` detail that shows the
   cells/ranges a query generates (as CockroachDB exposes), makes the covering tunable and
   debuggable.
-- **Executor**: the baseline refine reuses the exact predicate as a retained `Selection`
-  over a plain or multi-valued index scan, so Phases 1-2 need **no new operator** (the PoC
-  confirmed this; it stores no bbox in the value). The in-value bbox pre-filter and
-  covering-index lookup-skip require a **`SpatialIndexLookup`** contract (decode the spatial
-  index value, apply the bbox, dedup handles, conditionally skip the row lookup), a later
-  phase, deliberately off the MVP path.
+- **Executor**: no new operator. The exact refine is a retained `Selection` over a plain or
+  multi-valued index scan; the **bbox pre-filter is on index columns**, so it pushes to the
+  coprocessor through the existing index-filter machinery and runs before the row lookup
+  (Layer A). A point index can also reconstruct the point from its `x,y` index columns to
+  refine without a lookup (a covering access). The only part needing new machinery is pushing
+  the **exact** `ST_*` predicate to the coprocessor (Layer B: tipb sigs + a TiKV/TiFlash
+  evaluator), a later, optional increment; Layer A already delivers most of the win with no
+  protocol or TiKV change.
 - **TiKV**: no storage-engine change; entries are ordinary ordered keys. Coprocessor
   pushdown of refine is a later, optional enhancement.
 - **TiFlash/BR/TiCDC/Dumpling**: the index is regular index data; tools that handle
@@ -416,8 +433,8 @@ Risks:
   is one reason it is rejected.
 - **Prerequisite coupling**: the index depends on the geometry type and `ST_*` functions
   landing; mitigated by coding against a thin accessor so churn stays localized.
-- **Refine library gaps**: exact `ST_Intersects`/`ST_Contains` may need code beyond
-  `go-geom`; to be verified.
+- **Refine library gaps**: exact `ST_*` predicates use `simplefeatures` (pure-Go OGC/DE-9IM,
+  validated byte-identical to MySQL in the PoC); a coprocessor port (Layer B) must match it.
 - **Global index costs** (Phase 3): cross-partition writes and partition-DDL cleanup are
   the usual global-index costs, inherited because global is the spatial default.
 - **SRID 0 domain**: data outside the configured bounds is clamped to the boundary cell
@@ -458,14 +475,17 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
   the future. The cell-covering/MVI encoding represents a NULL geometry as zero index
   entries (NULL rows unindexed, and they never satisfy a spatial predicate, so no false
   negatives), so lifting the restriction is feasible; deferred.
-- Index value contents: bbox only, bbox plus simplified geometry, or full EWKB
-  (covering); fixed per index or a `WITH` option; the index-size/write-amplification
-  budget.
-- Where the bbox pre-filter runs: TiDB after the scan, or pushed to the TiKV
-  coprocessor.
-- `SpatialIndexLookup` operator: the detailed contract for the optimized path (in-value
-  bbox pre-filter, handle dedup, covering-index lookup-skip); the baseline needs no new
-  operator, so this is a later phase.
+- Index value contents: the bbox/coords now ride in the **key** (index columns), so the
+  value is empty by default. A *covering* index may still store the full EWKB in the value
+  to refine without a row fetch, an optional size-vs-speed choice; the
+  index-size/write-amplification budget for it.
+- Where the bbox pre-filter runs: **resolved**, the bbox is in index columns, so the
+  existing index-filter machinery pushes it to the coprocessor and runs it before the row
+  lookup (Layer A), no new operator or protocol change.
+- Exact-predicate pushdown (Layer B): the tipb `ScalarFuncSig` set for the `ST_*` relate
+  predicates and a matching TiKV (Rust) / TiFlash (C++) evaluator, with a cross-engine
+  conformance suite (see `research.md` -> "Exact refine location and coprocessor
+  pushdown"); a later, optional increment.
 - Prepared statements / plan cache: rebuild covering ranges at execution from the
   parameters (preferred, like parameterized index ranges) vs marking spatial plans
   non-cacheable.
@@ -478,9 +498,9 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
 - `partition_id` encoding (future, Phase 3): reuse the existing global-index encoding
   verbatim (partition id in the key for non-unique non-clustered indexes, per the V2 work
   #65289).
-- Phase 1 mechanism wrinkle: the hidden-generated-column expression index normally has an
-  empty value, so carrying the bbox/coordinates needs a small index-value-generation
-  extension.
+- Phase 1 carries the point's `x,y` as additional hidden generated index **columns** (a
+  normal composite index over `(cell_key, x, y)`), so the bbox/coords are in the key and the
+  value stays empty; no index-value-generation extension is needed.
 - Cell-depth and max-cells defaults; SRID 0 default bounds and out-of-domain behavior.
 - S2 library adoption (`github.com/golang/geo`) vs a minimal in-house spherical coverer.
 - Whether a clustered spatial table is ever a target use case (would revive the ER-tree

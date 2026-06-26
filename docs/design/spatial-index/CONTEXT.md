@@ -77,12 +77,15 @@ this directory are the supporting working material it references.
   `tidb_spatial_key(position)`, reusing expression-index DDL and the non-MVI
   `PlainIndexKVGenerator` write path. Restrict to POINT, NOT NULL, SRID-constrained
   columns. Refine via retained exact predicate (no new executor code).
-- Sunny Bains review (2026-06-25): store the geometry bbox in the index value for a
-  cheap pre-lookback filter (optionally full EWKB for a covering index); make spatial
-  indexes on partitioned tables global (Hilbert across all partitions, `partition_id`
-  in the value, where `partition_id` is the `PARTITION BY` physical partition id, not
-  the PK). MVP stays non-partitioned; global index is a follow-on. See research.md ->
-  "Index value contents and table partitioning" and its open-questions list.
+- Sunny Bains review (2026-06-25): carry the geometry bbox with each index entry for a
+  cheap pre-lookback filter (optionally full EWKB in the value for a covering index); make
+  spatial indexes on partitioned tables global (Hilbert across all partitions, with
+  `partition_id`, the `PARTITION BY` physical partition id, not the PK). The PoC implemented
+  the bbox as index **key** columns (`tidb_spatial_key(p), ST_X(p), ST_Y(p)`), so the
+  pre-filter is a pushed-down index filter and the value stays empty; in-value is reserved
+  for the future full-EWKB covering index. The global index reuses the existing global-index
+  encoding (partition id in the key, V2 #65289). MVP stays non-partitioned; global is a
+  follow-on. See research.md -> "Index value contents and table partitioning".
 - SQL syntax (2026-06-25): MySQL-compatible `SPATIAL INDEX`/`SPATIAL KEY` on a `NOT NULL`,
   SRID-restricted (0/4326) geometry column (a MySQL 8.0+ `SHOW CREATE TABLE` imports
   cleanly; TiDB already parses `SPATIAL INDEX`, execution is the gap). Cell tuning is

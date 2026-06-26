@@ -596,21 +596,28 @@ secondary-index architecture (same key layout, Hilbert default, cover -> scan ->
 distributed mutable R-tree) and contributed two refinements recorded here. Neither
 changes the core design; both sharpen it.
 
-### Storing the bounding box in the index value
+### Storing the bounding box in the index (key columns)
 
-Rather than an empty index value, store the geometry's bounding box
-(`minX, minY, maxX, maxY`) in the value. This enables a cheap pre-lookback filter:
-intersect the stored bbox against the query box using only the index entry, and discard
-candidates that the coarse covering cell admitted but whose actual extent does not
-intersect, before fetching the row. This recovers part of the R-tree/SER-tree
-MBR-pruning benefit inside the flat MVI, with no tree to maintain (a per-entry MBR
-instead of a tree of MBRs). Two extensions: store an optional simplified geometry
-summary for a cheaper-but-tighter pre-filter, or store the full EWKB (a covering index)
-so the exact `ST_Intersects` refine needs no row fetch at all. For points the bbox is
-degenerate (the point itself), so the value can simply carry the exact coordinates,
-which already lets distance refine skip the lookback. Cost: larger index entries, and
-the value must be rewritten when the geometry changes; for polygons the same bbox is
-repeated across the geometry's covering-cell entries.
+Carry the geometry's bounding box (`minX, minY, maxX, maxY`) with each index entry.
+Sunny's review proposed the **value**; the PoC then moved it into the **key**, as trailing
+index columns after the cell key (for a point, the exact `x, y`). The key placement is
+strictly better: because they are index columns, TiDB's existing index-filter machinery
+pushes the bbox-intersection pre-filter
+(`minX <= q_maxX AND maxX >= q_minX AND minY <= q_maxY AND maxY >= q_minY`) to the
+coprocessor and applies it *during the index scan, before the row lookup*, with no new
+operator, no value decode, and no protocol change (this is "Layer A" pushdown; see
+"Exact refine location and coprocessor pushdown"). It discards candidates the coarse
+covering cell admitted but whose MBR cannot intersect the query, recovering the
+R-tree/SER-tree MBR-pruning benefit inside the flat MVI with no tree to maintain. For a
+point index the `x, y` columns also let the exact refine run on index data alone
+(`ST_Within(ST_Point(x, y), q)`), a covering access that skips the lookback entirely. An
+optional further step stores the full EWKB in the **value** (a covering index) so even
+general-geometry refine needs no row fetch. Cost: larger index entries (the same bbox
+repeats across a polygon's covering-cell entries) and a rewrite when the geometry changes.
+The bbox columns trail the cell key, so they cannot narrow the cell-key range scan (range
+building stops at the first non-equality column); they act purely as index filters, which
+is sufficient for MBR pruning. Per-entry size is small (a point's two float64s ~16 bytes; a
+general geometry's 4-float MBR ~32 bytes).
 
 ### Global vs local spatial index for partitioned tables
 
@@ -629,9 +636,10 @@ The local-vs-global choice itself is **not spatial-specific**: it is the same me
 and tradeoff as for any TiDB secondary index on a partitioned table. A local index
 stores entries per partition (a query that does not constrain the partition key must
 scan every partition's local index); a global index is one namespace across all
-partitions with `partition_id` in the value, scanned once, at the cost of cross-partition
-lookback and the usual global-index maintenance (for example `DROP`/`TRUNCATE PARTITION`
-must clean up global entries).
+partitions carrying the `partition_id` (in the existing global-index encoding, in the key
+for non-unique non-clustered indexes, the V2 work #65289), scanned once, at the cost of
+cross-partition lookback and the usual global-index maintenance (for example
+`DROP`/`TRUNCATE PARTITION` must clean up global entries).
 
 What *is* spatial-specific is predicate alignment. Partition pruning only helps when the
 query constrains the partition key, and a pure spatial predicate constrains the geometry,
@@ -649,8 +657,9 @@ are always co-scoped by the partition key (e.g. a multi-tenant table partitioned
 local spatial index within the pruned partition is fine, even preferable (no global-index
 overhead). The determinant is the same as for any index: does the query carry the
 partition key? Pure-spatial queries favor a **global** index (one Hilbert-ordered
-namespace, `partition_id` in the value so the lookback can address `t{partition_id}_r{pk}`,
-fanout proportional to the query's spatial extent rather than the partition count);
+namespace, `partition_id` carried per the existing global-index encoding so the lookback can
+address `t{partition_id}_r{pk}`, fanout proportional to the query's spatial extent rather
+than the partition count);
 partition-key-co-constrained queries let a local index prune. Global is therefore the
 stronger *default* for spatial, because pure spatial predicates do not carry the partition
 key, not because the local/global machinery differs. The rows stay distributed by the
@@ -705,11 +714,12 @@ yet decided.
    partition id, or a spatial-specific layout? (Reuse preferred.)
 5. **MVP scope**: start non-partitioned only, or include global-index support from the
    start? (Recommendation: non-partitioned first, global as a tracked follow-on.)
-6. **MVP mechanism wrinkle**: the points MVP models the index as an expression index on a
-   hidden generated column, whose value is normally empty/handle. Carrying a bbox (or
-   EWKB) in the value is not standard for a plain secondary index, so it needs either a
-   small extension to index-value generation or modeling the bbox as additional stored
-   index data. Clarify how the value is produced and encoded.
+6. **MVP mechanism wrinkle (RESOLVED)**: the points MVP models the index as an expression
+   index on hidden generated columns. The bbox/coordinates are carried as additional
+   **index key columns** (`tidb_spatial_key(p), ST_X(p), ST_Y(p)`), part of the standard
+   key encoding, so no index-value-generation extension was needed and the value stays
+   empty. This remains open only for the optional **full-EWKB covering index**, which does
+   need the value (the key cannot hold full EWKB sensibly).
 7. **Dedup vs bbox**: when a polygon fans out to several cells each carrying the same
    bbox, confirm dedup-by-PK happens first and the bbox filter is applied per surviving
    candidate.
@@ -789,8 +799,8 @@ their index keys differ only by the appended handle (`..._<cell>_<handleA>` vs
 set by the max level (S2 level 30 is about 1 cm on Earth; a planar-quadtree leaf is
 domain-width / 2^maxLevel), so a finer level reduces collisions but never eliminates
 them (a leaf always spans a range, and floats are finite anyway). The `cell_key` is
-therefore a spatial bucket, not a location: exact coordinates live in the row (and,
-with the covering option, the bbox in the index value) and drive the exact refine, so
+therefore a spatial bucket, not a location: exact coordinates live in the row (and in the
+index key's bbox/`x,y` columns) and drive the exact refine, so
 cell_key precision affects only candidate selectivity, not correctness. A dense cluster
 of points collapses onto one `cell_key` (many handles under it), which is a fan-out
 consideration for hotspots.
@@ -1178,9 +1188,16 @@ These are PoC measurements, not production numbers.
   (`COMMENT 'spatial:level,minX,minY,maxX,maxY'`) rather than new grammar; it round-trips
   through SHOW CREATE and uses MySQL's existing index-option idiom. This is a viable
   alternative to the deferred bare `NAME=value` options (see "Non-default cell tuning").
-- **Index value contents**: the PoC does not store a per-row bbox in the index value; cell
-  overlap plus the exact refine sufficed for correctness. So bbox-in-value (Sunny's review)
-  is confirmed as an optional selectivity optimization, not a requirement.
+- **Bbox placement (key, not value)**: the PoC first stored no bbox (cell overlap + exact
+  refine only), then added the bbox, and a point's exact `x,y`, as **trailing index key
+  columns**, not in the value. Because they are index columns, the bbox-intersection
+  pre-filter is **free coprocessor pushdown** ("Layer A"): it runs during the index scan
+  before the row lookup, removing the wasted random reads: the PoC measured the bbox filter
+  pruning 169 candidate index rows to 121 table lookups (48 false positives removed before
+  the random read). A point index can refine on the `x,y` columns
+  alone (covering access). bbox-in-value is superseded by bbox-in-key; full-EWKB-in-value
+  remains an optional covering-index extension. (Updates the "Index value contents" review
+  section above.)
 - **Self-review caught real bugs** before the PoC settled: unbounded general-geometry
   covering at insert (capped at 8192 cells) and mixed-SRID silent wrong results in
   `ST_Distance_Sphere` (now SRID-validated). A third, a GEOS panic on invalid geometry,
@@ -1216,10 +1233,13 @@ that branch.
   implementing a spherical coverer in-house.
   (`halfrost/S2` is a separate experimental port, not the one to use.)
 - **Exact refine location and coprocessor pushdown (TiKV / TiFlash)**: TiDB-side first;
-  push down later for efficiency. The filter-and-refine split means most of the win needs
-  **no geometry library in the coprocessor**: the cell-range scan (TiDB's coverer emits the
-  key ranges, storage just scans them) and the numeric bbox pre-filter are library-free and
-  trivially consistent across engines. Only the **exact predicate** refine needs a geometry
+  push down later for efficiency. Two layers. **Layer A (bbox-in-index)**: the cell-range
+  scan (TiDB's coverer emits the key ranges, storage just scans them) and the bbox
+  pre-filter need **no geometry library** and are trivially consistent across engines; since
+  the PoC carries the bbox as **index key columns**, the bbox-intersection filter is plain
+  numeric comparisons on index columns that TiDB already pushes to the coprocessor and
+  applies before the row lookup, the dominant win, with no protocol or TiKV change.
+  **Layer B (exact-predicate pushdown)**: only the exact `ST_*` predicate needs a geometry
   library coprocessor-side, and it is the only part with a cross-engine parity risk.
   Matching libraries exist per engine:
   - **TiKV (Rust)**: `georust/geo` (pure Rust, full DE-9IM `Relate` + Contains/Intersects/
@@ -1235,10 +1255,11 @@ that branch.
   (C++) must agree, especially on boundary/precision/invalid edge cases. Since MySQL itself
   uses Boost.Geometry, anchor cross-engine semantics on Boost.Geometry (TiDB's
   `simplefeatures` is already byte-identical to MySQL in the PoC; `georust/geo` is the one to
-  validate hardest). Plan: (1) push down the library-free scan + bbox filter first (big I/O
-  win, zero parity risk); (2) keep exact refine in TiDB initially (single source of truth);
-  (3) when pushing exact refine down, add a cross-engine conformance suite (same geometries
-  -> identical predicate results across TiDB/TiKV/TiFlash and MySQL). Licenses: the
+  validate hardest). Plan: (1) Layer A, the scan + bbox-column filter, already pushes down
+  for free (big I/O win, zero parity risk); (2) keep the exact refine in TiDB initially
+  (single source of truth); (3) Layer B, when pushing the exact predicate down, add a
+  cross-engine conformance suite (same geometries -> identical predicate results across
+  TiDB/TiKV/TiFlash and MySQL). Licenses: the
   permissive stack is `simplefeatures`/`georust/geo`/Boost.Geometry +
   `golang/geo`/`rust-s2`/s2geometry; avoid GEOS (LGPL).
 - **`go-geom` predicate gaps**: exact `ST_Intersects`/`ST_Contains` may need code
