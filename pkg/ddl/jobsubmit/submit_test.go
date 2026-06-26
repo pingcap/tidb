@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -159,6 +160,65 @@ func TestSubmitBatchEnqueuesTableModeJob(t *testing.T) {
 	env.tk.MustQuery(
 		fmt.Sprintf("select schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = %d", spec.Job.ID),
 	).Check(testkit.Rows(fmt.Sprintf("100 200 %d 0", model.ActionAlterTableMode)))
+
+	t.Run("normalizes scheduler names", func(t *testing.T) {
+		env := newSubmitTestEnv(t)
+		spec := newTableModeSpec(t)
+		spec.Job.SchemaName = "TestDB"
+		spec.Job.TableName = "T1"
+		spec.Job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{
+			{Database: "TestDB", Table: "T1"},
+			{Database: "AnotherDB", Table: model.InvolvingAll},
+			{Database: model.InvolvingAll, Table: model.InvolvingAll},
+		}
+
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+		require.NoError(t, err)
+		require.Equal(t, "testdb", spec.Job.SchemaName)
+		require.Equal(t, "t1", spec.Job.TableName)
+		require.Equal(t, []model.InvolvingSchemaInfo{
+			{Database: "testdb", Table: "t1"},
+			{Database: "anotherdb", Table: model.InvolvingAll},
+			{Database: model.InvolvingAll, Table: model.InvolvingAll},
+		}, spec.Job.InvolvingSchemaInfo)
+
+		jobW, err := env.opts.SysTblMgr.GetJobByID(ctx, spec.Job.ID)
+		require.NoError(t, err)
+		require.Equal(t, spec.Job.InvolvingSchemaInfo, jobW.InvolvingSchemaInfo)
+	})
+
+	t.Run("initializes missing trace info", func(t *testing.T) {
+		env := newSubmitTestEnv(t)
+		spec := newTableModeSpec(t)
+		require.Nil(t, spec.Job.TraceInfo)
+
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+		require.NoError(t, err)
+		require.Equal(t, &tracing.TraceInfo{}, spec.Job.TraceInfo)
+
+		jobW, err := env.opts.SysTblMgr.GetJobByID(ctx, spec.Job.ID)
+		require.NoError(t, err)
+		require.Equal(t, &tracing.TraceInfo{}, jobW.TraceInfo)
+	})
+
+	t.Run("preserves existing trace info", func(t *testing.T) {
+		env := newSubmitTestEnv(t)
+		spec := newTableModeSpec(t)
+		traceInfo := &tracing.TraceInfo{
+			SessionAlias: "submit-trace",
+			TraceID:      []byte("trace-id"),
+			ConnectionID: 123,
+		}
+		spec.Job.TraceInfo = traceInfo
+
+		err := jobsubmit.SubmitBatch(ctx, env.opts, []*jobsubmit.JobSpec{spec})
+		require.NoError(t, err)
+		require.Same(t, traceInfo, spec.Job.TraceInfo)
+
+		jobW, err := env.opts.SysTblMgr.GetJobByID(ctx, spec.Job.ID)
+		require.NoError(t, err)
+		require.Equal(t, traceInfo, jobW.TraceInfo)
+	})
 }
 
 func TestSubmitBatchAllocatesIDsAndInsertsJob(t *testing.T) {

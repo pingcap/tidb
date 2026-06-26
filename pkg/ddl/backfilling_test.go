@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -62,6 +63,12 @@ func TestDoneTaskKeeper(t *testing.T) {
 
 	n.updateNextKey(6, kv.Key("h"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
+}
+
+func TestIndexInfoNotFoundIsNonRetryable(t *testing.T) {
+	err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+	require.True(t, isIndexInfoNotFoundErr(err))
+	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 }
 
 func TestPickBackfillType(t *testing.T) {
