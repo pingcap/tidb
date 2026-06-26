@@ -102,6 +102,21 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   vs the channelz goroutine (logutil.InitLogger / metrics) appear under the race
   detector on master too.
 
+## Self-review outcome (Item 6)
+
+Two independent review passes on the spatial diff.
+- Pass 1 found 1 HIGH (unbounded general-geometry MVI covering -> INSERT-time
+  blowup + uint32 capacity overflow), 2 MEDIUM (GEOS panic on invalid geometry;
+  ST_Distance_Sphere missing SRID validation -> silent mixed-SRID wrong result),
+  4 LOW. It confirmed the core planar/S2 covering math, mergeRanges/addOne, and
+  mysqlWKT are correct (no false negatives).
+- Fixed in commit 662ea363be: the HIGH (cell cap + uint64), both MEDIUMs (geos
+  recover; sphere SRID check + planner SRID-scheme gate), and the empty-range
+  guard. Added regression tests.
+- Pass 2 verified the fixes are correct and complete with no new high-severity
+  bugs; remaining notes are non-correctness (per-row coverer alloc; ST_Distance_
+  Sphere intentionally SRID-4326-only in the POC).
+
 ## Progress log
 
 (Newest first. Each item: status, commits, surprises, what was verified.)
