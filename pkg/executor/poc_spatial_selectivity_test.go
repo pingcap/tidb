@@ -189,3 +189,65 @@ func BenchmarkSpatialIndexLookups(b *testing.B) {
 		tk.MustQuery(query)
 	}
 }
+
+// indexRangeScanEstAct returns the estRows and actRows of the IndexRangeScan in
+// EXPLAIN ANALYZE of query.
+func indexRangeScanEstAct(tb testing.TB, tk *testkit.TestKit, query string) (est float64, act int, ok bool) {
+	re := regexp.MustCompile(`^\s*(\d+)`)
+	for _, r := range tk.MustQuery("EXPLAIN ANALYZE " + query).Rows() {
+		if !strings.Contains(fmt.Sprintf("%v", r[0]), "IndexRangeScan") {
+			continue
+		}
+		e, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", r[1])), 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		m := re.FindStringSubmatch(fmt.Sprintf("%v", r[2]))
+		if m == nil {
+			return 0, 0, false
+		}
+		a, _ := strconv.Atoi(m[1])
+		return e, a, true
+	}
+	return 0, 0, false
+}
+
+// TestPOCSpatialIndexAnalyzeStats guards the ANALYZE fix: a point spatial index is
+// an expression index over virtual columns generated from a geometry column, which
+// the row sampler cannot decode (the codec has no TypeGeometry case). Recomputing
+// the index columns from the sampled rows therefore yielded NULL and a 0-bucket
+// histogram, pinning the cell-range estimate at the estRows=1 floor. The fix routes
+// such indexes to an independent index-scan analyze (like a multi-valued index),
+// building a real histogram from the materialized cell-key/x/y entries.
+func TestPOCSpatialIndexAnalyzeStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE locs (id int primary key, p POINT NOT NULL SRID 0)")
+	id := 0
+	for i := 0; i < 100; i++ {
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO locs VALUES ")
+		for j := 0; j < 100; j++ {
+			if j > 0 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, ST_GeomFromText('POINT(%d %d)',0))", id, i, j)
+			id++
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p) COMMENT 'spatial:12,0,0,100,100'")
+	tk.MustExec("ANALYZE TABLE locs")
+
+	buckets := len(tk.MustQuery("SHOW STATS_BUCKETS WHERE table_name='locs' AND column_name='sidx'").Rows())
+	require.Positive(t, buckets, "ANALYZE must build a real histogram for the spatial index (was 0 before the fix)")
+
+	const q = "SELECT id FROM locs FORCE INDEX (sidx) WHERE " +
+		"ST_Distance(p, ST_GeomFromText('POINT(50 50)',0)) <= 5"
+	est, act, ok := indexRangeScanEstAct(t, tk, q)
+	require.True(t, ok, "expected an IndexRangeScan")
+	require.Greater(t, est, 20.0, "estRows must be off the estRows=1 floor (was 1.00 before the fix)")
+	require.Less(t, est, float64(act)*2, "estRows should be in the right ballpark, not a wild overestimate")
+	t.Logf("spatial index analyze: %d buckets, estRows=%.1f actRows=%d", buckets, est, act)
+}

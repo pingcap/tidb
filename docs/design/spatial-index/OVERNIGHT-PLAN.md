@@ -70,12 +70,24 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   compatibility/ergonomics item (so e.g. `ST_Within(g, POLYGON((...)))` works
   instead of only `ST_Within(g, ST_GeomFromText('POLYGON((...))'))`). Today they
   parse but resolve to "function does not exist".
-- **Spatial cost/statistics + ANALYZE (now a top priority).** Without spatial
-  stats the optimizer can't reliably pick the spatial index over a full scan, so
-  POC tests `FORCE INDEX`. Layer A (below) made this sharper: the extra bbox
-  conditions tip the statistics-free cost estimate toward a full scan, so a query
-  that previously auto-selected the index now needs `FORCE INDEX`. Needed for the
-  index to be usable without hints and to credit the bbox selectivity.
+- **Spatial cost/statistics + ANALYZE (top priority; ANALYZE fix landed).**
+  Root cause found: `ANALYZE` produced a 0-bucket histogram for the point spatial
+  index, pinning the cell-range estimate at the `estRows=1` floor. The point index
+  is an expression index over virtual columns generated from the geometry column;
+  v2 ANALYZE samples table rows and *recomputes* those columns, but the row sampler
+  can't decode geometry (the `pkg/util/codec` hash/encode switches have no
+  `TypeGeometry` case → sampled as NULL → every derived column NULL). A
+  multi-valued index escapes this by being analyzed via an independent index-scan
+  (it reads the materialized entries). **Fix:** route geometry-derived expression
+  indexes to that same independent index-scan analyze (`getModifiedIndexesInfoForAnalyze`
+  + `isGeometryDerivedIndex` in `planbuilder.go`). Result: the index now gets a real
+  histogram (156 buckets) and `estRows` moves `1.00 → 159.9` vs actual 169
+  (`TestPOCSpatialIndexAnalyzeStats`). REMAINING: independent `x`/`y` histograms so
+  the bbox selectivity (`sel(x)·sel(y)`) is available — needs a benchmark across
+  data distributions to confirm it improves accuracy (uniform vs clustered/skewed),
+  and to keep the scan-cost estimate (entries scanned) distinct from the
+  output-cardinality estimate (entries matched) — the former drives single-table
+  cost, the latter drives join planning.
 - **Performance: bounding-box-in-index → coprocessor pushdown.** See
   `bbox-pushdown-design.md`. Layer A (bbox-in-index) is **implemented for the
   POINT index**: ST_X/ST_Y are carried as hidden index columns and the resolver
@@ -174,6 +186,16 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   non-geometry argument returns a generic "invalid geometry value" error rather
   than MySQL's `ER_CANNOT_CONVERT_STRING`. The internal mysql-test expectations
   are aligned to this POC behavior on a separate tidb-test branch.
+- **BUG — `ST_GeomFromText` nulls out on the set-based insert path.** A
+  `INSERT ... SELECT ST_GeomFromText(CONCAT('POINT(',a.n,' ',b.n,')'),0) FROM ...`
+  inserts NULL geometries (fails a `NOT NULL` column with "Column 'p' cannot be
+  null"), even though the *identical* expression in a plain `SELECT` returns the
+  correct points and the row-by-row multi-row `VALUES` form works. Symptom of a
+  missing/incorrect **vectorized eval** for `ST_GeomFromText` (the batched
+  insert path takes the vectorized branch). Found while building the spatial
+  stats repro (`docs/design/spatial-index/repro-stats-gap.sql` uses the working
+  multi-row `VALUES` form as a workaround). Fix: implement/verify `vecEvalString`
+  for `builtinStGeomFromTextSig` (and audit the other ST_ constructors).
 
 ## Deferred / backlog (not this run unless time remains)
 
