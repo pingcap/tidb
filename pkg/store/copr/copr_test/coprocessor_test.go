@@ -258,6 +258,22 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 4)
 
+	// byte-budget paging will force-enable paging and disable store batch.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeDAG,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	req.Paging.RCNonBurstable = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 4)
+
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
 	req = &kv.Request{
