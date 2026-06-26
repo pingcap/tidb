@@ -95,13 +95,13 @@ func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 	case mysql.TypeTimestamp:
 		minTime = types.MinTimestamp
 		if valueTime.Compare(types.MinTimestamp) < 0 {
-			// Relaxed SQL modes can leave zero TIMESTAMP values in stats. The
-			// old scalar path subtracted MinTimestamp (1970-01-01 00:00:01) from
-			// a zero TIMESTAMP; GoTime normalizes the zero value to -0001-11-30,
-			// and the subtraction saturates to math.MinInt64 ns. That creates an
-			// artificial huge distance from normal TIMESTAMP values and skews
-			// fraction/out-of-range estimates, so keep before-min values finite
-			// and just before the legal TIMESTAMP range.
+			// Relaxed SQL modes can leave zero TIMESTAMP values in stats. If we
+			// subtract MinTimestamp (1970-01-01 00:00:01) from such a value
+			// directly, GoTime normalizes zero TIMESTAMP to -0001-11-30 and the
+			// subtraction saturates to math.MinInt64 ns. That artificial huge
+			// distance from normal TIMESTAMP values would skew fraction and
+			// out-of-range estimates, so keep before-min values finite and just
+			// before the legal TIMESTAMP range.
 			return -1
 		}
 		if valueTime.Compare(types.MaxTimestamp) > 0 {
