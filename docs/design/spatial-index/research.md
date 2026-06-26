@@ -110,11 +110,18 @@ Key facts inherited from that prior art, which constrain the index design:
   go-geom (decode) + our planar coverer (no S2); SRID 4326 needs go-geom (decode) + S2
   (cover + spherical refine).
 
+  **Update (PoC):** the proof-of-concept consolidated onto `peterstace/simplefeatures` for
+  *both* storage (WKT/WKB/EWKB) and exact predicates, dropping go-geom and GEOS, a single
+  pure-Go library, no cgo, MySQL byte-parity preserved (use `geom.NoValidate` on the read
+  path for speed). So the current direction is `simplefeatures` (+ `golang/geo` for S2)
+  rather than go-geom + a separate predicate library. See "Proof-of-concept validation".
+
 **The contract the index needs from the scaffolding** (and nothing more):
 
 1. A stored geometry value the index can read (EWKB bytes + SRID).
 2. The ability to compute a geometry's 2D minimum bounding rectangle (MBR) and to
-   enumerate its constituent shape for covering. `go-geom` provides bounds.
+   enumerate its constituent shape for covering. The geometry library provides bounds
+   (`simplefeatures` in the PoC; see "Proof-of-concept validation").
 3. At least the predicates the index optimizes, available as expressions the
    planner can recognize: an intersects/contains style relation and a
    distance-bound predicate. Exact evaluation can live in TiDB initially.
@@ -1126,8 +1133,9 @@ not map to this design and are not followed.
 
 ## Proof-of-concept validation (`spatial-index-poc`, 2026-06)
 
-An autonomous proof-of-concept (branch `spatial-index-poc`, ~20 commits, Phases A-E plus
-extensions) implemented the design end to end and confirmed the core choices. It
+An autonomous proof-of-concept (branch `spatial-index-poc`, ~27 commits: Phases A-E,
+overnight extensions, then a consolidation onto a single pure-Go geometry library)
+implemented the design end to end and confirmed the core choices. It
 independently arrived at the same architecture: cell-covering over the MVI, `CellKey
 []byte` (`type CellKey []byte` in `pkg/util/spatial/coverer.go`, not `int64`), planar
 quadtree for SRID 0 + S2 for SRID 4326, the hidden-generated-column `tidb_spatial_key(col)`
@@ -1142,15 +1150,27 @@ These are PoC measurements, not production numbers.
   Deeper levels tighten the candidate set but emit more cell ranges; level 16 balanced
   precision against range count. Coverer microbenchmarks: ~50 ns/op to cover a query
   rectangle, ~40 ns/op to encode a point, negligible per-row overhead.
-- **Exact predicates -> GEOS**: hand-rolled ray-casting gave wrong OGC boundary semantics
-  (e.g. polygon-corner containment), so the PoC adopted **GEOS** via
-  `github.com/twpayne/go-geos` (cgo) for the relate predicates (Within/Contains/Intersects/
-  Touches/Crosses/Overlaps/Equals/Disjoint), matching MySQL's OGC DE-9IM. Pure-Go
-  `simplefeatures` was not tried for parity; GEOS is the validated choice, at the cost of a
-  cgo/libgeos build dependency. (Updates the "Geometry library" recommendation above.)
-- **MySQL compatibility**: two output divergences found and fixed, WKT spacing
-  (`POINT(0 0)`, no space) and boundary containment; the `spatial_compat` integration test
-  is then byte-identical to MySQL 8.0.46.
+- **Geometry library -> a single pure-Go `simplefeatures`**: this superseded an earlier
+  GEOS step. Hand-rolled ray-casting was OGC-incorrect (polygon-corner containment), so the
+  PoC first adopted GEOS (`github.com/twpayne/go-geos`, cgo), then **replaced both GEOS and
+  `go-geom` with `github.com/peterstace/simplefeatures`** (v0.59.0, pure Go, the same
+  OpenGIS Simple Feature Access spec GEOS/JTS/PostGIS implement). One library now backs
+  WKT/WKB(+EWKB) parse/encode, bounds, point coordinates, and the relate predicates
+  (Within/Contains/Intersects/Touches/Crosses/Overlaps/Equals/Disjoint). This removes the
+  cgo/libgeos dependency entirely (`CGO_ENABLED=0`). So the validated library answer is **a
+  single pure-Go library, `simplefeatures` (+ `golang/geo` for S2)**, not go-geom + GEOS.
+  (Supersedes the "Geometry library" note above.)
+- **MySQL compatibility**: the two divergences first found, WKT spacing (`POINT(0 0)`) and
+  on-boundary containment, are both resolved, and `simplefeatures` gets them right
+  natively, its `AsText` already matches MySQL spacing (the earlier shim was dropped) and
+  its DE-9IM relate matches MySQL on boundaries. `spatial_compat` is byte-identical to
+  MySQL 8.0.46, re-recorded after the engine swap.
+- **`simplefeatures` performance / validation**: it validates geometry topology by default,
+  which dominates polygon decode (50-vertex ring: ~7891 ns/op vs go-geom's ~710), but with
+  `geom.NoValidate` it is ~203 ns/op (~3.5x faster than go-geom). The read path
+  (`decodeEWKB`) uses `NoValidate` (stored EWKB is already validated at construction via
+  `ST_GeomFromText`); points (the hot path), bounds, and encode are faster either way. Net:
+  the engine swap is a performance win or neutral across every measured op.
 - **SRID 4326 / S2 defaults**: maxLevel 30, maxCells 16, `EarthRadiusMeters = 6370986` (the
   same radius for covering and refine so they agree). Antimeridian and poles are handled
   natively by S2, no special-casing.
@@ -1161,14 +1181,18 @@ These are PoC measurements, not production numbers.
 - **Index value contents**: the PoC does not store a per-row bbox in the index value; cell
   overlap plus the exact refine sufficed for correctness. So bbox-in-value (Sunny's review)
   is confirmed as an optional selectivity optimization, not a requirement.
-- **Self-review caught three real bugs** before the PoC settled: unbounded general-geometry
-  covering at insert (capped at 8192 cells), a GEOS panic on invalid geometry, and
-  mixed-SRID silent wrong results in `ST_Distance_Sphere` (now SRID-validated).
-- **Open build gap**: the Go toolchain builds and tests green, but `libgeos` is not yet
-  wired into the Bazel/CI build (needs a `cc_library` plus mirroring the new Go deps). This
-  is the main unfinished piece and a prerequisite for landing GEOS-backed predicates.
-- **Dependencies confirmed**: `twpayne/go-geom v1.6.1` (storage/EWKB), `twpayne/go-geos`
-  (exact predicates, cgo), `github.com/golang/geo` (S2). MVI proved to be exactly the right
+- **Self-review caught real bugs** before the PoC settled: unbounded general-geometry
+  covering at insert (capped at 8192 cells) and mixed-SRID silent wrong results in
+  `ST_Distance_Sphere` (now SRID-validated). A third, a GEOS panic on invalid geometry,
+  became moot when GEOS was dropped: `simplefeatures` returns an error instead.
+- **Build status**: the spatial stack builds cgo-free (`CGO_ENABLED=0`) and under Bazel; the
+  new deps are pure Go fetched via GOPROXY, with no `cc_library`/libgeos wiring. The earlier
+  libgeos/Bazel gap is **resolved** by moving off GEOS. Remaining CI fixes were mechanical
+  (regenerated builtins for `gogenerate`, the `function_traits` golden list, a couple of
+  `nogo` findings, and a few stale test-build call sites).
+- **Dependencies (final)**: `github.com/peterstace/simplefeatures v0.59.0` (geometry model +
+  WKT/WKB/EWKB + DE-9IM predicates) and `github.com/golang/geo` (S2, SRID 4326), both pure
+  Go; `go-geom` and `go-geos` were both dropped. MVI proved to be exactly the right
   primitive (no new distributed read/write code), and the coverer package is engine-agnostic
   (encouraging for future TiFlash reuse).
 
@@ -1191,14 +1215,38 @@ that branch.
   official Go S2 port, is Apache 2.0, so adopt it for the 4326 coverer rather than
   implementing a spherical coverer in-house.
   (`halfrost/S2` is a separate experimental port, not the one to use.)
-- **Exact refine location**: TiDB-side first; coprocessor pushdown to TiKV later for
-  efficiency. Pushdown needs `go-geom`-equivalent predicate evaluation in TiKV.
+- **Exact refine location and coprocessor pushdown (TiKV / TiFlash)**: TiDB-side first;
+  push down later for efficiency. The filter-and-refine split means most of the win needs
+  **no geometry library in the coprocessor**: the cell-range scan (TiDB's coverer emits the
+  key ranges, storage just scans them) and the numeric bbox pre-filter are library-free and
+  trivially consistent across engines. Only the **exact predicate** refine needs a geometry
+  library coprocessor-side, and it is the only part with a cross-engine parity risk.
+  Matching libraries exist per engine:
+  - **TiKV (Rust)**: `georust/geo` (pure Rust, full DE-9IM `Relate` + Contains/Intersects/
+    Within/...) for planar; `yjh0502/rust-s2` (a port of the Go S2) for spherical, pure
+    Rust, no FFI. (The `geos` crate would give exact GEOS parity but reintroduces a libgeos
+    FFI dependency; avoid.)
+  - **TiFlash (C++)**: **Boost.Geometry** for planar, the exact library MySQL 8.0 uses for
+    spatial relations, so the closest possible MySQL parity, and **s2geometry** (Google's
+    C++ S2) for spherical. Both are already vendored in ClickHouse (`contrib/boost`,
+    `contrib/s2geometry`), TiFlash's engine base, so likely already in the C++ build.
+
+  Parity is the real constraint: simplefeatures (Go), georust/geo (Rust), and Boost.Geometry
+  (C++) must agree, especially on boundary/precision/invalid edge cases. Since MySQL itself
+  uses Boost.Geometry, anchor cross-engine semantics on Boost.Geometry (TiDB's
+  `simplefeatures` is already byte-identical to MySQL in the PoC; `georust/geo` is the one to
+  validate hardest). Plan: (1) push down the library-free scan + bbox filter first (big I/O
+  win, zero parity risk); (2) keep exact refine in TiDB initially (single source of truth);
+  (3) when pushing exact refine down, add a cross-engine conformance suite (same geometries
+  -> identical predicate results across TiDB/TiKV/TiFlash and MySQL). Licenses: the
+  permissive stack is `simplefeatures`/`georust/geo`/Boost.Geometry +
+  `golang/geo`/`rust-s2`/s2geometry; avoid GEOS (LGPL).
 - **`go-geom` predicate gaps**: exact `ST_Intersects`/`ST_Contains` may need code
   beyond `go-geom`; verify coverage before committing the refine step to it. Candidates
   if so: `peterstace/simplefeatures` (pure-Go OGC/DE-9IM predicates) or GEOS via cgo
   (see "Geometry library" above). The PoC settled this empirically: hand-rolled ray-casting
-  was OGC-incorrect, so it adopted GEOS (`go-geos`) for MySQL-identical results; the open
-  cost is wiring `libgeos` into the Bazel/CI build (see "Proof-of-concept validation").
+  was OGC-incorrect, so it adopted GEOS, then replaced GEOS with pure-Go `simplefeatures`
+  (same DE-9IM, MySQL-identical, no cgo/libgeos). See "Proof-of-concept validation".
 - **Statistics**: MVI row/NDV counts can exceed table row count due to fan-out
   (already noted in `pkg/statistics/analyze.go`); the optimizer's cost model for the
   spatial access path needs to account for the candidate-superset behavior.
