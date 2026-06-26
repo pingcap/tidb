@@ -40,6 +40,8 @@ const (
 	Touches
 	Crosses
 	Overlaps
+	Covers
+	CoveredBy
 )
 
 // decodeEWKB strips the 4-byte little-endian SRID prefix and parses the WKB.
@@ -81,6 +83,10 @@ func Relate(pred Predicate, ewkb1, ewkb2 string) (bool, error) {
 		return geom.Crosses(g1, g2)
 	case Overlaps:
 		return geom.Overlaps(g1, g2)
+	case Covers:
+		return geom.Covers(g1, g2)
+	case CoveredBy:
+		return geom.CoveredBy(g1, g2)
 	default:
 		return false, errors.Errorf("geomrel: unknown predicate %d", pred)
 	}

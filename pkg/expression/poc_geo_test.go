@@ -73,6 +73,13 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT ST_IsValid(ST_GeomFromText('POINT(1 1)'))").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT ST_IsEmpty(ST_GeomFromText('POINT(1 1)')), ST_IsEmpty(ST_GeomFromText('GEOMETRYCOLLECTION EMPTY'))").Check(testkit.Rows("0 1"))
 	tk.MustQuery("SELECT ST_SRID(ST_SRID(ST_GeomFromText('POINT(1 1)', 0), 4326))").Check(testkit.Rows("4326"))
+
+	// ST_Covers/ST_CoveredBy predicates and GeoJSON I/O.
+	tk.MustQuery("SELECT ST_Covers(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))'), ST_GeomFromText('POINT(2 2)'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_CoveredBy(ST_GeomFromText('POINT(2 2)'), ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))'))").Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT ST_AsGeoJSON(ST_GeomFromText('POINT(1 2)'))`).Check(testkit.Rows(`{"type":"Point","coordinates":[1,2]}`))
+	// GeoJSON parses to a 4326 geometry (MySQL default) and round-trips.
+	tk.MustQuery(`SELECT ST_AsText(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[3,4]}'))`).Check(testkit.Rows("POINT(3 4)"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.

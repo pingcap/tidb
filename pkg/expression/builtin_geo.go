@@ -50,6 +50,8 @@ var (
 	_ functionClass = &stEnvelopeFunctionClass{}
 	_ functionClass = &stIsValidFunctionClass{}
 	_ functionClass = &stIsEmptyFunctionClass{}
+	_ functionClass = &stAsGeoJSONFunctionClass{}
+	_ functionClass = &stGeomFromGeoJSONFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
@@ -70,6 +72,8 @@ var (
 	_ builtinFunc = &builtinStSRIDSetSig{}
 	_ builtinFunc = &builtinStIsValidSig{}
 	_ builtinFunc = &builtinStIsEmptySig{}
+	_ builtinFunc = &builtinStAsGeoJSONSig{}
+	_ builtinFunc = &builtinStGeomFromGeoJSONSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
@@ -864,6 +868,93 @@ func (b *builtinStIsEmptySig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 1, false, nil
 	}
 	return 0, false, nil
+}
+
+type stAsGeoJSONFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stAsGeoJSONFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStAsGeoJSONSig{bf}
+	return sig, nil
+}
+
+type builtinStAsGeoJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStAsGeoJSONSig) Clone() builtinFunc {
+	newSig := &builtinStAsGeoJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_AsGeoJSON(geom) -> the GeoJSON representation.
+func (b *builtinStAsGeoJSONSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	j, err := g.MarshalJSON()
+	if err != nil {
+		return "", false, errors.Trace(err)
+	}
+	return string(j), false, nil
+}
+
+type stGeomFromGeoJSONFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stGeomFromGeoJSONFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStGeomFromGeoJSONSig{bf}
+	return sig, nil
+}
+
+type builtinStGeomFromGeoJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStGeomFromGeoJSONSig) Clone() builtinFunc {
+	newSig := &builtinStGeomFromGeoJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_GeomFromGeoJSON(json) -> EWKB geometry. GeoJSON is
+// WGS 84 by convention, so the result uses SRID 4326 (matching MySQL's default).
+func (b *builtinStGeomFromGeoJSONSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	jsonVal, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	g, err := geom.UnmarshalGeoJSON([]byte(jsonVal))
+	if err != nil {
+		return "", false, errors.Trace(err)
+	}
+	return encodeEWKB(g, spatial.SRID4326), false, nil
 }
 
 type tidbSpatialKeysFunctionClass struct {

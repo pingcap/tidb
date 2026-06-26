@@ -819,10 +819,13 @@ sm3
 space
 sqrt
 st_asbinary
+st_asgeojson
 st_astext
 st_aswkb
 st_aswkt
 st_contains
+st_coveredby
+st_covers
 st_crosses
 st_disjoint
 st_distance
@@ -830,6 +833,7 @@ st_distance_sphere
 st_envelope
 st_equals
 st_geometrytype
+st_geomfromgeojson
 st_geomfromtext
 st_geomfromwkb
 st_intersects
