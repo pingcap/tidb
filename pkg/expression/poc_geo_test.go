@@ -92,6 +92,8 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT ST_StartPoint(ST_GeomFromText('POINT(1 1)')) IS NULL").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT ST_AsText(ST_ExteriorRing(ST_GeomFromText('POLYGON((0 0,3 0,3 3,0 3,0 0),(1 1,2 1,2 2,1 2,1 1))')))").Check(testkit.Rows("LINESTRING(0 0,3 0,3 3,0 3,0 0)"))
 	tk.MustQuery("SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON((0 0,3 0,3 3,0 3,0 0),(1 1,2 1,2 2,1 2,1 1))'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_NumPoints(ST_GeomFromText('LINESTRING(0 0,1 1,2 2)')), ST_AsText(ST_PointN(ST_GeomFromText('LINESTRING(0 0,1 1,2 2)'), 2))").Check(testkit.Rows("3 POINT(1 1)"))
+	tk.MustQuery("SELECT ST_PointN(ST_GeomFromText('LINESTRING(0 0,1 1)'), 5) IS NULL").Check(testkit.Rows("1"))
 }
 
 // TestPOCSpatialKey checks tidb_spatial_key encodes points to ordered keys.

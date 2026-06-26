@@ -846,7 +846,9 @@ st_isempty
 st_isvalid
 st_length
 st_numinteriorrings
+st_numpoints
 st_overlaps
+st_pointn
 st_srid
 st_startpoint
 st_touches

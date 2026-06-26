@@ -411,6 +411,8 @@ const (
 	StEndPoint         = "st_endpoint"
 	StExteriorRing     = "st_exteriorring"
 	StNumInteriorRings = "st_numinteriorrings"
+	StNumPoints        = "st_numpoints"
+	StPointN           = "st_pointn"
 	// TiDBSpatialKey is an internal function: it maps a POINT to its
 	// order-preserving spatial index CellKey. It backs the hidden generated
 	// column of a points-only spatial index and is not intended for direct use.

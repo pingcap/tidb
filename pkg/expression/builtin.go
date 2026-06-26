@@ -1038,6 +1038,8 @@ var funcs = map[string]functionClass{
 	ast.StEndPoint:         &stEndPointFunctionClass{baseFunctionClass{ast.StEndPoint, 1, 1}},
 	ast.StExteriorRing:     &stExteriorRingFunctionClass{baseFunctionClass{ast.StExteriorRing, 1, 1}},
 	ast.StNumInteriorRings: &stNumInteriorRingsFunctionClass{baseFunctionClass{ast.StNumInteriorRings, 1, 1}},
+	ast.StNumPoints:        &stNumPointsFunctionClass{baseFunctionClass{ast.StNumPoints, 1, 1}},
+	ast.StPointN:           &stPointNFunctionClass{baseFunctionClass{ast.StPointN, 2, 2}},
 	ast.TiDBSpatialKey:     &tidbSpatialKeyFunctionClass{baseFunctionClass{ast.TiDBSpatialKey, 1, 6}},
 	ast.TiDBSpatialKeys:    &tidbSpatialKeysFunctionClass{baseFunctionClass{ast.TiDBSpatialKeys, 1, 6}},
 }

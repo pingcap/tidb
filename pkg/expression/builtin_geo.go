@@ -60,6 +60,8 @@ var (
 	_ functionClass = &stEndPointFunctionClass{}
 	_ functionClass = &stExteriorRingFunctionClass{}
 	_ functionClass = &stNumInteriorRingsFunctionClass{}
+	_ functionClass = &stNumPointsFunctionClass{}
+	_ functionClass = &stPointNFunctionClass{}
 	_ functionClass = &tidbSpatialKeyFunctionClass{}
 	_ functionClass = &tidbSpatialKeysFunctionClass{}
 )
@@ -89,6 +91,8 @@ var (
 	_ builtinFunc = &builtinStEndpointSig{}
 	_ builtinFunc = &builtinStExteriorRingSig{}
 	_ builtinFunc = &builtinStNumInteriorRingsSig{}
+	_ builtinFunc = &builtinStNumPointsSig{}
+	_ builtinFunc = &builtinStPointNSig{}
 	_ builtinFunc = &builtinTiDBSpatialKeySig{}
 	_ builtinFunc = &builtinTiDBSpatialKeysSig{}
 )
@@ -1291,6 +1295,106 @@ func (b *builtinStNumInteriorRingsSig) evalInt(ctx EvalContext, row chunk.Row) (
 		return 0, true, nil
 	}
 	return int64(p.NumInteriorRings()), false, nil
+}
+
+type stNumPointsFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stNumPointsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinStNumPointsSig{bf}
+	return sig, nil
+}
+
+type builtinStNumPointsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStNumPointsSig) Clone() builtinFunc {
+	newSig := &builtinStNumPointsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt implements ST_NumPoints(line) -> the point count, or NULL when the
+// argument is not a LINESTRING (MySQL semantics).
+func (b *builtinStNumPointsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	_, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, false, err
+	}
+	ls, ok := g.AsLineString()
+	if !ok {
+		return 0, true, nil
+	}
+	return int64(ls.Coordinates().Length()), false, nil
+}
+
+type stPointNFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stPointNFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	sig := &builtinStPointNSig{bf}
+	return sig, nil
+}
+
+type builtinStPointNSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStPointNSig) Clone() builtinFunc {
+	newSig := &builtinStPointNSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString implements ST_PointN(line, n) -> the n-th point (1-indexed), or
+// NULL when the argument is not a LINESTRING or n is out of range.
+func (b *builtinStPointNSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	ewkb, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	n, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return "", false, err
+	}
+	ls, ok := g.AsLineString()
+	if !ok {
+		return "", true, nil
+	}
+	seq := ls.Coordinates()
+	if n < 1 || n > int64(seq.Length()) {
+		return "", true, nil
+	}
+	xy := seq.GetXY(int(n - 1))
+	return encodeEWKB(geom.NewPointXY(xy.X, xy.Y).AsGeometry(), srid), false, nil
 }
 
 type tidbSpatialKeysFunctionClass struct {

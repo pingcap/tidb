@@ -2180,6 +2180,16 @@ func (s *builtinStNumInteriorRingsSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStNumPointsSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStPointNSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinStSRIDSetSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
