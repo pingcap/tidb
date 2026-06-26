@@ -46,3 +46,50 @@ INSERT INTO test.pairs11 VALUES (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),
 ALTER TABLE test.pairs11 ADD UNIQUE KEY u1(x, y);
 
 CREATE TABLE test.huge_idx(id int AUTO_INCREMENT, blob1 varchar(1000), blob2 varchar(1000));
+
+-- test foreign key constraint 1
+CREATE TABLE test.pairs12_parent (id int);
+CREATE TABLE test.pairs12_child (id int, pid int);
+INSERT INTO test.pairs12_parent VALUES (1), (2), (3), (4), (5);
+INSERT INTO test.pairs12_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test foreign key constraint 2.1
+CREATE TABLE test.pairs13_parent (id int, index i1(id));
+CREATE TABLE test.pairs13_child (id int, pid int);
+INSERT INTO test.pairs13_parent VALUES (1), (2), (3), (4), (5);
+INSERT INTO test.pairs13_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test foreign key constraint 2.2
+CREATE TABLE test.pairs14_parent (id int, index i1(id));
+CREATE TABLE test.pairs14_child (id int, pid int);
+INSERT INTO test.pairs14_parent VALUES (1), (2), (3), (4), (5);
+INSERT INTO test.pairs14_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test foreign key constraint 3
+CREATE TABLE test.pairs15_parent (id int);
+CREATE TABLE test.pairs15_child (id int, pid int, index i1(pid));
+INSERT INTO test.pairs15_parent VALUES (1), (2), (3), (4), (5);
+INSERT INTO test.pairs15_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test foreign key constraint 4
+CREATE TABLE test.pairs16_parent (id int, pid int, index i1(id, pid));
+CREATE TABLE test.pairs16_child (id int, pid int, index i1(pid, id));
+INSERT INTO test.pairs16_parent VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+INSERT INTO test.pairs16_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test foreign key constraint 5
+CREATE TABLE test.pairs17_parent (id int primary key, pid int);
+CREATE TABLE test.pairs17_child (id int, pid int, index i1(pid), foreign key fk_0 (pid) references test.pairs17_parent (id) on delete cascade);
+INSERT INTO test.pairs17_parent VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+INSERT INTO test.pairs17_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test foreign key constraint 6
+CREATE DATABASE test2;
+CREATE TABLE test.pairs18_parent (id int);
+CREATE TABLE test2.pairs18_child (id int, pid int);
+INSERT INTO test.pairs18_parent VALUES (1), (2), (3), (4), (5);
+INSERT INTO test2.pairs18_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test global index
+CREATE TABLE test.pairs19 (id int, pid int) partition by range(id) (partition p0 values less than (6), partition p1 values less than (11));
+INSERT INTO test.pairs19 values (1, 1), (10, 10);

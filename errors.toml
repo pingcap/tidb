@@ -56,6 +56,16 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -199,6 +209,11 @@ failed to wait region splitted
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
+'''
+
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
 '''
 
 ["BR:PiTR:ErrInvalidTaskInfo"]

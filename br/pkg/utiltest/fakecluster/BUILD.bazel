@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "fakecluster",
+    srcs = ["core.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/utiltest/fakecluster",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/streamhelper",
+        "//br/pkg/streamhelper/spans",
+        "//br/pkg/utils",
+        "//pkg/kv",
+        "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/logbackuppb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//txnkv/txnlock",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//metadata",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
+    ],
+)

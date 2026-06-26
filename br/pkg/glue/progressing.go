@@ -129,8 +129,7 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 	return ops.startProgressBarOverTTY(title, total, extraFields...)
 }
 
-func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int,
-	extraFields ...ExtraField) ProgressWaiter {
+func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int, _ ...ExtraField) ProgressWaiter {
 	return noOPWaiter{utils.StartProgress(context.TODO(), title, int64(total), true, nil)}
 }
 

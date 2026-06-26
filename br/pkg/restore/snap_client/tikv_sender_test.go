@@ -22,6 +22,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -207,14 +208,14 @@ func key(tableID int64, row int) []byte {
 	return tablecodec.EncodeRowKeyWithHandle(downstreamID(tableID), kv.IntHandle(row))
 }
 
-func files(physicalTableID int64, startRows []int, cfs []string) snapclient.TableIDWithFiles {
+func files(physicalTableID int64, startRows []int, cfs []string) restore.BackupFileSet {
 	files := make([]*backuppb.File, 0, len(startRows))
 	for i, startRow := range startRows {
 		files = append(files, &backuppb.File{Name: fmt.Sprintf("file_%d_%d_%s.sst", physicalTableID, startRow, cfs[i])})
 	}
-	return snapclient.TableIDWithFiles{
-		TableID: downstreamID(physicalTableID),
-		Files:   files,
+	return restore.BackupFileSet{
+		TableID:  downstreamID(physicalTableID),
+		SSTFiles: files,
 	}
 }
 
@@ -247,7 +248,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 
 		// expected result
 		splitKeys              [][]byte
-		tableIDWithFilesGroups [][]snapclient.TableIDWithFiles
+		tableIDWithFilesGroups [][]restore.BackupFileSet
 	}{
 		{ // large sst, split-on-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -270,7 +271,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				/*split table key*/ key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -298,7 +299,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				/*split table key*/ key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				//{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -323,7 +324,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 2), key(202, 3), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -351,7 +352,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 2), key(202, 3), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				//{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -376,7 +377,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -404,7 +405,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), /*split table key*/
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				// {files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d})},
@@ -429,7 +430,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
@@ -455,7 +456,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 			},
@@ -475,7 +476,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeyCount:            450,
 			splitOnTable:             true,
 			splitKeys:                [][]byte{},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w})},
@@ -500,7 +501,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeyCount:  450,
 			splitOnTable:   true,
 			splitKeys:      [][]byte{},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d})},
 				{files(302, []int{1}, []string{w})},
@@ -523,7 +524,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w}), files(100, []int{1, 1}, []string{w, d})},
@@ -549,7 +550,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(102, 2), key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d})},
 				{files(302, []int{1}, []string{w})},
@@ -572,7 +573,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w}), files(100, []int{1, 1}, []string{w, d})},
 			},
@@ -597,7 +598,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 3), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w})},
 			},
@@ -619,7 +620,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1}, []string{w, d})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
@@ -645,7 +646,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			splitKeys: [][]byte{
 				key(202, 2), key(302, 2), key(100, 2),
 			},
-			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+			tableIDWithFilesGroups: [][]restore.BackupFileSet{
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 			},
@@ -655,7 +656,8 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 	for i, cs := range cases {
 		t.Log(i)
 		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, updateCh)
+		onProgress := func(i int64) { updateCh.IncBy(i) }
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, onProgress)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
@@ -665,8 +667,8 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			for j, expectFiles := range expectFilesGroup {
 				actualFiles := actualFilesGroup[j]
 				require.Equal(t, expectFiles.TableID, actualFiles.TableID)
-				for k, expectFile := range expectFiles.Files {
-					actualFile := actualFiles.Files[k]
+				for k, expectFile := range expectFiles.SSTFiles {
+					actualFile := actualFiles.SSTFiles[k]
 					require.Equal(t, expectFile.Name, actualFile.Name)
 				}
 			}
