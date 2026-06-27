@@ -44,33 +44,55 @@ Findings:
   decode, and **2/3 of that is redundant** — the point index's `tidb_spatial_key`,
   `ST_X`, `ST_Y` each decode the same value. Without an index there is *no* decode on
   write (the bytes are just stored), so this cost is entirely index maintenance.
-- **Read path (refine) is relate-bound, not decode-bound:** decode is ~5% of the
-  point/poly refine and ~1.5% of poly/poly; the DE-9IM `relate` (and its 77–446
-  allocations) dominates. A faster decode format does ~nothing here.
+- **Read path (refine), isolated:** decode *looks* like ~5% of a single `Relate`
+  call. But that treats `relate` as a black box — the end-to-end profile below shows
+  `relate` **re-parses WKB internally**, so the true parse cost is much higher.
 
-**Caveat — what this measures.** These are the geometry-library costs (EWKB
-`decodeEWKB` → geo, then DE-9IM `relate`) on a raw EWKB `string` — which *is* the
-form the value has at the decode point (every spatial builtin reads it via
-`EvalString(ctx, row)` and parses that string). They **exclude** the per-row envelope
-that sits *upstream* of decode: the row-codec decode (KV → column bytes), the chunk
-column access / `EvalString` dispatch, and `Datum` wrapping on Datum-based paths
-(a byte copy, not a geometry decode). That envelope is fixed and geometry-agnostic,
-so the relative split holds; if anything, including it makes the geometry decode an
-even smaller fraction of true end-to-end cost — reinforcing the conclusion below.
+### End-to-end profile (the full SQL pipeline)
 
-So a leaner format is a **modest, write-skewed, point-favoring** win: after
-decode-once, the remaining single point decode (53 ns) could drop to ~15 ns with a
-flat no-framing layout, taking a point-heavy bulk load's per-row geometry CPU from
-~210 → ~50 ns (~4×) — but **decode-once does most of that**, and reads barely move.
+The table above is the *isolated* library cost. Profiling the real pipeline
+(testkit/unistore CPU profile: a 160k-row indexed bulk load, and 300× a
+`ST_Within(p, const)` refine over 100k rows) puts it in context — and **corrects the
+read-path reading**:
 
-## Ranked levers (so the format isn't over-sold)
+- **Write (160k INSERT into an indexed table):** geometry decode for index
+  maintenance (`decodeEWKB`) is only **~1.8%** of insert CPU; the input WKT parse
+  (`ST_GeomFromText` on the literals) ~7%; the rest is SQL parsing, allocation, the
+  row codec, and KV writes. End-to-end the stored-format decode is a *minor* write
+  cost — decode-once saves ~2/3 of ~1.8% ≈ **~1%**.
+- **Read (refine; pushdown active — the predicate runs in the cop, ~58% of query
+  CPU):** WKB parsing is **~27% of the query** (≈ half the refine) — far more than the
+  isolated bench's "~5%" implied. It splits two ways:
+  - **~13% explicit operand decode** (`geomrel.decodeEWKB` → `UnmarshalWKB`) — parses
+    our stored EWKB, so a leaner stored format helps here; ~half of it is the query
+    **constant re-decoded per row** (a decode-once-per-query *code* fix).
+  - **~14% a relate-*internal* WKB re-parse** — simplefeatures' `Relate` (the JTS
+    port) serializes to WKB and re-reads it (`jts.Io_WKBReader`, confirmed 100% under
+    `jtsRelateNG`) on every call, *independent of our stored format*. Removing it
+    means handing `relate` the already-decoded geometry (a code/library fix).
+  
+  The DE-9IM matrix is ~24%; scan/codec/agg/cop framing ~21%.
 
-1. **Decode-once on writes** — code, not format; ~2.5× on index maintenance; free.
-2. **Point covering-index** — read win is the table random-read *I/O* + skipping
-   decode; code, not format.
-3. **Cut `relate` allocations** (77–446/call) — the real read-CPU lever; code.
-4. **Leaner stored format** — the only *format* item, and the only one hard to
-   change post-GA. Modest perf, but decide now.
+So "reads are relate-bound, decode ~5%" was an artifact of treating `relate` as a
+black box — ~14% of the query is WKB re-parsing *inside* it. Net: on **writes** the
+format/decode is even smaller than the isolated bench (~2% e2e, envelope-dominated);
+on **reads** parsing is *larger* (~27%), but the biggest read-parse win is a **code**
+fix (decode the constant once + drop the relate-internal WKB round-trip), with the
+stored format helping only the residual per-row column decode.
+
+## Ranked levers (by end-to-end impact, so the format isn't over-sold)
+
+1. **Read parse code-fixes** — decode the query constant once per query, and avoid
+   simplefeatures' relate-internal WKB round-trip (hand `relate` the decoded
+   geometry). Together ~20% of read CPU; **code, not format.**
+2. **Cut the DE-9IM cost** — the ~24% matrix + its 77–446 allocations/call; the
+   algorithmic core; code/library.
+3. **Point covering-index** — read win is the table random-read *I/O* (not visible in
+   this CPU profile) + skipping decode; code, not format.
+4. **Decode-once on writes** — ~1% end-to-end (the insert is envelope-bound); code.
+5. **Leaner stored format** — helps only the residual per-row column decode (~5–6% of
+   reads after the constant fix; ~2% of writes). Modest perf, but it is the one
+   **pre-GA lock-in**, so decide it now regardless.
 
 ## Proposed format direction (for design review)
 
