@@ -70,7 +70,7 @@ M3: `ST_FrechetDistance`, `ST_HausdorffDistance`.
 ## Geohash  · M3
 `ST_GeoHash`, `ST_PointFromGeoHash`, `ST_LatFromGeoHash`, `ST_LongFromGeoHash`.
 
-## PostGIS extras (NOT in MySQL — verified absent in 9.7 & 8.0)
+## PostGIS extras (NOT in MySQL — verified absent: server probe + 9.7 reference manual)
 The POC already ships `ST_Covers`✓ / `ST_CoveredBy`✓ — these are PostGIS, not MySQL.
 **Policy (see review-plan): keep a PostGIS extra only when it is index-supported.**
 `ST_Covers`/`ST_CoveredBy` qualify — they are now index-eligible region predicates
