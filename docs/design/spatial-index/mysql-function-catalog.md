@@ -5,8 +5,8 @@ in [`review-plan.md`](review-plan.md).
 
 **Provenance:** the public MySQL reference manual, **validated by black-box probing
 of running MySQL 9.7.1 and 8.0.46** (each candidate probed: a `1582` param-count
-error = present, `1305`/`1046` = absent). No MySQL source is used here — function
-identity is established from the manual and observable server behavior only.
+error = present, `1305`/`1046` = absent). Function identity is established from the
+public manual and observable server behavior only.
 
 **Key fact:** the spatial catalog is **identical in 8.0.46 and 9.7.1** — probing
 both shows no spatial function present in one but not the other. (The "newer" ones —
