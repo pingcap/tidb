@@ -73,6 +73,13 @@ read-path reading**:
   
   The DE-9IM matrix is ~24%; scan/codec/agg/cop framing ~21%.
 
+> **TODO — open an issue:** eliminate the relate-internal WKB re-parse. Hand
+> `geomrel.Relate` (and the cop-side evaluator) the already-decoded geometry instead
+> of letting simplefeatures' `Relate` re-serialize to WKB and re-read it. Worth ~14%
+> of refine-query CPU and **independent of the storage format**, so it can land any
+> time. Pair it with decoding the query constant once per query (the other ~half of
+> the explicit-decode cost).
+
 So "reads are relate-bound, decode ~5%" was an artifact of treating `relate` as a
 black box — ~14% of the query is WKB re-parsing *inside* it. Net: on **writes** the
 format/decode is even smaller than the isolated bench (~2% e2e, envelope-dominated);
