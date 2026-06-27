@@ -197,3 +197,40 @@ func TestPOCSpatialRefinePushdown(t *testing.T) {
 	require.True(t, copSelectionHas(idxQuery, "st_within"), "ST_Within refine should push to the coprocessor under the index lookup")
 	tk.MustQuery(idxQuery).Check(want)
 }
+
+// TestPOCSpatialCoversIndex verifies ST_Covers/ST_CoveredBy are index-eligible
+// region predicates: Covers ⊇ Contains and CoveredBy ⊇ Within both imply a
+// non-empty intersection, so the covering-cell prefilter is valid (no false
+// negatives) and they use the spatial index like ST_Within/ST_Contains.
+func TestPOCSpatialCoversIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE pt (id int primary key, p POINT NOT NULL SRID 0)")
+	var b strings.Builder
+	b.WriteString("INSERT INTO pt VALUES ")
+	id := 0
+	for x := 0; x < 10; x++ {
+		for y := 0; y < 10; y++ {
+			if id > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, "(%d, ST_GeomFromText('POINT(%d %d)',0))", id, x, y)
+			id++
+		}
+	}
+	tk.MustExec(b.String())
+	tk.MustExec("CREATE SPATIAL INDEX si ON pt (p)")
+
+	const pred = "ST_CoveredBy(p, ST_GeomFromText('POLYGON((2 2,2 5,5 5,5 2,2 2))',0))"
+	var plan strings.Builder
+	for _, r := range tk.MustQuery("EXPLAIN SELECT id FROM pt FORCE INDEX(si) WHERE " + pred).Rows() {
+		plan.WriteString(fmt.Sprintf("%v ", r[0]))
+	}
+	require.Contains(t, plan.String(), "IndexRangeScan", "ST_CoveredBy should use the spatial index")
+
+	// CoveredBy includes the boundary: the closed [2,5]x[2,5] box = 16 grid points.
+	want := tk.MustQuery("SELECT id FROM pt IGNORE INDEX(si) WHERE " + pred + " ORDER BY id").Rows()
+	require.Len(t, want, 16)
+	tk.MustQuery("SELECT id FROM pt FORCE INDEX(si) WHERE " + pred + " ORDER BY id").Check(want)
+}

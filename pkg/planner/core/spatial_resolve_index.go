@@ -636,12 +636,14 @@ func recognizeSpatialPredicate(cond expression.Expression, evalCtx expression.Ev
 	case ast.LE, ast.LT:
 		// ST_Distance(col, const) <= r  or  ST_Distance_Sphere(col, const) <= r
 		return recognizeDistancePredicate(sf, evalCtx)
-	case ast.StContains, ast.StWithin, ast.StIntersects:
-		// ST_Contains / ST_Within / ST_Intersects of a column and a constant
-		// geometry: one argument is the indexed column, the other the constant query
-		// region. For all three, a matching row's geometry overlaps the region, so
-		// its covering cells overlap the region's cells — the same covering serves
-		// every predicate, and the argument order does not matter here.
+	case ast.StContains, ast.StWithin, ast.StIntersects, ast.StCovers, ast.StCoveredBy:
+		// ST_Contains / ST_Within / ST_Intersects / ST_Covers / ST_CoveredBy of a
+		// column and a constant geometry: one argument is the indexed column, the
+		// other the constant query region. For all of these a matching row's geometry
+		// overlaps the region (Covers ⊇ Contains and CoveredBy ⊇ Within both still
+		// imply a non-empty intersection), so its covering cells overlap the region's
+		// cells — the same covering serves every predicate, and the argument order
+		// does not matter here.
 		args := sf.GetArgs()
 		return recognizeRegionPredicate(args[0], args[1], evalCtx)
 	}
