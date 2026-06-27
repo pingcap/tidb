@@ -25,6 +25,12 @@ code PRs. Confirm it (or a short addendum) covers the parts that are *new* vs
 - **bbox-in-index** pruning and the **expression-index / MVI** representation
   (point → scalar `tidb_spatial_key`; general geometry → MVI `tidb_spatial_keys` +
   `json_overlaps`).
+- the **index-eligible predicate set**: the resolver injects a covering-cell range
+  for the *region* predicates `ST_Within` / `ST_Contains` / `ST_Intersects` /
+  `ST_Covers` / `ST_CoveredBy` (Covers ⊇ Contains and CoveredBy ⊇ Within, so the
+  prefilter has no false negatives) and for the *cap* predicates `ST_Distance` /
+  `ST_Distance_Sphere ≤ r`. Other predicates run as plain filters (still
+  cop-pushable).
 - **ANALYZE** for geometry-derived virtual indexes (independent index-scan path).
 - accepted **limitations**: planar 4326 refine (only the S2 covering is geodesic);
   4326 axis convention (coord0 = lng here vs lat in MySQL).
