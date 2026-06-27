@@ -1910,7 +1910,7 @@ func evalGeographicPoint(ctx EvalContext, fn string, arg Expression, row chunk.R
 		return 0, 0, false, err
 	}
 	if srid != spatial.SRID4326 {
-		return 0, 0, false, errors.Errorf("Function %s is only defined for geographic spatial reference systems, but one of its arguments is in SRID %d, which is not geographic.", fn, srid)
+		return 0, 0, false, errors.Errorf("function %s is only defined for geographic spatial reference systems, but one of its arguments is in SRID %d, which is not geographic", fn, srid)
 	}
 	px, py, ok := pointXY(g)
 	if !ok {
