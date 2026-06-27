@@ -70,6 +70,8 @@ var (
 	_ functionClass = &geomPointFunctionClass{}
 	_ functionClass = &geomLineStringFunctionClass{}
 	_ functionClass = &geomPolygonFunctionClass{}
+	_ functionClass = &stLongitudeFunctionClass{}
+	_ functionClass = &stLatitudeFunctionClass{}
 )
 
 var (
@@ -105,6 +107,8 @@ var (
 	_ builtinFunc = &builtinGeomPointSig{}
 	_ builtinFunc = &builtinGeomLineStringSig{}
 	_ builtinFunc = &builtinGeomPolygonSig{}
+	_ builtinFunc = &builtinStLongitudeSig{}
+	_ builtinFunc = &builtinStLatitudeSig{}
 )
 
 // defaultPlanarCoverer is the SRID 0 coverer used by tidb_spatial_key and the
@@ -872,7 +876,25 @@ func (b *builtinStEnvelopeSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	if err != nil {
 		return "", false, err
 	}
-	return encodeEWKB(g.Envelope().AsGeometry(), srid), false, nil
+	// Match MySQL's ST_Envelope: a degenerate MBR collapses to a POINT (zero
+	// width+height) or a LINESTRING (zero width or height); otherwise a POLYGON
+	// whose exterior ring is CCW starting at the min corner
+	// (minX minY, maxX minY, maxX maxY, minX maxY, minX minY).
+	mn, mx, ok := g.Envelope().MinMaxXYs()
+	if !ok {
+		return encodeEWKB(g.Envelope().AsGeometry(), srid), false, nil
+	}
+	var env geom.Geometry
+	switch {
+	case mn.X == mx.X && mn.Y == mx.Y:
+		env = geom.NewPointXY(mn.X, mn.Y).AsGeometry()
+	case mn.X == mx.X || mn.Y == mx.Y:
+		env = geom.NewLineStringXY(mn.X, mn.Y, mx.X, mx.Y).AsGeometry()
+	default:
+		ring := geom.NewLineStringXY(mn.X, mn.Y, mx.X, mn.Y, mx.X, mx.Y, mn.X, mx.Y, mn.X, mn.Y)
+		env = geom.NewPolygon([]geom.LineString{ring}).AsGeometry()
+	}
+	return encodeEWKB(env, srid), false, nil
 }
 
 type stIsValidFunctionClass struct {
@@ -1863,4 +1885,89 @@ func (b *builtinGeomPolygonSig) evalString(ctx EvalContext, row chunk.Row) (stri
 		rings = append(rings, ls)
 	}
 	return encodeEWKB(geom.NewPolygon(rings).AsGeometry(), 0), false, nil
+}
+
+// evalGeographicPoint decodes a geographic (SRID 4326) POINT argument and returns
+// its stored coordinates (x = coord 0, y = coord 1). ST_Latitude is x, ST_Longitude
+// is y. Mirrors MySQL's domain checks: the SRS must be geographic and the value a
+// POINT.
+func evalGeographicPoint(ctx EvalContext, fn string, arg Expression, row chunk.Row) (x, y float64, isNull bool, err error) {
+	ewkb, isNull, err := arg.EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, 0, isNull, err
+	}
+	srid, g, err := decodeEWKB(ewkb)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if srid != spatial.SRID4326 {
+		return 0, 0, false, errors.Errorf("Function %s is only defined for geographic spatial reference systems, but one of its arguments is in SRID %d, which is not geographic.", fn, srid)
+	}
+	px, py, ok := pointXY(g)
+	if !ok {
+		return 0, 0, false, errors.Errorf("%s requires a POINT argument", fn)
+	}
+	return px, py, false, nil
+}
+
+// stLongitudeFunctionClass implements MySQL ST_Longitude(point) for a 4326 point.
+type stLongitudeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stLongitudeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	return &builtinStLongitudeSig{bf}, nil
+}
+
+type builtinStLongitudeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStLongitudeSig) Clone() builtinFunc {
+	newSig := &builtinStLongitudeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinStLongitudeSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	_, lng, isNull, err := evalGeographicPoint(ctx, "st_longitude", b.args[0], row)
+	return lng, isNull, err
+}
+
+// stLatitudeFunctionClass implements MySQL ST_Latitude(point) for a 4326 point.
+type stLatitudeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *stLatitudeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	return &builtinStLatitudeSig{bf}, nil
+}
+
+type builtinStLatitudeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinStLatitudeSig) Clone() builtinFunc {
+	newSig := &builtinStLatitudeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinStLatitudeSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	lat, _, isNull, err := evalGeographicPoint(ctx, "st_latitude", b.args[0], row)
+	return lat, isNull, err
 }

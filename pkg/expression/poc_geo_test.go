@@ -79,7 +79,13 @@ func TestPOCGeoFunctions(t *testing.T) {
 	// Accessors: ST_GeometryType, ST_Envelope, and the WKB I/O round-trip.
 	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POINT(1 2)'))").Check(testkit.Rows("POINT"))
 	tk.MustQuery("SELECT ST_GeometryType(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))").Check(testkit.Rows("POLYGON"))
-	tk.MustQuery("SELECT ST_AsText(ST_Envelope(ST_GeomFromText('LINESTRING(0 0,2 3)')))").Check(testkit.Rows("POLYGON((0 0,0 3,2 3,2 0,0 0))"))
+	// ST_Envelope matches MySQL: CCW ring from the min corner, and degenerate MBRs
+	// collapse to a POINT (zero area) or LINESTRING (zero width/height).
+	tk.MustQuery("SELECT ST_AsText(ST_Envelope(ST_GeomFromText('LINESTRING(0 0,2 3)')))").Check(testkit.Rows("POLYGON((0 0,2 0,2 3,0 3,0 0))"))
+	tk.MustQuery("SELECT ST_AsText(ST_Envelope(ST_GeomFromText('POINT(1 2)')))").Check(testkit.Rows("POINT(1 2)"))
+	tk.MustQuery("SELECT ST_AsText(ST_Envelope(ST_GeomFromText('LINESTRING(0 0,2 0)')))").Check(testkit.Rows("LINESTRING(0 0,2 0)"))
+	// ST_Longitude/ST_Latitude on a geographic (4326) point (long=coord1, lat=coord0).
+	tk.MustQuery("SELECT ST_Longitude(ST_GeomFromText('POINT(1 2)',4326)), ST_Latitude(ST_GeomFromText('POINT(1 2)',4326))").Check(testkit.Rows("2 1"))
 	// ST_GeomFromWKB(ST_AsBinary(g)) round-trips; ST_AsWKB is an alias of ST_AsBinary.
 	tk.MustQuery("SELECT ST_AsText(ST_GeomFromWKB(ST_AsBinary(ST_GeomFromText('POINT(5 6)'))))").Check(testkit.Rows("POINT(5 6)"))
 	tk.MustQuery("SELECT ST_AsWKB(ST_GeomFromText('POINT(0 0)')) = ST_AsBinary(ST_GeomFromText('POINT(0 0)'))").Check(testkit.Rows("1"))

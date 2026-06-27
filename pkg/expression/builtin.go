@@ -1040,6 +1040,8 @@ var funcs = map[string]functionClass{
 	ast.StNumInteriorRings: &stNumInteriorRingsFunctionClass{baseFunctionClass{ast.StNumInteriorRings, 1, 1}},
 	ast.StNumPoints:        &stNumPointsFunctionClass{baseFunctionClass{ast.StNumPoints, 1, 1}},
 	ast.StPointN:           &stPointNFunctionClass{baseFunctionClass{ast.StPointN, 2, 2}},
+	ast.StLongitude:        &stLongitudeFunctionClass{baseFunctionClass{ast.StLongitude, 1, 1}},
+	ast.StLatitude:         &stLatitudeFunctionClass{baseFunctionClass{ast.StLatitude, 1, 1}},
 	ast.GeomPoint:          &geomPointFunctionClass{baseFunctionClass{ast.GeomPoint, 2, 2}},
 	ast.GeomLineString:     &geomLineStringFunctionClass{baseFunctionClass{ast.GeomLineString, 2, -1}},
 	ast.GeomPolygon:        &geomPolygonFunctionClass{baseFunctionClass{ast.GeomPolygon, 1, -1}},

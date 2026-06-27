@@ -413,6 +413,8 @@ const (
 	StNumInteriorRings = "st_numinteriorrings"
 	StNumPoints        = "st_numpoints"
 	StPointN           = "st_pointn"
+	StLongitude        = "st_longitude"
+	StLatitude         = "st_latitude"
 	// Geometry constructor functions (MySQL): build a geometry (SRID 0) from
 	// coordinates / sub-geometries. POINT(x,y), LineString(pt, ...), Polygon(ring, ...).
 	GeomPoint      = "point"
