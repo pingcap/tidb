@@ -149,6 +149,29 @@ struct-based predicate calls). It captures the outer decode on both; only Go car
 the extra internal `native→WKB→JTS` bridge, because simplefeatures keeps two
 representations (native + JTS) while the geo crate keeps one.
 
+**The format is library-neutral — don't model it on either struct.** Both libraries
+store coordinates the *same* way: interleaved `x,y f64` (geo `Coord<f64>` = `{x,y}` →
+`Vec<Coord<f64>>`; simplefeatures `Sequence` = flat `[]float64`). So one **flat
+interleaved-f64 layout** (type byte + part/ring counts + coordinate arrays, recursive
+for multi/collection) decodes cheaply into both — there is no benefit to matching one
+library's representation. Note also that **neither side supports true zero-copy**:
+`Coord<f64>` is not `#[repr(C)]` and `Vec`/`Sequence` carry heap headers, so the bytes
+can't be transmuted into the struct — the ceiling is a cheap *typed* read (bulk-read
+the f64 array into a pre-sized buffer), available equally on both. Aligning to the geo
+crate would *not* remove the Go bridge (that is relate-internal, not storage), so the
+choice is symmetric.
+
+**Type coverage / Z-M.** Both libraries cover the full **2D** OGC set (Point,
+LineString, Polygon, Multi*, GeometryCollection — WKB codes 1–7), which is MySQL's
+entire surface (MySQL geometry is 2D-only); a custom format mirrors that hierarchy, so
+it round-trips everything for MySQL parity. The one limit is **dimensionality: the geo
+crate is 2D-only** (`Coord` has just `x,y`; no Z/M), while simplefeatures *does* carry
+Z/M. So PostGIS-level XYZ/XYM/XYZM geometries could be stored losslessly and
+related at the TiDB root, but **could not be represented in the geo crate / pushed to
+TiKV** — a *library* limitation, not a format one, and irrelevant to the 2D MySQL
+scope (it would only matter if 3D/measured geometry is ever pursued, where the cop
+refine would need a different library or would stay at the root).
+
 ## Recommendation
 
 - **Lock the format before GA**, and at minimum ship **Tier A** now — a
