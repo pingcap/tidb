@@ -460,9 +460,15 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
-	// Spatial index internal function (POC).
+	// Spatial index generated-column functions (POC): the cell key, the MVI cell
+	// array, and the MBR bbox columns (ST_X/ST_Y for a point, tidb_spatial_bbox for
+	// a general geometry). They must be GA so CREATE SPATIAL INDEX works without the
+	// experimental allow-expression-index config.
 	ast.TiDBSpatialKey:  {},
 	ast.TiDBSpatialKeys: {},
+	ast.TiDBSpatialBBox: {},
+	ast.StX:             {},
+	ast.StY:             {},
 	// JSON functions.
 	ast.JSONType:          {},
 	ast.JSONExtract:       {},
