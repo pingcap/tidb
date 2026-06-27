@@ -121,9 +121,33 @@ Two tiers, in increasing intrusiveness:
   - Optionally an inline MBR (4×`f64`) in a header for bbox without a full parse
     (weigh against the fact that the index already carries bbox columns).
 
-Caveat: TiDB (Go `simplefeatures`) and TiKV (Rust `geo`) use different in-memory
-structures, so no single format is zero-copy for both — the goal is a *cheap parse*
-into each, not a shared mmap.
+## Library integration: how a custom format decodes
+
+Both geometry libraries' predicate APIs take **native geometry structs, not WKB**,
+and both expose coordinate builders — so a custom format decodes *straight to structs*
+with no WKB step. (No single format is zero-copy for both — the Go and Rust structs
+differ — so the goal is a cheap parse into each, not a shared mmap.) The asymmetry is
+what each library does *internally* for `relate`:
+
+- **Go (simplefeatures).** `geomrel.Relate` decodes `EWKB → geom.Geometry`, then calls
+  `geom.Within(a, b Geometry)` etc. A custom format would build `geom.Geometry`
+  directly via the public constructors (`NewSequence([]float64,…) → NewLineString` /
+  `NewPolygon`, `NewPoint(Coordinates{XY})`) — replacing the outer `UnmarshalWKB`
+  (~13% of read CPU). **But** every relate predicate except `Intersects` routes through
+  `jtsRelateNG`, which bridges to the JTS-ported engine by re-serializing the struct
+  back to WKB and re-reading it (`a.AsBinary()` → `wkbReader.ReadBytes`,
+  `alg_relate.go`). That ~14% second parse is *internal to simplefeatures*; the custom
+  format cannot remove it — it is the relate-internal re-parse TODO above.
+- **Rust (geo crate, TiKV).** `decode_ewkb → read_geometry` already hand-builds
+  `geo::Geometry<f64>` directly from the bytes (`Point::from`, `Polygon::new`, …), and
+  `geo`'s `Relate` operates on those structs — **no WKB bridge**. A custom format is
+  just a different byte layout in that same hand-rolled parser; here the decode saving
+  is the *whole* decode cost.
+
+So a custom format is feasible and clean on both sides (swap the parser, keep the
+struct-based predicate calls). It captures the outer decode on both; only Go carries
+the extra internal `native→WKB→JTS` bridge, because simplefeatures keeps two
+representations (native + JTS) while the geo crate keeps one.
 
 ## Recommendation
 
