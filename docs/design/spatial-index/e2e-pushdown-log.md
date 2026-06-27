@@ -31,9 +31,32 @@ storage — where unistore's in-memory costs hide them.
    and data distributions; verify the cost-model cut-off point.
 5. Log + fix every issue found.
 
+## Summary of this run
+
+End-to-end coprocessor pushdown **works and is correct** on a real cluster (custom
+TiDB ⊕ pushdown + custom TiKV Rust evaluator), and the benefits are **measured**.
+
+- **3 bugs found + fixed** (all committed): (1) TiKV `FieldTypeTp::Geometry →
+  EvalType::Bytes` — without it *all* spatial pushdown errored; (2) `ST_Crosses`
+  computed symmetrically vs MySQL's dimension gate — fixed in **both** TiDB (Go) and
+  TiKV (Rust); (3) `ST_Envelope` ring order + missing `ST_Longitude`/`ST_Latitude`
+  (MySQL compat).
+- **Correctness:** all 8 DE-9IM predicates match MySQL over **3000** random
+  geometry pairs (points/lines/polygons/multi*); the **index path is sound** —
+  FORCE INDEX == full scan == MySQL over 3000 geoms × 60 random windows (bbox/cell
+  prune never drops a true match). Compat battery 40/44 (remaining: AsGeoJSON
+  whitespace/float format, 1 m sphere rounding — cosmetic).
+- **Performance:** pushdown ~50–100× (3.3 s → 34 ms at 5M rows; 208× fewer rows
+  shipped); index+bbox keeps latency flat in selectivity while a full scan grows.
+- **Known limitation:** 4326 predicates are planar in the refine (geodesic only in
+  the S2 covering) → small boundary divergence from MySQL's geodesic 4326.
+
+Cluster left running: TiDB `127.0.0.1:4000` (tag `spatial`). MySQL compare box:
+docker `mysql-compat` on `127.0.0.1:3307` (root/root).
+
 ## Status / timeline
 
-- Builds kicked off (TiKV release + TiDB server). Cluster + tests to follow.
+- Builds done; cluster up; correctness + benchmark + bug fixes complete (above).
 
 ## Issues found / fixed
 
@@ -63,8 +86,9 @@ Centroid/PointN/etc., even ST_Within on a boundary point). Divergences:
 **After fixes (#1 ST_Envelope, #3 ST_Longitude/Latitude, plus the ST_Crosses gate):
 re-ran the battery against the cluster's rebuilt TiDB — 40/44 MATCH, 0 TiDB-errors;
 only AsGeoJSON formatting and the 1 m sphere rounding remain (both cosmetic).**
-Larger fuzz (800 random pairs incl. multipoint/multilinestring): **all 8 predicates
-match** the Rust cop eval vs MySQL — ST_Crosses included (was 16 mismatches).
+Larger fuzz (800, then **3000** random pairs incl. multipoint/multilinestring):
+**all 8 predicates match** the Rust cop eval vs MySQL on every run — ST_Crosses
+included (was 16 mismatches). Strong evidence the native DE-9IM evaluator is correct.
 
 ### Real-cluster pushdown (custom TiDB + custom TiKV)
 
