@@ -119,7 +119,11 @@ geometry; milestone 3 = geometry *processing/analysis* and the long-tail
 variants/aliases.** Milestone 1 is ≈ what the POC already implements, so its `fn-*`
 PRs are mostly review/cleanup of existing code rather than new work.
 
-**Milestone 1 — minimal (store / read / query / index)**
+Membership below was **verified empirically against MySQL 9.7.1 and 8.0.46** (call
+each with no args: `1582` = present, `1305`/`1046` = absent). **The two versions are
+identical** — nothing in this catalog is 9.7-only or 8.0-only — so "MySQL" = both.
+
+**Milestone 1 — minimal (store / read / query / index)** · all present in MySQL.
 - *I/O:* `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`; `ST_AsText`
   (`ST_AsWKT`), `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
 - *Constructors:* `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString`,
@@ -133,26 +137,29 @@ PRs are mostly review/cleanup of existing code rather than new work.
 - *Predicates (DE-9IM):* `ST_Within`, `ST_Contains`, `ST_Intersects`, `ST_Equals`,
   `ST_Disjoint`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`.
 
-**Milestone 3 — tail (rest of MySQL's catalog + PostGIS extras)**
-- *Set ops / processing (MySQL):* `ST_Buffer` (+ `ST_Buffer_Strategy`),
-  `ST_ConvexHull`, `ST_Union`, `ST_Intersection`, `ST_Difference`, `ST_SymDifference`.
-- *Sampling / editing (MySQL):* `ST_Collect`, `ST_LineInterpolatePoint(s)`,
-  `ST_PointAtDistance`, `ST_SwapXY`, `ST_Validate`.
-- *Distance variants (MySQL):* `ST_FrechetDistance`, `ST_HausdorffDistance`.
-- *Niche accessors (MySQL):* `ST_GeometryN`, `ST_NumGeometries`, `ST_InteriorRingN`,
-  `ST_IsSimple`, `ST_IsClosed`, `ST_Boundary`.
-- *MBR predicates (MySQL):* `MBRContains`, `MBRWithin`, `MBRIntersects`,
-  `MBRDisjoint`, `MBREquals`, `MBROverlaps`, `MBRTouches`, `MBRCoveredBy`.
-- *Geohash (MySQL):* `ST_GeoHash`, `ST_PointFromGeoHash`, `ST_LatFromGeoHash`,
+**Milestone 3 — tail.** *In MySQL* (the long tail to reach full parity):
+- *Set ops / processing:* `ST_Buffer` (+ `ST_Buffer_Strategy`), `ST_ConvexHull`,
+  `ST_Union`, `ST_Intersection`, `ST_Difference`, `ST_SymDifference`, `ST_Simplify`.
+- *Editing / sampling / utility:* `ST_Validate`, `ST_MakeEnvelope`, `ST_SwapXY`,
+  `ST_Collect`, `ST_LineInterpolatePoint(s)`, `ST_PointAtDistance`.
+- *Distance variants:* `ST_FrechetDistance`, `ST_HausdorffDistance`.
+- *Niche accessors:* `ST_GeometryN`, `ST_NumGeometries`, `ST_InteriorRingN`,
+  `ST_IsSimple`, `ST_IsClosed`.
+- *MBR predicates:* `MBRContains`, `MBRWithin`, `MBRIntersects`, `MBRDisjoint`,
+  `MBREquals`, `MBROverlaps`, `MBRTouches`, `MBRCoveredBy`.
+- *Geohash:* `ST_GeoHash`, `ST_PointFromGeoHash`, `ST_LatFromGeoHash`,
   `ST_LongFromGeoHash`.
-- *Typed I/O aliases (MySQL):* `ST_PointFromText`/`ST_LineFromText`/`ST_PolyFromText`/
-  `ST_M*FromText` and their `*FromWKB` counterparts — thin wrappers over the generic
-  form.
+- *Typed I/O aliases:* `ST_PointFromText`/`ST_LineFromText`/`ST_PolyFromText`/
+  `ST_M*FromText` (+ `…FromTxt`/`…FromWKB` spellings) — thin wrappers over the
+  generic form.
 - *Cross-SRID:* `ST_Transform` — travels with the projected/PostGIS SRID work (needs
   the SRS catalog + reprojection), not here.
-- *PostGIS extras to consider ("important missing ones"):* `ST_Covers`/`ST_CoveredBy`
-  (already in the POC), `ST_Relate` (DE-9IM matrix), `ST_Simplify`,
-  `ST_PointOnSurface`, `ST_ClosestPoint`, `ST_Subdivide` — pick by demand.
+
+*NOT in MySQL — PostGIS-only* (verified absent in 9.7 & 8.0; add only the
+"important missing ones" by demand): `ST_Covers`/`ST_CoveredBy` (already in the
+POC), `ST_Relate` (DE-9IM matrix), `ST_PointOnSurface`, `ST_Boundary`, `ST_IsRing`,
+`ST_Perimeter`, `ST_Subdivide`, `ST_ClosestPoint`, `ST_Azimuth`. (Also absent: the
+bare non-`ST_` aliases such as `GeometryType`.)
 
 **Library note:** the processing ops (`ST_Buffer`/`ST_Union`/`ST_Intersection`/…)
 need GEOS-equivalent algorithms; Go `simplefeatures` and the TiKV `geo` crate cover
