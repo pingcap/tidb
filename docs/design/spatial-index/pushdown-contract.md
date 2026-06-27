@@ -107,6 +107,11 @@ EvalType::Bytes` fix. `st_crosses` is a hand-written rpn_fn (the dimension gate)
 - **Empty geometry.** A predicate with an empty-geometry operand returns 0 here vs
   NULL in MySQL (rare; a candidate follow-up — would be an empty-operand → NULL
   guard on both sides).
+- **SRID coverage.** The contract is unchanged for additional **PROJECTED** SRSs
+  (Cartesian — the refine stays planar, TiKV still strips the SRID prefix). Only
+  additional **GEOGRAPHIC** SRSs would extend it, and only via the geodesic-refine
+  work above (a per-ellipsoid evaluator on both sides). See `review-plan.md` →
+  "SRID / SRS coverage".
 
 ## Open questions for design review
 

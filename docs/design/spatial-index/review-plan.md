@@ -96,6 +96,35 @@ required. TCov and the key builtins span the new `pkg/util/spatial` and
 - **Wave 2 — enhancements:** general geometry (TMVI), then the pushdown chain
   (P1 → K1 → T9). Pushdown is independent of TMVI; either order.
 
+## SRID / SRS coverage (scope beyond v1)
+
+v1 supports **SRID 0 (planar)** and **SRID 4326 (S2/geographic)** — enough to prove
+the model. Full MySQL parity (and optionally PostGIS) is a follow-up, layered by
+cost so the cheap, high-value part can land without the expensive part:
+
+- **SRS catalog** — populate `information_schema.st_spatial_reference_systems` from
+  the EPSG dataset (MySQL ships ~5,100 entries) plus the metadata the engine needs
+  per SRS: kind (PROJECTED vs GEOGRAPHIC), axis order, coordinate bounds, unit,
+  ellipsoid. Prerequisite for everything below. *Moderate* (a system table + data).
+- **All PROJECTED SRSs** (Cartesian, e.g. 3857 Web Mercator) — *low extra cost*: the
+  planar Morton coverer is already Cartesian; it just needs the SRS's coordinate
+  bounds to size the quadtree domain, and the ST_ functions are already planar. So
+  "every projected SRID MySQL supports" ≈ the catalog + dispatch-by-bounds. **This
+  is the recommended next SRID target after the points MVP** — big compatibility win,
+  small change.
+- **GEOGRAPHIC SRSs beyond 4326** (other datums/ellipsoids) — *moderate*: S2 covering
+  generalizes to the sphere, but exact geodesic *refine* per ellipsoid is the same
+  bigger lift as the planar-4326 limitation (a geodesic predicate/distance library
+  on both TiDB and TiKV).
+- **PostGIS-level** (user `CREATE SPATIAL REFERENCE SYSTEM`, `ST_Transform` between
+  SRSs via a projection/`proj` library) — *bigger; out of scope for now*. Needs
+  on-the-fly reprojection; revisit only if required. (This is the "bigger change"
+  case — flagged, not committed.)
+
+**Recommendation:** target "SRID 0 + all PROJECTED SRSs + the SRS catalog" as the
+SRID scope right after the points MVP; treat full geographic/geodesic and PostGIS
+transforms as a separate, explicitly-scoped effort tied to the geodesic-refine work.
+
 ## Feature flags (and their removal)
 
 - Gate Wave 1 on `tidb_enable_spatial_index` (off by default); optionally a second
@@ -130,3 +159,9 @@ required. TCov and the key builtins span the new `pkg/util/spatial` and
    documented limitation for v1, or block on geodesic predicates?
 3. Feature-flag name + default, and whether general-geometry/pushdown ship gated
    separately from the points MVP.
+4. **SRID/SRS coverage tier:** settle the SRS model in #69473 (catalog source =
+   EPSG via `information_schema.st_spatial_reference_systems`; PROJECTED-vs-GEOGRAPHIC
+   dispatch; axis order). Decide whether the first SRID-expansion target is "all
+   PROJECTED SRSs + catalog" (cheap, recommended) and where geographic-beyond-4326
+   and PostGIS `ST_Transform` sit (tied to geodesic-refine; PostGIS likely out of
+   scope).
