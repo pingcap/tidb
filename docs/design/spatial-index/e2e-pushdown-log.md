@@ -85,6 +85,11 @@ Centroid/PointN/etc., even ST_Within on a boundary point). Divergences:
 6. **Degenerate LINESTRING validation** — TiDB rejects a linestring whose two
    endpoints coincide ("only one distinct XY value"); MySQL accepts it. Minor
    strictness difference (surfaced while fuzzing).
+7. **Empty-geometry predicates** — for a predicate whose operand is an empty
+   geometry (e.g. `ST_Intersects(GEOMETRYCOLLECTION EMPTY, POINT(1 1))`), MySQL
+   returns NULL; TiDB/geo return 0 (false). NULL operands match (both → NULL),
+   `ST_IsEmpty` matches. Rare edge case; would need an empty-operand → NULL guard
+   in both the Go and Rust evaluators. Candidate fix, not done.
 
 **After fixes (#1 ST_Envelope, #3 ST_Longitude/Latitude, plus the ST_Crosses gate):
 re-ran the battery against the cluster's rebuilt TiDB — 40/44 MATCH, 0 TiDB-errors;
