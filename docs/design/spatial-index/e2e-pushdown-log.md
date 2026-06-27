@@ -45,7 +45,10 @@ TiDB ⊕ pushdown + custom TiKV Rust evaluator), and the benefits are **measured
   geometry pairs (points/lines/polygons/multi*); the **index path is sound** —
   FORCE INDEX == full scan == MySQL over 3000 geoms × 60 random windows (bbox/cell
   prune never drops a true match). Compat battery 40/44 (remaining: AsGeoJSON
-  whitespace/float format, 1 m sphere rounding — cosmetic).
+  whitespace/float format, 1 m sphere rounding — cosmetic). All **10 predicates push
+  to `cop[tikv]`**. DML maintenance verified on **real TiKV**: point + MVI
+  UPDATE/DELETE re-cover the index, `ADMIN CHECK TABLE`/`INDEX` all pass, moved
+  geometries found at their new location.
 - **Performance:** pushdown ~50–100× (3.3 s → 34 ms at 5M rows; 208× fewer rows
   shipped); index+bbox keeps latency flat in selectivity while a full scan grows.
 - **Known limitation:** 4326 predicates are planar in the refine (geodesic only in
