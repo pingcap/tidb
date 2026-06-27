@@ -21,7 +21,7 @@ code PRs. Confirm it (or a short addendum) covers the parts that are *new* vs
   [`pushdown-contract.md`](pushdown-contract.md) (tipb `ScalarFuncSig` 7100–7109,
   the bbox-prefilter → exact-refine split, EWKB/Bytes encoding, DE-9IM semantics
   verified == MySQL/simplefeatures). Cross-repo (tipb + TiKV); the design ref for
-  P1/K1/T9 below.
+  pushdown-tipb/pushdown-tikv/pushdown-tidb below.
 - **bbox-in-index** pruning and the **expression-index / MVI** representation
   (point → scalar `tidb_spatial_key`; general geometry → MVI `tidb_spatial_keys` +
   `json_overlaps`).
@@ -72,24 +72,24 @@ Each row is a compilable unit; "no user-visible behavior yet" is fine while gate
 | --- | --- | --- | --- | --- | --- |
 <!-- M = milestone: 1 = basic data (no index), 2 = spatial index. Milestone 3 (full function set) is future expression PRs, not listed. -->
 
-| **S0** | Experimental flag(s) + OWNERS for the new spatial dirs | `critical-tidb-server` + new OWNERS | `sessionctx/variable`, `pkg/util/{spatial,geomrel}/OWNERS` | — | 1 |
-| **TP** | Geometry types + `SRID` grammar (regenerates `parser.go`) | `parser` | `parser/*.y`, `types/field_type` | — | 1 |
-| **TC** | `TypeGeometry` value plumbing: chunk `GetDatum` + cast flen (INSERT…SELECT / UNION) | community + `expression` | `util/chunk/row.go`, `builtin_cast.go` | TP | 1 |
-| **TF1** | ST_ I/O + accessors + measurement | `expression` | `builtin_geo.go`, `builtin.go`, `ast/functions.go` | TP | 1 |
-| **TF2** | DE-9IM predicates + constructors + compat (Envelope/Long/Lat/Crosses gate) | `expression` (+ geomrel OWNERS) | `geomrel.go`, `builtin_geo.go` | TF1 | 1 |
-| **TCov** | Planar/S2 coverer + `tidb_spatial_key/keys` builtins | `spatial`(new) + `expression` | `pkg/util/spatial/*`, key builtins | TP | 2 |
-| **TD** | CREATE SPATIAL INDEX (point) + bbox cols + SHOW CREATE | `ddl` | `create_table`, `executor`, `show` | TCov | 2 |
-| **TPl** | `SpatialIndexResolver`: cell-range + bbox prune + refine | `planner` | `spatial_resolve_index.go`, `planbuilder` | TD, TF2 | 2 |
-| **TGA** | bbox functions GA in `GAFunction4ExpressionIndex` | `critical-tidb-server` ⚠️ | `varsutil.go` | TD | 2 |
-| **TStat** | ANALYZE for geometry-derived indexes | `planner` (+ `stats`) | `planbuilder.go` | TPl | 2 |
-| **TMVI** | General-geometry MVI (`json_overlaps` + MVI bbox) | `ddl` + `planner` | ddl MVI, `spatial_resolve_index.go` | TPl | 2 |
-| **P1** | DE-9IM `ScalarFuncSig` 7100–7109 | **tipb** | `expression.proto` | — | 2 |
-| **K1** | Rust evaluator + `Geometry→Bytes` + Crosses gate | **tikv** | `impl_spatial.rs`, `eval_type.rs` | P1 | 2 |
-| **T9** | Pushdown wiring (`setPbCode`/allow-list/`columnToPBExpr`) | `expression` | `builtin_geo.go`, `expr_to_pb.go`, `infer_pushdown.go` | P1, TF2 | 2 |
+| **setup** | Experimental flag(s) + OWNERS for the new spatial dirs | `critical-tidb-server` + new OWNERS | `sessionctx/variable`, `pkg/util/{spatial,geomrel}/OWNERS` | — | 1 |
+| **types** | Geometry types + `SRID` grammar (regenerates `parser.go`) | `parser` | `parser/*.y`, `types/field_type` | — | 1 |
+| **geom-plumbing** | `TypeGeometry` value plumbing: chunk `GetDatum` + cast flen (INSERT…SELECT / UNION) | community + `expression` | `util/chunk/row.go`, `builtin_cast.go` | types | 1 |
+| **fn-io-accessors** | ST_ I/O + accessors + measurement | `expression` | `builtin_geo.go`, `builtin.go`, `ast/functions.go` | types | 1 |
+| **fn-predicates** | DE-9IM predicates + constructors + compat (Envelope/Long/Lat/Crosses gate) | `expression` (+ geomrel OWNERS) | `geomrel.go`, `builtin_geo.go` | fn-io-accessors | 1 |
+| **index-coverer** | Planar/S2 coverer + `tidb_spatial_key/keys` builtins | `spatial`(new) + `expression` | `pkg/util/spatial/*`, key builtins | types | 2 |
+| **index-ddl** | CREATE SPATIAL INDEX (point) + bbox cols + SHOW CREATE | `ddl` | `create_table`, `executor`, `show` | index-coverer | 2 |
+| **index-planner** | `SpatialIndexResolver`: cell-range + bbox prune + refine | `planner` | `spatial_resolve_index.go`, `planbuilder` | index-ddl, fn-predicates | 2 |
+| **index-ga-funcs** | bbox functions GA in `GAFunction4ExpressionIndex` | `critical-tidb-server` ⚠️ | `varsutil.go` | index-ddl | 2 |
+| **index-analyze** | ANALYZE for geometry-derived indexes | `planner` (+ `stats`) | `planbuilder.go` | index-planner | 2 |
+| **index-mvi** | General-geometry MVI (`json_overlaps` + MVI bbox) | `ddl` + `planner` | ddl MVI, `spatial_resolve_index.go` | index-planner | 2 |
+| **pushdown-tipb** | DE-9IM `ScalarFuncSig` 7100–7109 | **tipb** | `expression.proto` | — | 2 |
+| **pushdown-tikv** | Rust evaluator + `Geometry→Bytes` + Crosses gate | **tikv** | `impl_spatial.rs`, `eval_type.rs` | pushdown-tipb | 2 |
+| **pushdown-tidb** | Pushdown wiring (`setPbCode`/allow-list/`columnToPBExpr`) | `expression` | `builtin_geo.go`, `expr_to_pb.go`, `infer_pushdown.go` | pushdown-tipb, fn-predicates | 2 |
 
-TD/TPl were one "index" PR; splitting on the ddl↔planner boundary makes each
-single-team. TMVI still spans ddl+planner — split the same way if a single team is
-required. TCov and the key builtins span the new `pkg/util/spatial` and
+index-ddl/index-planner were one "index" PR; splitting on the ddl↔planner boundary makes each
+single-team. index-mvi still spans ddl+planner — split the same way if a single team is
+required. index-coverer and the key builtins span the new `pkg/util/spatial` and
 `pkg/expression`; the coverer can land first (spatial OWNERS) and the builtin in TF*.
 
 ## Functional landing order (three milestones)
@@ -99,18 +99,65 @@ constraint: basic data support must be in master — and ideally its flag remove
 before index PRs start merging.** Within each milestone, rows can be reordered or
 subdivided further.
 
-1. **Basic spatial data — no index** · S0, TP, TC, TF1, TF2.
+1. **Basic spatial data — no index** · setup, types, geom-plumbing, fn-io-accessors, fn-predicates.
    Geometry types + EWKB storage + full type *syntax* + a *minimal but useful*
    function set: I/O (`ST_GeomFromText/AsText/AsBinary/GeomFromWKB`), the DE-9IM
    predicates, accessors (`ST_X/Y/SRID/GeometryType`), measurement
    (`ST_Distance(_Sphere)`), constructors. Geometry becomes storable and queryable
    by full scan. Stabilize, then **remove the basic flag** (no prior impl to keep).
-2. **Spatial index** · TCov, TD, TPl, TGA, TStat (points + stats) → TMVI (general
-   geometry) → P1 → K1 → T9 (pushdown). Gated by its own flag(s).
+2. **Spatial index** · index-coverer, index-ddl, index-planner, index-ga-funcs, index-analyze (points + stats) → index-mvi (general
+   geometry) → pushdown-tipb → pushdown-tikv → pushdown-tidb (pushdown). Gated by its own flag(s).
 3. **Full function set** · the geometry-*processing* tail (`ST_Buffer`, `ST_Union`,
    `ST_Intersection`, `ST_Difference`, `ST_ConvexHull`, `ST_Simplify`, …), remaining
    accessors, GeoJSON options, and important PostGIS extras. Pure expression-layer
    builtins.
+
+### Function catalog: milestone-1 *minimal* vs milestone-3 *tail*
+
+Boundary rule: **milestone 1 = everything needed to store, read, and query/index a
+geometry; milestone 3 = geometry *processing/analysis* and the long-tail
+variants/aliases.** Milestone 1 is ≈ what the POC already implements, so its `fn-*`
+PRs are mostly review/cleanup of existing code rather than new work.
+
+**Milestone 1 — minimal (store / read / query / index)**
+- *I/O:* `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`; `ST_AsText`
+  (`ST_AsWKT`), `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
+- *Constructors:* `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString`,
+  `MultiPolygon`, `GeometryCollection`.
+- *Accessors:* `ST_X`, `ST_Y`, `ST_Latitude`, `ST_Longitude`, `ST_SRID` (get + set),
+  `ST_GeometryType`, `ST_Dimension`, `ST_IsEmpty`, `ST_IsValid`, `ST_Envelope`,
+  `ST_StartPoint`, `ST_EndPoint`, `ST_PointN`, `ST_NumPoints`, `ST_ExteriorRing`,
+  `ST_NumInteriorRings`.
+- *Measurement:* `ST_Area`, `ST_Length`, `ST_Centroid`, `ST_Distance`,
+  `ST_Distance_Sphere`.
+- *Predicates (DE-9IM):* `ST_Within`, `ST_Contains`, `ST_Intersects`, `ST_Equals`,
+  `ST_Disjoint`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`.
+
+**Milestone 3 — tail (rest of MySQL's catalog + PostGIS extras)**
+- *Set ops / processing (MySQL):* `ST_Buffer` (+ `ST_Buffer_Strategy`),
+  `ST_ConvexHull`, `ST_Union`, `ST_Intersection`, `ST_Difference`, `ST_SymDifference`.
+- *Sampling / editing (MySQL):* `ST_Collect`, `ST_LineInterpolatePoint(s)`,
+  `ST_PointAtDistance`, `ST_SwapXY`, `ST_Validate`.
+- *Distance variants (MySQL):* `ST_FrechetDistance`, `ST_HausdorffDistance`.
+- *Niche accessors (MySQL):* `ST_GeometryN`, `ST_NumGeometries`, `ST_InteriorRingN`,
+  `ST_IsSimple`, `ST_IsClosed`, `ST_Boundary`.
+- *MBR predicates (MySQL):* `MBRContains`, `MBRWithin`, `MBRIntersects`,
+  `MBRDisjoint`, `MBREquals`, `MBROverlaps`, `MBRTouches`, `MBRCoveredBy`.
+- *Geohash (MySQL):* `ST_GeoHash`, `ST_PointFromGeoHash`, `ST_LatFromGeoHash`,
+  `ST_LongFromGeoHash`.
+- *Typed I/O aliases (MySQL):* `ST_PointFromText`/`ST_LineFromText`/`ST_PolyFromText`/
+  `ST_M*FromText` and their `*FromWKB` counterparts — thin wrappers over the generic
+  form.
+- *Cross-SRID:* `ST_Transform` — travels with the projected/PostGIS SRID work (needs
+  the SRS catalog + reprojection), not here.
+- *PostGIS extras to consider ("important missing ones"):* `ST_Covers`/`ST_CoveredBy`
+  (already in the POC), `ST_Relate` (DE-9IM matrix), `ST_Simplify`,
+  `ST_PointOnSurface`, `ST_ClosestPoint`, `ST_Subdivide` — pick by demand.
+
+**Library note:** the processing ops (`ST_Buffer`/`ST_Union`/`ST_Intersection`/…)
+need GEOS-equivalent algorithms; Go `simplefeatures` and the TiKV `geo` crate cover
+some but not all, so the tail may pull in additional geometry-library capability —
+another reason to keep it off the index critical path.
 
 ### Assessment — does the full function set (3) come after the index (2)? **Yes.**
 
@@ -177,15 +224,15 @@ transforms as a separate, explicitly-scoped effort tied to the geodesic-refine w
 
 - **Stacked PRs:** each tidb PR branches off the previous; note "Depends on #N" and
   keep them rebasing forward. Squash the 73 WIP commits into these logical units.
-- **Generated files:** TP (the grammar PR) regenerates `parser.go` (~12k lines) and
+- **Generated files:** types (the grammar PR) regenerates `parser.go` (~12k lines) and
   the threadsafe builtin table — mark them generated so nobody reads them; run
   `make bazel_prepare` for BUILD metadata.
-- **tipb dependency for T9/K1:** P1 must merge first; until it does, the branch
+- **tipb dependency for pushdown-tidb/pushdown-tikv:** pushdown-tipb must merge first; until it does, the branch
   pins the fork. For go: `replace github.com/pingcap/tipb => github.com/mjonss/tipb
   v0.0.0-20260626151721-eacc7e94342e`. For bazel: the `go_repository` `replace`
   attribute form (no mirror needed) — see `e2e-pushdown-log.md`; `make
   bazel_prepare` reverts it, so re-apply.
-- **Pushdown correctness evidence** for K1/T9 review: real-cluster results vs
+- **Pushdown correctness evidence** for pushdown-tikv/pushdown-tidb review: real-cluster results vs
   MySQL (8/8 DE-9IM predicates over 3000 fuzzed pairs; index path sound) and the
   benchmark are in `docs/design/spatial-index/e2e-pushdown-log.md`.
 
