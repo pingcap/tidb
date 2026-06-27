@@ -61,62 +61,24 @@ const (
 )
 
 var (
-	testSQLMarkStaleMVRefreshHistOrphaned = fmt.Sprintf(
-		`UPDATE mysql.tidb_mview_refresh_hist
-SET REFRESH_STATUS = '%s',
-	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
-	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
-	REFRESH_FAILED_REASON = IFNULL(REFRESH_FAILED_REASON, '%s')
-WHERE REFRESH_STATUS = 'running'
-  AND COALESCE(LAST_HEARTBEAT_AT, REFRESH_TIME) < %%?
-ORDER BY REFRESH_JOB_ID
-LIMIT %d`,
-		mvHistoryOrphanedStatus,
-		mvRefreshHistoryOrphanedReason,
-		historyGCDeleteBatchSize,
-	)
-	testSQLMarkStaleMVLogPurgeHistOrphaned = fmt.Sprintf(
-		`UPDATE mysql.tidb_mlog_purge_hist
-SET PURGE_STATUS = '%s',
-	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
-	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
-	PURGE_FAILED_REASON = IFNULL(PURGE_FAILED_REASON, '%s')
-WHERE PURGE_STATUS = 'running'
-  AND COALESCE(LAST_HEARTBEAT_AT, PURGE_TIME) < %%?
-ORDER BY PURGE_JOB_ID
-LIMIT %d`,
-		mvHistoryOrphanedStatus,
-		mvLogPurgeHistoryOrphanedReason,
-		historyGCDeleteBatchSize,
-	)
-	testSQLDeleteMVRefreshHistBeforeTSO = fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
-		historyGCDeleteBatchSize,
-	)
-	testSQLDeleteMVLogPurgeHistBeforeTSO = fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
-		historyGCDeleteBatchSize,
-	)
-	testSQLCountMVRefreshHist  = `SELECT COUNT(*), MIN(REFRESH_JOB_ID) FROM mysql.tidb_mview_refresh_hist`
-	testSQLCountMVLogPurgeHist = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.tidb_mlog_purge_hist`
-	testExpectedPurgeMVLogSQL  = []string{
+	testSQLMarkStaleMVRefreshHistOrphaned  = buildMarkRefreshHistoryRunningRowsOrphanedSQL()
+	testSQLMarkStaleMVLogPurgeHistOrphaned = buildMarkLogPurgeHistoryRunningRowsOrphanedSQL()
+	testSQLDeleteMVRefreshHistBeforeTSO    = buildDeleteRefreshHistoryByCutoffTSOSQL()
+	testSQLDeleteMVLogPurgeHistBeforeTSO   = buildDeleteLogPurgeHistoryByCutoffTSOSQL()
+	testSQLCountMVRefreshHist              = countRefreshHistorySQL
+	testSQLCountMVLogPurgeHist             = countLogPurgeHistorySQL
+	testExpectedPurgeMVLogSQL              = []string{
 		testSQLPurgeMVLog,
 		testSQLFindPurgeNextTime,
 	}
 )
 
 func testSQLDeleteMVRefreshHistByCount(limit uint64) string {
-	return fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID >= %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
-		limit,
-	)
+	return buildDeleteRefreshHistoryByCountLimitSQL(limit)
 }
 
 func testSQLDeleteMVLogPurgeHistByCount(limit uint64) string {
-	return fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID >= %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
-		limit,
-	)
+	return buildDeleteLogPurgeHistoryByCountLimitSQL(limit)
 }
 
 type mockSessionPool struct{}
@@ -2103,6 +2065,11 @@ func TestServerHelperPurgeMVHistoryBeforeTSOReconcilesStaleRunningHistRows(t *te
 	require.Equal(t, []any{currentTSO}, se.executedRestrictedArg[1])
 	require.Equal(t, []any{expectedCutoffTime}, se.executedRestrictedArg[3])
 	require.Equal(t, []any{currentTSO}, se.executedRestrictedArg[4])
+}
+
+func TestServerHelperPurgeMVHistoryBeforeTSOUsesStatusIndexHints(t *testing.T) {
+	require.Contains(t, buildMarkRefreshHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_refresh_status)")
+	require.Contains(t, buildMarkLogPurgeHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_purge_status)")
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
