@@ -1626,6 +1626,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// coprocessor path after the deadline and finished before the expensive-query
 	// handler's poll sampled them. It is a no-op if an earlier path already marked
 	// the query.
+	//
+	// This covers all statement-completion paths except the detached server-side
+	// cursor path (`execStmtResult.TryDetach`), which finishes without calling
+	// `FinishExecuteStmt`; that path runs the same check in
+	// `staticrecordset.cursorRecordSet.Close` instead.
 	if sessVars.StmtCtx.RunawayChecker != nil {
 		sessVars.StmtCtx.RunawayChecker.AfterExecutor()
 	}
