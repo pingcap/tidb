@@ -4056,7 +4056,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 				}
 				fullUpdateLookupIS = fullUpdateSnapshot.InfoSchema
 			}
-			supportingIndexName, err := validateMVFullUpdateSupportingIndex(
+			supportingIndexNames, err := validateMVFullUpdateSupportingIndex(
 				ctx,
 				fullUpdateLookupIS,
 				res.BaseTableID,
@@ -4065,7 +4065,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			if err != nil {
 				return nil, err
 			}
-			if err := mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, supportingIndexName); err != nil {
+			if err := mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, supportingIndexNames); err != nil {
 				return nil, err
 			}
 			// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
@@ -4177,19 +4177,19 @@ func validateMVFullUpdateSupportingIndex(
 	is infoschema.InfoSchema,
 	baseTableID int64,
 	groupKeyBaseCols []string,
-) (pmodel.CIStr, error) {
+) ([]pmodel.CIStr, error) {
 	if len(groupKeyBaseCols) == 0 {
-		return pmodel.CIStr{}, errors.New("mview full-update lookup template: group key base columns are empty")
+		return nil, errors.New("mview full-update lookup template: group key base columns are empty")
 	}
 	baseTable, ok := is.TableByID(ctx, baseTableID)
 	if !ok || baseTable == nil {
-		return pmodel.CIStr{}, errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
+		return nil, errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
 	}
-	indexName, ok := mview.FindVisibleIndexWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols)
-	if !ok {
-		return pmodel.CIStr{}, errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols)
+	if len(indexNames) == 0 {
+		return nil, errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
 	}
-	return indexName, nil
+	return indexNames, nil
 }
 
 // extractMVFullUpdateLookupTemplate extracts executor-facing lookup metadata from the optimized

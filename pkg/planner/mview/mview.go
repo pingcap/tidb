@@ -53,27 +53,34 @@ const (
 	diffNewRowPrefix    = "__mvd_n_"
 )
 
-// FindVisibleIndexWithPrefixCoveringColumns returns the usable key layout for MIN/MAX full-update lookup.
-func FindVisibleIndexWithPrefixCoveringColumns(
+// FindVisibleIndexesWithPrefixCoveringColumns returns all usable key layouts for MIN/MAX full-update lookup.
+func FindVisibleIndexesWithPrefixCoveringColumns(
 	baseTableInfo *model.TableInfo,
 	groupByCols []string,
-) (pmodel.CIStr, bool) {
-	indexName, ok := mviewutil.FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
-	if !ok {
-		return pmodel.CIStr{}, false
+) []pmodel.CIStr {
+	indexNames := mviewutil.FindVisibleIndexesWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+	if len(indexNames) == 0 {
+		return nil
 	}
-	return pmodel.NewCIStr(indexName), true
+	names := make([]pmodel.CIStr, 0, len(indexNames))
+	for _, indexName := range indexNames {
+		names = append(names, pmodel.NewCIStr(indexName))
+	}
+	return names
 }
 
-// SetFullUpdateLookupIndexHint binds the full-update lookup inner scan to the supporting index.
-func SetFullUpdateLookupIndexHint(sel *ast.SelectStmt, indexName pmodel.CIStr) error {
+// SetFullUpdateLookupIndexHint binds the full-update lookup inner scan to the supporting indexes.
+func SetFullUpdateLookupIndexHint(sel *ast.SelectStmt, indexNames []pmodel.CIStr) error {
 	baseTableName, err := fullUpdateLookupInnerBaseTableName(sel)
 	if err != nil {
 		return err
 	}
+	if len(indexNames) == 0 {
+		return errors.New("mview full-update lookup template: no index hint names")
+	}
 	baseTableName.IndexHints = []*ast.IndexHint{
 		{
-			IndexNames: []pmodel.CIStr{indexName},
+			IndexNames: append([]pmodel.CIStr(nil), indexNames...),
 			HintType:   ast.HintUse,
 			HintScope:  ast.HintForScan,
 		},

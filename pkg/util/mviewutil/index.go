@@ -21,10 +21,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-// FindVisibleIndexWithPrefixCoveringColumns returns the public visible key layout
+// FindVisibleIndexWithPrefixCoveringColumns returns the first public visible key layout
 // usable by MIN/MAX materialized-view refresh.
 func FindVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) (string, bool) {
-	return findIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, "", true)
+	indexNames := findIndexesWithPrefixCoveringColumns(baseTableInfo, groupByCols, "", true)
+	if len(indexNames) == 0 {
+		return "", false
+	}
+	return indexNames[0], true
+}
+
+// FindVisibleIndexesWithPrefixCoveringColumns returns all public visible key layouts
+// usable by MIN/MAX materialized-view refresh.
+func FindVisibleIndexesWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) []string {
+	return findIndexesWithPrefixCoveringColumns(baseTableInfo, groupByCols, "", true)
 }
 
 // HasIndexWithPrefixCoveringColumns reports whether the table has a key layout
@@ -37,33 +47,33 @@ func HasIndexWithPrefixCoveringColumns(
 	excludedIndexName string,
 	requireVisiblePublic bool,
 ) bool {
-	_, ok := findIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, excludedIndexName, requireVisiblePublic)
-	return ok
+	return len(findIndexesWithPrefixCoveringColumns(baseTableInfo, groupByCols, excludedIndexName, requireVisiblePublic)) > 0
 }
 
-func findIndexWithPrefixCoveringColumns(
+func findIndexesWithPrefixCoveringColumns(
 	baseTableInfo *model.TableInfo,
 	groupByCols []string,
 	excludedIndexName string,
 	requireVisiblePublic bool,
-) (string, bool) {
+) []string {
 	if baseTableInfo == nil {
-		return "", false
+		return nil
 	}
 	prefixLen := len(groupByCols)
 	if prefixLen == 0 {
-		return "", false
+		return nil
 	}
 	groupBySet := make(map[string]struct{}, prefixLen)
 	for _, col := range groupByCols {
 		groupBySet[strings.ToLower(col)] = struct{}{}
 	}
 
+	indexNames := make([]string, 0, len(baseTableInfo.Indices))
 	excludedIndexName = strings.ToLower(excludedIndexName)
 	if baseTableInfo.PKIsHandle && prefixLen == 1 && excludedIndexName != strings.ToLower(mysql.PrimaryKeyName) {
 		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
 			if _, ok := groupBySet[pkCol.Name.L]; ok {
-				return mysql.PrimaryKeyName, true
+				indexNames = append(indexNames, mysql.PrimaryKeyName)
 			}
 		}
 	}
@@ -78,28 +88,28 @@ func findIndexWithPrefixCoveringColumns(
 		if excludedIndexName != "" && idx.Name.L == excludedIndexName {
 			continue
 		}
-		matched := make(map[string]struct{}, prefixLen)
-		ok := true
-		for i := range prefixLen {
-			idxCol := idx.Columns[i]
-			if idxCol.Length > 0 {
-				ok = false
-				break
-			}
-			name := idxCol.Name.L
-			if _, exists := groupBySet[name]; !exists {
-				ok = false
-				break
-			}
-			if _, exists := matched[name]; exists {
-				ok = false
-				break
-			}
-			matched[name] = struct{}{}
-		}
-		if ok && len(matched) == prefixLen {
-			return idx.Name.O, true
+		if indexPrefixCoversColumns(idx, prefixLen, groupBySet) {
+			indexNames = append(indexNames, idx.Name.O)
 		}
 	}
-	return "", false
+	return indexNames
+}
+
+func indexPrefixCoversColumns(idx *model.IndexInfo, prefixLen int, groupBySet map[string]struct{}) bool {
+	matched := make(map[string]struct{}, prefixLen)
+	for i := range prefixLen {
+		idxCol := idx.Columns[i]
+		if idxCol.Length > 0 {
+			return false
+		}
+		name := idxCol.Name.L
+		if _, exists := groupBySet[name]; !exists {
+			return false
+		}
+		if _, exists := matched[name]; exists {
+			return false
+		}
+		matched[name] = struct{}{}
+	}
+	return len(matched) == prefixLen
 }
