@@ -110,12 +110,17 @@ fixed (geometry builtins typed `GEOMETRY`; the DDL guard rejects them).
   implemented too (`tidb_spatial_bbox`, pruned on the cop Build side of the
   IndexMerge — e.g. 81 covering candidates → 25 lookups → 9 results in
   `TestPOCSpatialMVIAutoInjectAndBBox`). TODO: the
-  point covering-index rewrite (`ST_Point(x,y)` refine on index data); Layer B
-  exact-refine pushdown to TiKV. The **tipb protocol part is DONE** (`~/repos/tipb`
-  branch `spatial-pushdown`: ScalarFuncSig 7100-7109). The **TiKV contract +
-  correctness corpus** is in `tikv-pushdown-handoff.md` (ready for parallel TiKV
-  work). Remaining: TiDB pb wiring (`setPbCode`/`PBToExpr`/allow-list/dep bump)
-  + unistore round-trip validation (no perf, plumbing only).
+  point covering-index rewrite (`ST_Point(x,y)` refine on index data).
+  **Layer B exact-refine pushdown to TiKV — DONE (merged from `spatial-pushdown`).**
+  tipb protocol: ScalarFuncSig 7100-7109 (`~/repos/tipb` branch `spatial-pushdown`).
+  TiDB pb wiring done (`setPbCode`/`getSignatureByPB`/`scalarExprSupportedByTiKV`
+  allow-list/`columnToPBExpr` allows `TypeGeometry`), so the ST_ refine pushes to a
+  cop Selection (`TestPOCSpatialRefinePushdown`); validated against unistore's Go
+  evaluator. TiKV native evaluator: `mjonss/tikv` branch `spatial-copr-pushdown`
+  (`impl_spatial.rs`). NOTE: this merge carries a local tipb `replace` in `go.mod`
+  (`=> /home/mattias/repos/tipb`) — fine for local/e2e builds, but must move to a
+  pinned `mjonss/tipb` ref before this branch is CI/PR-clean. Remaining: the
+  real-cluster e2e + benchmark (this run).
 - Stand up a **real-storage (TiKV/disk) benchmark** so the Layer A and pushdown
   latency wins can actually be measured (the mock store only shows lookup-count).
 - `ST_Intersects`/`ST_Within`/`ST_Contains` → covering auto-rewrite (cell ranges

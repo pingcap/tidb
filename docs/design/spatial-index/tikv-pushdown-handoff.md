@@ -106,9 +106,16 @@ No special framing beyond the standard scalar-function encoding.
 ## 5. Status / sequencing
 
 - tipb sigs + go-tipb bindings: DONE (`spatial-pushdown` branch).
+- TiDB-side wiring: DONE (TiDB branch `spatial-pushdown`). `geomRelPbCode` sets the
+  sig in `getFunction`; `getSignatureByPB`/`geomRelFromPbCode` reverse-map it;
+  `scalarExprSupportedByTiKV` allow-lists the predicates; `columnToPBExpr` now
+  pushes `TypeGeometry` columns; go.mod has a local `replace` to the tipb fork.
+  **Validated in unistore** (`TestPOCSpatialRefinePushdown`): the `ST_Within`
+  refine is evaluated at `cop[tikv]` (table scan *and* index-lookup probe side)
+  and returns the same rows as a root/full-scan evaluation.
 - TiKV Rust evaluator (this doc): to do — can proceed in parallel against the
-  corpus above.
-- TiDB-side wiring (`setPbCode` on the `geomRel` sigs, `PBToExpr` reverse map,
-  pushdown allow-list, bump the tipb dep): to do — needed for end-to-end
-  integration; unistore validates the round-trip (it reuses TiDB's Go evaluator,
-  so it needs no new code, just the pb mapping).
+  corpus above. TiDB already emits the `Expr` shape in §4 for it to decode.
+
+Note: the unistore validation reuses TiDB's Go evaluator via the pb round-trip,
+so it proves the wiring/encoding but not a native Rust implementation — that is
+exactly what the TiKV side adds.
