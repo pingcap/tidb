@@ -16,10 +16,11 @@ behind an experimental flag, landing a points-only MVP first.
 **Design-review action:** land #69473 (design sign-off) before/independently of the
 code PRs. Confirm it (or a short addendum) covers the parts that are *new* vs
 #38916 and weren't obvious at design time:
-- the **coprocessor pushdown contract** — tipb `ScalarFuncSig` 7100–7109, the
-  bbox-prefilter → exact-refine split, and the TiKV evaluator's OGC/DE-9IM
-  semantics (verified == MySQL/simplefeatures). This is cross-repo (tipb + TiKV)
-  and is the most likely design gap.
+- the **coprocessor pushdown contract** — drafted as a companion design note,
+  [`pushdown-contract.md`](pushdown-contract.md) (tipb `ScalarFuncSig` 7100–7109,
+  the bbox-prefilter → exact-refine split, EWKB/Bytes encoding, DE-9IM semantics
+  verified == MySQL/simplefeatures). Cross-repo (tipb + TiKV); the design ref for
+  P1/K1/T9 below.
 - **bbox-in-index** pruning and the **expression-index / MVI** representation
   (point → scalar `tidb_spatial_key`; general geometry → MVI `tidb_spatial_keys` +
   `json_overlaps`).
@@ -42,37 +43,74 @@ review the `.y` grammar, not the generated file). Hand-written surface:
 
 So each PR below is ~100–800 reviewable lines.
 
-## Code-review stack (dependency-ordered, single-team, flag-gated)
+## OWNERS routing (so each PR has one review team)
 
-Gate everything behind an experimental flag (e.g. `tidb_enable_spatial_index`, off
-by default) so each PR is a no-op until enabled and safe to merge incrementally.
+From the directory `OWNERS` (each `no_parent_owners: true`):
 
-| PR | Scope | Repo | Key files | ~LOC | Depends on | Owner | MVP? |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| **T1** | Geometry types + EWKB storage + SRID; `TypeGeometry` fixes (chunk `GetDatum`, cast flen) | tidb | parser `.y`+types, `create_table`, `chunk/row.go`, `builtin_cast.go` | ~400 (+gen parser.go) | — | parser/types/ddl | ✅ |
-| **T2** | ST_ I/O + accessors + measurement | tidb | `builtin_geo.go`, `builtin.go`, `ast/functions.go` | ~800 | T1 | expression | ✅ |
-| **T3** | DE-9IM predicates + constructors + compat (Envelope, Longitude/Latitude, Crosses gate) | tidb | `geomrel.go`, `builtin_geo.go` | ~700 | T2 | expression | ✅ |
-| **T4** | Coverer + `tidb_spatial_key/keys` | tidb | `pkg/util/spatial/*`, key builtins | ~600 | T1 | spatial team | ✅ |
-| **T5** | Point spatial index: DDL + `SpatialIndexResolver` (cell-range + refine) | tidb | ddl `create_table`/`executor`/`show`, `spatial_resolve_index.go`, `planbuilder` | ~600 | T3, T4 | ddl + planner | ✅ |
-| **T6** | bbox-in-index (Layer A) + GA-list fix | tidb | `spatial_resolve_index.go`, `create_table.go`, `varsutil.go` | ~300 | T5 | planner + ddl | ✅ |
-| **T7** | ANALYZE stats for geometry-derived indexes | tidb | `planbuilder.go`, analyze routing | ~150 | T5 | statistics | ✅ |
-| **T8** | General-geometry MVI (`json_overlaps` auto-injection + MVI bbox) | tidb | ddl MVI, `spatial_resolve_index.go` | ~400 | T6 | ddl + planner | — |
-| **P1** | DE-9IM `ScalarFuncSig` 7100–7109 | tipb | `expression.proto` | ~tens | — | tipb owners | — |
-| **K1** | Rust DE-9IM evaluator + `Geometry→Bytes` EvalType + Crosses gate | tikv | `impl_spatial.rs`, `eval_type.rs`, geo crate | ~500 | P1 | TiKV coprocessor | — |
-| **T9** | Coprocessor pushdown wiring (`setPbCode`/allow-list/`columnToPBExpr`) | tidb | `builtin_geo.go`, `expr_to_pb.go`, `infer_pushdown.go` | ~150 | P1, T3 | expression + planner | — |
+| Path | Approver sig |
+| --- | --- |
+| `pkg/parser/**` (grammar, `types/field_type`, `ast/functions`) | `sig-approvers-parser` (+ `sig-critical-approvers-parser`) |
+| `pkg/expression/**` (`builtin_geo`, `builtin_cast`, `expr_to_pb`, `infer_pushdown`, `distsql_builtin`) | `sig-approvers-expression` |
+| `pkg/ddl/**` (`create_table`, `executor`, `show`) | `sig-approvers-ddl` |
+| `pkg/planner/**` (`spatial_resolve_index`, `planbuilder`) | `sig-approvers-planner` |
+| `pkg/statistics/**` | `sig-approvers-stats` |
+| `pkg/sessionctx/variable/**` (feature flag, GA-list) | `sig-critical-approvers-tidb-server` ⚠️ critical |
+| `pkg/util/chunk`, `pkg/util/codec`, `pkg/types` | root → community/dep |
+| **`pkg/util/spatial`, `pkg/util/geomrel` (NEW)** | none yet → **add an OWNERS naming the spatial team** so they don't fall to community-wide review |
+
+Two consequences: (1) the boundary to split on is **parser \| expression \| ddl \|
+planner \| stats \| sessionctx(critical) \| tikv \| tipb**; (2) `sessionctx/variable`
+is a **critical** approver, so isolate the flag and the GA-list into their own
+1-file PRs and don't block index work on that queue.
+
+## Code-review stack (one primary sig per PR, flag-gated)
+
+Each row is a compilable unit; "no user-visible behavior yet" is fine while gated.
+
+| PR | Scope | Primary sig | Key files | Depends | Wave |
+| --- | --- | --- | --- | --- | --- |
+| **S0** | Experimental flag(s) + OWNERS for the new spatial dirs | `critical-tidb-server` + new OWNERS | `sessionctx/variable`, `pkg/util/{spatial,geomrel}/OWNERS` | — | 1 |
+| **TP** | Geometry types + `SRID` grammar (regenerates `parser.go`) | `parser` | `parser/*.y`, `types/field_type` | — | 1 |
+| **TC** | `TypeGeometry` value plumbing: chunk `GetDatum` + cast flen (INSERT…SELECT / UNION) | community + `expression` | `util/chunk/row.go`, `builtin_cast.go` | TP | 1 |
+| **TF1** | ST_ I/O + accessors + measurement | `expression` | `builtin_geo.go`, `builtin.go`, `ast/functions.go` | TP | 1 |
+| **TF2** | DE-9IM predicates + constructors + compat (Envelope/Long/Lat/Crosses gate) | `expression` (+ geomrel OWNERS) | `geomrel.go`, `builtin_geo.go` | TF1 | 1 |
+| **TCov** | Planar/S2 coverer + `tidb_spatial_key/keys` builtins | `spatial`(new) + `expression` | `pkg/util/spatial/*`, key builtins | TP | 1 |
+| **TD** | CREATE SPATIAL INDEX (point) + bbox cols + SHOW CREATE | `ddl` | `create_table`, `executor`, `show` | TCov | 1 |
+| **TPl** | `SpatialIndexResolver`: cell-range + bbox prune + refine | `planner` | `spatial_resolve_index.go`, `planbuilder` | TD, TF2 | 1 |
+| **TGA** | bbox functions GA in `GAFunction4ExpressionIndex` | `critical-tidb-server` ⚠️ | `varsutil.go` | TD | 1 |
+| **TStat** | ANALYZE for geometry-derived indexes | `planner` (+ `stats`) | `planbuilder.go` | TPl | 1 |
+| **TMVI** | General-geometry MVI (`json_overlaps` + MVI bbox) | `ddl` + `planner` | ddl MVI, `spatial_resolve_index.go` | TPl | 2 |
+| **P1** | DE-9IM `ScalarFuncSig` 7100–7109 | **tipb** | `expression.proto` | — | 2 |
+| **K1** | Rust evaluator + `Geometry→Bytes` + Crosses gate | **tikv** | `impl_spatial.rs`, `eval_type.rs` | P1 | 2 |
+| **T9** | Pushdown wiring (`setPbCode`/allow-list/`columnToPBExpr`) | `expression` | `builtin_geo.go`, `expr_to_pb.go`, `infer_pushdown.go` | P1, TF2 | 2 |
+
+TD/TPl were one "index" PR; splitting on the ddl↔planner boundary makes each
+single-team. TMVI still spans ddl+planner — split the same way if a single team is
+required. TCov and the key builtins span the new `pkg/util/spatial` and
+`pkg/expression`; the coverer can land first (spatial OWNERS) and the builtin in TF*.
 
 ## Land in two waves
 
-- **Wave 1 — points MVP (T1–T7):** a complete, usable points-only spatial index
-  that ANALYZEs and auto-selects. Coherent, bounded, mergeable on its own.
-- **Wave 2 — enhancements:** general geometry (T8), then the pushdown chain
-  (P1 → K1 → T9). The pushdown is independent of T8 and can go in either order.
+- **Wave 1 — points MVP (S0, TP, TC, TF1, TF2, TCov, TD, TPl, TGA, TStat):** a
+  complete, usable points-only spatial index that ANALYZEs and auto-selects.
+- **Wave 2 — enhancements:** general geometry (TMVI), then the pushdown chain
+  (P1 → K1 → T9). Pushdown is independent of TMVI; either order.
+
+## Feature flags (and their removal)
+
+- Gate Wave 1 on `tidb_enable_spatial_index` (off by default); optionally a second
+  flag for the pushdown so it can ramp independently. Multiple flags are fine.
+- **These are launch gates, not compatibility switches.** This is brand-new
+  functionality — there is no prior implementation to fall back to — so once the
+  basic feature is stable in master, **remove the flag(s)** (and the dead gated-off
+  branches) rather than keeping them indefinitely. Plan a cleanup PR per flag right
+  after each wave GA's. Track the removal in #6347 so it isn't forgotten.
 
 ## Mechanics & gotchas for reviewers
 
 - **Stacked PRs:** each tidb PR branches off the previous; note "Depends on #N" and
   keep them rebasing forward. Squash the 73 WIP commits into these logical units.
-- **Generated files:** T1/any grammar PR regenerates `parser.go` (~12k lines) and
+- **Generated files:** TP (the grammar PR) regenerates `parser.go` (~12k lines) and
   the threadsafe builtin table — mark them generated so nobody reads them; run
   `make bazel_prepare` for BUILD metadata.
 - **tipb dependency for T9/K1:** P1 must merge first; until it does, the branch
