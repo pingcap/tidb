@@ -48,6 +48,16 @@ Findings:
   point/poly refine and ~1.5% of poly/poly; the DE-9IM `relate` (and its 77–446
   allocations) dominates. A faster decode format does ~nothing here.
 
+**Caveat — what this measures.** These are the geometry-library costs (EWKB
+`decodeEWKB` → geo, then DE-9IM `relate`) on a raw EWKB `string` — which *is* the
+form the value has at the decode point (every spatial builtin reads it via
+`EvalString(ctx, row)` and parses that string). They **exclude** the per-row envelope
+that sits *upstream* of decode: the row-codec decode (KV → column bytes), the chunk
+column access / `EvalString` dispatch, and `Datum` wrapping on Datum-based paths
+(a byte copy, not a geometry decode). That envelope is fixed and geometry-agnostic,
+so the relative split holds; if anything, including it makes the geometry decode an
+even smaller fraction of true end-to-end cost — reinforcing the conclusion below.
+
 So a leaner format is a **modest, write-skewed, point-favoring** win: after
 decode-once, the remaining single point decode (53 ns) could drop to ~15 ns with a
 flat no-framing layout, taking a point-heavy bulk load's per-row geometry CPU from
