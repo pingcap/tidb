@@ -156,7 +156,7 @@ identical** — nothing in this catalog is 9.7-only or 8.0-only — so "MySQL" =
 - *Niche accessors:* `ST_GeometryN`, `ST_NumGeometries`, `ST_InteriorRingN`,
   `ST_IsSimple`, `ST_IsClosed`.
 - *MBR predicates:* `MBRContains`, `MBRWithin`, `MBRIntersects`, `MBRDisjoint`,
-  `MBREquals`, `MBROverlaps`, `MBRTouches`, `MBRCoveredBy`.
+  `MBREquals`, `MBROverlaps`, `MBRTouches`, `MBRCovers`, `MBRCoveredBy`.
 - *Geohash:* `ST_GeoHash`, `ST_PointFromGeoHash`, `ST_LatFromGeoHash`,
   `ST_LongFromGeoHash`.
 - *Typed I/O aliases:* `ST_PointFromText`/`ST_LineFromText`/`ST_PolyFromText`/

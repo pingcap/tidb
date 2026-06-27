@@ -57,7 +57,8 @@ M3: `ST_FrechetDistance`, `ST_HausdorffDistance`.
 
 ## Predicates — MBR (bounding-box)  · M3
 `MBRContains`, `MBRWithin`, `MBRIntersects`, `MBRDisjoint`, `MBREquals`,
-`MBROverlaps`, `MBRTouches`, `MBRCoveredBy`.
+`MBROverlaps`, `MBRTouches`, `MBRCovers`, `MBRCoveredBy` (all 9 documented in the
+8.0 and 9.7 manuals).
 
 ## Processing / analysis  · M3
 `ST_Buffer`, `ST_Buffer_Strategy`, `ST_ConvexHull`, `ST_Union`, `ST_Intersection`,
