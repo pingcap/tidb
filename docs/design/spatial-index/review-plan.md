@@ -31,6 +31,13 @@ code PRs. Confirm it (or a short addendum) covers the parts that are *new* vs
   prefilter has no false negatives) and for the *cap* predicates `ST_Distance` /
   `ST_Distance_Sphere ≤ r`. Other predicates run as plain filters (still
   cop-pushable).
+- **pre-GA encoding lock-ins** (hard to change after release — they need migration)
+  — see [`storage-format.md`](storage-format.md): (a) the GEOMETRY **value format**
+  (recommend a format-version byte + stripping the redundant per-row SRID / byte-order
+  flag; a flat-coord layout is benchmark-gated) and (b) the SRID-0 index **cell-key
+  curve** — **benchmark Hilbert vs Morton** (Morton today; 4326 already uses
+  S2/Hilbert). Profiling shows writes are decode-bound (decode-once = 2.5×, a code
+  fix) and reads relate-bound, so storage *size* is not the lever.
 - **ANALYZE** for geometry-derived virtual indexes (independent index-scan path).
 - accepted **limitations**: planar 4326 refine (only the S2 covering is geodesic);
   4326 axis convention (coord0 = lng here vs lat in MySQL).
