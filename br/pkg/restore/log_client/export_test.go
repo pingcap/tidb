@@ -102,12 +102,26 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 	}
 }
 
+func TEST_NewLogClientWithLogFileManager(fm *LogFileManager) *LogClient {
+	return &LogClient{
+		LogFileManager: fm,
+	}
+}
+
 // TEST_NewLogClientWithStorage returns a minimal LogClient whose only
 // dependency is the storage. It is intended for tests that exercise
 // storage-level behavior (lock acquisition, migration loading) and do
 // not need the full domain / session / checkpoint wiring.
 func TEST_NewLogClientWithStorage(s storage.ExternalStorage) *LogClient {
 	return &LogClient{storage: s}
+}
+
+func (rc *LogClient) TEST_ConstructIDMap(
+	ctx context.Context,
+	fs []*backuppb.DataFileInfo,
+	sr *stream.SchemasReplace,
+) error {
+	return rc.constructIDMap(ctx, fs, sr)
 }
 
 func (rc *LogClient) SetUseCheckpoint() {

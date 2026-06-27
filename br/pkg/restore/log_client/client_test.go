@@ -16,6 +16,7 @@ package logclient_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -159,6 +161,69 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 	)
 }
 
+func MockEmptySchemasReplaceWithGlobalID() *stream.SchemasReplace {
+	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
+	nextID := int64(100)
+	return stream.NewSchemasReplace(
+		dbMap,
+		true,
+		nil,
+		1,
+		filter.All(),
+		func(context.Context) (int64, error) {
+			nextID++
+			return nextID, nil
+		},
+		nil,
+		nil,
+	)
+}
+
+func encodeTxnMetaKV(key, field []byte, ts uint64, value []byte) []byte {
+	rawKey := tablecodec.EncodeMetaKey(key, field)
+	txnKey := codec.EncodeBytes(nil, rawKey)
+	txnKey = codec.EncodeUintDesc(txnKey, ts)
+	return stream.EncodeKVEntry(txnKey, value)
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	data, err := json.Marshal(value)
+	require.NoError(t, err)
+	return data
+}
+
+func generateIDMapKVData(t *testing.T) ([]byte, logclient.Log, int64, int64, string, string) {
+	const (
+		dbID       int64  = 101
+		tableID    int64  = 202
+		dbName            = "test_db"
+		tableName         = "test_table"
+		dbEntryTS  uint64 = 40
+		tblEntryTS uint64 = 41
+	)
+
+	dbValue := mustMarshalJSON(t, &model.DBInfo{
+		ID:   dbID,
+		Name: pmodel.NewCIStr(dbName),
+	})
+	tableValue := mustMarshalJSON(t, &model.TableInfo{
+		ID:   tableID,
+		Name: pmodel.NewCIStr(tableName),
+	})
+
+	buff := make([]byte, 0)
+	buff = append(buff, encodeTxnMetaKV([]byte("DBs"), meta.DBkey(dbID), dbEntryTS, dbValue)...)
+	buff = append(buff, encodeTxnMetaKV(meta.DBkey(dbID), meta.TableKey(tableID), tblEntryTS, tableValue)...)
+	checksum := sha256.Sum256(buff)
+	return buff, &backuppb.DataFileInfo{
+		Sha256:      checksum[:],
+		RangeOffset: 0,
+		RangeLength: uint64(len(buff)),
+		Length:      uint64(len(buff)),
+		Cf:          stream.DefaultCF,
+	}, dbID, tableID, dbName, tableName
+}
+
 func TestRestoreBatchMetaKVFiles(t *testing.T) {
 	client := logclient.NewRestoreClient(nil, nil, nil, keepalive.ClientParameters{})
 	files := []*backuppb.DataFileInfo{}
@@ -166,6 +231,47 @@ func TestRestoreBatchMetaKVFiles(t *testing.T) {
 	next, err := client.RestoreBatchMetaKVFiles(context.Background(), files[0:], nil, make([]*logclient.KvEntryWithTS, 0), math.MaxUint64, nil, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(next))
+}
+
+func TestConstructIDMapReadsFilesConcurrently(t *testing.T) {
+	ctx := context.Background()
+	data, file, dbID, tableID, dbName, tableName := generateIDMapKVData(t)
+	readGate := make(chan struct{})
+	helper := &logclient.FakeStreamMetadataHelper{Data: data, ReadGate: readGate}
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)
+	client := logclient.TEST_NewLogClientWithLogFileManager(fm)
+
+	files := make([]*backuppb.DataFileInfo, 0, 4)
+	for i := range 4 {
+		f := *file
+		f.Path = fmt.Sprintf("meta-kv-%d", i)
+		f.Cf = stream.DefaultCF
+		files = append(files, &f)
+	}
+
+	sr := MockEmptySchemasReplaceWithGlobalID()
+	sr.SetPreConstructMapStatus()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.TEST_ConstructIDMap(ctx, files, sr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return helper.ActiveReadCount() == int32(len(files))
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(len(files)), helper.MaxActiveReadCount())
+	close(readGate)
+	require.NoError(t, <-errCh)
+
+	dbReplace := sr.DbMap[dbID]
+	require.NotNil(t, dbReplace)
+	require.Equal(t, dbName, dbReplace.Name)
+	require.NotZero(t, dbReplace.DbID)
+
+	tableReplace := dbReplace.TableMap[tableID]
+	require.NotNil(t, tableReplace)
+	require.Equal(t, tableName, tableReplace.Name)
+	require.NotZero(t, tableReplace.TableID)
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {

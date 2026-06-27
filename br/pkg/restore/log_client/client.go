@@ -1330,17 +1330,42 @@ func (rc *LogClient) constructIDMap(
 	fs []*backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
 ) error {
-	for _, f := range fs {
-		entries, _, err := rc.ReadAllEntries(ctx, f, math.MaxUint64)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
+	var rewriteLock sync.Mutex
+	return rc.readMetaKVFiles(ctx, fs, math.MaxUint64, func(entries, _ []*KvEntryWithTS, cf string) error {
+		rewriteLock.Lock()
+		defer rewriteLock.Unlock()
 		for _, entry := range entries {
-			if _, err := sr.RewriteKvEntry(&entry.E, f.GetCf()); err != nil {
+			if _, err := sr.RewriteKvEntry(&entry.E, cf); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		return nil
+	})
+}
+
+func (rc *LogClient) readMetaKVFiles(
+	ctx context.Context,
+	files []*backuppb.DataFileInfo,
+	filterTS uint64,
+	consumeFn func([]*KvEntryWithTS, []*KvEntryWithTS, string) error,
+) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	workerPool := tidbutil.NewWorkerPool(min(uint(len(files)), maxReadMetaKVFilesConcurrency), "read meta kv files")
+	for _, file := range files {
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			es, nextEs, err := rc.ReadAllEntries(egCtx, file, filterTS)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return consumeFn(es, nextEs, file.GetCf())
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -1462,25 +1487,15 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 
 	// read all entries from files.
 	if len(files) > 0 {
-		eg, egCtx := errgroup.WithContext(ctx)
-		workerPool := tidbutil.NewWorkerPool(min(uint(len(files)), maxReadMetaKVFilesConcurrency), "read meta kv files")
 		var entriesLock sync.Mutex
-		for _, f := range files {
-			file := f
-			workerPool.ApplyOnErrorGroup(eg, func() error {
-				es, nextEs, err := rc.ReadAllEntries(egCtx, file, filterTS)
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				entriesLock.Lock()
-				curKvEntries = append(curKvEntries, es...)
-				nextKvEntries = append(nextKvEntries, nextEs...)
-				entriesLock.Unlock()
-				return nil
-			})
-		}
-		if err := eg.Wait(); err != nil {
+		err := rc.readMetaKVFiles(ctx, files, filterTS, func(es, nextEs []*KvEntryWithTS, _ string) error {
+			entriesLock.Lock()
+			curKvEntries = append(curKvEntries, es...)
+			nextKvEntries = append(nextKvEntries, nextEs...)
+			entriesLock.Unlock()
+			return nil
+		})
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
