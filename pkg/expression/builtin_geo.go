@@ -537,16 +537,25 @@ func (b *builtinGeomRelSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	s1, _, err := decodeEWKB(g1)
+	s1, geo1, err := decodeEWKB(g1)
 	if err != nil {
 		return 0, false, err
 	}
-	s2, _, err := decodeEWKB(g2)
+	s2, geo2, err := decodeEWKB(g2)
 	if err != nil {
 		return 0, false, err
 	}
 	if s1 != s2 {
 		return 0, false, errors.Errorf("%s: binary geometry function passed two arguments with different SRIDs", b.funcName)
+	}
+	// MySQL's ST_Crosses is only defined when dim(g1) < dim(g2), or both are lines;
+	// in any other dimension combination (e.g. Crosses(polygon, line), poly/poly,
+	// point/point) it returns NULL rather than a boolean.
+	if b.pred == geomrel.Crosses {
+		d1, d2 := geo1.Dimension(), geo2.Dimension()
+		if !(d1 < d2 || (d1 == 1 && d2 == 1)) {
+			return 0, true, nil
+		}
 	}
 	res, err := geomrel.Relate(b.pred, g1, g2)
 	if err != nil {

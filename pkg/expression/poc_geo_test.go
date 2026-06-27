@@ -86,6 +86,11 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT ST_AsText(ST_Envelope(ST_GeomFromText('LINESTRING(0 0,2 0)')))").Check(testkit.Rows("LINESTRING(0 0,2 0)"))
 	// ST_Longitude/ST_Latitude on a geographic (4326) point (long=coord1, lat=coord0).
 	tk.MustQuery("SELECT ST_Longitude(ST_GeomFromText('POINT(1 2)',4326)), ST_Latitude(ST_GeomFromText('POINT(1 2)',4326))").Check(testkit.Rows("2 1"))
+	// ST_Crosses is dimension-gated like MySQL: NULL unless dim(g1) < dim(g2) or
+	// both are lines (a symmetric library would wrongly return a boolean here).
+	tk.MustQuery("SELECT ST_Crosses(ST_GeomFromText('LINESTRING(8 3,8 12)'), ST_GeomFromText('POLYGON((2 7,12 7,12 9,2 9,2 7))'))").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_Crosses(ST_GeomFromText('POLYGON((2 7,12 7,12 9,2 9,2 7))'), ST_GeomFromText('LINESTRING(8 3,8 12)')) IS NULL").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ST_Crosses(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'), ST_GeomFromText('POLYGON((2 2,3 2,3 3,2 3,2 2))')) IS NULL").Check(testkit.Rows("1"))
 	// ST_GeomFromWKB(ST_AsBinary(g)) round-trips; ST_AsWKB is an alias of ST_AsBinary.
 	tk.MustQuery("SELECT ST_AsText(ST_GeomFromWKB(ST_AsBinary(ST_GeomFromText('POINT(5 6)'))))").Check(testkit.Rows("POINT(5 6)"))
 	tk.MustQuery("SELECT ST_AsWKB(ST_GeomFromText('POINT(0 0)')) = ST_AsBinary(ST_GeomFromText('POINT(0 0)'))").Check(testkit.Rows("1"))
