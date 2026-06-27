@@ -1154,16 +1154,12 @@ func (*serviceHelper) GetCurrentTSO(_ context.Context, sysSessionPool basic.Sess
 	return ver.Ver, nil
 }
 
-// PurgeMVHistoryBeforeTSO removes old records from MV history tables.
-func (*serviceHelper) PurgeMVHistoryBeforeTSO(
-	ctx context.Context,
-	sysSessionPool basic.SessionPool,
-	currentTSO uint64,
-	mviewRefreshRetention time.Duration,
-	mlogPurgeRetention time.Duration,
-) error {
-	markRefreshHistoryRunningRowsOrphanedSQL := fmt.Sprintf(
-		`UPDATE mysql.tidb_mview_refresh_hist
+const countRefreshHistorySQL = `SELECT COUNT(*), MIN(REFRESH_JOB_ID) FROM mysql.tidb_mview_refresh_hist`
+const countLogPurgeHistorySQL = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.tidb_mlog_purge_hist`
+
+func buildMarkRefreshHistoryRunningRowsOrphanedSQL() string {
+	return fmt.Sprintf(
+		`UPDATE mysql.tidb_mview_refresh_hist FORCE INDEX (idx_refresh_status)
 SET REFRESH_STATUS = '%s',
 	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
 	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
@@ -1176,8 +1172,11 @@ LIMIT %d`,
 		mvRefreshHistoryOrphanedReason,
 		historyGCDeleteBatchSize,
 	)
-	markLogPurgeHistoryRunningRowsOrphanedSQL := fmt.Sprintf(
-		`UPDATE mysql.tidb_mlog_purge_hist
+}
+
+func buildMarkLogPurgeHistoryRunningRowsOrphanedSQL() string {
+	return fmt.Sprintf(
+		`UPDATE mysql.tidb_mlog_purge_hist FORCE INDEX (idx_purge_status)
 SET PURGE_STATUS = '%s',
 	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
 	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
@@ -1190,28 +1189,48 @@ LIMIT %d`,
 		mvLogPurgeHistoryOrphanedReason,
 		historyGCDeleteBatchSize,
 	)
-	deleteRefreshHistoryByCutoffTSOSQL := fmt.Sprintf(
+}
+
+func buildDeleteRefreshHistoryByCutoffTSOSQL() string {
+	return fmt.Sprintf(
 		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
 	)
-	deleteLogPurgeHistoryByCutoffTSOSQL := fmt.Sprintf(
+}
+
+func buildDeleteLogPurgeHistoryByCutoffTSOSQL() string {
+	return fmt.Sprintf(
 		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
 	)
-	const countRefreshHistorySQL = `SELECT COUNT(*), MIN(REFRESH_JOB_ID) FROM mysql.tidb_mview_refresh_hist`
-	const countLogPurgeHistorySQL = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.tidb_mlog_purge_hist`
-	deleteRefreshHistoryByCountLimitSQL := func(limit uint64) string {
-		return fmt.Sprintf(
-			`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID >= %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
-			limit,
-		)
-	}
-	deleteLogPurgeHistoryByCountLimitSQL := func(limit uint64) string {
-		return fmt.Sprintf(
-			`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID >= %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
-			limit,
-		)
-	}
+}
+
+func buildDeleteRefreshHistoryByCountLimitSQL(limit uint64) string {
+	return fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID >= %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+		limit,
+	)
+}
+
+func buildDeleteLogPurgeHistoryByCountLimitSQL(limit uint64) string {
+	return fmt.Sprintf(
+		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID >= %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+		limit,
+	)
+}
+
+// PurgeMVHistoryBeforeTSO removes old records from MV history tables.
+func (*serviceHelper) PurgeMVHistoryBeforeTSO(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	currentTSO uint64,
+	mviewRefreshRetention time.Duration,
+	mlogPurgeRetention time.Duration,
+) error {
+	markRefreshHistoryRunningRowsOrphanedSQL := buildMarkRefreshHistoryRunningRowsOrphanedSQL()
+	markLogPurgeHistoryRunningRowsOrphanedSQL := buildMarkLogPurgeHistoryRunningRowsOrphanedSQL()
+	deleteRefreshHistoryByCutoffTSOSQL := buildDeleteRefreshHistoryByCutoffTSOSQL()
+	deleteLogPurgeHistoryByCutoffTSOSQL := buildDeleteLogPurgeHistoryByCutoffTSOSQL()
 
 	calcCutoffTSO := func(retention time.Duration) uint64 {
 		cutoffTSO := currentTSO
@@ -1242,7 +1261,7 @@ LIMIT %d`,
 	if err := purgeMVHistoryByCutoffTSOInBatches(ctx, sctx, deleteRefreshHistoryByCutoffTSOSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by retention failed: %w", err))
 	}
-	if err := purgeMVHistoryByCountLimitInBatches(ctx, sctx, countRefreshHistorySQL, deleteRefreshHistoryByCountLimitSQL, defaultMVHistoryGCMaxRecords); err != nil {
+	if err := purgeMVHistoryByCountLimitInBatches(ctx, sctx, countRefreshHistorySQL, buildDeleteRefreshHistoryByCountLimitSQL, defaultMVHistoryGCMaxRecords); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by count limit failed: %w", err))
 	}
 	if err := reconcileMVHistoryRunningRowsInBatches(ctx, sctx, markLogPurgeHistoryRunningRowsOrphanedSQL, calcHeartbeatCutoffTime(mvHistoryHeartbeatTimeout)); err != nil {
@@ -1251,7 +1270,7 @@ LIMIT %d`,
 	if err := purgeMVHistoryByCutoffTSOInBatches(ctx, sctx, deleteLogPurgeHistoryByCutoffTSOSQL, calcCutoffTSO(mlogPurgeRetention)); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by retention failed: %w", err))
 	}
-	if err := purgeMVHistoryByCountLimitInBatches(ctx, sctx, countLogPurgeHistorySQL, deleteLogPurgeHistoryByCountLimitSQL, defaultMVHistoryGCMaxRecords); err != nil {
+	if err := purgeMVHistoryByCountLimitInBatches(ctx, sctx, countLogPurgeHistorySQL, buildDeleteLogPurgeHistoryByCountLimitSQL, defaultMVHistoryGCMaxRecords); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by count limit failed: %w", err))
 	}
 	if len(purgeErrs) > 0 {
