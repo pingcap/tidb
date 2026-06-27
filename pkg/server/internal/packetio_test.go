@@ -62,6 +62,48 @@ func TestPacketIOWrite(t *testing.T) {
 	require.Equal(t, byte(0), res[3])
 }
 
+func TestPacketIOAvailableWriteBuffer(t *testing.T) {
+	t.Run("write packet from available buffer", func(t *testing.T) {
+		var outBuffer bytes.Buffer
+		pkt := NewPacketIOForTest(bufio.NewWriterSize(&outBuffer, 16))
+
+		buf, err := pkt.AvailableWriteBuffer(8)
+		require.NoError(t, err)
+		require.NotNil(t, buf)
+
+		data := append(buf[:4], 0x01, 0x02, 0x03)
+		err = pkt.WritePacket(data)
+		require.NoError(t, err)
+		err = pkt.Flush()
+		require.NoError(t, err)
+		require.Equal(t, []byte{0x03, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03}, outBuffer.Bytes())
+	})
+
+	t.Run("flush before returning buffer when remaining space is insufficient", func(t *testing.T) {
+		var outBuffer bytes.Buffer
+		writer := bufio.NewWriterSize(&outBuffer, 8)
+		pkt := NewPacketIOForTest(writer)
+
+		_, err := writer.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06})
+		require.NoError(t, err)
+
+		buf, err := pkt.AvailableWriteBuffer(4)
+		require.NoError(t, err)
+		require.NotNil(t, buf)
+		require.Equal(t, []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}, outBuffer.Bytes())
+		require.GreaterOrEqual(t, cap(buf), 4)
+	})
+
+	t.Run("return nil when requested capacity is larger than writer size", func(t *testing.T) {
+		var outBuffer bytes.Buffer
+		pkt := NewPacketIOForTest(bufio.NewWriterSize(&outBuffer, 8))
+
+		buf, err := pkt.AvailableWriteBuffer(9)
+		require.NoError(t, err)
+		require.Nil(t, buf)
+	})
+}
+
 func TestPacketIOWriteCompressed(t *testing.T) {
 	var testdata, outBuffer bytes.Buffer
 
