@@ -201,6 +201,12 @@ Then: **self-review → enumerate tests → benchmark → review again.**
   cast-string flen setup (`builtin_cast.go`). Both now read geometry as a binary
   string. Regressions in `TestPOCGeoFunctions`. (The `pkg/util/codec` hash-encode
   default for type 255 is *not* reached — hash agg/join on geometry work.)
+- FIXED (CI): `CREATE SPATIAL INDEX` was rejected under the default (strict) config
+  (`allow-expression-index` off) because the Layer A bbox columns use `ST_X`/`ST_Y`
+  (point) and `tidb_spatial_bbox` (general geometry), which were not in
+  `GAFunction4ExpressionIndex` — only `tidb_spatial_key`/`keys` were. Added the
+  three; the index now creates regardless of config. This had been failing 9 of the
+  spatial unit tests on CI since Layer A (`varsutil.go`).
 
 ## Deferred / backlog (not this run unless time remains)
 
