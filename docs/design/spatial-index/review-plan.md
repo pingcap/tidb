@@ -114,6 +114,10 @@ subdivided further.
 
 ### Function catalog: milestone-1 *minimal* vs milestone-3 *tail*
 
+The authoritative full list (every MySQL spatial function, POC-implemented marked,
+PostGIS extras noted) is [`mysql-function-catalog.md`](mysql-function-catalog.md);
+this section is the milestone-split summary.
+
 Boundary rule: **milestone 1 = everything needed to store, read, and query/index a
 geometry; milestone 3 = geometry *processing/analysis* and the long-tail
 variants/aliases.** Milestone 1 is ≈ what the POC already implements, so its `fn-*`
@@ -155,11 +159,15 @@ identical** — nothing in this catalog is 9.7-only or 8.0-only — so "MySQL" =
 - *Cross-SRID:* `ST_Transform` — travels with the projected/PostGIS SRID work (needs
   the SRS catalog + reprojection), not here.
 
-*NOT in MySQL — PostGIS-only* (verified absent in 9.7 & 8.0; add only the
-"important missing ones" by demand): `ST_Covers`/`ST_CoveredBy` (already in the
-POC), `ST_Relate` (DE-9IM matrix), `ST_PointOnSurface`, `ST_Boundary`, `ST_IsRing`,
-`ST_Perimeter`, `ST_Subdivide`, `ST_ClosestPoint`, `ST_Azimuth`. (Also absent: the
-bare non-`ST_` aliases such as `GeometryType`.)
+*NOT in MySQL — PostGIS-only* (verified absent in 9.7 & 8.0). **Policy: keep a
+PostGIS extra only when it is index-supported.**
+- `ST_Covers` / `ST_CoveredBy` — **kept**: now index-eligible region predicates
+  (`Covers ⊇ Contains`, `CoveredBy ⊇ Within`, so the covering-cell prefilter is valid
+  with no false negatives — implemented in the resolver).
+- Possible extensions (only if index-supported / by demand, none implemented):
+  `ST_Relate` (DE-9IM matrix), `ST_PointOnSurface`, `ST_Boundary`, `ST_IsRing`,
+  `ST_Perimeter`, `ST_Subdivide`, `ST_ClosestPoint`, `ST_Azimuth`. (Also absent: the
+  bare non-`ST_` aliases such as `GeometryType`.)
 
 **Library note:** the processing ops (`ST_Buffer`/`ST_Union`/`ST_Intersection`/…)
 need GEOS-equivalent algorithms; Go `simplefeatures` and the TiKV `geo` crate cover
