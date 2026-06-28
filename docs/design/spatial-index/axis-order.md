@@ -116,3 +116,22 @@ order.
 - Migration guidance for the user docs: a `POINT(a b)` literal (WKT) that worked in
   PostGIS must have its coordinates **swapped** for TiDB at 4326 (and vice-versa);
   GeoJSON payloads and WKB carry over per their own fixed conventions.
+
+## References
+
+- Norvald H. Ryeng, **"Axis Order in Spatial Reference Systems"**, MySQL Server Blog,
+  2018-05-03 — <https://dev.mysql.com/blog-archive/axis-order-in-spatial-reference-systems/>.
+  The authoritative MySQL write-up, and the basis for the conventions above: MySQL 8.0
+  follows the OGC 2008 Axis Order Policy (OGC 08-038r5), so every geographic SRS uses its
+  EPSG-defined order — WGS 84 / 4326 is `AXIS["Lat",NORTH],AXIS["Lon",EAST]`, i.e.
+  latitude-first — and a swapped axis silently returns wrong results (the post shows a
+  ~300 km distance error). It also confirms GeoJSON is always longitude-first, with no
+  axis-order option, by spec. (Note: MySQL stores coordinates longitude-first
+  *internally* and swaps on WKT/WKB I/O per the SRS; the POC instead stores 4326
+  latitude-first, but the user-visible WKT/WKB output is lat-first in both — hence the
+  byte-identical WKB verified above.)
+- MySQL axis-order controls the post documents that the **POC does not yet implement**
+  (future gaps): the `axis-order` parameter on `ST_GeomFromText` / `ST_AsText` /
+  `ST_AsBinary` / `ST_GeomFromWKB` (`axis-order=long-lat` | `srid-defined`), and
+  `ST_SwapXY()` — these let users ingest/emit long-lat (PostGIS-style) data against a
+  lat-first SRS without rewriting the coordinates.
