@@ -175,8 +175,14 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	if m.backendCtx != nil {
 		m.backendCtx.Close()
+		m.backendCtx = nil
 	}
-	m.backend.Close()
+	if m.backend != nil {
+		m.backend.Close()
+		m.backend = nil
+	}
+	metrics.UnregisterLightningCommonMetricsForDDL(m.job.ID, m.metric)
+	m.metric = nil
 	return nil
 }
 

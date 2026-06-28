@@ -62,6 +62,7 @@ type readIndexStepExecutor struct {
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
 	backendCfg     *local.BackendConfig
 	backend        *local.Backend
+	metric         *lightningmetric.Common
 	// pipeline of current running subtask, it's nil when no subtask is running.
 	currPipe atomic.Pointer[operator.AsyncPipeline]
 }
@@ -103,6 +104,7 @@ func hasUniqueIndex(indexes []*model.IndexInfo) bool {
 
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+	r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == "tikv" {
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, hasUniqueIndex(r.indexes), false, 0)
@@ -218,6 +220,8 @@ func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
+	metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
+	r.metric = nil
 	if r.backend != nil {
 		r.backend.Close()
 	}
