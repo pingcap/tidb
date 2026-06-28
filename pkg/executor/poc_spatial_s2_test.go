@@ -121,3 +121,43 @@ func TestPOCSpatial4326GeoJSONAxis(t *testing.T) {
 	// SRID 0 coordinates are not lat/lng, so GeoJSON is unchanged.
 	tk.MustQuery("SELECT ST_AsGeoJSON(ST_GeomFromText('POINT(30 50)',0))").Check(testkit.Rows(`{"type":"Point","coordinates":[30,50]}`))
 }
+
+// TestPOCSpatial4326CoveringIndex covers batch item B3: a 4326 (geographic) point
+// predicate is served index-only, like the SRID-0 covering index. The covering rewrite
+// reconstructs the point as ST_SRID(Point(ST_X, ST_Y), 4326) so the geodesic refine keeps
+// dispatching on SRID 4326; the result must match the full scan exactly.
+func TestPOCSpatial4326CoveringIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE g4 (id int primary key, p POINT NOT NULL SRID 4326)")
+	var b strings.Builder
+	b.WriteString("INSERT INTO g4 VALUES ")
+	id := 0
+	for lat := 10; lat <= 40; lat += 2 {
+		for lng := 10; lng <= 40; lng += 2 {
+			if id > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, "(%d,ST_GeomFromText('POINT(%d %d)',4326))", id, lat, lng)
+			id++
+		}
+	}
+	tk.MustExec(b.String())
+	tk.MustExec("CREATE SPATIAL INDEX si ON g4 (p)")
+	tk.MustExec("ANALYZE TABLE g4")
+
+	const region = "ST_GeomFromText('POLYGON((20 20,20 30,30 30,30 20,20 20))',4326)"
+	const q = "SELECT count(*) FROM g4 WHERE ST_Within(p, " + region + ")"
+
+	var plan strings.Builder
+	for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
+		plan.WriteString(fmt.Sprintf("%v ", r[0]))
+	}
+	require.Contains(t, plan.String(), "IndexReader", "4326 point query should be served from the index")
+	require.NotContains(t, plan.String(), "TableReader", "4326 point query should be index-only")
+	require.NotContains(t, plan.String(), "TableRowIDScan", "4326 point query should not look up the table")
+
+	want := tk.MustQuery("SELECT count(*) FROM g4 IGNORE INDEX(si) WHERE ST_Within(p, " + region + ")").Rows()
+	require.Equal(t, want, tk.MustQuery(q).Rows())
+}

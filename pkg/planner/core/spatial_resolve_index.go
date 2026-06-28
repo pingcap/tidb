@@ -141,8 +141,10 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 				added = append(added, buildBBoxConds(exprCtx, minX, minY, maxX, maxY, rect)...)
 			}
 		}
-		// SRID-0 point refine: a candidate for the index-only covering rewrite.
-		if req.kind == coverPlanarRect {
+		// SRID-0 (planar) or 4326 (geographic) point refine: a candidate for the
+		// index-only covering rewrite. The findPointXYColumns check in
+		// maybeRewriteForCovering restricts it to genuine point indexes.
+		if req.kind == coverPlanarRect || req.kind == coverLatLngRect || req.kind == coverSphereCap {
 			coveringIdx = append(coveringIdx, i)
 			coveringGeomID = req.geomColID
 		}
@@ -206,6 +208,17 @@ func (s *SpatialIndexResolver) maybeRewriteForCovering(ds *logicalop.DataSource,
 	pt, err := expression.NewFunction(ctx, ast.GeomPoint, types.NewFieldType(mysql.TypeGeometry), x, y)
 	if err != nil {
 		return
+	}
+	// Point() yields a SRID-0 geometry. For a geographic (4326) point column, re-stamp the
+	// column's SRID with ST_SRID so the reconstructed point equals the original p and the
+	// refine keeps dispatching on SRID 4326 (geodesic). Point(ST_X(p),ST_Y(p)) already
+	// carries p's stored lat/lng, so this is exactly p.
+	if srid := geomColumnSRID(ds.TableInfo, geomColID); srid != 0 {
+		sridConst := &expression.Constant{Value: types.NewIntDatum(int64(srid)), RetType: types.NewFieldType(mysql.TypeLonglong)}
+		pt, err = expression.NewFunction(ctx, ast.StSRID, types.NewFieldType(mysql.TypeGeometry), pt, sridConst)
+		if err != nil {
+			return
+		}
 	}
 	schema := expression.NewSchema(geomCol)
 	for _, i := range coveringIdx {
@@ -340,6 +353,16 @@ func srid0Column(tblInfo *model.TableInfo, geomColID int64) bool {
 		}
 	}
 	return false
+}
+
+// geomColumnSRID returns the SRID of table column geomColID (0 if not found).
+func geomColumnSRID(tblInfo *model.TableInfo, geomColID int64) uint32 {
+	for _, c := range tblInfo.Columns {
+		if c.ID == geomColID {
+			return c.Srid
+		}
+	}
+	return 0
 }
 
 // findSpatialHiddenColumn returns the expression.Column of the hidden generated
