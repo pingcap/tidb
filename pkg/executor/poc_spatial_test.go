@@ -17,6 +17,7 @@ package executor_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -268,4 +269,70 @@ func TestPOCSpatialCostBasedSelection(t *testing.T) {
 	allPlan := planOf(all)
 	require.NotContains(t, allPlan, "IndexRangeScan", "high-selectivity query should fall back to a table scan:\n"+allPlan)
 	tk.MustQuery(all).Check(baseline(all))
+}
+
+// TestPOCSpatialConcurrentDML stresses the spatial index under concurrent writes:
+// several workers (each owning a disjoint id range) interleave INSERT/UPDATE/DELETE
+// of points while autocommitting. Afterwards the hidden generated columns + index
+// must remain consistent with the table (ADMIN CHECK), and an index-served query
+// must match a full scan. Workers use t.Errorf (not require/FailNow, which must run
+// on the test goroutine) and retry transient write conflicts.
+func TestPOCSpatialConcurrentDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("CREATE TABLE pts (id int primary key, p POINT NOT NULL SRID 0)")
+	setup.MustExec("CREATE SPATIAL INDEX si ON pts (p) COMMENT 'spatial:14,0,0,1000,1000'")
+
+	const workers, perWorker = 4, 60
+	tks := make([]*testkit.TestKit, workers)
+	for w := range tks {
+		tks[w] = testkit.NewTestKit(t, store)
+		tks[w].MustExec("use test")
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			tk := tks[w]
+			exec := func(sql string) {
+				for attempt := 0; ; attempt++ {
+					_, err := tk.Exec(sql)
+					if err == nil {
+						return
+					}
+					msg := err.Error()
+					if attempt < 40 && (strings.Contains(msg, "Write conflict") ||
+						strings.Contains(msg, "try again") || strings.Contains(msg, "Deadlock")) {
+						continue
+					}
+					t.Errorf("worker %d: %s: %v", w, sql, err)
+					return
+				}
+			}
+			base := w * 100000
+			for i := 0; i < perWorker; i++ {
+				id := base + i
+				x, y := (w*200+i*3)%1000, (i*7)%1000
+				exec(fmt.Sprintf("INSERT INTO pts VALUES (%d, ST_GeomFromText('POINT(%d %d)',0))", id, x, y))
+				if i%3 == 0 {
+					exec(fmt.Sprintf("UPDATE pts SET p=ST_GeomFromText('POINT(%d %d)',0) WHERE id=%d", (x+1)%1000, (y+2)%1000, id))
+				}
+				if i%5 == 0 {
+					exec(fmt.Sprintf("DELETE FROM pts WHERE id=%d", id))
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	setup.MustExec("ADMIN CHECK TABLE pts")
+	setup.MustExec("ADMIN CHECK INDEX pts si")
+
+	const q = "SELECT id FROM pts %s WHERE ST_Within(p, ST_GeomFromText('POLYGON((0 0,0 300,300 300,300 0,0 0))',0)) ORDER BY id"
+	withIdx := setup.MustQuery(fmt.Sprintf(q, "FORCE INDEX(si)")).Rows()
+	noIdx := setup.MustQuery(fmt.Sprintf(q, "IGNORE INDEX(si)")).Rows()
+	require.Equal(t, noIdx, withIdx, "index result must match full scan after concurrent DML")
 }

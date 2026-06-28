@@ -51,12 +51,12 @@ point-in-polygon (dominant case); polygon/polygon + Touches/Crosses/Overlaps lat
 Partly works (ANALYZE-driven; `poc_spatial_test.go:68`). Strengthen: tests proving the
 optimizer picks the spatial index at low selectivity *and falls back to a table scan
 at high selectivity*, across a selectivity sweep, without hints. Fix the cost model if
-a sweep point chooses wrong. **Done**: `TestPOCSpatialCostBasedSelection` proves auto-select at low selectivity + full-scan fallback at high selectivity (both correct); the cost model already behaves correctly, no fix needed.
+a sweep point chooses wrong. **Done (was already mostly covered)**: the existing `TestPOCSpatialAutoSelect` already proves auto-select + full-scan fallback for the `ST_Distance` cap. Added `TestPOCSpatialCostBasedSelection` to extend it to the `ST_Within` *region* predicate (+ correctness vs a full scan). Cost model already correct; no fix needed.
 
-### 6 — Concurrent DML consistency under load ☐
+### 6 — Concurrent DML consistency under load ☑ DONE
 Stress test: N goroutines doing concurrent INSERT/UPDATE/DELETE of geometries while
 periodic `ADMIN CHECK TABLE` / `ADMIN CHECK INDEX` confirm the hidden generated
-columns + index stay consistent with the table.
+columns + index stay consistent with the table. **Done**: `TestPOCSpatialConcurrentDML` — 4 workers (disjoint id ranges) interleave INSERT/UPDATE/DELETE with conflict-retry; afterwards `ADMIN CHECK TABLE`/`INDEX` pass and an index-served query matches a full scan. Green over repeated runs.
 
 ### 7 — Non-0/4326 SRID (projected) ☐
 The planar coverer hard-rejects non-0 SRID (`coverer.go:173`). Relax so any
