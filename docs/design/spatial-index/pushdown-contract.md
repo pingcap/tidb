@@ -38,6 +38,17 @@ Add ten `ScalarFuncSig` enum values, **7100–7109**, one per predicate
 shared verbatim by TiDB and TiKV so the two sides agree on the wire identity of
 each predicate.
 
+**Landing order (build dependency).** Because `builtin_geo.go` / `distsql_builtin.go`
+reference these by name (`tipb.ScalarFuncSig_StWithin` …), **P1 must land in upstream
+`pingcap/tipb` before — or together with — the TiDB pushdown code.** Any build context
+that doesn't carry the `mjonss/tipb` fork replace fails to compile with `undefined:
+tipb.ScalarFuncSig_St*`. On the POC branch this is a *known, expected* CI red: the
+bazel build and the enterprise-server build use the fork and pass, but the separate
+`pingcap-inc/enterprise-plugin` repo (its own `go.mod`, upstream tipb) fails in the
+`pluginpkg` step — so `idc-jenkins-ci-tidb/build` and `pull-build-next-gen` stay red
+until the sigs are upstream. (A raw-value workaround — `tipb.ScalarFuncSig(7100)` — was
+considered and rejected in favour of landing P1 properly.)
+
 - A pushed predicate is an `Expr` of type `ScalarFunc` with `Sig` = one of the
   above and exactly **two children**, each an EWKB-valued expression (a `ColumnRef`
   for the stored geometry and a `Constant` for the query geometry — or two columns).

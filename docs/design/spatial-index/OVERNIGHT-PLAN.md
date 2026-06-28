@@ -354,3 +354,22 @@ Two independent review passes on the spatial diff.
     75 matches (2.25x false-positive ratio), identical rows vs full scan. Note:
     automatic index *selection* over a full scan needs spatial stats/cost (Item:
     spatial costs/stats); test forces the index to prove pruning.
+
+## CI status (round 2, branch HEAD e7f03cb8be)
+
+After the nogo + TestColumn2Pb fixes: **30 pass**, the remaining reds are all known —
+no spatial-logic regressions.
+
+- ✅ **unit-test / unit-test-ddlv1 / unit-test-next-gen** — green (TestColumn2Pb now
+  asserts TypeGeometry IS pushable). Bazel Crossbuild green.
+- ❌ **build / build-next-gen** — the `pingcap-inc/enterprise-plugin` `pluginpkg` step
+  builds against upstream tipb (its own go.mod, no fork replace) → `undefined:
+  tipb.ScalarFuncSig_St*`. **Expected**; fixed by landing the sigs in upstream tipb
+  (PR P1). Decision: leave it (see `pushdown-contract.md` → Landing order). The bazel
+  build + enterprise-server build (fork replace) pass.
+- ❌ **Check Bazel Prepare / check_dev / check_dev_2** — `bazel_prepare` reverts the
+  `mjonss/tipb` (and other un-mirrored fork) `DEPS.bzl` entries. Expected until mirrored.
+- ❌ **mysql-test** — deferred `tidb-test` compat. Long-standing.
+- ❌ **pull-integration-e2e-test** — infra: the cross-component harness
+  (`computeBranchFromPR` for pd/tikv/tiflash) errors in setup, not on a spatial test
+  (`[DNM]` PR).
