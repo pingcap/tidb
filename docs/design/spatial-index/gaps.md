@@ -109,8 +109,9 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   not in the implement set.)
 - **TiFlash / OLAP** — no columnar spatial index, so analytic spatial scans
   (aggregations over large regions) can't use one.
-- **Other projected SRIDs** — only 0/4326 are indexable (the 4-site SRID gating,
-  round-2 item #7).
+- **Other projected SRIDs** — ✅ **FIXED** (batch C1): any non-4326 SRID is treated as a
+  projected planar CRS and indexed with the planar quadtree (e.g. 3857 Web Mercator);
+  `ST_Distance` is planar (Cartesian) for them. `TestPOCSpatialProjectedSRID`.
 
 ## Priority (highest value first)
 - **Correctness:** 4326 **axis order**, then **geodesic refine** (#2).

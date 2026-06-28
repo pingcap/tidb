@@ -58,7 +58,7 @@ Stress test: N goroutines doing concurrent INSERT/UPDATE/DELETE of geometries wh
 periodic `ADMIN CHECK TABLE` / `ADMIN CHECK INDEX` confirm the hidden generated
 columns + index stay consistent with the table. **Done**: `TestPOCSpatialConcurrentDML` — 4 workers (disjoint id ranges) interleave INSERT/UPDATE/DELETE with conflict-retry; afterwards `ADMIN CHECK TABLE`/`INDEX` pass and an index-served query matches a full scan. Green over repeated runs.
 
-### 7 — Non-0/4326 SRID (projected) ☐
+### 7 — Non-0/4326 SRID (projected) ☑ DONE (batch C1)
 The planar coverer hard-rejects non-0 SRID (`coverer.go:173`). Relax so any
 **projected** (non-geographic) SRID uses the planar coverer; keep 4326→S2. Test with
 e.g. SRID 3857 (Web Mercator). (Full SRS catalog out of scope; treat non-4326 as
