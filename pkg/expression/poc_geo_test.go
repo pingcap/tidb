@@ -104,8 +104,10 @@ func TestPOCGeoFunctions(t *testing.T) {
 	tk.MustQuery("SELECT ST_Covers(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))'), ST_GeomFromText('POINT(2 2)'))").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT ST_CoveredBy(ST_GeomFromText('POINT(2 2)'), ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))'))").Check(testkit.Rows("1"))
 	tk.MustQuery(`SELECT ST_AsGeoJSON(ST_GeomFromText('POINT(1 2)'))`).Check(testkit.Rows(`{"type":"Point","coordinates":[1,2]}`))
-	// GeoJSON parses to a 4326 geometry (MySQL default) and round-trips.
-	tk.MustQuery(`SELECT ST_AsText(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[3,4]}'))`).Check(testkit.Rows("POINT(3 4)"))
+	// GeoJSON is always [longitude, latitude] (RFC 7946) and parses to a 4326 geometry
+	// (MySQL default), whose WKT axis order is latitude-first: [3,4] = lng 3, lat 4, so
+	// ST_AsText is POINT(4 3) (matches MySQL).
+	tk.MustQuery(`SELECT ST_AsText(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[3,4]}'))`).Check(testkit.Rows("POINT(4 3)"))
 
 	// Measurement/derived: ST_Area, ST_Length, ST_Dimension, ST_Centroid.
 	tk.MustQuery("SELECT ST_Area(ST_GeomFromText('POLYGON((0 0,3 0,3 4,0 4,0 0))'))").Check(testkit.Rows("12"))
