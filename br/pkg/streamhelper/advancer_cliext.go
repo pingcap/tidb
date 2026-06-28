@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -23,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type EventType int
@@ -73,7 +76,15 @@ type AdvancerExt struct {
 var (
 	// etcd's default periodic watch progress is too sparse for failover, so request it proactively.
 	metadataWatchProgressInterval = 30 * time.Second
+	metadataWatchCreateTimeouts   = []time.Duration{5 * time.Second, 10 * time.Second, 15 * time.Second}
+	metadataRequestTimeouts       = []time.Duration{5 * time.Second, 10 * time.Second, 15 * time.Second}
 	metadataWatchIdleTimeout      = 90 * time.Second
+)
+
+const (
+	metadataWatchCreating int32 = iota
+	metadataWatchCreated
+	metadataWatchCreateTimedOut
 )
 
 func errorEvent(err error) TaskEvent {
@@ -106,6 +117,60 @@ func requestWatchProgress(ctx context.Context, watcher clientv3.Watcher) error {
 func watchIdleTimeoutError(target string) error {
 	return errors.Errorf("watching %s timed out after %s without etcd progress",
 		target, metadataWatchIdleTimeout)
+}
+
+func isRetryableMetadataRequestError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if errors.Cause(err) == context.DeadlineExceeded {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.DeadlineExceeded, codes.Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func runMetadataRequestWithRetry[T any](
+	ctx context.Context,
+	warnMessage string,
+	fields []zap.Field,
+	request func(context.Context) (T, error),
+) (T, error) {
+	var (
+		lastErr error
+		zero    T
+	)
+	for attempt, timeout := range metadataRequestTimeouts {
+		requestCtx, cancel := context.WithTimeout(ctx, timeout)
+		resp, err := request(requestCtx)
+		cancel()
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+		retryable := attempt+1 < len(metadataRequestTimeouts) &&
+			isRetryableMetadataRequestError(ctx, err)
+		logFields := make([]zap.Field, 0, len(fields)+7)
+		logFields = append(logFields, zap.String("category", "log backup advancer"))
+		logFields = append(logFields, fields...)
+		logFields = append(logFields,
+			zap.Int("attempt", attempt+1),
+			zap.Int("max-attempts", len(metadataRequestTimeouts)),
+			zap.Bool("retry", retryable),
+			zap.Duration("timeout", timeout),
+			logutil.ShortError(err))
+		log.Warn(warnMessage, logFields...)
+		if retryable {
+			continue
+		}
+		return zero, err
+	}
+	return zero, lastErr
 }
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
@@ -170,8 +235,9 @@ func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResp
 }
 
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
-	taskCh := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
-	pauseCh := t.Client.Watcher.Watch(ctx, PrefixOfPause(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	watcher := t.getWatcher()
+	taskCh := watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	pauseCh := watcher.Watch(ctx, PrefixOfPause(), clientv3.WithPrefix(), clientv3.WithRev(rev))
 
 	// inner function def
 	handleResponse := func(resp clientv3.WatchResponse) bool {
@@ -312,7 +378,19 @@ func (t MetaDataClient) WaitGlobalCheckpointAdvance(ctx context.Context, taskNam
 
 func (t MetaDataClient) getGlobalCheckpointWithRevision(ctx context.Context, taskName string) (uint64, int64, error) {
 	key := GlobalCheckpointOf(taskName)
-	resp, err := t.KV.Get(ctx, key)
+	redactedKey := redact.Key([]byte(key))
+	resp, err := runMetadataRequestWithRetry(ctx,
+		"failed to get global checkpoint from metadata store",
+		[]zap.Field{
+			zap.String("key", redactedKey),
+			zap.String("task", taskName),
+		},
+		func(requestCtx context.Context) (*clientv3.GetResponse, error) {
+			failpoint.Inject("advancer_get_global_checkpoint_request_timeout", func(val failpoint.Value) {
+				failpoint.Return(nil, context.DeadlineExceeded)
+			})
+			return t.KV.Get(requestCtx, key)
+		})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -326,7 +404,9 @@ func (t MetaDataClient) getGlobalCheckpointWithRevision(ctx context.Context, tas
 	if err != nil {
 		return 0, 0, err
 	}
-	return checkpoint, firstKV.ModRevision, nil
+	// Watch from the response revision rather than the key's ModRevision. The key
+	// can stay unchanged long enough for its ModRevision to be compacted.
+	return checkpoint, resp.Header.Revision, nil
 }
 
 func (t MetaDataClient) waitCheckpointEvent(
@@ -335,9 +415,61 @@ func (t MetaDataClient) waitCheckpointEvent(
 	current uint64,
 	rev int64,
 ) error {
-	watchCtx, cancelWatch := context.WithCancel(clientv3.WithRequireLeader(ctx))
+	redactedKey := redact.Key([]byte(key))
+	var (
+		watchCtx    context.Context
+		cancelWatch context.CancelFunc
+		watcher     clientv3.Watcher
+		watchCh     clientv3.WatchChan
+	)
+	for attempt, timeout := range metadataWatchCreateTimeouts {
+		watchCtx, cancelWatch = context.WithCancel(clientv3.WithRequireLeader(ctx))
+		// etcd Watch may block before returning the watch channel when creating the watch stream.
+		watcher = t.getWatcher()
+		var watchCreateState atomic.Int32
+		watchCreateTimer := time.AfterFunc(timeout, func() {
+			if !watchCreateState.CompareAndSwap(metadataWatchCreating, metadataWatchCreateTimedOut) {
+				return
+			}
+			log.Warn("etcd watch creation timed out, resetting metadata watcher",
+				zap.String("category", "log backup advancer"),
+				zap.String("key", redactedKey),
+				zap.Uint64("current-checkpoint", current),
+				zap.Int64("revision", rev),
+				zap.Int("attempt", attempt+1),
+				zap.Int("max-attempts", len(metadataWatchCreateTimeouts)),
+				zap.Bool("retry", attempt+1 < len(metadataWatchCreateTimeouts)),
+				zap.Duration("timeout", timeout))
+			cancelWatch()
+			t.resetWatcher()
+		})
+		watchCh = watcher.Watch(watchCtx, key, clientv3.WithRev(rev), clientv3.WithProgressNotify())
+		if watchCreateState.CompareAndSwap(metadataWatchCreating, metadataWatchCreated) {
+			watchCreateTimer.Stop()
+		}
+		if watchCreateState.Load() == metadataWatchCreateTimedOut {
+			log.Warn("global checkpoint watch returned after creation timeout",
+				zap.String("category", "log backup advancer"),
+				zap.String("key", redactedKey),
+				zap.Uint64("current-checkpoint", current),
+				zap.Int64("revision", rev),
+				zap.Int("attempt", attempt+1),
+				zap.Int("max-attempts", len(metadataWatchCreateTimeouts)))
+			cancelWatch()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if attempt+1 < len(metadataWatchCreateTimeouts) {
+				continue
+			}
+			return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
+		}
+		break
+	}
+	if watchCh == nil {
+		return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
+	}
 	defer cancelWatch()
-	watchCh := t.Watcher.Watch(watchCtx, key, clientv3.WithRev(rev), clientv3.WithProgressNotify())
 	progressTicker := time.NewTicker(metadataWatchProgressInterval)
 	defer progressTicker.Stop()
 	idleTimer := time.NewTimer(metadataWatchIdleTimeout)
@@ -345,13 +477,31 @@ func (t MetaDataClient) waitCheckpointEvent(
 	for {
 		select {
 		case <-ctx.Done():
+			log.Info("stop waiting for global checkpoint event because context is done",
+				zap.String("category", "log backup advancer"),
+				zap.String("key", redactedKey),
+				zap.Uint64("current-checkpoint", current),
+				zap.Int64("revision", rev),
+				logutil.ShortError(ctx.Err()))
 			return ctx.Err()
 		case resp, ok := <-watchCh:
 			resetWatchIdleTimer(idleTimer)
 			if !ok {
+				log.Warn("global checkpoint watch channel closed",
+					zap.String("category", "log backup advancer"),
+					zap.String("key", redactedKey),
+					zap.Uint64("current-checkpoint", current),
+					zap.Int64("revision", rev))
 				return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
 			}
 			if err := resp.Err(); err != nil {
+				log.Warn("global checkpoint watch response has error",
+					zap.String("category", "log backup advancer"),
+					zap.String("key", redactedKey),
+					zap.Uint64("current-checkpoint", current),
+					zap.Int64("revision", rev),
+					zap.Int64("compact-revision", resp.CompactRevision),
+					logutil.ShortError(err))
 				if resp.CompactRevision != 0 {
 					return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
 				}
@@ -370,10 +520,22 @@ func (t MetaDataClient) waitCheckpointEvent(
 				}
 			}
 		case <-progressTicker.C:
-			if err := requestWatchProgress(watchCtx, t.Watcher); err != nil {
+			if err := requestWatchProgress(watchCtx, watcher); err != nil {
+				log.Warn("failed to request global checkpoint watch progress",
+					zap.String("category", "log backup advancer"),
+					zap.String("key", redactedKey),
+					zap.Uint64("current-checkpoint", current),
+					zap.Int64("revision", rev),
+					logutil.ShortError(err))
 				return err
 			}
 		case <-idleTimer.C:
+			log.Warn("global checkpoint watch idle timeout",
+				zap.String("category", "log backup advancer"),
+				zap.String("key", redactedKey),
+				zap.Uint64("current-checkpoint", current),
+				zap.Int64("revision", rev),
+				zap.Duration("timeout", metadataWatchIdleTimeout))
 			return watchIdleTimeoutError("global checkpoint")
 		}
 	}
@@ -392,6 +554,7 @@ func parseGlobalCheckpointValue(value []byte) (uint64, error) {
 func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
 	key := GlobalCheckpointOf(taskName)
 	value := string(encodeUint64(checkpoint))
+	redactedKey := redact.Key([]byte(key))
 	oldValue, err := t.GetGlobalCheckpointForTask(ctx, taskName)
 	if err != nil {
 		return err
@@ -403,7 +566,26 @@ func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskNa
 		return nil
 	}
 
-	_, err = t.KV.Put(ctx, key, value)
+	_, err = runMetadataRequestWithRetry(ctx,
+		"failed to upload global checkpoint to metadata store",
+		[]zap.Field{
+			zap.String("key", redactedKey),
+			zap.String("task", taskName),
+			zap.Uint64("checkpoint", checkpoint),
+		},
+		func(requestCtx context.Context) (struct{}, error) {
+			failpoint.Inject("advancer_upload_global_checkpoint_request_timeout", func(val failpoint.Value) {
+				failpoint.Return(struct{}{}, context.DeadlineExceeded)
+			})
+			_, err = t.KV.Put(requestCtx, key, value)
+			if err == nil {
+				failpoint.Inject("advancer_upload_global_checkpoint_commit_timeout", func(val failpoint.Value) {
+					err = context.DeadlineExceeded
+				})
+			}
+			return struct{}{}, err
+		},
+	)
 	if err != nil {
 		return err
 	}
