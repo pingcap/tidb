@@ -127,6 +127,8 @@ func TestChangePruneMode(t *testing.T) {
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_auto_analyze=1")
+	tk.MustExec("set global tidb_auto_analyze_concurrency=1")
 	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (140))")
 	tk.MustExec("insert into t1 values (0, 0)")
 	tk.MustExec("flush stats_delta *.*")

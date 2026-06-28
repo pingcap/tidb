@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -115,25 +116,25 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 		rand:         rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
-	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
+	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type),
+		zap.Bool("allocated-slots", param.allocatedSlots))
 	return s
 }
 
 // Init implements the Scheduler interface.
 func (s *BaseScheduler) Init() error {
-	if s.TaskStore.GetKeyspace() != s.GetTask().Keyspace {
-		// shouldn't happen normally, but since keyspace mismatch might cause
-		// correctness error, we check it at runtime too.
-		return errors.New("store keyspace mismatch with task")
-	}
-	return nil
+	return dxfutil.CheckTaskRuntime(s.TaskRuntime, s.GetTask().Keyspace)
 }
 
 // ScheduleTask implements the Scheduler interface.
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
 	s.logger.Info("schedule task",
-		zap.Stringer("state", task.State), zap.Int("requiredSlots", task.RequiredSlots))
+		zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
+		zap.Int("requiredSlots", task.RequiredSlots),
+		zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode),
+	)
 	s.scheduleTask()
 }
 
@@ -201,7 +202,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
-			s.sampleLogger.Error("refresh task failed", zap.Error(err))
+			s.sampleLogger.Warn("refresh task failed", zap.Error(err))
 			continue
 		}
 		failpoint.InjectCall("afterRefreshTask", s.GetTask())
@@ -378,9 +379,26 @@ func (s *BaseScheduler) onReverting() error {
 
 // handle task in pending state, schedule subtasks.
 func (s *BaseScheduler) onPending() error {
-	task := s.GetTask()
+	task := s.getTaskClone()
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+		if err := s.OnPrepare(s.ctx, s, task); err != nil {
+			return s.handlePrepareOrPlanErr(err)
+		}
+		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !switched {
+			return nil
+		}
+		task.Step = proto.StepPrepared
+		s.task.Store(task)
+		failpoint.InjectCall("afterTaskPrepared", task)
+		// fall through to switch to next step to avoid wait another tick to
+		// schedule subtasks after prepare.
+	}
 	return s.switch2NextStep()
 }
 
@@ -514,7 +532,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
-		return s.handlePlanErr(err)
+		return s.handlePrepareOrPlanErr(err)
 	}
 
 	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
@@ -596,9 +614,9 @@ func (s *BaseScheduler) scheduleSubTask(
 	)
 }
 
-func (s *BaseScheduler) handlePlanErr(err error) error {
+func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
 	task := s.getTaskClone()
-	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
+	s.logger.Warn("prepare or generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 		return err

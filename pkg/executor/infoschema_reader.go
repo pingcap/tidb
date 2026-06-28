@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -2791,33 +2793,76 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx sessionctx.Context) error {
 	var (
-		checker       = privilege.GetPrivilegeManager(sctx)
-		rows          [][]types.Datum
-		tiFlashStores map[int64]pd.StoreInfo
+		checker = privilege.GetPrivilegeManager(sctx)
+		rows    [][]types.Datum
 	)
 	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
+	hasTiFlashReplicaTable := false
+	for _, schema := range rs {
+		if len(schema.TableInfos) > 0 {
+			hasTiFlashReplicaTable = true
+			break
+		}
+	}
+	if !hasTiFlashReplicaTable {
+		e.rows = rows
+		return nil
+	}
+	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
+	tiFlashStores, tikvStores, storesErr := infosync.GetTiFlashProgressStores(ctx)
+	if storesErr != nil {
+		return storesErr
+	}
+	if !enableColumnarStore {
+		tikvStores = nil
+	}
+	var globalCircuitBreakerTriggered bool
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName.L, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			var progress float64
-			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-					if err != nil {
-						logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-					}
-					progress += progressOfPartition
-				}
-				progress = progress / float64(len(pi.Definitions))
+			circuitBreakerProgress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				circuitBreakerProgress = 0.0
+			}
+			// If the circuit breaker is triggered from previous table, set progress of this table directly.
+			if globalCircuitBreakerTriggered {
+				logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+				progress = circuitBreakerProgress
 			} else {
-				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-				if err != nil {
-					logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, p.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
+						if err != nil {
+							logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						}
+						progress += progressOfPartition
+						if circuitBreakerTriggered {
+							globalCircuitBreakerTriggered = true
+							// If circuit breaker is triggered, break the loop for partitions.
+							break
+						}
+					}
+					if globalCircuitBreakerTriggered {
+						progress = circuitBreakerProgress
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+					} else {
+						progress = progress / float64(len(pi.Definitions))
+					}
+				} else {
+					var err error
+					progress, globalCircuitBreakerTriggered, err = infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, tbl.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
+					if err != nil {
+						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					}
+					if globalCircuitBreakerTriggered {
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+						progress = circuitBreakerProgress
+					}
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)
@@ -3143,8 +3188,14 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
-		tikvStore, _ := sctx.GetStore().(helper.Storage)
-		r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
+		skipResolvingLocks := false
+		failpoint.Inject("dataLockWaitsSkipResolvingLocks", func() {
+			skipResolvingLocks = true
+		})
+		if !skipResolvingLocks {
+			tikvStore, _ := sctx.GetStore().(helper.Storage)
+			r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
+		}
 		if err != nil {
 			r.retrieved = true
 			return nil, err
@@ -3771,7 +3822,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessi
 		kr := strings.Join(ranges, ", ")
 
 		row := types.MakeDatums(
-			rule.ID,
+			label.RestoreRuleID(rule.ID),
 			rule.RuleType,
 			labels,
 			kr,
@@ -4154,10 +4205,23 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("the label rule has no data")
 		return
 	}
-	dbName = s[1]
-	tableName = s[2]
-	if len(s) > 3 {
-		partitionName = s[3]
+	idOffset := 0
+	if kerneltype.IsNextGen() && s[0] == label.KeyspacePrefix {
+		if len(s) < 5 {
+			err = errors.Errorf("invalid keyspace label rule ID: %v", rule.ID)
+			return
+		}
+		idOffset = 2
+	}
+	if s[idOffset] != label.IDPrefix || len(s) < idOffset+3 {
+		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
+		return
+	}
+
+	dbName = s[idOffset+1]
+	tableName = s[idOffset+2]
+	if idOffset+3 < len(s) {
+		partitionName = s[idOffset+3]
 	}
 	return
 }

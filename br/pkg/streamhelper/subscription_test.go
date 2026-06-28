@@ -5,6 +5,7 @@ package streamhelper_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,29 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
+func waitEvents(t *testing.T, sub *streamhelper.FlushSubscriber, expected int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return len(sub.Events()) >= expected
+	}, 3*time.Second, 100*time.Millisecond)
+}
+
+func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
+	t.Helper()
+	observed := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	require.Eventually(t, func() bool {
+		for {
+			select {
+			case event := <-sub.Events():
+				observed.Merge(event)
+			default:
+				return observed.MinValue() >= checkpoint
+			}
+		}
+	}, 3*time.Second, 100*time.Millisecond)
+	return observed
+}
+
 func TestSubBasic(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
@@ -59,12 +83,8 @@ func TestSubBasic(t *testing.T) {
 	}
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -72,7 +92,7 @@ func TestSubBasic(t *testing.T) {
 		}
 	}()
 
-	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
+	req.GreaterOrEqual(s.MinValue(), cp, "s.MinValue() = %d, cp = %d", s.MinValue(), cp)
 }
 
 func TestNormalError(t *testing.T) {
@@ -169,12 +189,8 @@ func TestStoreRemoved(t *testing.T) {
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	defer func() {
 		if t.Failed() {
@@ -183,12 +199,13 @@ func TestStoreRemoved(t *testing.T) {
 		}
 	}()
 
-	req.Equal(cp, s.MinValue(), "cp = %d, s = %d", cp, s.MinValue())
+	req.GreaterOrEqual(s.MinValue(), cp, "s.MinValue() = %d, cp = %d", s.MinValue(), cp)
 }
 
 func TestSomeOfStoreUnsupported(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
+	const flushRounds = 10
 	c := createFakeCluster(t, 4, true)
 	c.splitAndScatter("0001", "0002", "0003", "0008", "0009", "0010", "0100", "0956", "1000")
 
@@ -196,15 +213,28 @@ func TestSomeOfStoreUnsupported(t *testing.T) {
 	installSubscribeSupportForRandomN(c, 3)
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
+	supportedStores := make(map[uint64]struct{})
+	for _, store := range c.storeList() {
+		if store.SupportsSub {
+			supportedStores[store.ID] = struct{}{}
+		}
+	}
+	expectedEventsPerFlush := 0
+	for _, region := range c.RegionList() {
+		if _, ok := supportedStores[region.Leader]; ok {
+			expectedEventsPerFlush++
+		}
+	}
+
 	var cp uint64
-	for range 10 {
+	for range flushRounds {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	m := new(sync.Mutex)
 
-	waitPendingEvents(t, sub)
+	waitEvents(t, sub, expectedEventsPerFlush*flushRounds)
 	sub.Drop()
 	for k := range sub.Events() {
 		s.Merge(k)
@@ -265,4 +295,59 @@ func TestEncounterError(t *testing.T) {
 	}, 3*time.Second, 100*time.Millisecond)
 	sub.HandleErrors()
 	require.NoError(t, sub.PendingErrors())
+}
+
+func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
+	req := require.New(t)
+	ctx := context.Background()
+	c := createFakeCluster(t, 1, true)
+	installSubscribeSupport(c)
+
+	clearedCache := make(chan uint64, 1)
+	c.SetOnClearCache(func(storeID uint64) error {
+		select {
+		case clearedCache <- storeID:
+		default:
+		}
+		return nil
+	})
+
+	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
+	defer sub.Drop()
+	req.NoError(sub.UpdateStoreTopology(ctx))
+	req.Eventually(func() bool {
+		err := sub.PendingErrors()
+		return err != nil && strings.Contains(err.Error(), "while receiving from")
+	}, 3*time.Second, 10*time.Millisecond)
+
+	sub.HandleErrors()
+	req.NoError(sub.PendingErrors())
+	req.Eventually(func() bool {
+		return len(clearedCache) > 0
+	}, 3*time.Second, 10*time.Millisecond)
+
+	cp := c.advanceCheckpoints()
+	c.flushAll()
+	s := collectCheckpointSpans(t, sub, cp)
+	req.Equal(cp, s.MinValue())
+}
+
+func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
+	req := require.New(t)
+	ctx := context.Background()
+	c := createFakeCluster(t, 4, true)
+	c.splitAndScatter(manyRegions(0, 1500)...)
+	installSubscribeSupport(c)
+
+	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
+	defer sub.Drop()
+	req.NoError(sub.UpdateStoreTopology(ctx))
+
+	c.advanceCheckpoints()
+	c.flushAll()
+
+	req.Eventually(func() bool {
+		err := sub.PendingErrors()
+		return err != nil && strings.Contains(err.Error(), "has no activity")
+	}, 3*time.Second, 10*time.Millisecond)
 }

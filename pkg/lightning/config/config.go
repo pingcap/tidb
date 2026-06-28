@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
@@ -367,7 +368,7 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
 		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
+		cpuCount := cpu.GetCPUCount()
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
 		}
@@ -1117,6 +1118,15 @@ type TikvImporter struct {
 	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
 	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
+	// StripS3ExternalIDForImportSQL strips explicit S3 external ID from
+	// generated IMPORT INTO SQL resource parameters while keeping the original
+	// source path unchanged for Lightning storage access. This compatibility flag
+	// is only for callers that need to work with older IMPORT INTO planners that
+	// reject explicit S3 external ID.
+	// Deprecated: remove this flag after downstream callers no longer need to
+	// keep compatibility with those older planners.
+	StripS3ExternalIDForImportSQL bool `toml:"-" json:"-"`
+
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
@@ -1461,7 +1471,7 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency:  runtime.NumCPU(),
+			RegionConcurrency:  cpu.GetCPUCount(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
 			IOConcurrency:      5,

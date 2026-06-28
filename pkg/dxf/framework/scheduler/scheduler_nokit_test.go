@@ -20,8 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -29,12 +31,38 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
+
+func newSessionPoolForStore(t *testing.T, sessionStore kv.Storage) tidbutil.DestroyableSessionPool {
+	t.Helper()
+
+	sePool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		se := utilmock.NewContext()
+		se.Store = sessionStore
+		return se, nil
+	}, nil, nil, nil)
+	t.Cleanup(sePool.Close)
+	return sePool
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	if sePool != nil {
+		runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	}
+	return runtime
+}
 
 func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager, ctrl *gomock.Controller) *BaseScheduler {
 	ctx := context.Background()
@@ -47,6 +75,38 @@ func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager,
 		allocatedSlots: allocatedSlots,
 	})
 	return sch
+}
+
+func TestBaseSchedulerInitChecksTaskRuntime(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	task := &proto.Task{TaskBase: proto.TaskBase{
+		ID:       1,
+		Key:      "task",
+		Type:     proto.TaskTypeExample,
+		Keyspace: "task_ks",
+	}}
+
+	taskStore := &storeWithKS{ks: task.Keyspace}
+	sch := NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(ctrl, taskStore, newSessionPoolForStore(t, taskStore)),
+	})
+	require.NoError(t, sch.Init())
+
+	sch = NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(ctrl, &storeWithKS{ks: "other_ks"}, nil),
+	})
+	require.ErrorContains(t, sch.Init(), "store keyspace mismatch with task")
+
+	sch = NewBaseScheduler(context.Background(), task, Param{
+		TaskRuntime: newMockRuntime(
+			ctrl,
+			taskStore,
+			newSessionPoolForStore(t, &storeWithKS{ks: "session_ks"}),
+		),
+	})
+	require.ErrorContains(t, sch.Init(), "invalid task runtime with mismatched keyspace")
 }
 
 func TestSchedulerOnNextStage(t *testing.T) {
@@ -327,7 +387,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	schExt := schmock.NewMockExtension(ctrl)
 	schExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
 		switch base.Step {
-		case proto.StepInit:
+		case proto.StepInit, proto.StepPrepared:
 			return proto.StepOne
 		default:
 			return proto.StepDone
@@ -478,6 +538,90 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
+	})
+
+	t.Run("test onPending prepare mode required", func(t *testing.T) {
+		taskWithPrepare := task
+		taskWithPrepare.ExtraParams.PrepareMode = proto.PrepareModeRequired
+		scheduler.task.Store(&taskWithPrepare)
+		scheduler.Extension = schExt
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("prepare err"))
+		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
+		require.ErrorContains(t, scheduler.onPending(), "prepare err")
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		nonRetryableErr := errors.New("prepare fatal err")
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(nonRetryableErr)
+		schExt.EXPECT().IsRetryableErr(nonRetryableErr).Return(false)
+		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, proto.TaskStatePending, nonRetryableErr).Return(fmt.Errorf("revert task err"))
+		require.ErrorContains(t, scheduler.onPending(), "revert task err")
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(nonRetryableErr)
+		schExt.EXPECT().IsRetryableErr(nonRetryableErr).Return(false)
+		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, proto.TaskStatePending, nonRetryableErr).Return(nil)
+		require.NoError(t, scheduler.onPending())
+		taskWithPrepare.State = proto.TaskStateReverting
+		taskWithPrepare.Error = nonRetryableErr
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		taskWithPrepare.State = proto.TaskStatePending
+		taskWithPrepare.Error = nil
+		scheduler.task.Store(&taskWithPrepare)
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+				inTask.Meta = []byte(`{"prepare":"done"}`)
+				inTask.RequiredSlots = 8
+				inTask.MaxNodeCount = 6
+				return nil
+			})
+		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
+				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				require.Equal(t, 8, inTask.RequiredSlots)
+				require.Equal(t, 6, inTask.MaxNodeCount)
+				return true, nil
+			})
+		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, nil)
+		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
+		require.NoError(t, scheduler.onPending())
+		taskWithPrepare.State = proto.TaskStateRunning
+		taskWithPrepare.Step = proto.StepOne
+		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
+		taskWithPrepare.RequiredSlots = 8
+		taskWithPrepare.MaxNodeCount = 6
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		taskWithPrepare.Step = proto.StepInit
+		taskWithPrepare.Meta = []byte(`{"prepare":"init"}`)
+		taskWithPrepare.RequiredSlots = task.RequiredSlots
+		taskWithPrepare.MaxNodeCount = task.MaxNodeCount
+		scheduler.task.Store(&taskWithPrepare)
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+				inTask.Meta = []byte(`{"prepare":"done"}`)
+				inTask.RequiredSlots = 8
+				inTask.MaxNodeCount = 6
+				return nil
+			})
+		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
+				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				require.Equal(t, 8, inTask.RequiredSlots)
+				require.Equal(t, 6, inTask.MaxNodeCount)
+				return false, nil
+			})
+		require.NoError(t, scheduler.onPending())
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
 	})
 
 	t.Run("test revertTask", func(t *testing.T) {

@@ -417,7 +417,9 @@ func (d *SchemaTracker) createIndex(
 		return err
 	}
 	for _, hiddenCol := range hiddenCols {
-		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		// Mark the hidden column public to match the metadata produced by executing ADD INDEX.
+		colInfo.State = model.StatePublic
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
@@ -753,6 +755,7 @@ func (d *SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec 
 	if err != nil {
 		return err
 	}
+	ddl.RenameExpressionIndexColumns(tblInfo, spec.FromKey, spec.ToKey)
 	idx := tblInfo.FindIndexByName(spec.FromKey.L)
 	idx.Name = spec.ToKey
 	return nil
@@ -1137,6 +1140,11 @@ func (*SchemaTracker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt
 
 // AlterSequence implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) error {
+	return nil
+}
+
+// CreateMaskingPolicy implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) CreateMaskingPolicy(_ sessionctx.Context, _ *ast.CreateMaskingPolicyStmt) error {
 	return nil
 }
 

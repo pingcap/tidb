@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/atomic"
 )
 
@@ -55,10 +54,7 @@ func TestContextDetach(t *testing.T) {
 		KVVars:                 kvVars,
 		KvExecCounter:          &stmtstats.KvExecCounter{},
 		RUV2Metrics:            execdetails.NewRUV2Metrics(),
-		RUV2RPCInterceptor: interceptor.NewRPCInterceptor("test", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
-			return next
-		}),
-		SessionMemTracker: &memory.Tracker{},
+		SessionMemTracker:      &memory.Tracker{},
 
 		Location:         time.Local,
 		RuntimeStatsColl: &execdetails.RuntimeStatsColl{},
@@ -93,6 +89,8 @@ func TestContextDetach(t *testing.T) {
 		LoadBasedReplicaReadThreshold: time.Second,
 		TiKVClientReadTimeout:         1,
 		MaxExecutionTime:              1,
+		MaxKeysRead:                   1,
+		MaxKeysReadCounter:            new(atomic.Uint64),
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
@@ -113,7 +111,6 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
-			"$.RUV2RPCInterceptor",
 		}))
 
 	staticObj := obj.Detach()
@@ -130,7 +127,6 @@ func TestContextDetach(t *testing.T) {
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
 			"$.RUV2Metrics",
-			"$.RUV2RPCInterceptor",
 			"$.KVVars.Killed",
 			"$.KvExecCounter",
 			"$.SessionMemTracker",

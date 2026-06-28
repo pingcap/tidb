@@ -556,4 +556,5 @@ var ReorgRetryableErrMsgs = []string{
 	"context deadline exceeded",
 	"requested lease not found",
 	"mvcc: required revision has been compacted",
+	"All returned regions have no leaders",
 }

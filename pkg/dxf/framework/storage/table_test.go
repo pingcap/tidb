@@ -312,6 +312,55 @@ func TestSwitchTaskStep(t *testing.T) {
 	// start time should not change
 	require.Equal(t, taskStartTime, task.StartTime)
 	checkAfterSwitchStep(t, startTime, task, subtasksStepTwo, proto.StepTwo)
+
+	t.Run("prepare transition persists fields and exposes zero-row CAS", func(t *testing.T) {
+		prepareTaskID, err := tm.CreateTask(ctx, "prepare-key", "test", "", 1, "", 1, proto.ExtraParams{}, []byte("init-meta"))
+		require.NoError(t, err)
+		prepareTask, err := tm.GetTaskByID(ctx, prepareTaskID)
+		require.NoError(t, err)
+		checkTaskStateStep(t, prepareTask, proto.TaskStatePending, proto.StepInit)
+
+		prepareTask.Meta = []byte(`{"prepare":"done"}`)
+		prepareTask.RequiredSlots = 8
+		prepareTask.MaxNodeCount = 6
+		prepareTask.ExtraParams = proto.ExtraParams{
+			ManualRecovery: true,
+			PrepareMode:    proto.PrepareModeRequired,
+		}
+		switchTime := time.Unix(time.Now().Unix(), 0)
+		switched, err := tm.SwitchTaskStepAfterPrepare(ctx, prepareTask)
+		require.NoError(t, err)
+		require.True(t, switched)
+
+		persistedTask, err := tm.GetTaskByID(ctx, prepareTaskID)
+		require.NoError(t, err)
+		checkTaskStateStep(t, persistedTask, proto.TaskStatePending, proto.StepPrepared)
+		require.Equal(t, []byte(`{"prepare":"done"}`), persistedTask.Meta)
+		require.Equal(t, 8, persistedTask.RequiredSlots)
+		require.Equal(t, 6, persistedTask.MaxNodeCount)
+		require.Equal(t, proto.ExtraParams{}, persistedTask.ExtraParams)
+		require.Zero(t, persistedTask.StartTime)
+		require.GreaterOrEqual(t, persistedTask.StateUpdateTime, switchTime)
+		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = %d", prepareTaskID)).
+			Check(testkit.Rows("0"))
+
+		prepareTask.Meta = []byte(`{"prepare":"stale-owner"}`)
+		prepareTask.RequiredSlots = 99
+		prepareTask.MaxNodeCount = 99
+		prepareTask.ExtraParams = proto.ExtraParams{
+			PrepareMode: proto.PrepareModeDisabled,
+		}
+		switched, err = tm.SwitchTaskStepAfterPrepare(ctx, prepareTask)
+		require.NoError(t, err)
+		require.False(t, switched)
+
+		persistedTask, err = tm.GetTaskByID(ctx, prepareTaskID)
+		require.NoError(t, err)
+		require.Equal(t, []byte(`{"prepare":"done"}`), persistedTask.Meta)
+		require.Equal(t, 8, persistedTask.RequiredSlots)
+		require.Equal(t, 6, persistedTask.MaxNodeCount)
+		require.Equal(t, proto.ExtraParams{}, persistedTask.ExtraParams)
+	})
 }
 
 func TestGetSubtaskSummaries(t *testing.T) {
@@ -800,18 +849,22 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 
 func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
+	originNodeResource := storage.GetNodeResource()
+	t.Cleanup(func() {
+		storage.SetNodeResource(originNodeResource)
+	})
 
 	// when no node
 	_, err := sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
+	storage.SetNodeResource(proto.NewNodeResource(0, 0, 0))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	_, err = sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	storage.SetNodeResource(proto.NewNodeResource(8, 8, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
@@ -822,7 +875,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
@@ -883,10 +936,10 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	require.NoError(t, sm.InitMeta(ctx, ":4001", "background"))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	storage.SetNodeResource(proto.NewNodeResource(8, 8, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", ""))
 	cpuCount, err = sm.GetCPUCountOfNode(ctx)
@@ -898,6 +951,31 @@ func TestDistFrameworkMeta(t *testing.T) {
 	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
+
+	storage.SetNodeResource(proto.NewNodeResource(5, 5, 100))
+	require.NoError(t, sm.InitMeta(ctx, ":4004", "background"))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	var limitedNode proto.ManagedNode
+	for _, n := range nodes {
+		if n.ID == ":4004" {
+			limitedNode = n
+			break
+		}
+	}
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 5}, limitedNode)
+
+	storage.SetNodeResource(proto.NewNodeResource(1, 1, 100))
+	require.NoError(t, sm.RecoverMeta(ctx, ":4004", ""))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.ID == ":4004" {
+			limitedNode = n
+			break
+		}
+	}
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 1}, limitedNode)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -1333,6 +1411,17 @@ func TestSubtasksState(t *testing.T) {
 	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
+
+	// 4. CancelSubtask should cancel all pending/running subtasks for one exec/task.
+	subtaskID1 := testutil.CreateSubTask(t, sm, 5, proto.StepInit, "for_test_multi", []byte("test"), proto.TaskTypeExample, 11)
+	testutil.CreateSubTask(t, sm, 5, proto.StepInit, "for_test_multi", []byte("test"), proto.TaskTypeExample, 11)
+	require.NoError(t, sm.StartSubtask(ctx, subtaskID1, "for_test_multi"))
+	require.NoError(t, sm.CancelSubtask(ctx, "for_test_multi", 5))
+	cntByStates, err := sm.GetSubtaskCntGroupByStates(ctx, 5, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cntByStates[proto.SubtaskStateCanceled])
+	require.Equal(t, int64(0), cntByStates[proto.SubtaskStatePending])
+	require.Equal(t, int64(0), cntByStates[proto.SubtaskStateRunning])
 }
 
 func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.TaskBase) {
