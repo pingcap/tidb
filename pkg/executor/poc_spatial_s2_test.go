@@ -161,3 +161,21 @@ func TestPOCSpatial4326CoveringIndex(t *testing.T) {
 	want := tk.MustQuery("SELECT count(*) FROM g4 IGNORE INDEX(si) WHERE ST_Within(p, " + region + ")").Rows()
 	require.Equal(t, want, tk.MustQuery(q).Rows())
 }
+
+// TestPOCSpatial4326Measurements covers batch item B4: ellipsoidal geodesic ST_Distance
+// and ST_Length for SRID 4326 (Andoyer, matching MySQL 9.7 to sub-metre). ST_Area on 4326
+// (ellipsoidal area) is a follow-up and errors rather than returning a planar/spherical
+// value; SRID-0 measurements stay planar.
+func TestPOCSpatial4326Measurements(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Geodesic distance/length, vs MySQL 9.7 (156897.79947260793, 221892.62892108463).
+	tk.MustQuery("SELECT ABS(ST_Distance(ST_GeomFromText('POINT(0 0)',4326), ST_GeomFromText('POINT(1 1)',4326)) - 156897.79947260793) < 0.01").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ABS(ST_Length(ST_GeomFromText('LINESTRING(0 0,0 1,1 1)',4326)) - 221892.62892108463) < 0.01").Check(testkit.Rows("1"))
+	// ST_Area on 4326 is not yet supported (ellipsoidal-area follow-up).
+	require.ErrorContains(t, tk.QueryToErr("SELECT ST_Area(ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',4326))"), "srid 4326")
+	// SRID-0 measurements unchanged (planar).
+	tk.MustQuery("SELECT ST_Area(ST_GeomFromText('POLYGON((0 0,0 2,2 2,2 0,0 0))',0))").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT ST_Distance(ST_GeomFromText('POINT(0 0)',0), ST_GeomFromText('POINT(3 4)',0))").Check(testkit.Rows("5"))
+}

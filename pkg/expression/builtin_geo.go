@@ -450,10 +450,20 @@ func (b *builtinStDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 	if s1 != s2 {
 		return 0, false, errors.New("ST_Distance: binary geometry function passed two arguments with different SRIDs")
 	}
+	if s1 == spatial.SRID4326 {
+		// 4326 ST_Distance is the ellipsoidal geodesic distance in metres (Andoyer),
+		// matching MySQL. Points only in the POC (line/polygon nearest-distance on the
+		// ellipsoid is a follow-up).
+		x1, y1, ok1 := pointXY(g1)
+		x2, y2, ok2 := pointXY(g2)
+		if !ok1 || !ok2 {
+			return 0, false, errors.New("st_distance: only point arguments are supported for srid 4326 in the poc")
+		}
+		// 4326 axis order: x is latitude, y is longitude.
+		return geodesicMetersWGS84(x1, y1, x2, y2), false, nil
+	}
 	if s1 != 0 {
-		// 4326 ST_Distance is geodesic (ellipsoidal) in MySQL; not yet implemented
-		// here (ST_Distance_Sphere covers the spherical case).
-		return 0, false, errors.New("ST_Distance: only SRID 0 is supported in the POC")
+		return 0, false, errors.New("st_distance: only srid 0 and 4326 are supported in the poc")
 	}
 	// Planar distance between any two SRID-0 geometries (point/line/polygon/…).
 	d, ok := geom.Distance(g1, g2)
@@ -527,6 +537,40 @@ func (b *builtinStDistanceSphereSig) evalReal(ctx EvalContext, row chunk.Row) (f
 	}
 	// 4326 axis order is (latitude, longitude): x is the latitude, y the longitude.
 	return greatCircleMeters(y1, x1, y2, x2), false, nil
+}
+
+// geodesicMetersWGS84 returns the ellipsoidal geodesic distance in metres between two
+// points given as (latitude, longitude) degrees on the WGS 84 ellipsoid, using the
+// Andoyer formula — the spherical-law-of-cosines distance with a first-order flattening
+// correction, which is what MySQL / boost::geometry use for SRID 4326. It matches MySQL's
+// ST_Distance to well under a metre.
+func geodesicMetersWGS84(lat1, lng1, lat2, lng2 float64) float64 {
+	const (
+		a     = 6378137.0         // WGS 84 semi-major axis (m)
+		f     = 1 / 298.257223563 // WGS 84 flattening
+		toRad = math.Pi / 180
+	)
+	la1, la2 := lat1*toRad, lat2*toRad
+	bigF := (la1 + la2) / 2
+	bigG := (la1 - la2) / 2
+	bigL := (lng1 - lng2) * toRad / 2
+	sinF, cosF := math.Sin(bigF), math.Cos(bigF)
+	sinG, cosG := math.Sin(bigG), math.Cos(bigG)
+	sinL, cosL := math.Sin(bigL), math.Cos(bigL)
+	s := sinG*sinG*cosL*cosL + cosF*cosF*sinL*sinL
+	c := cosG*cosG*cosL*cosL + sinF*sinF*sinL*sinL
+	if s == 0 {
+		return 0
+	}
+	w := math.Atan(math.Sqrt(s / c))
+	if w == 0 {
+		return 0
+	}
+	r := math.Sqrt(s*c) / w
+	d := 2 * w * a
+	h1 := (3*r - 1) / (2 * c)
+	h2 := (3*r + 1) / (2 * s)
+	return d * (1 + f*h1*sinF*sinF*cosG*cosG - f*h2*cosF*cosF*sinG*sinG)
 }
 
 // greatCircleMeters is the haversine distance in metres between two points given
@@ -1248,9 +1292,15 @@ func (b *builtinStAreaSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bo
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	_, g, err := decodeEWKB(ewkb)
+	srid, g, err := decodeEWKB(ewkb)
 	if err != nil {
 		return 0, false, err
+	}
+	if srid == spatial.SRID4326 {
+		// 4326 ST_Area is the ellipsoidal area in m² in MySQL; the geodesic polygon area
+		// (Karney) is a follow-up. Error rather than return a planar (degree²) value or a
+		// spherical approximation (~0.45% off MySQL) that would silently diverge.
+		return 0, false, errors.New("st_area: srid 4326 is not yet supported in the poc")
 	}
 	return g.Area(), false, nil
 }
@@ -1287,11 +1337,53 @@ func (b *builtinStLengthSig) evalReal(ctx EvalContext, row chunk.Row) (float64, 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	_, g, err := decodeEWKB(ewkb)
+	srid, g, err := decodeEWKB(ewkb)
 	if err != nil {
 		return 0, false, err
 	}
+	if srid == spatial.SRID4326 {
+		// 4326 ST_Length is the ellipsoidal geodesic length in metres (Andoyer per
+		// segment), matching MySQL.
+		return geodesicLengthWGS84(g), false, nil
+	}
 	return g.Length(), false, nil
+}
+
+// geodesicLengthWGS84 sums the ellipsoidal geodesic length (metres) of every line
+// segment in g (LineString / MultiLineString), for SRID 4326. Coordinates are (x=lat,
+// y=lng) in the POC's 4326 axis order.
+func geodesicLengthWGS84(g geom.Geometry) float64 {
+	switch g.Type() {
+	case geom.TypeLineString:
+		ls, ok := g.AsLineString()
+		if !ok {
+			return 0
+		}
+		return lineStringGeodesicLength(ls)
+	case geom.TypeMultiLineString:
+		mls, ok := g.AsMultiLineString()
+		if !ok {
+			return 0
+		}
+		total := 0.0
+		for i := range mls.NumLineStrings() {
+			total += lineStringGeodesicLength(mls.LineStringN(i))
+		}
+		return total
+	default:
+		return 0
+	}
+}
+
+func lineStringGeodesicLength(ls geom.LineString) float64 {
+	seq := ls.Coordinates()
+	total := 0.0
+	for i := 0; i+1 < seq.Length(); i++ {
+		a := seq.GetXY(i)
+		b := seq.GetXY(i + 1)
+		total += geodesicMetersWGS84(a.X, a.Y, b.X, b.Y)
+	}
+	return total
 }
 
 type stDimensionFunctionClass struct {
