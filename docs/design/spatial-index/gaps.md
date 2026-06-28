@@ -16,9 +16,14 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   cover all treat the first coordinate as latitude (the accessors already did).
   Verified vs MySQL 9.7 (`ST_Latitude`/`ST_Longitude`/`ST_Distance_Sphere`).
   `TestPOCSpatial4326Axis`.
-- **Planar refine** `✓code` — the S2 *covering* is geodesic but the exact predicate
-  (`pkg/util/geomrel`) is planar, so `ST_Within`/`Contains`/… diverge from MySQL near
-  edges/poles/the antimeridian. (Round-2 item #2.)
+- **Planar refine** — ✅ **point-in-polygon now geodesic** (S2) for the 4326 region
+  predicates, matching MySQL where the planar refine diverged (`geomrel/geodesic.go`;
+  `TestGeodesic4326PointInPolygon` proves a geodesic-inside / planar-outside point).
+  Follow-ups: polygon/polygon + Touches/Crosses/Overlaps stay planar; the index
+  *covering* still uses the vertex lat/lng bbox, so a pathological large polygon whose
+  geodesic edge bulges past its vertex bbox could miss index candidates (the full scan
+  stays correct); and TiKV's geo-crate refine is still planar, so real-TiKV 4326-region
+  pushdown should be gated off until it's geodesic too.
 - **`ST_Distance` on 4326** `✓code` — hard-restricted to SRID 0
   (`builtin_geo.go:341`); MySQL returns the **geodesic distance in meters**
   (ellipsoidal). `ST_Distance_Sphere` uses a sphere, not MySQL's ellipsoid, so the

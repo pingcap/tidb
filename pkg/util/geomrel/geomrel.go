@@ -23,6 +23,8 @@
 package geomrel
 
 import (
+	"encoding/binary"
+
 	"github.com/peterstace/simplefeatures/geom"
 	"github.com/pingcap/errors"
 )
@@ -44,27 +46,36 @@ const (
 	CoveredBy
 )
 
-// decodeEWKB strips the 4-byte little-endian SRID prefix and parses the WKB.
-func decodeEWKB(ewkb string) (geom.Geometry, error) {
+// decodeEWKB returns the SRID (the 4-byte little-endian prefix) and the parsed WKB.
+func decodeEWKB(ewkb string) (uint32, geom.Geometry, error) {
 	if len(ewkb) < 4 {
-		return geom.Geometry{}, errors.New("geomrel: invalid geometry value: too short")
+		return 0, geom.Geometry{}, errors.New("geomrel: invalid geometry value: too short")
 	}
+	srid := binary.LittleEndian.Uint32([]byte(ewkb[:4]))
 	g, err := geom.UnmarshalWKB([]byte(ewkb[4:]))
 	if err != nil {
-		return geom.Geometry{}, errors.Trace(err)
+		return 0, geom.Geometry{}, errors.Trace(err)
 	}
-	return g, nil
+	return srid, g, nil
 }
 
 // Relate evaluates a binary relational predicate between two EWKB geometries.
 func Relate(pred Predicate, ewkb1, ewkb2 string) (bool, error) {
-	g1, err := decodeEWKB(ewkb1)
+	srid, g1, err := decodeEWKB(ewkb1)
 	if err != nil {
 		return false, err
 	}
-	g2, err := decodeEWKB(ewkb2)
+	_, g2, err := decodeEWKB(ewkb2)
 	if err != nil {
 		return false, err
+	}
+	// SRID-4326 region predicates use a geodesic (S2) evaluator for the
+	// point-in-polygon case, so polygon edges are great-circle arcs (matching MySQL);
+	// other operands/predicates use the planar simplefeatures evaluator below.
+	if srid == srid4326 {
+		if res, handled := geodesic4326PointInPolygon(pred, g1, g2); handled {
+			return res, nil
+		}
 	}
 	switch pred {
 	case Within:

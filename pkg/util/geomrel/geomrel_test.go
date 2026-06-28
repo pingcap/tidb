@@ -96,3 +96,38 @@ func TestRelateInvalidGeometryNoPanic(t *testing.T) {
 		require.Error(t, err2)
 	})
 }
+
+// ewkb4326 builds the POC EWKB form with the WGS 84 SRID prefix (4326 = 0x10E6).
+func ewkb4326(t *testing.T, wktStr string) string {
+	g, err := geom.UnmarshalWKT(wktStr)
+	require.NoError(t, err)
+	return string(append([]byte{0xE6, 0x10, 0, 0}, g.AsBinary()...))
+}
+
+// TestGeodesic4326PointInPolygon verifies the SRID-4326 geodesic (S2) refine for
+// point-in-polygon. The big spherical triangle (lat lng) (0,0),(80,0),(0,80) has a
+// great-circle hypotenuse that bows away from the origin, so (41,41) — which is
+// planar-OUTSIDE (lat+lng=82) — is geodesically INSIDE (MySQL 9.7 ST_Within=1). A
+// passing assertion here proves the geodesic path ran (the planar evaluator returns
+// false). Values verified against MySQL 9.7.
+func TestGeodesic4326PointInPolygon(t *testing.T) {
+	poly := ewkb4326(t, "POLYGON((0 0,80 0,0 80,0 0))")
+	within := func(wkt string) bool {
+		res, err := Relate(Within, ewkb4326(t, wkt), poly)
+		require.NoError(t, err)
+		return res
+	}
+	require.True(t, within("POINT(41 41)"), "geodesically inside (MySQL=1) though planar-outside")
+	require.True(t, within("POINT(20 20)"), "clearly inside")
+	require.False(t, within("POINT(70 70)"), "clearly outside")
+	require.False(t, within("POINT(-5 20)"), "negative latitude, outside")
+
+	// ST_Contains(polygon, point): the polygon is the first operand.
+	cres, err := Relate(Contains, poly, ewkb4326(t, "POINT(41 41)"))
+	require.NoError(t, err)
+	require.True(t, cres)
+	// Disjoint is the negation of intersects.
+	dres, err := Relate(Disjoint, ewkb4326(t, "POINT(70 70)"), poly)
+	require.NoError(t, err)
+	require.True(t, dres)
+}
