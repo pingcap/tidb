@@ -289,6 +289,8 @@ type RestoreConfig struct {
 	UseCheckpoint     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
 	upstreamClusterID uint64 `json:"-" toml:"-"`
 	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	// snapshotRestoreDataSize records the filtered snapshot files restored before PITR log restore.
+	snapshotRestoreDataSize uint64
 
 	// for phased PITR restore
 	RestorePhase   uint64 `json:"restore-phase" toml:"restore-phase"`
@@ -932,6 +934,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return err
 	}
 	files, tables, dbs := filterRestoreFiles(client, cfg)
+	cfg.snapshotRestoreDataSize = totalBackupFileSize(files)
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
@@ -1309,6 +1312,14 @@ func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint6
 	}
 	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
 	return totalSize * replicaCnt / storeCnt
+}
+
+func totalBackupFileSize(files []*backuppb.File) uint64 {
+	totalSize := uint64(0)
+	for _, file := range files {
+		totalSize += file.GetSize_()
+	}
+	return totalSize
 }
 
 func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
