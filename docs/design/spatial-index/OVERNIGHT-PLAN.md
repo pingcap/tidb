@@ -47,11 +47,11 @@ refine stays planar, and a geodesic root + planar cop would break the "pushdown 
 changes the answer" contract. Validate vs the running MySQL 4326. Start:
 point-in-polygon (dominant case); polygon/polygon + Touches/Crosses/Overlaps later.
 
-### 3 — Cost-based index selection (no FORCE INDEX) ☐
+### 3 — Cost-based index selection (no FORCE INDEX) ☑ DONE
 Partly works (ANALYZE-driven; `poc_spatial_test.go:68`). Strengthen: tests proving the
 optimizer picks the spatial index at low selectivity *and falls back to a table scan
 at high selectivity*, across a selectivity sweep, without hints. Fix the cost model if
-a sweep point chooses wrong.
+a sweep point chooses wrong. **Done**: `TestPOCSpatialCostBasedSelection` proves auto-select at low selectivity + full-scan fallback at high selectivity (both correct); the cost model already behaves correctly, no fix needed.
 
 ### 6 — Concurrent DML consistency under load ☐
 Stress test: N goroutines doing concurrent INSERT/UPDATE/DELETE of geometries while

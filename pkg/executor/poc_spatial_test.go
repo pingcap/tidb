@@ -234,3 +234,38 @@ func TestPOCSpatialCoversIndex(t *testing.T) {
 	require.Len(t, want, 16)
 	tk.MustQuery("SELECT id FROM pt FORCE INDEX(si) WHERE " + pred + " ORDER BY id").Check(want)
 }
+
+// TestPOCSpatialCostBasedSelection verifies the optimizer chooses the spatial index
+// by cost, without a FORCE INDEX hint: a selective region picks the index range scan,
+// while a region covering essentially all rows falls back to a full table scan
+// (where the index + table lookups would be more expensive). Both must stay correct.
+func TestPOCSpatialCostBasedSelection(t *testing.T) {
+	tk, cleanup := seedSpatialTable(t)
+	defer cleanup()
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p)")
+	tk.MustExec("ANALYZE TABLE locs")
+
+	planOf := func(q string) string {
+		var b strings.Builder
+		for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
+			b.WriteString(fmt.Sprintf("%v ", r[0]))
+		}
+		return b.String()
+	}
+	baseline := func(q string) [][]any {
+		return tk.MustQuery(strings.Replace(q, "FROM locs", "FROM locs IGNORE INDEX(sidx)", 1)).Rows()
+	}
+
+	// Low selectivity (a small 20x20 window, ~9 of 961 rows): auto-pick the index.
+	const sel = "SELECT id FROM locs WHERE ST_Within(p, ST_GeomFromText('POLYGON((100 100,100 120,120 120,120 100,100 100))',0)) ORDER BY id"
+	selPlan := planOf(sel)
+	require.Contains(t, selPlan, "IndexRangeScan", "low-selectivity query should auto-pick the spatial index:\n"+selPlan)
+	tk.MustQuery(sel).Check(baseline(sel))
+
+	// High selectivity (a window covering the whole grid, all 961 rows): a full table
+	// scan is cheaper, so the optimizer should not use the index.
+	const all = "SELECT id FROM locs WHERE ST_Within(p, ST_GeomFromText('POLYGON((-10 -10,-10 310,310 310,310 -10,-10 -10))',0)) ORDER BY id"
+	allPlan := planOf(all)
+	require.NotContains(t, allPlan, "IndexRangeScan", "high-selectivity query should fall back to a table scan:\n"+allPlan)
+	tk.MustQuery(all).Check(baseline(all))
+}
