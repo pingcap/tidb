@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/spatial"
@@ -68,6 +69,15 @@ func (s *SpatialIndexResolver) resolve(plan, parent, grandparent base.LogicalPla
 	if ds, ok := plan.(*logicalop.DataSource); ok {
 		if sel, ok := parent.(*logicalop.LogicalSelection); ok {
 			changed = s.injectForDataSource(ds, sel, grandparent) || changed
+		}
+		// KNN: ORDER BY ST_Distance(col, const) [ASC] LIMIT k keeps the distance in the
+		// Sort/TopN ByItems directly above the DataSource. Rewrite it to Point(ST_X, ST_Y)
+		// from the in-index bbox columns so, when the geometry is not otherwise needed,
+		// the order-by is served index-only (no table read, no EWKB decode). This narrows
+		// the scan; it does not add spatial pruning (which would need a best-first /
+		// expanding-cell operator).
+		if byItems, ok := orderByItems(parent); ok {
+			changed = s.rewriteKNNDistance(ds, byItems) || changed
 		}
 		return changed
 	}
@@ -249,6 +259,87 @@ func (s *SpatialIndexResolver) findPointXYColumns(ds *logicalop.DataSource, geom
 		return nil, nil, false
 	}
 	return minX, minY, true
+}
+
+// orderByItems returns the ByItems of a LogicalSort or LogicalTopN, the operators
+// that carry an ORDER BY ... LIMIT k order expression above a DataSource.
+func orderByItems(p base.LogicalPlan) ([]*plannerutil.ByItems, bool) {
+	switch v := p.(type) {
+	case *logicalop.LogicalSort:
+		return v.ByItems, true
+	case *logicalop.LogicalTopN:
+		return v.ByItems, true
+	}
+	return nil, false
+}
+
+// rewriteKNNDistance rewrites an ST_Distance(col, const) order-by expression over a
+// SRID-0 point spatial-index column to operate on Point(ST_X, ST_Y) reconstructed from
+// the in-index bbox columns. Point(ST_X(p), ST_Y(p)) == p, so the order is unchanged;
+// the geometry column then has no remaining reference (for a SELECT that does not
+// project it) and the second column-pruning pass drops it, serving the order-by
+// index-only.
+func (s *SpatialIndexResolver) rewriteKNNDistance(ds *logicalop.DataSource, byItems []*plannerutil.ByItems) bool {
+	geomColID := int64(-1)
+	for _, bi := range byItems {
+		if id, ok := distanceColumnOperand(bi.Expr); ok && srid0Column(ds.TableInfo, id) {
+			geomColID = id
+			break
+		}
+	}
+	if geomColID < 0 {
+		return false
+	}
+	x, y, ok := s.findPointXYColumns(ds, geomColID)
+	if !ok {
+		return false
+	}
+	var geomCol *expression.Column
+	for _, c := range ds.Schema().Columns {
+		if c.ID == geomColID {
+			geomCol = c
+			break
+		}
+	}
+	if geomCol == nil {
+		return false
+	}
+	exprCtx := ds.SCtx().GetExprCtx()
+	pt, err := expression.NewFunction(exprCtx, ast.GeomPoint, types.NewFieldType(mysql.TypeGeometry), x, y)
+	if err != nil {
+		return false
+	}
+	schema := expression.NewSchema(geomCol)
+	for _, bi := range byItems {
+		bi.Expr = expression.ColumnSubstitute(exprCtx, bi.Expr, schema, []expression.Expression{pt})
+	}
+	return true
+}
+
+// distanceColumnOperand returns the table column ID of the column operand of an
+// ST_Distance(col, const) scalar function, if e is one.
+func distanceColumnOperand(e expression.Expression) (int64, bool) {
+	sf, ok := e.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.StDistance {
+		return 0, false
+	}
+	args := sf.GetArgs()
+	col, _, ok := splitColAndConst(args[0], args[1])
+	if !ok {
+		return 0, false
+	}
+	return col.ID, true
+}
+
+// srid0Column reports whether table column geomColID has SRID 0 (the only SRID for
+// which ST_Distance and the Point(ST_X, ST_Y) reconstruction are planar-consistent).
+func srid0Column(tblInfo *model.TableInfo, geomColID int64) bool {
+	for _, c := range tblInfo.Columns {
+		if c.ID == geomColID {
+			return c.Srid == 0
+		}
+	}
+	return false
 }
 
 // findSpatialHiddenColumn returns the expression.Column of the hidden generated

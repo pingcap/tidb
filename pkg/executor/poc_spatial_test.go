@@ -416,3 +416,34 @@ func TestPOCSpatialTypedConstructors(t *testing.T) {
 	require.Error(t, tk.QueryToErr("SELECT ST_PointFromText('LINESTRING(0 0,1 1)')"))
 	require.Error(t, tk.QueryToErr("SELECT ST_PolygonFromText('POINT(1 1)')"))
 }
+
+// TestPOCSpatialKNN covers roadmap #4: ORDER BY ST_Distance(p, const) LIMIT k is served
+// index-only (the distance is computed from the in-index ST_X/ST_Y, so no table read or
+// EWKB decode), and the top-k matches the full-scan baseline exactly. This narrows the
+// scan; it is not a pruning/expanding-search KNN.
+func TestPOCSpatialKNN(t *testing.T) {
+	tk, cleanup := seedSpatialTable(t)
+	defer cleanup()
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p)")
+	tk.MustExec("ANALYZE TABLE locs")
+
+	const q = "SELECT id FROM locs ORDER BY ST_Distance(p, ST_GeomFromText('POINT(150 150)',0)) ASC, id ASC LIMIT 5"
+
+	var plan strings.Builder
+	for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
+		plan.WriteString(fmt.Sprintf("%v ", r[0]))
+	}
+	require.Contains(t, plan.String(), "IndexReader", "KNN should be served from the index")
+	require.NotContains(t, plan.String(), "TableReader", "KNN should be index-only")
+	require.NotContains(t, plan.String(), "TableRowIDScan", "KNN should not look up the table")
+
+	// Exactness: identical top-k with and without the index.
+	want := tk.MustQuery("SELECT id FROM locs IGNORE INDEX(sidx) ORDER BY ST_Distance(p, ST_GeomFromText('POINT(150 150)',0)) ASC, id ASC LIMIT 5").Rows()
+	require.Equal(t, want, tk.MustQuery(q).Rows())
+	tk.MustQuery(q).Check(testkit.Rows("481", "450", "480", "482", "512"))
+
+	// Projecting the geometry must stay correct (the ByItems rewrite must not corrupt
+	// the SELECT list).
+	got := tk.MustQuery("SELECT ST_AsText(p) FROM locs ORDER BY ST_Distance(p, ST_GeomFromText('POINT(150 150)',0)) ASC, id ASC LIMIT 1").Rows()
+	require.Equal(t, "POINT(150 150)", got[0][0])
+}
