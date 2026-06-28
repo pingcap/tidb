@@ -40,7 +40,10 @@ code PRs. Confirm it (or a short addendum) covers the parts that are *new* vs
   fix) and reads relate-bound, so storage *size* is not the lever.
 - **ANALYZE** for geometry-derived virtual indexes (independent index-scan path).
 - accepted **limitations**: planar 4326 refine (only the S2 covering is geodesic);
-  4326 axis convention (coord0 = lng here vs lat in MySQL).
+  4326 axis convention (coord0 = lng here vs lat in MySQL). The full list of
+  MySQL-compat and index-utilization gaps (what's missing on SRID 0/4326, and where
+  the index could help but doesn't — KNN, spatial joins, covering-index) is tracked
+  in [`gaps.md`](gaps.md).
 
 ## Actual scope (it looks bigger than it is)
 

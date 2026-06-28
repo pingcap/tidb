@@ -1,0 +1,98 @@
+# Spatial POC — Compatibility & Index-Utilization Gaps
+
+What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 planar,
+4326 geographic), and (2) fully exploiting the spatial index. Companion to
+`review-plan.md` (milestones), `mysql-function-catalog.md` (function surface),
+`storage-format.md` (refine-CPU levers), `pushdown-contract.md` (cop pushdown), and
+`OVERNIGHT-PLAN.md` round-2 items #1/#2/#7/#8.
+
+`✓code` = verified in source this audit; otherwise from design notes.
+
+## Part 1 — MySQL compatibility gaps (SRID 0 & 4326)
+
+### SRID 4326 (geographic) — the larger divergences
+- **Axis order** `✓code` — `EncodePointS2(lng, lat)` (`pkg/util/spatial/s2.go:43`)
+  treats the first WKT coordinate as longitude. MySQL 4326 uses the EPSG axis order
+  **(latitude, longitude)** — first coordinate is *latitude*. So `POINT(30 50)` is
+  stored/queried swapped vs MySQL; affects stored bytes **and** every 4326 result.
+  Highest-impact 4326 gap.
+- **Planar refine** `✓code` — the S2 *covering* is geodesic but the exact predicate
+  (`pkg/util/geomrel`) is planar, so `ST_Within`/`Contains`/… diverge from MySQL near
+  edges/poles/the antimeridian. (Round-2 item #2.)
+- **`ST_Distance` on 4326** `✓code` — hard-restricted to SRID 0
+  (`builtin_geo.go:341`); MySQL returns the **geodesic distance in meters**
+  (ellipsoidal). `ST_Distance_Sphere` uses a sphere, not MySQL's ellipsoid, so the
+  meters differ slightly too.
+- **Geodesic `ST_Length` / `ST_Area`** for 4326 (MySQL → meters / m² on the
+  ellipsoid) — not done.
+- **Coordinate-range validation** `✓code` — none found; MySQL errors on
+  lat ∉ [−90,90] / lng ∉ [−180,180]. The PoC accepts anything.
+
+### SRID 0 (planar) — mostly compatible; remaining gaps
+- **`ST_Distance` is POINT-only** `✓code` (`builtin_geo.go:346`) — MySQL computes
+  distance between *any* geometry types (point↔line, polygon↔polygon, …).
+- **Empty geometry** — a predicate with an empty operand returns `0` here vs **NULL**
+  in MySQL.
+- Boundary/DE-9IM semantics should now be OGC-correct (simplefeatures); worth a fresh
+  diff vs MySQL.
+
+### Both SRIDs
+- **Function tail** — the ~65 MySQL functions not yet implemented (see
+  `mysql-function-catalog.md` M3): typed `*FromText`/`*FromWKB` variants, the 9 MBR
+  predicates, processing (`ST_Buffer`/`Union`/`Intersection`/`Difference`/
+  `SymDifference`/`ConvexHull`/`Simplify`/`Validate`/`MakeEnvelope`/`SwapXY`/
+  `LineInterpolate*`/`PointAtDistance`/`Collect`), geohash (4), niche accessors
+  (`IsSimple`/`IsClosed`/`InteriorRingN`/`GeometryN`/`NumGeometries`),
+  Multi*/GeometryCollection constructors.
+- **`ST_Transform`** (cross-SRID reprojection) — absent.
+- **Error parity** — MySQL-specific codes/messages (the PoC uses "…in the POC").
+- **SRS catalog** — `information_schema.ST_SPATIAL_REFERENCE_SYSTEMS`,
+  `CREATE/DROP SPATIAL REFERENCE SYSTEM` (minor for just 0/4326).
+
+## Part 2 — Index-utilization gaps
+
+### A. Query shapes the index can't serve (fall back to scan/sort)
+- **KNN** `ORDER BY ST_Distance(g, const) LIMIT k` — full-scans + sorts today. The
+  single biggest latency win missing; nearest-neighbor is a primary spatial workload.
+  (Round-2 item #1.)
+- **Spatial joins** `ST_Intersects(t1.g, t2.g)` `✓code` — the resolver needs a
+  **constant** query geometry to compute covering cells, so column↔column joins can't
+  be index-accelerated → cross-join + filter. An index-nested-loop spatial join (cell
+  lookup per outer row) would be a large win.
+- **Point covering-index** — point queries still do an `IndexLookUp` (random table
+  probe + EWKB decode) although `ST_X`/`ST_Y` are *in the index*. Index-only refine
+  removes the dominant read cost (random I/O) + the decode. (Round-2 item #8.)
+
+### B. Predicates not index-eligible
+- **MBR predicates** — not implemented, so the natural bbox-index users get no index
+  path.
+- **`Disjoint` / negated predicates** — inherently the complement of a region → no
+  covering range (full scan; largely unavoidable).
+
+### C. Index used, but doing more work than needed
+- **Morton vs Hilbert (SRID 0)** — Morton's poorer locality → more disjoint key
+  ranges + more covering false positives → more rows refined. Hilbert tightens it
+  (`storage-format.md`) → lower latency/CPU.
+- **Refine CPU** — the simplefeatures relate-internal WKB re-parse (~14%), the per-row
+  constant re-decode, and decode-once on the write path (the pprof findings in
+  `storage-format.md`).
+- **Statistics quality** — cost-based selection works at the extremes, but
+  mid-selectivity plan choice depends on spatial cardinality estimation accuracy; poor
+  estimates → mis-plans.
+- **4326 pushdown trade-off** — 4326 region predicates push to the cop (planar both
+  sides) today. Adding geodesic refine *forces 4326 pushdown off* (cop stays planar)
+  → more rows shipped to root → higher latency. Making **TiKV's refine geodesic**
+  gives both correctness and the pushdown latency win.
+
+### D. Coverage gaps
+- **Partitioned tables** — unverified that the hidden-index + resolver compose with
+  partitioning; if not, partitioned spatial tables lose the index. (Round-2 item #5,
+  not in the implement set.)
+- **TiFlash / OLAP** — no columnar spatial index, so analytic spatial scans
+  (aggregations over large regions) can't use one.
+- **Other projected SRIDs** — only 0/4326 are indexable (the 4-site SRID gating,
+  round-2 item #7).
+
+## Priority (highest value first)
+- **Correctness:** 4326 **axis order**, then **geodesic refine** (#2).
+- **Utilization:** **KNN** (#1), **point covering-index** (#8), **spatial joins**.
