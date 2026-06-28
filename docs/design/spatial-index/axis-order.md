@@ -49,6 +49,58 @@ already-built geometry, or that name latitude/longitude explicitly, agree.
   comes from how the inputs were *constructed/read* at the boundary above, not from the
   function itself.
 
+## Per-SRID axis order: which SRIDs actually differ (the full picture)
+
+The flip is **not** limited to 4326, and it is **not** a clean "geographic differs,
+projected agrees" split. The rule is simply:
+
+- **PostGIS** uses one **fixed** order for *every* SRID — it ignores the SRS's
+  authority axis order and always reads/writes WKT/WKB as `(x, y)` =
+  `(easting/longitude first, northing/latitude second)`.
+- **TiDB/MySQL** honor each SRID's **authority-defined** axis order.
+
+Counting MySQL's catalog (`information_schema.ST_SPATIAL_REFERENCE_SYSTEMS`, **5238**
+entries; parsed from each SRS's top-level `AXIS` order and validated against
+`ST_Latitude`):
+
+| MySQL's first axis | count | vs PostGIS |
+| --- | ---: | --- |
+| projected, easting-first | 3464 | **agree** |
+| geographic, **lon-first** | 8 | **agree** |
+| geographic, lat-first | 537 | **differ** |
+| projected, northing-first | 1169 | **differ** |
+| projected, westing-first | 30 | **differ** |
+| projected, southing-first | 29 | **differ** |
+| (no explicit axis) | 1 | — |
+
+So **~1765 of 5238 SRIDs (~34%) disagree with PostGIS**, spanning *both* families:
+
+- **Most geographic SRIDs are lat-first** (differ) — incl. **4326**, 4258 (ETRS89),
+  and the bulk of geographic CRSs. The **8 geographic exceptions that agree with
+  PostGIS** are lon-first frames: EPSG **7035 RGSPM06, 7037 RGR92, 7039 RGM04,
+  7041 RGFG95, 7084 RGF93, 7086 RGAF09, 7133 RGTAAF07, 8902 RGWF96** (French overseas,
+  defined "(lon-lat)").
+- **Most projected SRIDs are easting-first** (agree), but **~1228 differ**
+  (northing/southing/westing-first): Gauss-Krüger / Gauss-Boaga zones, Krovak
+  (S-JTSK), Argentina (POSGAR / Campo Inchauspe), Korean belts, and many national
+  grids.
+
+Empirical check (MySQL 9.7): `ST_Latitude(POINT(30 50))` returns `30` for 4326 and
+4258 (latitude is the **first** coordinate → lat-first) but `50` for 7035 RGSPM06
+(latitude is the **second** → lon-first).
+
+### Migration guidance (PostGIS → TiDB) — for the public docs
+
+You **cannot** assume "swap coordinates for geographic, leave projected alone." The
+swap is needed **per-SRID**, wherever MySQL's authority order is not easting/lon-first
+— ~1/3 of all SRIDs, across *both* geographic and projected. Practically: a WKT/WKB
+`POINT(a b)` ingested under one of the ~1765 "differ" SRIDs has its two coordinates in
+the opposite order between PostGIS and TiDB. **GeoJSON** (always `[lon, lat]`,
+RFC 7946) and the explicit **`ST_Latitude`/`ST_Longitude`** accessors carry over
+unchanged. Reproduce the table above with: `SELECT SRS_ID, DEFINITION FROM
+information_schema.ST_SPATIAL_REFERENCE_SYSTEMS` and inspect the top-level `AXIS[...]`
+order.
+
 ## PoC-specific notes (verified)
 
 - The roadmap-#2 axis fix unified the **S2 covering, `ST_Distance_Sphere`, and the
