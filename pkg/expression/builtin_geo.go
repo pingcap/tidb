@@ -242,7 +242,42 @@ func (b *builtinStGeomFromTextSig) evalString(ctx EvalContext, row chunk.Row) (s
 	if err != nil {
 		return "", false, errors.Trace(err)
 	}
+	if uint32(srid) == spatial.SRID4326 {
+		if verr := validateGeographic4326(g); verr != nil {
+			return "", false, verr
+		}
+	}
 	return encodeEWKB(g, uint32(srid)), false, nil
+}
+
+// validateGeographic4326 rejects coordinates outside the valid WGS 84 ranges, matching
+// MySQL's out-of-range error. The 4326 axis order is (latitude, longitude), so X is the
+// latitude (∈ [-90,90]) and Y the longitude (∈ [-180,180]).
+func validateGeographic4326(g geom.Geometry) error {
+	env := g.Envelope()
+	if env.IsEmpty() {
+		return nil
+	}
+	mn, ok1 := env.Min().XY()
+	mx, ok2 := env.Max().XY()
+	if !ok1 || !ok2 {
+		return nil
+	}
+	if mn.X < -90 || mx.X > 90 {
+		bad := mn.X
+		if mx.X > 90 {
+			bad = mx.X
+		}
+		return errors.Errorf("latitude %g is out of range for SRID 4326; it must be within [-90, 90]", bad)
+	}
+	if mn.Y < -180 || mx.Y > 180 {
+		bad := mn.Y
+		if mx.Y > 180 {
+			bad = mx.Y
+		}
+		return errors.Errorf("longitude %g is out of range for SRID 4326; it must be within [-180, 180]", bad)
+	}
+	return nil
 }
 
 type stAsTextFunctionClass struct {
@@ -338,16 +373,16 @@ func (b *builtinStDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 		return 0, false, errors.New("ST_Distance: binary geometry function passed two arguments with different SRIDs")
 	}
 	if s1 != 0 {
+		// 4326 ST_Distance is geodesic (ellipsoidal) in MySQL; not yet implemented
+		// here (ST_Distance_Sphere covers the spherical case).
 		return 0, false, errors.New("ST_Distance: only SRID 0 is supported in the POC")
 	}
-	x1, y1, ok1 := pointXY(g1)
-	x2, y2, ok2 := pointXY(g2)
-	if !ok1 || !ok2 {
-		return 0, false, errors.New("ST_Distance: only POINT arguments are supported in the POC")
+	// Planar distance between any two SRID-0 geometries (point/line/polygon/…).
+	d, ok := geom.Distance(g1, g2)
+	if !ok {
+		return 0, true, nil // an empty operand → NULL (MySQL)
 	}
-	dx := x1 - x2
-	dy := y1 - y2
-	return math.Sqrt(dx*dx + dy*dy), false, nil
+	return d, false, nil
 }
 
 type stDistanceSphereFunctionClass struct {
@@ -548,6 +583,10 @@ func (b *builtinGeomRelSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	if s1 != s2 {
 		return 0, false, errors.Errorf("%s: binary geometry function passed two arguments with different SRIDs", b.funcName)
+	}
+	// A spatial relation predicate with an empty-geometry operand is NULL in MySQL.
+	if geo1.IsEmpty() || geo2.IsEmpty() {
+		return 0, true, nil
 	}
 	// MySQL's ST_Crosses is only defined when dim(g1) < dim(g2), or both are lines;
 	// in any other dimension combination (e.g. Crosses(polygon, line), poly/poly,

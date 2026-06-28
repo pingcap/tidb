@@ -381,3 +381,21 @@ func TestPOCSpatialPointCoveringIndex(t *testing.T) {
 	require.Len(t, want, 4) // strictly-interior grid points (ST_Within excludes the boundary)
 	tk.MustQuery("SELECT id FROM locs WHERE " + pred + " ORDER BY id").Check(want)
 }
+
+// TestPOCSpatialCompatEdges covers MySQL-compat edges: a spatial predicate with an
+// empty-geometry operand is NULL; ST_Distance works for non-point SRID-0 geometries;
+// and creating a 4326 geometry with an out-of-range latitude errors.
+func TestPOCSpatialCompatEdges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Empty operand → NULL.
+	tk.MustQuery("SELECT ST_Within(ST_GeomFromText('POINT(1 1)',0), ST_GeomFromText('GEOMETRYCOLLECTION EMPTY',0))").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT ST_Contains(ST_GeomFromText('POLYGON((0 0,0 2,2 2,2 0,0 0))',0), ST_GeomFromText('GEOMETRYCOLLECTION EMPTY',0))").Check(testkit.Rows("<nil>"))
+	// ST_Distance for a point and a polygon (nearest point is the corner (2,0); dist 3).
+	tk.MustQuery("SELECT ABS(ST_Distance(ST_GeomFromText('POINT(5 0)',0), ST_GeomFromText('POLYGON((0 0,0 2,2 2,2 0,0 0))',0)) - 3) < 0.001").Check(testkit.Rows("1"))
+	// 4326 coordinate validation: latitude 100 (first coord) is out of range.
+	err := tk.QueryToErr("SELECT ST_GeomFromText('POINT(100 50)',4326)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "latitude")
+}

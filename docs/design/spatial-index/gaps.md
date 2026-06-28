@@ -30,14 +30,15 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   meters differ slightly too.
 - **Geodesic `ST_Length` / `ST_Area`** for 4326 (MySQL → meters / m² on the
   ellipsoid) — not done.
-- **Coordinate-range validation** `✓code` — none found; MySQL errors on
-  lat ∉ [−90,90] / lng ∉ [−180,180]. The PoC accepts anything.
+- **Coordinate-range validation** — ✅ **FIXED** in `ST_GeomFromText` (4326 lat ∉
+  [−90,90] / lng ∉ [−180,180] errors, matching MySQL); other ingest paths
+  (`ST_GeomFromWKB`/GeoJSON/constructors) are a follow-up.
 
 ### SRID 0 (planar) — mostly compatible; remaining gaps
-- **`ST_Distance` is POINT-only** `✓code` (`builtin_geo.go:346`) — MySQL computes
-  distance between *any* geometry types (point↔line, polygon↔polygon, …).
-- **Empty geometry** — a predicate with an empty operand returns `0` here vs **NULL**
-  in MySQL.
+- **`ST_Distance` non-point** — ✅ **FIXED** for SRID 0 (any geometry types, via
+  `geom.Distance`). 4326 `ST_Distance` (ellipsoidal meters) still a follow-up.
+- **Empty geometry** — ✅ **FIXED**: a spatial predicate with an empty operand is now
+  NULL (matching MySQL).
 - Boundary/DE-9IM semantics should now be OGC-correct (simplefeatures); worth a fresh
   diff vs MySQL.
 
