@@ -83,6 +83,30 @@ type PlanContext interface {
 	BuiltinFunctionUsageInc(scalarFuncSigName string)
 }
 
+// MLogCommitTSEstimationContext is an optional planning capability for mview fast-refresh.
+// It stays outside PlanContext because most planning contexts do not need mview-specific state.
+type MLogCommitTSEstimationContext interface {
+	// GetMLogCommitTSEstimation gets the mlog commit-ts estimation info for planning.
+	GetMLogCommitTSEstimation() *MLogCommitTSEstimation
+	// WithMLogCommitTSEstimation sets the mlog commit-ts estimation info only for the callback scope.
+	WithMLogCommitTSEstimation(estimation *MLogCommitTSEstimation, fn func() error) error
+}
+
+// MLogCommitTSEstimation is a planner-only hint for estimating mlog `_tidb_commit_ts` predicates.
+//
+// Refresh reads mlog rows from (RefreshLowerTSO, RefreshUpperTSO], while the currently retained mlog
+// data is approximated by (RetainedLowerTSO, RetainedUpperTSO]. The planner estimates the commit-ts
+// predicate selectivity by comparing the physical durations of these two windows. HasRefreshUpperTSOFilter
+// means the mview-generated mlog filter contains an explicit `_tidb_commit_ts <= RefreshUpperTSO` predicate.
+type MLogCommitTSEstimation struct {
+	MLogTableID              int64
+	RefreshLowerTSO          uint64
+	RefreshUpperTSO          uint64
+	HasRefreshUpperTSOFilter bool
+	RetainedLowerTSO         uint64
+	RetainedUpperTSO         uint64
+}
+
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
 // It is used by some mock contexts that are only required to implement PlanContext
 // but do not care about the actual implementation.

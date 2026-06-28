@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -368,6 +369,148 @@ ON DUPLICATE KEY
 	require.NotNil(t, mergePlan.FullUpdateSnapshot)
 	require.Equal(t, targetTSO, mergePlan.FullUpdateSnapshot.TS)
 	require.NotNil(t, mergePlan.FullUpdateSnapshot.InfoSchema)
+}
+
+func TestExplainRefreshMVFastPlanUsesMLogCommitTSWindowSelectivity(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
+	targetTSO := oracle.ComposeTS(startPhysical-1000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv_mlog_commit_ts_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		TargetRefreshReadTSO:         targetTSO,
+		RefreshReadTSO:               txn.StartTS(),
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_est._tidb_commit_ts", "4000.00")
+}
+
+func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_for_update_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_for_update_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_for_update_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_for_update_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
+	forUpdateTSO := oracle.ComposeTS(startPhysical+10000, 0)
+	tk.Session().GetSessionVars().TxnCtx.SetForUpdateTS(txn.StartTS())
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv_mlog_commit_ts_for_update_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		RefreshReadTSO:               forUpdateTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_for_update_est._tidb_commit_ts", "7500.00")
+}
+
+func TestExplainRefreshMVFastPlanObtainsForUpdateTSWhenNotProvided(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_stmt_for_update (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_stmt_for_update (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_stmt_for_update (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_stmt_for_update group by a")
+	tk.MustExec("begin pessimistic")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv_mlog_commit_ts_stmt_for_update"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+	require.Zero(t, implementStmt.RefreshReadTSO)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+	require.NotZero(t, implementStmt.RefreshReadTSO)
+	require.Equal(t, implementStmt.RefreshReadTSO, tk.Session().GetSessionVars().TxnCtx.GetForUpdateTS())
+	require.NotNil(t, p)
+}
+
+func requireMLogCommitTSSelectionEstRows(t *testing.T, rows [][]string, commitTSInfo string, estRows string) {
+	t.Helper()
+
+	for _, row := range rows {
+		if strings.Contains(row[4], commitTSInfo) {
+			require.Equal(t, estRows, row[1])
+			return
+		}
+	}
+	require.Failf(t, "mlog commit-ts selection not found", "commitTSInfo=%s rows=%v", commitTSInfo, rows)
 }
 
 func TestExplainRefreshMVFastPlanTree(t *testing.T) {

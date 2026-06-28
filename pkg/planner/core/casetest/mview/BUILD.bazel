@@ -8,7 +8,7 @@ go_test(
         "mv_refresh_test.go",
     ],
     flaky = True,
-    shard_count = 13,
+    shard_count = 16,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
@@ -20,6 +20,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/mview",
         "//pkg/session",
+        "//pkg/sessiontxn",
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

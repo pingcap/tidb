@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -3947,6 +3949,10 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if txn == nil || !txn.Valid() {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction")
 	}
+	refreshTxnStartTS := txn.StartTS()
+	if refreshTxnStartTS == 0 {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction start tso")
+	}
 
 	fromTS := stmt.LastSuccessfulRefreshReadTSO
 	toTS := stmt.TargetRefreshReadTSO
@@ -4006,7 +4012,39 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if res.MergeSourceSelect == nil {
 			return nil, errors.New("mview: merge source select is nil")
 		}
-		sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect, b.is, false)
+		retainedUpperTSO := stmt.RefreshReadTSO
+		if retainedUpperTSO == 0 {
+			retainedUpperTSO, err = sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
+			if err != nil {
+				return nil, err
+			}
+			stmt.RefreshReadTSO = retainedUpperTSO
+		}
+		refreshUpperTSO := retainedUpperTSO
+		if toTS > 0 {
+			refreshUpperTSO = toTS
+		}
+		sourcePlan, err := func() (base.PhysicalPlan, error) {
+			estimation := &planctx.MLogCommitTSEstimation{
+				MLogTableID:              res.MLogTableID,
+				RefreshLowerTSO:          fromTS,
+				RefreshUpperTSO:          refreshUpperTSO,
+				HasRefreshUpperTSOFilter: toTS > 0,
+				RetainedLowerTSO:         stmt.MLogRetainedLowerTSO,
+				RetainedUpperTSO:         retainedUpperTSO,
+			}
+			estimationCtx, ok := b.ctx.(planctx.MLogCommitTSEstimationContext)
+			if !ok {
+				return optimizeSelect(ctx, res.MergeSourceSelect, b.is, false)
+			}
+			var p base.PhysicalPlan
+			err := estimationCtx.WithMLogCommitTSEstimation(estimation, func() error {
+				var optimizeErr error
+				p, optimizeErr = optimizeSelect(ctx, res.MergeSourceSelect, b.is, false)
+				return optimizeErr
+			})
+			return p, err
+		}()
 		if err != nil {
 			return nil, err
 		}

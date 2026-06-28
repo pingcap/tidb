@@ -26,12 +26,14 @@ var _ planctx.PlanContext = struct {
 	sessionctx.Context
 	*PlanCtxExtended
 }{}
+var _ planctx.MLogCommitTSEstimationContext = (*PlanCtxExtended)(nil)
 
 // PlanCtxExtended provides extended method for session context to implement `PlanContext`
 type PlanCtxExtended struct {
 	sctx                   sessionctx.Context
 	nullRejectCheckExprCtx *exprctx.NullRejectCheckExprContext
 	readonlyUserVars       map[string]struct{}
+	mlogCommitTSEstimation *planctx.MLogCommitTSEstimation
 }
 
 // NewPlanCtxExtended creates a new PlanCtxExtended.
@@ -66,7 +68,26 @@ func (ctx *PlanCtxExtended) GetReadonlyUserVarMap() map[string]struct{} {
 	return ctx.readonlyUserVars
 }
 
+// GetMLogCommitTSEstimation gets the mlog commit-ts estimation info for planning.
+func (ctx *PlanCtxExtended) GetMLogCommitTSEstimation() *planctx.MLogCommitTSEstimation {
+	return ctx.mlogCommitTSEstimation
+}
+
+// WithMLogCommitTSEstimation sets the mlog commit-ts estimation info only for the callback scope.
+func (ctx *PlanCtxExtended) WithMLogCommitTSEstimation(
+	estimation *planctx.MLogCommitTSEstimation,
+	fn func() error,
+) error {
+	origEstimation := ctx.mlogCommitTSEstimation
+	ctx.mlogCommitTSEstimation = estimation
+	defer func() {
+		ctx.mlogCommitTSEstimation = origEstimation
+	}()
+	return fn()
+}
+
 // Reset resets the local
 func (ctx *PlanCtxExtended) Reset() {
 	ctx.readonlyUserVars = nil
+	ctx.mlogCommitTSEstimation = nil
 }

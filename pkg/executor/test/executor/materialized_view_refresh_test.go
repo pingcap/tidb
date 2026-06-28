@@ -771,6 +771,76 @@ func TestFastDryRunMaterializedViewRefreshUsesCurrentDB(t *testing.T) {
 	requireRowsContainPrefix(t, rows, "  MViewDeltaMerge")
 }
 
+func TestFastDryRunMaterializedViewRefreshRejectsHazardousPurgeInfo(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_fast_dry_run_purge_guard (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_fast_dry_run_purge_guard values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_fast_dry_run_purge_guard (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_dry_run_purge_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_fast_dry_run_purge_guard group by a")
+	tk.MustExec("refresh materialized view mv_fast_dry_run_purge_guard fast")
+
+	mvIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_fast_dry_run_purge_guard'").Rows()
+	require.Len(t, mvIDRows, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	mlogIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '$mlog$t_mv_fast_dry_run_purge_guard'").Rows()
+	require.Len(t, mlogIDRows, 1)
+	mlogID, err := strconv.ParseInt(fmt.Sprintf("%v", mlogIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	lastSuccessRows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).Rows()
+	require.Len(t, lastSuccessRows, 1)
+	lastSuccessReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", lastSuccessRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", lastSuccessReadTSO+1, mlogID))
+
+	err = tk.QueryToErr("refresh materialized view mv_fast_dry_run_purge_guard fast dry run")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+}
+
+func TestFastDryRunMaterializedViewRefreshNoopSkipsHazardousPurgeInfo(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t_mv_fast_dry_run_noop_purge_guard (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_fast_dry_run_noop_purge_guard values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_fast_dry_run_noop_purge_guard (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_dry_run_noop_purge_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_fast_dry_run_noop_purge_guard group by a")
+
+	mvIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_fast_dry_run_noop_purge_guard'").Rows()
+	require.Len(t, mvIDRows, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	mlogIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '$mlog$t_mv_fast_dry_run_noop_purge_guard'").Rows()
+	require.Len(t, mlogIDRows, 1)
+	mlogID, err := strconv.ParseInt(fmt.Sprintf("%v", mlogIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	targetTime := time.Now().UTC().Add(-time.Second).Truncate(time.Millisecond)
+	targetTSO := oracle.GoTimeToTS(targetTime)
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d", targetTSO, mvID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", targetTSO+1, mlogID))
+
+	rows := tk.MustQuery(fmt.Sprintf(
+		"refresh materialized view mv_fast_dry_run_noop_purge_guard fast as of timestamp '%s' dry run",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	)).Rows()
+	requireRowsContainPrefix(t, rows, "[S04 DATA_CHANGE_FAST_MERGE]")
+
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_fast_dry_run_noop_purge_guard fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+}
+
 func TestMaterializedViewRefreshOutOfPlaceObserveLoadShadowPlanUsesBuildSQL(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

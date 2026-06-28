@@ -4167,7 +4167,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}); err != nil {
 		return err
 	}
-	if refreshMode == ast.RefreshMaterializedViewModeFast && !lockedReadTSONull && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedReadTSO {
+	if refreshMode == ast.RefreshMaterializedViewModeFast && lockedReadTSONull {
+		return errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedReadTSO {
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
 		return nil
 	}
@@ -4180,10 +4183,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	histLoc := histSctx.GetSessionVars().Location()
 
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
-		!lockedReadTSONull &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedReadTSO
-	if refreshMode == ast.RefreshMaterializedViewModeFast && !lockedReadTSONull {
+	var mlogRetainedLowerTSO uint64
+	if refreshMode == ast.RefreshMaterializedViewModeFast {
 		// Read purge metadata through an internal session so this precheck sees latest committed state
 		// instead of the refresh transaction's repeatable-read startTS snapshot.
 		//
@@ -4191,8 +4194,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		// In theory, a concurrently-started purge should still be safe because purge computes safePurgeTSO
 		// from persisted LAST_SUCCESS_READ_TSO, which does not advance until this refresh commits.
 		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
-		if err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedReadTSO); err != nil {
+		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedReadTSO)
+		if err != nil {
 			return err
+		}
+		if mlogIntegrity.hasRetainedLowerTSO {
+			mlogRetainedLowerTSO = mlogIntegrity.retainedLowerTSO
 		}
 	}
 
@@ -4319,10 +4326,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	var lastSuccessfulRefreshReadTSO uint64
 	if refreshMode == ast.RefreshMaterializedViewModeFast {
-		// LAST_SUCCESS_READ_TSO is BIGINT UNSIGNED DEFAULT NULL. FAST refresh requires it to be non-NULL.
-		if lockedReadTSONull {
-			return finalizeFailure(errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"))
-		}
 		lastSuccessfulRefreshReadTSO = lockedReadTSO
 		if targetRefreshReadTSO > 0 {
 			if targetRefreshReadTSO < lastSuccessfulRefreshReadTSO {
@@ -4344,8 +4347,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshMode,
 		schemaName,
 		tblInfo,
-		lastSuccessfulRefreshReadTSO,
-		targetRefreshReadTSO,
+		refreshImplementOptions{
+			lastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
+			targetRefreshReadTSO:         targetRefreshReadTSO,
+			mlogRetainedLowerTSO:         mlogRetainedLowerTSO,
+		},
 		stepSet,
 		e.stepObserver,
 		e.planFormatForObserver,
@@ -5334,6 +5340,12 @@ LIMIT 1`,
 	return rows[0].GetUint64(0), true, nil
 }
 
+type fastRefreshMLogIntegrity struct {
+	hazardFenceTSO      uint64
+	retainedLowerTSO    uint64
+	hasRetainedLowerTSO bool
+}
+
 func checkFastRefreshMLogIntegrity(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
@@ -5341,40 +5353,47 @@ func checkFastRefreshMLogIntegrity(
 	schemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 	lastSuccessfulRefreshReadTSO uint64,
-) error {
-	if lastSuccessfulRefreshReadTSO == 0 {
-		return nil
-	}
-
+) (fastRefreshMLogIntegrity, error) {
 	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, schemaName, tblInfo)
 	if err != nil {
-		return err
+		return fastRefreshMLogIntegrity{}, err
 	}
 
 	lastPurgedTSO, hasLastPurgedTSO, err := readMLogPurgeInfoLastPurgedTSO(kctx, sqlExec, mlogID)
 	if err != nil {
-		return err
+		return fastRefreshMLogIntegrity{}, err
 	}
 	latestHazardCutoffTSO, hasLatestHazardCutoffTSO, err := readLatestHazardousMLogPurgeCutoffTSO(kctx, sqlExec, mlogID)
 	if err != nil {
-		return err
+		return fastRefreshMLogIntegrity{}, err
 	}
 
-	hazardTSO := uint64(0)
+	hazardFenceTSO := uint64(0)
 	if hasLastPurgedTSO {
-		hazardTSO = lastPurgedTSO
+		hazardFenceTSO = lastPurgedTSO
 	}
-	if hasLatestHazardCutoffTSO && latestHazardCutoffTSO > hazardTSO {
-		hazardTSO = latestHazardCutoffTSO
+	if hasLatestHazardCutoffTSO && latestHazardCutoffTSO > hazardFenceTSO {
+		hazardFenceTSO = latestHazardCutoffTSO
 	}
-	if hazardTSO > lastSuccessfulRefreshReadTSO {
-		return errors.Errorf(
+	if hazardFenceTSO > lastSuccessfulRefreshReadTSO {
+		return fastRefreshMLogIntegrity{}, errors.Errorf(
 			"refresh materialized view fast: materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO (hazard tso %d, LAST_SUCCESS_READ_TSO %d)",
-			hazardTSO,
+			hazardFenceTSO,
 			lastSuccessfulRefreshReadTSO,
 		)
 	}
-	return nil
+	return fastRefreshMLogIntegrity{
+		hazardFenceTSO:      hazardFenceTSO,
+		retainedLowerTSO:    hazardFenceTSO,
+		hasRetainedLowerTSO: hazardFenceTSO > 0,
+	}, nil
+}
+
+type refreshImplementOptions struct {
+	lastSuccessfulRefreshReadTSO uint64
+	targetRefreshReadTSO         uint64
+	refreshReadTSO               uint64
+	mlogRetainedLowerTSO         uint64
 }
 
 func executeRefreshMaterializedViewDataChanges(
@@ -5385,8 +5404,7 @@ func executeRefreshMaterializedViewDataChanges(
 	refreshMode ast.RefreshMaterializedViewMode,
 	schemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
-	lastSuccessfulRefreshReadTSO uint64,
-	targetRefreshReadTSO uint64,
+	implementOpts refreshImplementOptions,
 	stepSet mvRefreshStepSet,
 	stepObserver mvRefreshStepObserver,
 	explainFormat string,
@@ -5418,8 +5436,7 @@ func executeRefreshMaterializedViewDataChanges(
 			sqlExec,
 			sessVars,
 			s,
-			lastSuccessfulRefreshReadTSO,
-			targetRefreshReadTSO,
+			implementOpts,
 			stepSet,
 			stepObserver,
 			explainFormat,
@@ -5490,8 +5507,7 @@ func executeRefreshMaterializedViewFast(
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,
 	s *ast.RefreshMaterializedViewStmt,
-	lastSuccessfulRefreshReadTSO uint64,
-	targetRefreshReadTSO uint64,
+	implementOpts refreshImplementOptions,
 	stepSet mvRefreshStepSet,
 	stepObserver mvRefreshStepObserver,
 	explainFormat string,
@@ -5502,8 +5518,7 @@ func executeRefreshMaterializedViewFast(
 			sqlExec,
 			sessVars,
 			s,
-			lastSuccessfulRefreshReadTSO,
-			targetRefreshReadTSO,
+			implementOpts,
 		)
 	}); err != nil {
 		return err
@@ -5522,7 +5537,7 @@ func executeRefreshMaterializedViewCompleteDeltaApply(
 	explainFormat string,
 ) error {
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDeltaApply, func() error {
-		return executeRefreshMaterializedViewImplement(kctx, sqlExec, sessVars, s, 0, 0)
+		return executeRefreshMaterializedViewImplement(kctx, sqlExec, sessVars, s, refreshImplementOptions{})
 	}); err != nil {
 		return err
 	}
@@ -5535,13 +5550,14 @@ func executeRefreshMaterializedViewImplement(
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,
 	s *ast.RefreshMaterializedViewStmt,
-	lastSuccessfulRefreshReadTSO uint64,
-	targetRefreshReadTSO uint64,
+	implementOpts refreshImplementOptions,
 ) error {
 	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 		RefreshStmt:                  s,
-		LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
-		TargetRefreshReadTSO:         targetRefreshReadTSO,
+		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
+		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
+		RefreshReadTSO:               implementOpts.refreshReadTSO,
+		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
 	}
 
 	if internalExec, ok := sqlExec.(interface {

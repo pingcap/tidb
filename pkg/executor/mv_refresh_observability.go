@@ -354,24 +354,28 @@ func (e *RefreshMaterializedViewDryRunExec) buildFastMergePlanRows(ctx context.C
 	}
 	defer e.ReleaseSysSession(ctx, validationSctx)
 
-	lastSuccessfulRefreshReadTSO, err := e.loadFastRefreshReadTSOForDryRun(ctx, validationSctx)
-	if err != nil {
-		return nil, err
-	}
 	refreshStmt, targetRefreshReadTSO, err := e.buildImplementRefreshPlanInput(ctx)
 	if err != nil {
 		return nil, err
 	}
+	implementOpts, err := e.loadFastRefreshImplementOptionsForDryRun(ctx, validationSctx, targetRefreshReadTSO)
+	if err != nil {
+		return nil, err
+	}
 	if targetRefreshReadTSO > 0 {
-		if targetRefreshReadTSO < lastSuccessfulRefreshReadTSO {
+		if targetRefreshReadTSO == implementOpts.lastSuccessfulRefreshReadTSO {
+			return nil, nil
+		}
+		if targetRefreshReadTSO < implementOpts.lastSuccessfulRefreshReadTSO {
 			return nil, errors.Errorf(
 				"refresh materialized view fast as of timestamp: target tso %d is older than LAST_SUCCESS_READ_TSO %d",
 				targetRefreshReadTSO,
-				lastSuccessfulRefreshReadTSO,
+				implementOpts.lastSuccessfulRefreshReadTSO,
 			)
 		}
 	}
-	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, lastSuccessfulRefreshReadTSO, targetRefreshReadTSO)
+	implementOpts.targetRefreshReadTSO = targetRefreshReadTSO
+	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, implementOpts)
 }
 
 func (e *RefreshMaterializedViewDryRunExec) buildCompleteDeltaRefreshPlanRows(ctx context.Context) ([][]string, error) {
@@ -383,7 +387,7 @@ func (e *RefreshMaterializedViewDryRunExec) buildCompleteDeltaRefreshPlanRows(ct
 	if _, _, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt); err != nil {
 		return nil, err
 	}
-	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, 0, 0)
+	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, refreshImplementOptions{})
 }
 
 func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanInput(
@@ -401,28 +405,30 @@ func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanInput(
 func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanRows(
 	ctx context.Context,
 	refreshStmt *ast.RefreshMaterializedViewStmt,
-	lastSuccessfulRefreshReadTSO uint64,
-	targetRefreshReadTSO uint64,
+	implementOpts refreshImplementOptions,
 ) ([][]string, error) {
 	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 		RefreshStmt:                  refreshStmt,
-		LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
-		TargetRefreshReadTSO:         targetRefreshReadTSO,
+		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
+		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
+		RefreshReadTSO:               implementOpts.refreshReadTSO,
+		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
 	}
 	return e.renderPlanRowsForInternalStmt(ctx, implementStmt)
 }
 
-func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshReadTSOForDryRun(
+func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshImplementOptionsForDryRun(
 	ctx context.Context,
 	sctx sessionctx.Context,
-) (uint64, error) {
+	targetRefreshReadTSO uint64,
+) (refreshImplementOptions, error) {
 	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
 	refreshExec := &RefreshMaterializedViewExec{
 		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
 	}
-	_, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	schemaName, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
 	if err != nil {
-		return 0, err
+		return refreshImplementOptions{}, err
 	}
 
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
@@ -433,17 +439,41 @@ func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshReadTSOForDryRun(
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return 0, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
+			return refreshImplementOptions{}, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 		}
-		return 0, err
+		return refreshImplementOptions{}, err
 	}
 	if len(rows) == 0 {
-		return 0, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
+		return refreshImplementOptions{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
 	if rows[0].IsNull(0) {
-		return 0, errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
+		return refreshImplementOptions{}, errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
 	}
-	return rows[0].GetUint64(0), nil
+	opts := refreshImplementOptions{
+		lastSuccessfulRefreshReadTSO: rows[0].GetUint64(0),
+	}
+	if targetRefreshReadTSO > 0 && targetRefreshReadTSO == opts.lastSuccessfulRefreshReadTSO {
+		return opts, nil
+	}
+	is, ok := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return refreshImplementOptions{}, errors.New("dry run refresh materialized view: invalid infoschema")
+	}
+	mlogIntegrity, err := checkFastRefreshMLogIntegrity(
+		ctx,
+		sctx.GetSQLExecutor(),
+		is,
+		schemaName,
+		tblInfo,
+		opts.lastSuccessfulRefreshReadTSO,
+	)
+	if err != nil {
+		return refreshImplementOptions{}, err
+	}
+	if mlogIntegrity.hasRetainedLowerTSO {
+		opts.mlogRetainedLowerTSO = mlogIntegrity.retainedLowerTSO
+	}
+	return opts, nil
 }
 
 func (e *RefreshMaterializedViewDryRunExec) buildCompleteRefreshPlanRows(ctx context.Context) ([][]string, [][]string, error) {
