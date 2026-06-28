@@ -62,6 +62,7 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
 - **Point covering-index** — point queries still do an `IndexLookUp` (random table
   probe + EWKB decode) although `ST_X`/`ST_Y` are *in the index*. Index-only refine
   removes the dominant read cost (random I/O) + the decode. (Round-2 item #8.)
+  **Implemented** for SRID-0 points (`TestPOCSpatialPointCoveringIndex`); 4326 is a follow-up.
 
 ### B. Predicates not index-eligible
 - **MBR predicates** — not implemented, so the natural bbox-index users get no index

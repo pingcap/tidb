@@ -144,16 +144,20 @@ func TestPOCSpatialAutoSelect(t *testing.T) {
 	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p) COMMENT 'spatial:12,0,0,100,100'")
 	tk.MustExec("ANALYZE TABLE locs")
 
-	usesIndex := func(radius int) bool {
-		q := fmt.Sprintf("SELECT id FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(50 50)',0)) <= %d", radius)
+	usesIndex := func(proj string, radius int) bool {
+		q := fmt.Sprintf("SELECT %s FROM locs WHERE ST_Distance(p, ST_GeomFromText('POINT(50 50)',0)) <= %d", proj, radius)
 		var sb strings.Builder
 		for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
 			sb.WriteString(fmt.Sprintf("%v ", r[0]))
 		}
 		return strings.Contains(sb.String(), "IndexRangeScan")
 	}
-	require.True(t, usesIndex(5), "selective spatial query (no hint) should auto-select the index")
-	require.False(t, usesIndex(70), "unselective spatial query should fall back to a full scan")
+	require.True(t, usesIndex("id", 5), "selective spatial query (no hint) should auto-select the index")
+	// An unselective query that needs the geometry is non-covering — each match costs a
+	// table lookup — so it falls back to a full scan. (A covering-eligible query such as
+	// SELECT id stays index-only even when unselective: the covering rewrite makes the
+	// index cheaper; that path is covered by TestPOCSpatialPointCoveringIndex.)
+	require.False(t, usesIndex("id, p", 70), "unselective non-covering query should fall back to a full scan")
 }
 
 // TestPOCSpatialRefinePushdown verifies Layer B: the exact spatial refine
@@ -335,4 +339,45 @@ func TestPOCSpatialConcurrentDML(t *testing.T) {
 	withIdx := setup.MustQuery(fmt.Sprintf(q, "FORCE INDEX(si)")).Rows()
 	noIdx := setup.MustQuery(fmt.Sprintf(q, "IGNORE INDEX(si)")).Rows()
 	require.Equal(t, noIdx, withIdx, "index result must match full scan after concurrent DML")
+}
+
+// TestPOCSpatialPointCoveringIndex verifies the point covering-index optimization:
+// when a point query does not need the geometry column itself, the resolver rewrites
+// the refine to run on Point(ST_X, ST_Y) reconstructed from the in-index bbox columns,
+// so the query is served index-only (IndexReader, no table lookup / EWKB decode). A
+// query that does project the geometry still does the normal IndexLookUp (no
+// regression). Results stay correct either way.
+func TestPOCSpatialPointCoveringIndex(t *testing.T) {
+	tk, cleanup := seedSpatialTable(t)
+	defer cleanup()
+	tk.MustExec("CREATE SPATIAL INDEX sidx ON locs (p)")
+	tk.MustExec("ANALYZE TABLE locs")
+
+	const pred = "ST_Within(p, ST_GeomFromText('POLYGON((100 100,100 130,130 130,130 100,100 100))',0))"
+	planOf := func(q string) string {
+		var b strings.Builder
+		for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
+			b.WriteString(fmt.Sprintf("%v ", r[0]))
+		}
+		return b.String()
+	}
+
+	// Covering-eligible (geometry not projected): index-only.
+	for _, q := range []string{
+		"SELECT id FROM locs WHERE " + pred,
+		"SELECT count(*) FROM locs WHERE " + pred,
+	} {
+		p := planOf(q)
+		require.Contains(t, p, "IndexReader", "expected an index-only plan for %q:\n%s", q, p)
+		require.NotContains(t, p, "TableRowIDScan", "expected no table lookup for %q:\n%s", q, p)
+	}
+
+	// Projecting the geometry needs the table row: normal IndexLookUp, no rewrite.
+	withGeom := planOf("SELECT id, p FROM locs WHERE " + pred)
+	require.Contains(t, withGeom, "TableRowIDScan", "expected a table lookup when the geometry is projected:\n%s", withGeom)
+
+	// Correctness: the index-only result matches a full scan.
+	want := tk.MustQuery("SELECT id FROM locs IGNORE INDEX(sidx) WHERE " + pred + " ORDER BY id").Rows()
+	require.Len(t, want, 4) // strictly-interior grid points (ST_Within excludes the boundary)
+	tk.MustQuery("SELECT id FROM locs WHERE " + pred + " ORDER BY id").Check(want)
 }

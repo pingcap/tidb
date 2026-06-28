@@ -18,7 +18,7 @@ reviewer's confidence. Approaches below are investigation-informed (this run).
 Priority: correctness over breadth — bank tested, committed increments; checkpoint
 the hard ones rather than leave broken partials. Status: ☐ todo · ◐ wip · ☑ done.
 
-### 8 — Point covering-index (index-only point queries) ☐
+### 8 — Point covering-index (index-only point queries) ☑ DONE
 The point index already stores `ST_X(col)`/`ST_Y(col)` (`create_table.go:1354` — a
 point's MBR is the point itself). Today a point predicate is an `IndexLookUp`:
 cell-range scan → **probe the table** → **decode EWKB** → refine. Make it
@@ -26,7 +26,7 @@ cell-range scan → **probe the table** → **decode EWKB** → refine. Make it
 so it never probes the table or decodes EWKB. Eliminates the random table-read I/O
 (the dominant read cost on real storage, which the in-memory pprof couldn't see) +
 the per-row decode. Planner/column-pruning change so the needed columns are served
-from the index. Points only (x,y fully reconstruct the geometry).
+from the index. Points only (x,y fully reconstruct the geometry). **Done**: the resolver rewrites a point refine to `ST_Within(Point(ST_X,ST_Y), region)` over the in-index bbox columns when the geometry isn't otherwise needed (gated on the selection's parent + other conditions); the 2nd ColumnPruner then serves it via IndexReader — no table lookup, no EWKB decode. `TestPOCSpatialPointCoveringIndex`. SRID 0; 4326 is a follow-up.
 
 ### 1 — KNN: `ORDER BY ST_Distance(col,const) [ASC] LIMIT k` ☐
 Not supported today (only the distance-*cap* `<= r` range is; `ORDER BY … LIMIT k`

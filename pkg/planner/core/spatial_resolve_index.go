@@ -55,34 +55,40 @@ func (s *SpatialIndexResolver) Optimize(_ context.Context, plan base.LogicalPlan
 	if !plan.SCtx().GetSessionVars().StmtCtx.SpatialFunctionIsUsed {
 		return plan, false, nil
 	}
-	changed := s.resolve(plan, nil)
+	changed := s.resolve(plan, nil, nil)
 	return plan, changed, nil
 }
 
 // resolve walks the plan; for a DataSource directly under a LogicalSelection it
-// tries to inject covering-cell predicates.
-func (s *SpatialIndexResolver) resolve(plan base.LogicalPlan, parent base.LogicalPlan) bool {
+// tries to inject covering-cell predicates. grandparent is the LogicalSelection's
+// own parent, used to decide whether a point query can be served index-only (the
+// covering rewrite).
+func (s *SpatialIndexResolver) resolve(plan, parent, grandparent base.LogicalPlan) bool {
 	changed := false
 	if ds, ok := plan.(*logicalop.DataSource); ok {
 		if sel, ok := parent.(*logicalop.LogicalSelection); ok {
-			changed = s.injectForDataSource(ds, sel) || changed
+			changed = s.injectForDataSource(ds, sel, grandparent) || changed
 		}
 		return changed
 	}
 	for _, child := range plan.Children() {
-		changed = s.resolve(child, plan) || changed
+		changed = s.resolve(child, plan, parent) || changed
 	}
 	return changed
 }
 
 // injectForDataSource scans the selection's conditions for spatial predicates on
 // indexed columns and appends covering-range conditions on the hidden columns.
-func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel *logicalop.LogicalSelection) bool {
+func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel *logicalop.LogicalSelection, selParent base.LogicalPlan) bool {
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	exprCtx := ds.SCtx().GetExprCtx()
 	added := make([]expression.Expression, 0, 1)
+	// Indices (into sel.Conditions) of SRID-0 point refines that could be rewritten to
+	// operate on the in-index ST_X/ST_Y so the query can be served index-only.
+	var coveringIdx []int
+	var coveringGeomID int64
 
-	for _, cond := range sel.Conditions {
+	for i, cond := range sel.Conditions {
 		req, ok := recognizeSpatialPredicate(cond, evalCtx)
 		if !ok {
 			continue
@@ -125,6 +131,11 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 				added = append(added, buildBBoxConds(exprCtx, minX, minY, maxX, maxY, rect)...)
 			}
 		}
+		// SRID-0 point refine: a candidate for the index-only covering rewrite.
+		if req.kind == coverPlanarRect {
+			coveringIdx = append(coveringIdx, i)
+			coveringGeomID = req.geomColID
+		}
 	}
 
 	if len(added) == 0 {
@@ -133,7 +144,111 @@ func (s *SpatialIndexResolver) injectForDataSource(ds *logicalop.DataSource, sel
 	// Conjoin the covering predicates; keep the original spatial predicate(s)
 	// for refinement.
 	sel.Conditions = append(sel.Conditions, added...)
+	// Covering rewrite: when the query does not need the geometry column itself,
+	// rewrite the point refines to run on Point(ST_X, ST_Y) reconstructed from the
+	// in-index bbox columns. The geometry column then has no remaining reference, so
+	// the second column-pruning pass drops it and the query is served index-only
+	// (no table lookup, no EWKB decode).
+	s.maybeRewriteForCovering(ds, sel, selParent, coveringGeomID, coveringIdx)
 	return true
+}
+
+// maybeRewriteForCovering rewrites the SRID-0 point refines at coveringIdx to operate
+// on Point(ST_X, ST_Y) reconstructed from the in-index bbox columns, but only when the
+// geometry column is not needed anywhere else (the selection's other conditions or the
+// query above). The substitution is always semantically equivalent for a point
+// (Point(ST_X(p), ST_Y(p)) == p); the guard only avoids regressing queries that do
+// need the geometry, where reconstructing it from x/y would be wasted work.
+func (s *SpatialIndexResolver) maybeRewriteForCovering(ds *logicalop.DataSource, sel *logicalop.LogicalSelection, selParent base.LogicalPlan, geomColID int64, coveringIdx []int) {
+	if len(coveringIdx) == 0 || parentNeedsGeomCol(selParent, geomColID) {
+		return
+	}
+	rewriting := make(map[int]bool, len(coveringIdx))
+	for _, i := range coveringIdx {
+		rewriting[i] = true
+	}
+	// The geometry column must not be referenced by any non-rewritten condition.
+	for i, cond := range sel.Conditions {
+		if rewriting[i] {
+			continue
+		}
+		for _, c := range expression.ExtractColumns(cond) {
+			if c.ID == geomColID {
+				return
+			}
+		}
+	}
+	x, y, ok := s.findPointXYColumns(ds, geomColID)
+	if !ok {
+		return
+	}
+	var geomCol *expression.Column
+	for _, c := range ds.Schema().Columns {
+		if c.ID == geomColID {
+			geomCol = c
+			break
+		}
+	}
+	if geomCol == nil {
+		return
+	}
+	ctx := ds.SCtx().GetExprCtx()
+	pt, err := expression.NewFunction(ctx, ast.GeomPoint, types.NewFieldType(mysql.TypeGeometry), x, y)
+	if err != nil {
+		return
+	}
+	schema := expression.NewSchema(geomCol)
+	for _, i := range coveringIdx {
+		sel.Conditions[i] = expression.ColumnSubstitute(ctx, sel.Conditions[i], schema, []expression.Expression{pt})
+	}
+}
+
+// parentNeedsGeomCol reports whether the LogicalSelection's parent references the
+// geometry column (by table column ID) — meaning the query needs the geometry beyond
+// the spatial predicate, so the covering rewrite would not help. A projection or
+// aggregation that does not reference it lets the geometry be pruned; any other parent
+// (or none) is treated conservatively as needing it.
+func parentNeedsGeomCol(parent base.LogicalPlan, geomColID int64) bool {
+	if parent == nil {
+		return true
+	}
+	refs := func(exprs ...expression.Expression) bool {
+		for _, e := range exprs {
+			for _, c := range expression.ExtractColumns(e) {
+				if c.ID == geomColID {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch p := parent.(type) {
+	case *logicalop.LogicalProjection:
+		return refs(p.Exprs...)
+	case *logicalop.LogicalAggregation:
+		if refs(p.GroupByItems...) {
+			return true
+		}
+		for _, af := range p.AggFuncs {
+			if refs(af.Args...) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
+}
+
+// findPointXYColumns returns the ST_X/ST_Y index columns of a point spatial index on
+// geomColID (a point's MBR is the point itself, so findSpatialBBoxColumns yields
+// minX==maxX and minY==maxY). Returns ok=false for a general-geometry index.
+func (s *SpatialIndexResolver) findPointXYColumns(ds *logicalop.DataSource, geomColID int64) (x, y *expression.Column, ok bool) {
+	minX, minY, maxX, maxY, found := s.findSpatialBBoxColumns(ds, geomColID)
+	if !found || minX != maxX || minY != maxY {
+		return nil, nil, false
+	}
+	return minX, minY, true
 }
 
 // findSpatialHiddenColumn returns the expression.Column of the hidden generated
