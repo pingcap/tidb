@@ -25,12 +25,15 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   geodesic edge bulges past its vertex bbox could miss index candidates (the full scan
   stays correct); and TiKV's geo-crate refine is still planar, so real-TiKV 4326-region
   pushdown should be gated off until it's geodesic too.
-- **`ST_Distance` on 4326** `✓code` — hard-restricted to SRID 0
-  (`builtin_geo.go:341`); MySQL returns the **geodesic distance in meters**
-  (ellipsoidal). `ST_Distance_Sphere` uses a sphere, not MySQL's ellipsoid, so the
-  meters differ slightly too.
-- **Geodesic `ST_Length` / `ST_Area`** for 4326 (MySQL → meters / m² on the
-  ellipsoid) — not done.
+- **`ST_Distance` / `ST_Length` on 4326** — ✅ **FIXED**: ellipsoidal geodesic value in
+  metres via the Andoyer formula (what MySQL/boost::geometry use), verified vs MySQL 9.7
+  to sub-metre (`TestPOCSpatial4326Measurements`). `ST_Distance` is points-only;
+  `ST_Length` covers LineString/MultiLineString. (`ST_Distance_Sphere` remains the
+  spherical variant.)
+- **Geodesic `ST_Area`** for 4326 (MySQL → m² on the ellipsoid) — **not done**: now
+  errors rather than returning a planar (degree²) or ~0.45%-off spherical value; needs the
+  geodesic polygon area (Karney). Line/polygon nearest-distance on the ellipsoid for
+  `ST_Distance` is also a follow-up.
 - **Coordinate-range validation** — ✅ **FIXED** for `ST_GeomFromText`, the typed
   `*FromText` constructors, and `ST_GeomFromGeoJSON` (4326 lat ∉ [−90,90] / lng ∉
   [−180,180] errors, matching MySQL). Only **`ST_GeomFromWKB`** still skips the range
@@ -38,7 +41,8 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
 
 ### SRID 0 (planar) — mostly compatible; remaining gaps
 - **`ST_Distance` non-point** — ✅ **FIXED** for SRID 0 (any geometry types, via
-  `geom.Distance`). 4326 `ST_Distance` (ellipsoidal meters) still a follow-up.
+  `geom.Distance`). 4326 `ST_Distance` is now geodesic (Andoyer) for points; non-point
+  4326 distance is a follow-up.
 - **Empty geometry** — ✅ **FIXED**: a spatial predicate with an empty operand is now
   NULL (matching MySQL).
 - Boundary/DE-9IM semantics should now be OGC-correct (simplefeatures); worth a fresh

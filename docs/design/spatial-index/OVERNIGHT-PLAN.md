@@ -76,19 +76,19 @@ Order: bank the contained items (3, 7, 6) + the headline geodesic (2) first; giv
 Round-2 plus the impact roadmap (#1–#9) all landed. This batch closes the remaining
 SRID-4326 correctness/utilization gaps (see `gaps.md`). Status: ☐ todo · ◐ wip · ☑ done.
 
-### B2 — `ST_GeomFromWKB` 4326 coordinate-range validation ☐
+### B2 — `ST_GeomFromWKB` 4326 coordinate-range validation ☑ DONE
 The one ingest path that still skips the WGS 84 range check; `ST_GeomFromText`, the typed
 `*FromText` constructors, and `ST_GeomFromGeoJSON` already validate. Add
 `validateGeographic4326` to `builtinStGeomFromWKBSig` (mirror the existing sites) + a
 regression test. Small.
 
-### B3 — 4326 point covering-index ☐
+### B3 — 4326 point covering-index ☑ DONE
 Extend the point covering-index rewrite (roadmap #1, today SRID-0 `coverPlanarRect` only)
 to 4326 point indexes, so 4326 point predicates are served index-only (no table lookup /
 EWKB decode). The 4326 point index already carries `ST_X`/`ST_Y` bbox columns; gate as in
 the SRID-0 path. Add `TestPOCSpatial4326CoveringIndex`.
 
-### B4 — 4326 geodesic `ST_Distance` / `ST_Length` / `ST_Area` ☐
+### B4 — 4326 geodesic `ST_Distance` / `ST_Length` / `ST_Area` ◐ ST_Distance+ST_Length DONE; ST_Area follow-up
 Geodesic/ellipsoidal measurements for 4326: `ST_Distance` is hard-restricted to SRID 0
 today (MySQL returns ellipsoidal **meters**); `ST_Length`/`ST_Area` are planar. Use a
 WGS84 geodesic; validate meters/m² vs running MySQL 9.7. (`ST_Distance_Sphere` already
