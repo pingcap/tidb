@@ -15,7 +15,8 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   **(latitude, longitude)**: the S2 covering, `ST_Distance_Sphere`, and the cap/rect
   cover all treat the first coordinate as latitude (the accessors already did).
   Verified vs MySQL 9.7 (`ST_Latitude`/`ST_Longitude`/`ST_Distance_Sphere`).
-  `TestPOCSpatial4326Axis`.
+  `TestPOCSpatial4326Axis`. Full convention (incl. GeoJSON/WKB, vs PostGIS): see
+  [`axis-order.md`](axis-order.md).
 - **Planar refine** — ✅ **point-in-polygon now geodesic** (S2) for the 4326 region
   predicates, matching MySQL where the planar refine diverged (`geomrel/geodesic.go`;
   `TestGeodesic4326PointInPolygon` proves a geodesic-inside / planar-outside point).
