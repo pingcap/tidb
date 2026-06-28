@@ -33,6 +33,11 @@ this directory are the supporting working material it references.
 - `PLAN.md`: the broad ExecPlan / roadmap (milestones 0-5) for the full spatial index.
 - `PLAN-points-mvp.md`: the concrete first deliverable, a points-only secondary index,
   grounded in verified code integration points. This is where implementation starts.
+- `storage-format.md`: pre-GA lock-in note (ported from the `spatial-index-poc` branch) on
+  the two encodings that are hard to change after a release: the stored geometry **value**
+  format (leaner/version-tagged vs raw EWKB) and the index **cell-key** curve (Morton vs
+  Hilbert for SRID 0), with end-to-end profiling. Referenced from the formal doc's
+  Unresolved Questions.
 - `CONTEXT.md`: this file.
 
 ## How the design was reached (conversation arc)

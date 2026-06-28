@@ -144,7 +144,11 @@ before the handle; the value is empty:
   recovering R-tree-style MBR pruning with no new operator and no value decode.
 - `handle` is the row handle, appended for uniqueness (as for any non-unique index).
 - The value is empty in the common case. A *covering* index may optionally store the full
-  EWKB in the value to refine without any row fetch (a size-vs-speed choice). A global
+  geometry in the value to refine without any row fetch (a size-vs-speed choice). It should
+  use whatever internal value encoding the geometry-type prerequisite settles, rather than
+  hardwiring raw EWKB: the type work should investigate a leaner, version-tagged format,
+  since there may be meaningful benefits over EWKB (see Unresolved Questions and
+  `spatial-index/storage-format.md`). A global
   index on a partitioned table (a later phase, see Partitioned tables) carries the
   `partition_id` (the `PARTITION BY` physical partition id, not the primary key) so the
   lookback finds the row's partition, encoded exactly as TiDB's existing global-index does
@@ -194,6 +198,14 @@ or a descendant of a query cell: descendants via a prefix **range scan**, ancest
 bounded set of **point lookups** (one per coarser level, up to the index's max level),
 with half-open range bounds. The covering is proven to have no false negatives by a
 property test (brute force vs covering over random points, for both SRIDs).
+
+The SRID-0 planar curve is Morton/Z-order initially, while SRID 4326 (S2) is Hilbert
+internally, so 4326 already gets Hilbert-quality locality and SRID 0 does not, an
+asymmetry worth resolving before GA (Hilbert maps a query rectangle to fewer, longer key
+ranges than the Z-curve, at a higher encode cost; see Benchmark Tests and Unresolved
+Questions). The curve is recorded in the index metadata / a cell-key version so it can
+change later; unlike the stored value format, the index keys can be rebuilt by a
+`DROP`/`CREATE INDEX`, so this lock-in is more tractable, though still a migration.
 
 ### Write, update, and delete paths
 
@@ -417,6 +429,9 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
 - Write amplification (index entries per row; one for points, bounded for extents) and
   insert/update throughput vs an unindexed table.
 - Query latency and rows-scanned vs a full table scan, across selectivities.
+- SRID-0 cell-key curve, Hilbert vs Morton/Z-order (pre-GA): ranges-per-query and covering
+  false-positive ratio (pruning quality) vs encode ns/op (write cost). `pkg/util/spatial`
+  has `BenchmarkEncodePoint`/`BenchmarkCoverRect` and a false-positive-ratio test to extend.
 
 ## Impacts & Risks
 
@@ -476,9 +491,17 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
   entries (NULL rows unindexed, and they never satisfy a spatial predicate, so no false
   negatives), so lifting the restriction is feasible; deferred.
 - Index value contents: the bbox/coords now ride in the **key** (index columns), so the
-  value is empty by default. A *covering* index may still store the full EWKB in the value
+  value is empty by default. A *covering* index may still store the full geometry in the value
   to refine without a row fetch, an optional size-vs-speed choice; the
   index-size/write-amplification budget for it.
+- Stored geometry **value** encoding (owned by the geometry-type prerequisite, flagged here
+  because the covering index embeds it and it is a pre-GA lock-in): the type work should
+  investigate a leaner, version-tagged internal format rather than committing to raw EWKB.
+  The PoC found EWKB carries redundancy (per-row SRID, per-(sub)geometry byte-order flags,
+  WKB framing) and a 1-byte format-version tag would keep the format evolvable; a flat-`f64`
+  layout could further cheapen point decode. The measured win is modest, but the lock-in is
+  real, so it is worth investigating before GA. Detail and profiling in
+  `spatial-index/storage-format.md`.
 - Where the bbox pre-filter runs: **resolved**, the bbox is in index columns, so the
   existing index-filter machinery pushes it to the coprocessor and runs it before the row
   lookup (Layer A), no new operator or protocol change.
@@ -502,6 +525,10 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
   normal composite index over `(cell_key, x, y)`), so the bbox/coords are in the key and the
   value stays empty; no index-value-generation extension is needed.
 - Cell-depth and max-cells defaults; SRID 0 default bounds and out-of-domain behavior.
+- SRID-0 cell-key curve: keep Morton/Z-order or switch to Hilbert (4326/S2 already gets
+  Hilbert locality, so SRID 0 is the outlier), pending the pre-GA pruning-vs-encode
+  benchmark (see Benchmark Tests). Either way, record the curve in the index metadata /
+  cell-key version so it can change; the keys can be rebuilt by `DROP`/`CREATE INDEX`.
 - S2 library adoption (`github.com/golang/geo`) vs a minimal in-house spherical coverer.
 - Whether a clustered spatial table is ever a target use case (would revive the ER-tree
   direction).
