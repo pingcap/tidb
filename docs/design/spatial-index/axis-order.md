@@ -49,15 +49,18 @@ already-built geometry, or that name latitude/longitude explicitly, agree.
   comes from how the inputs were *constructed/read* at the boundary above, not from the
   function itself.
 
-## PoC-specific notes (verify before publishing)
+## PoC-specific notes (verified)
 
 - The roadmap-#2 axis fix unified the **S2 covering, `ST_Distance_Sphere`, and the
   cap/rect cover** onto MySQL's lat-first order; the **accessors** (`ST_Latitude` /
-  `ST_Longitude`) were already correct.
-- The fix did **not** touch GeoJSON I/O. Confirm that the PoC's
-  `ST_AsGeoJSON` / `ST_GeomFromGeoJSON` emit/read **lng-first** (matching RFC 7946 and
-  PostGIS). If they pass coordinates straight through, they would currently be
-  lat-first — i.e. **wrong vs both** the GeoJSON spec and PostGIS.
-- Migration guidance for the user docs: a `POINT(a b)` literal that worked in PostGIS
-  must have its coordinates **swapped** for TiDB at 4326 (and vice-versa), but GeoJSON
-  payloads carry over unchanged.
+  `ST_Longitude`, `ST_X` / `ST_Y`) were already correct.
+- **GeoJSON I/O is handled**: `ST_AsGeoJSON` / `ST_GeomFromGeoJSON` swap the axis for
+  4326 so they emit/read **lng-first** (RFC 7946), matching MySQL — verified
+  (`ST_AsGeoJSON(POINT(30 50),4326)` → `[50,30]`, round-trip preserves lat 30 / lng 50).
+  SRID 0 is left as-is. (The #2 flip briefly regressed this to lat-first; fixed in
+  `dbaa773a02`, `TestPOCSpatial4326GeoJSONAxis`.)
+- **WKB I/O matches MySQL**: `ST_AsBinary(POINT(30 50),4326)` is byte-identical to
+  MySQL's lat-first WKB (verified hex).
+- Migration guidance for the user docs: a `POINT(a b)` literal (WKT) that worked in
+  PostGIS must have its coordinates **swapped** for TiDB at 4326 (and vice-versa);
+  GeoJSON payloads and WKB carry over per their own fixed conventions.
