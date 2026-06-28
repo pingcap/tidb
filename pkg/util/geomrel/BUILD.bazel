@@ -2,10 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "geomrel",
-    srcs = ["geomrel.go"],
+    srcs = [
+        "geodesic.go",
+        "geomrel.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/geomrel",
     visibility = ["//visibility:public"],
     deps = [
+        "@com_github_golang_geo//s2",
         "@com_github_peterstace_simplefeatures//geom",
         "@com_github_pingcap_errors//:errors",
     ],

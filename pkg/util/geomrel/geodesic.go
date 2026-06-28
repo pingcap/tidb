@@ -93,7 +93,7 @@ func s2PolygonFromGeom(g geom.Geometry) (*s2.Polygon, bool) {
 		return nil, false
 	}
 	rings := []geom.LineString{poly.ExteriorRing()}
-	for i := 0; i < poly.NumInteriorRings(); i++ {
+	for i := range poly.NumInteriorRings() {
 		rings = append(rings, poly.InteriorRingN(i))
 	}
 	loops := make([]*s2.Loop, 0, len(rings))
@@ -105,7 +105,7 @@ func s2PolygonFromGeom(g geom.Geometry) (*s2.Polygon, bool) {
 		}
 		// Drop the repeated closing vertex; S2 loops are implicitly closed.
 		pts := make([]s2.Point, 0, n-1)
-		for i := 0; i < n-1; i++ {
+		for i := range n - 1 {
 			xy := seq.GetXY(i)
 			pts = append(pts, s2.PointFromLatLng(s2.LatLngFromDegrees(xy.X, xy.Y)))
 		}
