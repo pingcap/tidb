@@ -117,6 +117,44 @@ order.
   PostGIS must have its coordinates **swapped** for TiDB at 4326 (and vice-versa);
   GeoJSON payloads and WKB carry over per their own fixed conventions.
 
+## Internal storage order — ours vs MySQL, and why latitude-first
+
+We store a geometry's coordinates **as parsed from WKT/WKB, with no per-SRID
+reordering**: the on-disk EWKB is latitude-first for 4326 (because that is how 4326 WKT
+is written) and plain x,y for SRID 0. The stored bytes for `POINT(30 50)` are identical
+at SRID 0 and 4326; only **GeoJSON** is swapped (its mandated lng-first ↔ our as-stored
+order).
+
+MySQL does the opposite **internally**: it stores coordinates **longitude/easting-first,
+always, regardless of SRID**, and swaps to the SRS axis order on every WKT/WKB I/O. That
+internal order is never user-visible — `ST_AsBinary` / `ST_AsText` / `ST_X` / `ST_Y` all
+present latitude-first for 4326, **byte-identical to ours** (verified:
+`ST_AsBinary(POINT(30 50),4326)` = `0101…3E40…4940` = (30,50) in both engines, and equal
+to the SRID-0 bytes). The engines differ only in an invisible private representation;
+every observable result matches, so it has zero compatibility impact.
+
+### Why latitude-first is the right internal choice (the dependency libs do *not* fix it)
+A natural idea is to store in whatever fixed order our geometry libraries use — but the
+planar libraries impose **no** axis order, and the one library that does want a fixed
+order wants the order we already use:
+- **simplefeatures** (Go; the planar refine for SRID 0 and the planar parts of 4326) is
+  **axis-neutral**: it operates on positional `XY` with no latitude/longitude concept, so
+  it works with whatever order we store.
+- **TiKV's `geo` crate** (the cop-side refine) is likewise **planar/positional** (2-D
+  only; geodesic is a gap). If it ever adopts `geo`'s *geographic* algorithms
+  (Haversine/Geodesic), those conventionally expect **x = longitude (lng-first)** — the
+  *opposite* of a fixed lat-first — so that would need a swap **at that boundary**, not a
+  change of storage.
+- **S2** (Go; the 4326 index keys and the geodesic refine) is the one **axis-aware**
+  dependency, and it expects **(latitude, longitude)**. Because we store latitude-first,
+  the stored `X` feeds `s2.LatLngFromDegrees(lat=X, lng=Y)` **directly, with no swap**
+  (`pkg/util/geomrel/geodesic.go`, `pkg/util/spatial/s2.go`).
+
+So latitude-first storage is already aligned with the only dependency that cares about
+the axis (S2), keeps the planar refine swap-free, and matches MySQL at every user-visible
+layer. Switching to MySQL's internal longitude-first would *add* a swap on the hot 4326
+index/geodesic path for no benefit. **No change recommended.**
+
 ## References
 
 - Norvald H. Ryeng, **"Axis Order in Spatial Reference Systems"**, MySQL Server Blog,
