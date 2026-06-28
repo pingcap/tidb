@@ -399,3 +399,20 @@ func TestPOCSpatialCompatEdges(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "latitude")
 }
+
+// TestPOCSpatialTypedConstructors covers the typed WKT constructors (roadmap #9):
+// ST_PointFromText / ST_LineStringFromText / ST_PolygonFromText (and the
+// ST_LineFromText / ST_PolyFromText aliases) build a geometry like ST_GeomFromText but
+// reject a WKT of the wrong type, matching MySQL.
+func TestPOCSpatialTypedConstructors(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("SELECT ST_X(ST_PointFromText('POINT(1 2)')), ST_Y(ST_PointFromText('POINT(1 2)'))").Check(testkit.Rows("1 2"))
+	tk.MustQuery("SELECT ST_NumPoints(ST_LineStringFromText('LINESTRING(0 0,1 1,2 0)'))").Check(testkit.Rows("3"))
+	tk.MustQuery("SELECT ST_NumPoints(ST_LineFromText('LINESTRING(0 0,1 1)'))").Check(testkit.Rows("2")) // alias
+	tk.MustQuery("SELECT ABS(ST_Area(ST_PolygonFromText('POLYGON((0 0,0 2,2 2,2 0,0 0))')) - 4) < 0.001").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT ABS(ST_Area(ST_PolyFromText('POLYGON((0 0,0 2,2 2,2 0,0 0))')) - 4) < 0.001").Check(testkit.Rows("1")) // alias
+	require.Error(t, tk.QueryToErr("SELECT ST_PointFromText('LINESTRING(0 0,1 1)')"))
+	require.Error(t, tk.QueryToErr("SELECT ST_PolygonFromText('POINT(1 1)')"))
+}

@@ -43,8 +43,10 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   diff vs MySQL.
 
 ### Both SRIDs
-- **Function tail** — the ~65 MySQL functions not yet implemented (see
-  `mysql-function-catalog.md` M3): typed `*FromText`/`*FromWKB` variants, the 9 MBR
+- **Function tail** — ~65 MySQL functions remain (see `mysql-function-catalog.md` M3).
+  ✅ **Started**: the typed WKT constructors `ST_PointFromText` / `ST_LineFromText` /
+  `ST_LineStringFromText` / `ST_PolyFromText` / `ST_PolygonFromText`
+  (`TestPOCSpatialTypedConstructors`). Remaining: the `*FromWKB` variants, the 9 MBR
   predicates, processing (`ST_Buffer`/`Union`/`Intersection`/`Difference`/
   `SymDifference`/`ConvexHull`/`Simplify`/`Validate`/`MakeEnvelope`/`SwapXY`/
   `LineInterpolate*`/`PointAtDistance`/`Collect`), geohash (4), niche accessors

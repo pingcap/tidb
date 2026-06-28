@@ -280,6 +280,84 @@ func validateGeographic4326(g geom.Geometry) error {
 	return nil
 }
 
+// stTypedFromTextFunctionClass implements the typed WKT constructors
+// (ST_PointFromText / ST_LineFromText / ST_LineStringFromText / ST_PolyFromText /
+// ST_PolygonFromText): like ST_GeomFromText, but the parsed geometry must be of the
+// expected type, else an error (MySQL parity).
+type stTypedFromTextFunctionClass struct {
+	baseFunctionClass
+}
+
+// typedWKTWant maps a typed-constructor function name to its required geometry type.
+func typedWKTWant(funcName string) (geom.GeometryType, string) {
+	switch funcName {
+	case ast.StLineFromText, ast.StLineStringFromText:
+		return geom.TypeLineString, "LINESTRING"
+	case ast.StPolyFromText, ast.StPolygonFromText:
+		return geom.TypePolygon, "POLYGON"
+	default: // ast.StPointFromText
+		return geom.TypePoint, "POINT"
+	}
+}
+
+func (c *stTypedFromTextFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETString}
+	if len(args) >= 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.SetType(mysql.TypeGeometry)
+	bf.tp.SetFlen(types.UnspecifiedLength)
+	want, typeName := typedWKTWant(c.funcName)
+	return &builtinStTypedFromTextSig{bf, want, typeName}, nil
+}
+
+type builtinStTypedFromTextSig struct {
+	baseBuiltinFunc
+	want     geom.GeometryType
+	typeName string
+}
+
+func (b *builtinStTypedFromTextSig) Clone() builtinFunc {
+	newSig := &builtinStTypedFromTextSig{want: b.want, typeName: b.typeName}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinStTypedFromTextSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	wktVal, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	var srid int64
+	if len(b.args) >= 2 {
+		srid, isNull, err = b.args[1].EvalInt(ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+	}
+	g, err := geom.UnmarshalWKT(wktVal)
+	if err != nil {
+		return "", false, errors.Trace(err)
+	}
+	if g.Type() != b.want {
+		return "", false, errors.Errorf("typed WKT constructor requires a %s geometry", b.typeName)
+	}
+	if uint32(srid) == spatial.SRID4326 {
+		if verr := validateGeographic4326(g); verr != nil {
+			return "", false, verr
+		}
+	}
+	return encodeEWKB(g, uint32(srid)), false, nil
+}
+
 type stAsTextFunctionClass struct {
 	baseFunctionClass
 }
