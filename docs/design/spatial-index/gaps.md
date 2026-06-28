@@ -60,9 +60,12 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
 ## Part 2 — Index-utilization gaps
 
 ### A. Query shapes the index can't serve (fall back to scan/sort)
-- **KNN** `ORDER BY ST_Distance(g, const) LIMIT k` — full-scans + sorts today. The
-  single biggest latency win missing; nearest-neighbor is a primary spatial workload.
-  (Round-2 item #1.)
+- **KNN** `ORDER BY ST_Distance(g, const) LIMIT k` — full-scans + sorts today
+  (**not yet implemented**; assessed). Two paths: (A) a new physical operator doing
+  best-first expanding-cell search (the fast O(k log n) win, like the vector-ANN
+  feature) — large; (B) extend the covering rewrite to the TopN's `ORDER BY ST_Distance`
+  so the top-k is computed *index-only* (correct, no table lookup, but still an O(n)
+  index scan) — contained, needs the resolver to handle Sort/TopN-over-DataSource.
 - **Spatial joins** `ST_Intersects(t1.g, t2.g)` `✓code` — the resolver needs a
   **constant** query geometry to compute covering cells, so column↔column joins can't
   be index-accelerated → cross-join + filter. An index-nested-loop spatial join (cell
