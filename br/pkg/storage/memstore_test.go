@@ -110,6 +110,51 @@ func TestMemStoreBasic(t *testing.T) {
 	require.True(t, exists)
 }
 
+func TestMemStoreOpenRangeSeek(t *testing.T) {
+	store := NewMemStorage()
+	ctx := context.Background()
+
+	fileName := "/seek-range.txt"
+	require.NoError(t, store.WriteFile(ctx, fileName, []byte("0123456789")))
+
+	start, end := int64(2), int64(5)
+	r, err := store.Open(ctx, fileName, &storeapi.ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, r.Close())
+	}()
+
+	offs, err := r.Seek(0, io.SeekCurrent)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), offs)
+
+	offs, err = r.Seek(0, io.SeekEnd)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), offs)
+
+	b := make([]byte, 2)
+	n, err := r.Read(b)
+	require.Equal(t, 0, n)
+	require.ErrorIs(t, err, io.EOF)
+
+	offs, err = r.Seek(1, io.SeekStart)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), offs)
+
+	b = make([]byte, 10)
+	n, err = r.Read(b)
+	require.NoError(t, err)
+	require.Equal(t, 4, n)
+	require.Equal(t, "1234", string(b[:n]))
+
+	n, err = r.Read(b)
+	require.Equal(t, 0, n)
+	require.ErrorIs(t, err, io.EOF)
+}
+
 type iterFileInfo struct {
 	Name    string
 	Size    int64
