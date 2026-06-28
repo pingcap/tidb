@@ -31,9 +31,10 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
   meters differ slightly too.
 - **Geodesic `ST_Length` / `ST_Area`** for 4326 (MySQL → meters / m² on the
   ellipsoid) — not done.
-- **Coordinate-range validation** — ✅ **FIXED** in `ST_GeomFromText` (4326 lat ∉
-  [−90,90] / lng ∉ [−180,180] errors, matching MySQL); other ingest paths
-  (`ST_GeomFromWKB`/GeoJSON/constructors) are a follow-up.
+- **Coordinate-range validation** — ✅ **FIXED** for `ST_GeomFromText`, the typed
+  `*FromText` constructors, and `ST_GeomFromGeoJSON` (4326 lat ∉ [−90,90] / lng ∉
+  [−180,180] errors, matching MySQL). Only **`ST_GeomFromWKB`** still skips the range
+  check — the one remaining ingest path.
 
 ### SRID 0 (planar) — mostly compatible; remaining gaps
 - **`ST_Distance` non-point** — ✅ **FIXED** for SRID 0 (any geometry types, via
