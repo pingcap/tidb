@@ -462,10 +462,8 @@ func (b *builtinStDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 		// 4326 axis order: x is latitude, y is longitude.
 		return geodesicMetersWGS84(x1, y1, x2, y2), false, nil
 	}
-	if s1 != 0 {
-		return 0, false, errors.New("st_distance: only srid 0 and 4326 are supported in the poc")
-	}
-	// Planar distance between any two SRID-0 geometries (point/line/polygon/…).
+	// Planar distance for SRID 0 and any projected (non-geographic) SRID: Cartesian
+	// distance in the CRS units between any two geometries (point/line/polygon/…).
 	d, ok := geom.Distance(g1, g2)
 	if !ok {
 		return 0, true, nil // an empty operand → NULL (MySQL)

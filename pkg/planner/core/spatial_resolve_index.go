@@ -855,7 +855,8 @@ func (q coverRequest) sridMatchesColumn(tblInfo *model.TableInfo, geomColID int6
 	case coverSphereCap, coverLatLngRect:
 		return colSRID == spatial.SRID4326
 	default:
-		return colSRID == 0
+		// Planar covering scheme: SRID 0 and any projected (non-geographic) SRID.
+		return colSRID != spatial.SRID4326
 	}
 }
 
@@ -922,9 +923,10 @@ func recognizeDistancePredicate(cmp *expression.ScalarFunction, evalCtx expressi
 		// latitude and y the longitude, while the cap centre is kept as (lng, lat).
 		return coverRequest{geomColID: geomCol.ID, kind: coverSphereCap, cx: y, cy: x, r: radius}, true
 	}
-	if srid != 0 {
+	if srid == spatial.SRID4326 {
 		return coverRequest{}, false
 	}
+	// SRID 0 and any projected (non-geographic) SRID: a planar distance cap.
 	return coverRequest{
 		geomColID: geomCol.ID,
 		kind:      coverPlanarRect,
@@ -949,14 +951,11 @@ func recognizeRegionPredicate(arg0, arg1 expression.Expression, evalCtx expressi
 		return coverRequest{}, false
 	}
 	rect := spatial.Rect{MinX: minX, MinY: minY, MaxX: maxX, MaxY: maxY}
-	switch srid {
-	case 0:
-		return coverRequest{geomColID: geomCol.ID, kind: coverPlanarRect, rect: rect}, true
-	case spatial.SRID4326:
+	if srid == spatial.SRID4326 {
 		return coverRequest{geomColID: geomCol.ID, kind: coverLatLngRect, rect: rect}, true
-	default:
-		return coverRequest{}, false
 	}
+	// SRID 0 and any projected (non-geographic) SRID use the planar coverer.
+	return coverRequest{geomColID: geomCol.ID, kind: coverPlanarRect, rect: rect}, true
 }
 
 // splitColAndConst returns (column, otherArg) if exactly one of a, b is an

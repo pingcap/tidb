@@ -169,8 +169,8 @@ func (c *PlanarCoverer) quantize(v, lo, hi float64) uint32 {
 
 // EncodePoint implements Coverer.
 func (c *PlanarCoverer) EncodePoint(srid uint32, x, y float64) (CellKey, error) {
-	if srid != 0 {
-		return nil, errors.Errorf("PlanarCoverer only supports SRID 0, got %d", srid)
+	if srid == SRID4326 {
+		return nil, errors.Errorf("PlanarCoverer does not support geographic SRID %d (use the S2 coverer)", srid)
 	}
 	col := c.quantize(x, c.minX, c.maxX)
 	rowCell := c.quantize(y, c.minY, c.maxY)
@@ -181,8 +181,8 @@ func (c *PlanarCoverer) EncodePoint(srid uint32, x, y float64) (CellKey, error) 
 // emitting one CellKey range per node that is fully inside the rectangle or is
 // a leaf, skipping nodes disjoint from the rectangle.
 func (c *PlanarCoverer) CoverRect(srid uint32, r Rect) ([]CellKeyRange, error) {
-	if srid != 0 {
-		return nil, errors.Errorf("PlanarCoverer only supports SRID 0, got %d", srid)
+	if srid == SRID4326 {
+		return nil, errors.Errorf("PlanarCoverer does not support geographic SRID %d (use the S2 coverer)", srid)
 	}
 	// Normalize the rectangle.
 	if r.MinX > r.MaxX {

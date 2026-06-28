@@ -454,3 +454,46 @@ func TestPOCSpatialKNN(t *testing.T) {
 	got := tk.MustQuery("SELECT ST_AsText(p) FROM locs ORDER BY ST_Distance(p, ST_GeomFromText('POINT(150 150)',0)) ASC, id ASC LIMIT 1").Rows()
 	require.Equal(t, "POINT(150 150)", got[0][0])
 }
+
+// TestPOCSpatialProjectedSRID covers batch item C1: a projected (non-0/4326) SRID such as
+// 3857 (Web Mercator) is indexed with the planar quadtree like SRID 0 — region and
+// distance predicates use the index (index-only), match the full scan, and ST_Distance is
+// planar (Cartesian metres).
+func TestPOCSpatialProjectedSRID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE wm (id int primary key, p POINT NOT NULL SRID 3857)")
+	var b strings.Builder
+	b.WriteString("INSERT INTO wm VALUES ")
+	id := 0
+	for x := 0; x < 20000000; x += 2000000 {
+		for y := 0; y < 20000000; y += 2000000 {
+			if id > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, "(%d,ST_GeomFromText('POINT(%d %d)',3857))", id, x, y)
+			id++
+		}
+	}
+	tk.MustExec(b.String())
+	tk.MustExec("CREATE SPATIAL INDEX si ON wm (p)")
+	tk.MustExec("ANALYZE TABLE wm")
+
+	for _, pred := range []string{
+		"ST_Within(p, ST_GeomFromText('POLYGON((1000000 1000000,1000000 9000000,9000000 9000000,9000000 1000000,1000000 1000000))',3857))",
+		"ST_Distance(p, ST_GeomFromText('POINT(4000000 4000000)',3857)) <= 2500000",
+	} {
+		q := "SELECT count(*) FROM wm WHERE " + pred
+		var plan strings.Builder
+		for _, r := range tk.MustQuery("EXPLAIN " + q).Rows() {
+			plan.WriteString(fmt.Sprintf("%v ", r[0]))
+		}
+		require.Contains(t, plan.String(), "IndexReader", "3857 query should use the spatial index: %s", pred)
+		require.NotContains(t, plan.String(), "TableReader", "3857 query should be index-only: %s", pred)
+		want := tk.MustQuery("SELECT count(*) FROM wm IGNORE INDEX(si) WHERE " + pred).Rows()
+		require.Equal(t, want, tk.MustQuery(q).Rows(), "3857 result must match full scan: %s", pred)
+	}
+	// Planar (Cartesian) distance in the projected CRS units: 3-4-5.
+	tk.MustQuery("SELECT ST_Distance(ST_GeomFromText('POINT(0 0)',3857), ST_GeomFromText('POINT(3000000 4000000)',3857))").Check(testkit.Rows("5000000"))
+}

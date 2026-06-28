@@ -71,9 +71,11 @@ func TestPOCCreateSpatialIndex(t *testing.T) {
 	tk.MustExec("CREATE SPATIAL INDEX b ON good2 (g)")
 	tk.MustExec("CREATE TABLE bad2 (id int primary key, g GEOMETRY NOT NULL SRID 4326)")
 	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad2 (g)", "[ddl:8200]SPATIAL index on a general geometry supports SRID 0 in the POC, got SRID 4326")
-	// SRID 4326 is supported for POINT; an unsupported SRID (e.g. Web Mercator 3857) is rejected.
-	tk.MustExec("CREATE TABLE bad3 (id int primary key, p POINT NOT NULL SRID 3857)")
-	tk.MustGetErrMsg("CREATE SPATIAL INDEX b ON bad3 (p)", "[ddl:8200]SPATIAL index on a POINT supports SRID 0 or 4326 in the POC, got SRID 3857")
+	// A POINT with any SRID is indexable: 4326 uses S2, every other SRID (e.g. Web
+	// Mercator 3857) is treated as a projected planar CRS and uses the planar quadtree
+	// (batch item C1).
+	tk.MustExec("CREATE TABLE proj3857 (id int primary key, p POINT NOT NULL SRID 3857)")
+	tk.MustExec("CREATE SPATIAL INDEX b ON proj3857 (p)")
 	// A 4326 spatial index is accepted.
 	tk.MustExec("CREATE TABLE geo4326 (id int primary key, p POINT NOT NULL SRID 4326)")
 	tk.MustExec("CREATE SPATIAL INDEX g4326 ON geo4326 (p)")

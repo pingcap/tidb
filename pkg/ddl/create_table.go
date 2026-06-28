@@ -1397,7 +1397,8 @@ func parseSpatialComment(comment string) (spatial.PlanarParams, bool, error) {
 
 // validateSpatialColumn checks a column is indexable by a SPATIAL index and
 // reports whether it is a POINT (plain index) vs a general geometry (MVI). A
-// general-geometry MVI is SRID 0 only in the POC; POINT supports SRID 0 or 4326.
+// general-geometry MVI is SRID 0 only in the POC; a POINT supports any SRID (4326 is
+// covered with S2, every other SRID is treated as a projected planar CRS).
 func validateSpatialColumn(col *table.Column) (isPoint bool, err error) {
 	if col.FieldType.GetType() != mysql.TypeGeometry {
 		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on geometry columns")
@@ -1407,9 +1408,9 @@ func validateSpatialColumn(col *table.Column) (isPoint bool, err error) {
 	}
 	isPoint = col.FieldType.GetGeometryType() == field_types.GeomPoint
 	if isPoint {
-		if col.Srid != 0 && col.Srid != 4326 {
-			return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index on a POINT supports SRID 0 or 4326 in the POC, got SRID %d", col.Srid)
-		}
+		// SRID 4326 uses the S2 cell scheme; any other SRID is treated as a projected
+		// (planar) CRS and indexed with the planar quadtree, so all SRIDs are indexable
+		// for a POINT in the POC.
 		return true, nil
 	}
 	if col.Srid != 0 {
