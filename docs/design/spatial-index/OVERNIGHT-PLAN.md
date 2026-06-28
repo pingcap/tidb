@@ -11,6 +11,62 @@ coverer + `tidb_spatial_key`, `CREATE SPATIAL INDEX` (standalone + inline) with
 a `SpatialIndexResolver` planner rule (covering-cell ranges + retained refine
 filter), MySQL-compat integration test, Bazel/nogo clean.
 
+## Overnight round 2 — review-readiness additions (1, 2, 3, 6, 7, 8)
+
+Goal: close the capability / correctness / robustness gaps that most affect a
+reviewer's confidence. Approaches below are investigation-informed (this run).
+Priority: correctness over breadth — bank tested, committed increments; checkpoint
+the hard ones rather than leave broken partials. Status: ☐ todo · ◐ wip · ☑ done.
+
+### 8 — Point covering-index (index-only point queries) ☐
+The point index already stores `ST_X(col)`/`ST_Y(col)` (`create_table.go:1354` — a
+point's MBR is the point itself). Today a point predicate is an `IndexLookUp`:
+cell-range scan → **probe the table** → **decode EWKB** → refine. Make it
+**index-only**: refine (and project) on the in-index `x,y` (reconstruct the point),
+so it never probes the table or decodes EWKB. Eliminates the random table-read I/O
+(the dominant read cost on real storage, which the in-memory pprof couldn't see) +
+the per-row decode. Planner/column-pruning change so the needed columns are served
+from the index. Points only (x,y fully reconstruct the geometry).
+
+### 1 — KNN: `ORDER BY ST_Distance(col,const) [ASC] LIMIT k` ☐
+Not supported today (only the distance-*cap* `<= r` range is; `ORDER BY … LIMIT k`
+full-scans + sorts). Deepest item — analogous to the vector-index ANN TopN
+(`task.go`). Approach: recognize the TopN/Limit over a spatially-indexed DataSource
+and serve via **radius-expansion** — reuse the cap-cover
+(`recognizeDistancePredicate`) with a growing radius until `k` rows are confirmed by
+the refine, then TopN. Needs a TopN-aware path (not the WHERE-only resolver) + a small
+executor/iteration. Highest design risk; time-box and checkpoint.
+
+### 2 — Geodesic 4326 refine ☐
+`geomrel.Relate` is **always planar** today (ignores SRID), so 4326 results diverge
+from MySQL near edges/poles/antimeridian. Make the refine geodesic for SRID 4326 via
+S2 (already a dep): build S2 polygons/points, use `Polygon.Contains`/`Intersects`/
+`ContainsPoint` for the region predicates (Within/Contains/Intersects/Covers/
+CoveredBy/Disjoint). **Must also gate 4326-region pushdown OFF** — the cop (geo crate)
+refine stays planar, and a geodesic root + planar cop would break the "pushdown never
+changes the answer" contract. Validate vs the running MySQL 4326. Start:
+point-in-polygon (dominant case); polygon/polygon + Touches/Crosses/Overlaps later.
+
+### 3 — Cost-based index selection (no FORCE INDEX) ☐
+Partly works (ANALYZE-driven; `poc_spatial_test.go:68`). Strengthen: tests proving the
+optimizer picks the spatial index at low selectivity *and falls back to a table scan
+at high selectivity*, across a selectivity sweep, without hints. Fix the cost model if
+a sweep point chooses wrong.
+
+### 6 — Concurrent DML consistency under load ☐
+Stress test: N goroutines doing concurrent INSERT/UPDATE/DELETE of geometries while
+periodic `ADMIN CHECK TABLE` / `ADMIN CHECK INDEX` confirm the hidden generated
+columns + index stay consistent with the table.
+
+### 7 — Non-0/4326 SRID (projected) ☐
+The planar coverer hard-rejects non-0 SRID (`coverer.go:173`). Relax so any
+**projected** (non-geographic) SRID uses the planar coverer; keep 4326→S2. Test with
+e.g. SRID 3857 (Web Mercator). (Full SRS catalog out of scope; treat non-4326 as
+projected for the POC.)
+
+Order: bank the contained items (3, 7, 6) + the headline geodesic (2) first; give KNN
+(1) and the covering-index (8) the remaining time with checkpoints.
+
 ## Roadmap / status
 
 ### Implemented (working today)
