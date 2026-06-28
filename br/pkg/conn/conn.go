@@ -50,9 +50,9 @@ const (
 	DefaultMergeRegionKeyCount uint64 = 960000
 
 	// DefaultImportNumGoroutines is the default number of threads for import.
-	// use 128 as default value, which is 8 times of the default value of tidb.
+	// use 64 as default value, which is 4 times of the default value of tidb.
 	// we think is proper for IO-bound cases.
-	DefaultImportNumGoroutines uint = 128
+	DefaultImportNumGoroutines uint = 64
 )
 
 type VersionCheckerType int
@@ -342,9 +342,9 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 				log.Warn("Failed to parse import num-threads from config", logutil.ShortError(e))
 				return e
 			}
-			// We use 8 times the default value because it's an IO-bound case.
+			// We use 4 times the default value because it's an IO-bound case.
 			if importGoroutines.Value == DefaultImportNumGoroutines || (threads > 0 && threads*8 < importGoroutines.Value) {
-				importGoroutines.Value = threads * 8
+				importGoroutines.Value = threads * 4
 			}
 		}
 		// replace the value

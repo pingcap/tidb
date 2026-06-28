@@ -323,13 +323,16 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 	if fs.Err != nil {
 		return nil, errors.Annotatef(fs.Err, "failed to collect from files")
 	}
-	log.Info("finish to collect all ddl files", zap.Duration("take", time.Since(start)), zap.Int("file count", len(fs.Item)))
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
 		rc.helper.InitCacheEntry(g.Path, countReadableMetaKVFiles(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
 	}
+	log.Info("finish to collect all ddl files",
+		zap.Duration("take", time.Since(start)),
+		zap.Int("ddl file count", len(dataFileInfos)),
+	)
 
 	return dataFileInfos, nil
 }
