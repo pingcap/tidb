@@ -133,7 +133,6 @@ func TestColumn2Pb(t *testing.T) {
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
-	colExprs = append(colExprs, genColumn(mysql.TypeGeometry, 2))
 	colExprs = append(colExprs, genColumn(mysql.TypeUnspecified, 3))
 
 	pushed, remained := PushDownExprs(pushDownCtx, colExprs, kv.UnSpecified)
@@ -144,6 +143,17 @@ func TestColumn2Pb(t *testing.T) {
 		_, err := ExpressionsToPBList(ctx, []Expression{col}, client)
 		require.Error(t, err)
 	}
+
+	// TypeGeometry IS pushable: a geometry column is sent to the coprocessor as the
+	// operand of a pushed spatial predicate (ST_Within etc.), so unlike the
+	// non-pushable types above it converts to a PB column. (End-to-end coverage lives
+	// in the spatial pushdown tests under pkg/executor.)
+	geomCol := genColumn(mysql.TypeGeometry, 2)
+	gpushed, gremained := PushDownExprs(pushDownCtx, []Expression{geomCol}, kv.UnSpecified)
+	require.Len(t, gpushed, 1)
+	require.Len(t, gremained, 0)
+	_, gerr := ExpressionsToPBList(ctx, []Expression{geomCol}, client)
+	require.NoError(t, gerr)
 
 	colExprs = colExprs[:0]
 	colExprs = append(colExprs, genColumn(mysql.TypeTiny, 1))
