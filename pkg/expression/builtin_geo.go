@@ -412,7 +412,8 @@ func (b *builtinStDistanceSphereSig) evalReal(ctx EvalContext, row chunk.Row) (f
 	if !ok1 || !ok2 {
 		return 0, false, errors.New("ST_Distance_Sphere: only POINT arguments are supported in the POC")
 	}
-	return greatCircleMeters(x1, y1, x2, y2), false, nil
+	// 4326 axis order is (latitude, longitude): x is the latitude, y the longitude.
+	return greatCircleMeters(y1, x1, y2, x2), false, nil
 }
 
 // greatCircleMeters is the haversine distance in metres between two points given
@@ -1704,8 +1705,10 @@ func (b *builtinTiDBSpatialKeySig) evalString(ctx EvalContext, row chunk.Row) (s
 		return "", false, errors.New("tidb_spatial_key: only POINT geometries are supported in the POC")
 	}
 	// WGS 84 points use the S2 cell scheme; SRID 0 uses the planar quadtree.
+	// MySQL's EPSG:4326 axis order is (latitude, longitude), so the stored first
+	// coordinate (x) is the latitude and the second (y) the longitude.
 	if srid == spatial.SRID4326 {
-		return string(spatial.EncodePointS2(x, y)), false, nil
+		return string(spatial.EncodePointS2(y, x)), false, nil
 	}
 	coverer := defaultPlanarCoverer
 	if len(b.args) == 6 {

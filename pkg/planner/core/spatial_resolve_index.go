@@ -527,7 +527,9 @@ func (q coverRequest) ranges(params spatial.PlanarParams) ([]spatial.CellKeyRang
 	case coverSphereCap:
 		return spatial.CoverCapDegrees(q.cx, q.cy, q.r)
 	case coverLatLngRect:
-		return spatial.CoverLatLngRectDegrees(q.rect.MinX, q.rect.MinY, q.rect.MaxX, q.rect.MaxY)
+		// 4326 axis order is (latitude, longitude): the query rect's X is the latitude
+		// range and Y the longitude range; CoverLatLngRectDegrees wants (lng, lat).
+		return spatial.CoverLatLngRectDegrees(q.rect.MinY, q.rect.MinX, q.rect.MaxY, q.rect.MaxX)
 	default:
 		return params.Coverer().CoverRect(0, q.rect)
 	}
@@ -548,16 +550,19 @@ func (q coverRequest) bboxRect() (spatial.Rect, bool) {
 		// float error (the exact ST_Distance_Sphere refine removes the surplus).
 		theta := q.r / spatial.EarthRadiusMeters // angular radius, radians
 		const margin = 1 + 1e-9
+		// The bbox columns are ST_X/ST_Y = the geometry's (x, y) = (latitude,
+		// longitude), so the returned Rect carries the latitude range in X and the
+		// longitude range in Y.
 		dLat := theta * margin * 180 / math.Pi
 		minLat, maxLat := q.cy-dLat, q.cy+dLat
 		// Cap reaches a pole: every longitude is within range.
 		if minLat <= -90 || maxLat >= 90 {
-			return spatial.Rect{MinX: -180, MinY: math.Max(minLat, -90), MaxX: 180, MaxY: math.Min(maxLat, 90)}, true
+			return spatial.Rect{MinX: math.Max(minLat, -90), MinY: -180, MaxX: math.Min(maxLat, 90), MaxY: 180}, true
 		}
 		// Max longitude deviation of the cap at the centre latitude.
 		ratio := math.Sin(theta) / math.Cos(q.cy*math.Pi/180)
 		if ratio >= 1 {
-			return spatial.Rect{MinX: -180, MinY: minLat, MaxX: 180, MaxY: maxLat}, true
+			return spatial.Rect{MinX: minLat, MinY: -180, MaxX: maxLat, MaxY: 180}, true
 		}
 		dLng := math.Asin(ratio) * margin * 180 / math.Pi
 		minLng, maxLng := q.cx-dLng, q.cx+dLng
@@ -566,7 +571,7 @@ func (q coverRequest) bboxRect() (spatial.Rect, bool) {
 		if minLng < -180 || maxLng > 180 {
 			return spatial.Rect{}, false
 		}
-		return spatial.Rect{MinX: minLng, MinY: minLat, MaxX: maxLng, MaxY: maxLat}, true
+		return spatial.Rect{MinX: minLat, MinY: minLng, MaxX: maxLat, MaxY: maxLng}, true
 	default:
 		return spatial.Rect{}, false
 	}
@@ -799,7 +804,9 @@ func recognizeDistancePredicate(cmp *expression.ScalarFunction, evalCtx expressi
 		if srid != spatial.SRID4326 {
 			return coverRequest{}, false
 		}
-		return coverRequest{geomColID: geomCol.ID, kind: coverSphereCap, cx: x, cy: y, r: radius}, true
+		// 4326 axis order is (latitude, longitude): the query point's x is the
+		// latitude and y the longitude, while the cap centre is kept as (lng, lat).
+		return coverRequest{geomColID: geomCol.ID, kind: coverSphereCap, cx: y, cy: x, r: radius}, true
 	}
 	if srid != 0 {
 		return coverRequest{}, false

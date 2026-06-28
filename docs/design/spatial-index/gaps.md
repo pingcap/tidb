@@ -11,11 +11,11 @@ What's missing for (1) MySQL compatibility on the two implemented SRIDs (0 plana
 ## Part 1 — MySQL compatibility gaps (SRID 0 & 4326)
 
 ### SRID 4326 (geographic) — the larger divergences
-- **Axis order** `✓code` — `EncodePointS2(lng, lat)` (`pkg/util/spatial/s2.go:43`)
-  treats the first WKT coordinate as longitude. MySQL 4326 uses the EPSG axis order
-  **(latitude, longitude)** — first coordinate is *latitude*. So `POINT(30 50)` is
-  stored/queried swapped vs MySQL; affects stored bytes **and** every 4326 result.
-  Highest-impact 4326 gap.
+- **Axis order** — ✅ **FIXED**. 4326 now uses MySQL's EPSG axis order
+  **(latitude, longitude)**: the S2 covering, `ST_Distance_Sphere`, and the cap/rect
+  cover all treat the first coordinate as latitude (the accessors already did).
+  Verified vs MySQL 9.7 (`ST_Latitude`/`ST_Longitude`/`ST_Distance_Sphere`).
+  `TestPOCSpatial4326Axis`.
 - **Planar refine** `✓code` — the S2 *covering* is geodesic but the exact predicate
   (`pkg/util/geomrel`) is planar, so `ST_Within`/`Contains`/… diverge from MySQL near
   edges/poles/the antimeridian. (Round-2 item #2.)
