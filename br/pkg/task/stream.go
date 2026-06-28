@@ -511,11 +511,11 @@ func (s *streamMgr) checkStreamStartEnable(ctx context.Context) error {
 	return nil
 }
 
-type RestoreGCFunc func(string) error
+type RestoreConfigFunc func(string) error
 
 // DisableGC disables and returns a function that can enable gc back.
 // gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
-func DisableGC(g glue.Glue, store kv.Storage) (RestoreGCFunc, string, error) {
+func DisableGC(g glue.Glue, store kv.Storage) (RestoreConfigFunc, string, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -535,6 +535,38 @@ func DisableGC(g glue.Glue, store kv.Storage) (RestoreGCFunc, string, error) {
 	return func(ratio string) error {
 		return utils.SetGcRatio(execCtx, ratio)
 	}, oldRatio, nil
+}
+
+// KeepRocksDBMaxBackgroundJobsLow limits RocksDB compaction jobs during restore and returns a restore function.
+func KeepRocksDBMaxBackgroundJobsLow(g glue.Glue, store kv.Storage) (RestoreConfigFunc, string, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	oldJobs, err := utils.GetRocksDBMaxBackgroundJobs(execCtx)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	if oldJobs == "" {
+		log.Warn("skip setting rocksdb.max-background-jobs because config item is unavailable")
+		return func(string) error {
+			return nil
+		}, oldJobs, nil
+	}
+
+	err = utils.SetRocksDBMaxBackgroundJobs(execCtx, utils.RocksDBMaxBackgroundJobsForRestore)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+
+	return func(jobs string) error {
+		if jobs == "" {
+			return nil
+		}
+		return utils.SetRocksDBMaxBackgroundJobs(execCtx, jobs)
+	}, oldJobs, nil
 }
 
 // RunStreamCommand run all kinds of `stream task`
@@ -1596,19 +1628,23 @@ func restoreStream(
 
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	var restoreGCFunc RestoreGCFunc
-	var oldGCRatio string
+	var restoreGCFunc, restoreRocksDBMaxBackgroundJobsFunc RestoreConfigFunc
+	var oldGCRatio, oldRocksDBMaxBackgroundJobs string
 	if err := cfg.RestoreRegistry.OperationAfterWaitIDs(ctx, func() (err error) {
-		restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage())
+		if restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage()); err != nil {
+			return errors.Trace(err)
+		}
+		restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
 		return errors.Trace(err)
 	}); err != nil {
 		return errors.Trace(err)
 	}
-	gcDisabledRestorable := false
+	tikvConfigRestorable := false
+	tikvConfigCheckpointPersisted := !cfg.UseCheckpoint
 	defer func() {
 		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished
-		if cfg.UseCheckpoint && !gcDisabledRestorable {
-			log.Info("skip restore the gc-ratio-threshold for next retry")
+		if cfg.UseCheckpoint && !tikvConfigRestorable && tikvConfigCheckpointPersisted {
+			log.Info("skip restore the tikv config for next retry")
 			return
 		}
 
@@ -1618,10 +1654,16 @@ func restoreStream(
 			log.Warn("the original gc-ratio is negative, reset by default value 1.1", zap.String("old-gc-ratio", oldGCRatio))
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
-		log.Info("start to restore gc", zap.String("ratio", oldGCRatio))
+		log.Info("start to restore tikv config",
+			zap.String("gc-ratio", oldGCRatio),
+			zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
 		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
+				return errors.Trace(err)
+			}
+			if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
+				log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
 				return errors.Trace(err)
 			}
 			return nil
@@ -1631,12 +1673,17 @@ func restoreStream(
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
-		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
-			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder, cfg.logCheckpointMetaManager)
+		gcRatioFromCheckpoint, oldRocksDBMaxBackgroundJobsFromCheckpoint, snapshotRestoreDataSize, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
+			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, oldRocksDBMaxBackgroundJobs, cfg.tiflashRecorder, cfg.logCheckpointMetaManager, cfg.snapshotRestoreDataSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		tikvConfigCheckpointPersisted = true
 		oldGCRatio = gcRatioFromCheckpoint
+		oldRocksDBMaxBackgroundJobs = oldRocksDBMaxBackgroundJobsFromCheckpoint
+		if snapshotRestoreDataSize > 0 {
+			cfg.snapshotRestoreDataSize = snapshotRestoreDataSize
+		}
 		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx, cfg.sstCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
@@ -1770,6 +1817,7 @@ func restoreStream(
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
 	var checkpointSSTProgress int64
+	var checkpointSSTSize uint64
 	updateSSTStatsWithCheckpoint := func(kvCount, size uint64) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1778,6 +1826,7 @@ func restoreStream(
 		checkpointTotalKVCount += kvCount
 		checkpointTotalSize += size
 		checkpointSSTProgress += int64(kvCount)
+		checkpointSSTSize += size
 	}
 	compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
 		ctx, sstsIter, rewriteRules, sstCheckpointSets,
@@ -1822,7 +1871,14 @@ func restoreStream(
 			p.IncBy(int64(kvCount))
 		}
 
-		err = client.RestoreSSTFileSets(ctx, sstFileSets, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFileSets(
+			ctx,
+			sstFileSets,
+			importModeSwitcher,
+			cfg.snapshotRestoreDataSize,
+			checkpointSSTSize,
+			p.IncBy,
+		)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1936,7 +1992,7 @@ func restoreStream(
 		}
 	})
 
-	gcDisabledRestorable = true
+	tikvConfigRestorable = true
 
 	return nil
 }

@@ -325,6 +325,8 @@ type RestoreConfig struct {
 	RestoreRegistry               *registry.Registry              `json:"-" toml:"-"`
 
 	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	// snapshotRestoreDataSize records the filtered snapshot files restored before PITR log restore.
+	snapshotRestoreDataSize uint64
 
 	// PITR-related fields for blocklist creation
 	// RestoreStartTS is the timestamp when the restore operation began (before any table creation).
@@ -1586,6 +1588,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
+	cfg.snapshotRestoreDataSize = archiveSize
 	// some more checks once we get tables and files information
 	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, tables, archiveSize, isPiTR); err != nil {
 		return errors.Trace(err)

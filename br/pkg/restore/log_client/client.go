@@ -143,6 +143,8 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 // including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
 type SstRestoreManager struct {
 	restorer         restore.SstRestorer
+	storeCount       uint
+	replicaCount     uint
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
@@ -366,6 +368,8 @@ func (rc *LogClient) RestoreSSTFileSets(
 	ctx context.Context,
 	backupFileSets restore.BatchBackupFileSet,
 	importModeSwitcher *restore.ImportModeSwitcher,
+	snapshotRestoreDataSize uint64,
+	checkpointCompactedSSTSize uint64,
 	onProgress func(int64),
 ) error {
 	begin := time.Now()
@@ -373,6 +377,15 @@ func (rc *LogClient) RestoreSSTFileSets(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
+	if err := rc.adjustTiKVFlowControlForCompactedSSTRestore(
+		ctx,
+		backupFileSets,
+		snapshotRestoreDataSize,
+		checkpointCompactedSSTSize,
+	); err != nil {
+		return errors.Trace(err)
+	}
+
 	err := importModeSwitcher.GoSwitchToImportMode(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -565,6 +578,10 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
+	replicaCount, err := rc.getMaxReplica(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
@@ -613,7 +630,7 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sstRestoreManager := &SstRestoreManager{}
+	sstRestoreManager := &SstRestoreManager{storeCount: uint(len(stores)), replicaCount: replicaCount}
 	if sstCheckpointMetaManager != nil {
 		var err error
 		sstRestoreManager.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
@@ -630,6 +647,32 @@ func (rc *LogClient) InitClients(
 	}
 	rc.sstRestoreManager = sstRestoreManager
 	return nil
+}
+
+func (rc *LogClient) getMaxReplica(ctx context.Context) (uint, error) {
+	if rc.pdHTTPClient == nil {
+		return 0, errors.New("PD HTTP client is not initialized")
+	}
+	var resp map[string]any
+	var err error
+	err = utils.WithRetry(ctx, func() error {
+		resp, err = rc.pdHTTPClient.GetReplicateConfig(ctx)
+		return err
+	}, utils.NewAggressivePDBackoffStrategy())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	const key = "max-replicas"
+	val, ok := resp[key]
+	if !ok {
+		return 0, errors.Errorf("key %s not found in response %v", key, resp)
+	}
+	replicaCount, ok := val.(float64)
+	if !ok {
+		return 0, errors.Errorf("invalid %s value in response %v", key, resp)
+	}
+	return uint(replicaCount), nil
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
@@ -665,28 +708,34 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	ctx context.Context,
 	restoreStartTS, startTS, restoredTS uint64,
 	gcRatio string,
+	rocksDBMaxBackgroundJobs string,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) (string, error) {
+	snapshotRestoreDataSize uint64,
+) (string, string, uint64, error) {
 	rc.useCheckpoint = true
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
 	exists, err := logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", "", 0, errors.Trace(err)
 	}
 	if exists {
 		// load the checkpoint since this is not the first time to restore
 		log.Info("loading existing log restore checkpoint")
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", "", 0, errors.Trace(err)
 		}
 
-		log.Info("reuse gc ratio from checkpoint metadata", zap.String("old-gc-ratio", gcRatio),
-			zap.String("checkpoint-gc-ratio", meta.GcRatio))
-		return meta.GcRatio, nil
+		if meta.RocksDBMaxBackgroundJobs != "" {
+			rocksDBMaxBackgroundJobs = meta.RocksDBMaxBackgroundJobs
+		}
+		log.Info("reuse TiKV config from checkpoint metadata",
+			zap.String("gc-ratio", meta.GcRatio),
+			zap.String("rocksdb-max-background-jobs", rocksDBMaxBackgroundJobs))
+		return meta.GcRatio, rocksDBMaxBackgroundJobs, meta.SnapshotRestoreDataSize, nil
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
@@ -694,22 +743,25 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	if tiflashRecorder != nil {
 		items = tiflashRecorder.GetItems()
 	}
-	log.Info("save gc ratio into checkpoint metadata",
+	log.Info("save TiKV config into checkpoint metadata",
 		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
-		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
+		zap.String("gc-ratio", gcRatio), zap.String("rocksdb-max-background-jobs", rocksDBMaxBackgroundJobs),
+		zap.Int("tiflash-item-count", len(items)))
 	if err := logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
-		UpstreamClusterID: rc.upstreamClusterID,
-		RestoreStartTS:    restoreStartTS,
-		RestoredTS:        restoredTS,
-		StartTS:           startTS,
-		RewriteTS:         rc.currentTS,
-		GcRatio:           gcRatio,
-		TiFlashItems:      items,
+		UpstreamClusterID:        rc.upstreamClusterID,
+		RestoreStartTS:           restoreStartTS,
+		RestoredTS:               restoredTS,
+		StartTS:                  startTS,
+		RewriteTS:                rc.currentTS,
+		GcRatio:                  gcRatio,
+		RocksDBMaxBackgroundJobs: rocksDBMaxBackgroundJobs,
+		SnapshotRestoreDataSize:  snapshotRestoreDataSize,
+		TiFlashItems:             items,
 	}); err != nil {
-		return gcRatio, errors.Trace(err)
+		return gcRatio, rocksDBMaxBackgroundJobs, snapshotRestoreDataSize, errors.Trace(err)
 	}
 
-	return gcRatio, nil
+	return gcRatio, rocksDBMaxBackgroundJobs, snapshotRestoreDataSize, nil
 }
 
 type LockedMigrations struct {
