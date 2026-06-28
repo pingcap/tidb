@@ -1141,9 +1141,14 @@ func (b *builtinStAsGeoJSONSig) evalString(ctx EvalContext, row chunk.Row) (stri
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	_, g, err := decodeEWKB(ewkb)
+	srid, g, err := decodeEWKB(ewkb)
 	if err != nil {
 		return "", false, err
+	}
+	// GeoJSON (RFC 7946) is always [longitude, latitude]. The POC stores 4326 in
+	// (latitude, longitude) axis order — matching MySQL's WKT — so swap for GeoJSON.
+	if srid == spatial.SRID4326 {
+		g = g.TransformXY(swapXY)
 	}
 	j, err := g.MarshalJSON()
 	if err != nil {
@@ -1151,6 +1156,11 @@ func (b *builtinStAsGeoJSONSig) evalString(ctx EvalContext, row chunk.Row) (stri
 	}
 	return string(j), false, nil
 }
+
+// swapXY exchanges a geometry's X and Y coordinates — used to convert between the
+// POC's stored 4326 axis order (latitude, longitude) and GeoJSON's [longitude,
+// latitude] (RFC 7946).
+func swapXY(xy geom.XY) geom.XY { return geom.XY{X: xy.Y, Y: xy.X} }
 
 type stGeomFromGeoJSONFunctionClass struct {
 	baseFunctionClass
@@ -1191,6 +1201,12 @@ func (b *builtinStGeomFromGeoJSONSig) evalString(ctx EvalContext, row chunk.Row)
 	g, err := geom.UnmarshalGeoJSON([]byte(jsonVal))
 	if err != nil {
 		return "", false, errors.Trace(err)
+	}
+	// GeoJSON is [longitude, latitude]; the POC stores 4326 in (latitude, longitude)
+	// axis order, so swap on the way in. (GeoJSON is always WGS 84 / SRID 4326.)
+	g = g.TransformXY(swapXY)
+	if verr := validateGeographic4326(g); verr != nil {
+		return "", false, verr
 	}
 	return encodeEWKB(g, spatial.SRID4326), false, nil
 }

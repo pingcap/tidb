@@ -105,3 +105,19 @@ func TestPOCSpatial4326Axis(t *testing.T) {
 	tk.MustQuery("SELECT ABS(ST_Distance_Sphere(ST_GeomFromText('POINT(30 50)',4326), " +
 		"ST_GeomFromText('POINT(31 51)',4326)) - 146775.88330371436) < 1").Check(testkit.Rows("1"))
 }
+
+// TestPOCSpatial4326GeoJSONAxis pins the GeoJSON axis order: GeoJSON (RFC 7946) is
+// always [longitude, latitude], even though MySQL/the POC store 4326 WKT as
+// (latitude, longitude). So ST_AsGeoJSON / ST_GeomFromGeoJSON swap the axis for 4326
+// (a follow-up to the roadmap-#2 axis fix); SRID 0 is left as-is.
+func TestPOCSpatial4326GeoJSONAxis(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// 4326 POINT(30 50) = lat 30, lng 50 → GeoJSON [lng, lat] = [50, 30] (MySQL order).
+	tk.MustQuery("SELECT ST_AsGeoJSON(ST_GeomFromText('POINT(30 50)',4326))").Check(testkit.Rows(`{"type":"Point","coordinates":[50,30]}`))
+	// Round-trip: GeoJSON [lng=50, lat=30] → stored lat 30, lng 50.
+	tk.MustQuery(`SELECT ST_Latitude(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[50,30]}')), ST_Longitude(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[50,30]}'))`).Check(testkit.Rows("30 50"))
+	// SRID 0 coordinates are not lat/lng, so GeoJSON is unchanged.
+	tk.MustQuery("SELECT ST_AsGeoJSON(ST_GeomFromText('POINT(30 50)',0))").Check(testkit.Rows(`{"type":"Point","coordinates":[30,50]}`))
+}
