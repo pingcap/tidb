@@ -62,7 +62,11 @@ columns + index stay consistent with the table. **Done**: `TestPOCSpatialConcurr
 The planar coverer hard-rejects non-0 SRID (`coverer.go:173`). Relax so any
 **projected** (non-geographic) SRID uses the planar coverer; keep 4326→S2. Test with
 e.g. SRID 3857 (Web Mercator). (Full SRS catalog out of scope; treat non-4326 as
-projected for the POC.)
+projected for the POC.) **4 gating sites to relax**: (1) `validateSpatialColumn`
+(DDL — POINT restricted to SRID 0/4326, general to 0); (2) `PlanarCoverer.EncodePoint`/
+`CoverRect` (`srid!=0` reject, `coverer.go:172/185`); (3) resolver `sridMatchesColumn`
+(default/region case requires `colSRID==0`); (4) the encode dispatch already routes
+non-4326→planar. Bounds for the SRID's coordinate range come from the index `COMMENT`.
 
 Order: bank the contained items (3, 7, 6) + the headline geodesic (2) first; give KNN
 (1) and the covering-index (8) the remaining time with checkpoints.
