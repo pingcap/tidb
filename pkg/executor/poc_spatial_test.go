@@ -398,6 +398,13 @@ func TestPOCSpatialCompatEdges(t *testing.T) {
 	err := tk.QueryToErr("SELECT ST_GeomFromText('POINT(100 50)',4326)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "latitude")
+	// Same validation on the WKB ingest path (batch item B2): a WKB whose first
+	// coordinate is latitude 91 is rejected when re-interpreted as SRID 4326, while a
+	// valid one round-trips (matches MySQL ST_GeomFromWKB).
+	err = tk.QueryToErr("SELECT ST_GeomFromWKB(ST_AsBinary(ST_GeomFromText('POINT(91 0)',0)), 4326)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "latitude")
+	tk.MustQuery("SELECT ST_AsText(ST_GeomFromWKB(ST_AsBinary(ST_GeomFromText('POINT(45 90)',0)), 4326))").Check(testkit.Rows("POINT(45 90)"))
 }
 
 // TestPOCSpatialTypedConstructors covers the typed WKT constructors (roadmap #9):

@@ -960,6 +960,11 @@ func (b *builtinStGeomFromWKBSig) evalString(ctx EvalContext, row chunk.Row) (st
 	if err != nil {
 		return "", false, errors.Trace(err)
 	}
+	if uint32(srid) == spatial.SRID4326 {
+		if verr := validateGeographic4326(g); verr != nil {
+			return "", false, verr
+		}
+	}
 	return encodeEWKB(g, uint32(srid)), false, nil
 }
 
