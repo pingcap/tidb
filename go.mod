@@ -66,10 +66,16 @@ require (
 	github.com/golangci/misspell v0.6.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
+<<<<<<< HEAD
 	github.com/google/pprof v0.0.0-20241001023024-f4c0cfd0cf1d
 	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
 	github.com/google/uuid v1.6.0
 	github.com/gordonklaus/ineffassign v0.1.0
+=======
+	github.com/google/pprof v0.0.0-20250903194437-c28834ac2320
+	github.com/google/uuid v1.6.1-0.20241114170450-2d3c2a9cc518
+	github.com/gordonklaus/ineffassign v0.2.0
+>>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
