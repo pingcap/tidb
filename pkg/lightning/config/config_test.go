@@ -1476,3 +1476,103 @@ func TestRedactConfig(t *testing.T) {
 		require.Contains(t, cfg.String(), tt.origin)
 	}
 }
+
+// TestColumnConstantsNewSection verifies that [[mydumper.column-constants]] parses
+// correctly and that GetColumnConstants returns the values map.
+func TestColumnConstantsNewSection(t *testing.T) {
+	tomlData := `
+[[mydumper.column-constants]]
+db    = "mydb"
+table = "mytable"
+[mydumper.column-constants.values]
+customer_name = "acme"
+ts            = "2026-04-17 21:00:00"
+`
+	cfg := NewConfig()
+	_, err := toml.Decode(tomlData, cfg)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Mydumper.adjustIgnoreColumns())
+
+	cc, err := cfg.Mydumper.ColumnConstants.GetColumnConstants("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"customer_name": "acme",
+		"ts":            "2026-04-17 21:00:00",
+	}, cc)
+}
+
+// TestColumnConstantsNewSectionAutoPopulatesIgnore verifies that columns named in
+// [[mydumper.column-constants]] are automatically added to the ignore set so users
+// don't need a separate [[mydumper.ignore-data-columns]] entry.
+func TestColumnConstantsNewSectionAutoPopulatesIgnore(t *testing.T) {
+	tomlData := `
+[[mydumper.column-constants]]
+db    = "mydb"
+table = "mytable"
+[mydumper.column-constants.values]
+customer_name = "acme"
+ts            = "2026-04-17 21:00:00"
+`
+	cfg := NewConfig()
+	_, err := toml.Decode(tomlData, cfg)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Mydumper.adjustIgnoreColumns())
+
+	ic, err := cfg.Mydumper.IgnoreColumns.GetIgnoreColumns("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"customer_name", "ts"}, ic.Columns)
+}
+
+// TestColumnConstantsAbsent verifies that GetColumnConstants returns nil when no
+// matching entry exists.
+func TestColumnConstantsAbsent(t *testing.T) {
+	cfg := NewConfig()
+	cc, err := cfg.Mydumper.ColumnConstants.GetColumnConstants("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.Nil(t, cc)
+}
+
+// TestColumnConstantsTableFilter verifies that a ColumnConstantsEntry using
+// table-filter (not db/table) matches correctly and auto-populates IgnoreColumns.
+func TestColumnConstantsTableFilter(t *testing.T) {
+	tomlData := `
+[[mydumper.column-constants]]
+table-filter = ["mydb.mytable"]
+[mydumper.column-constants.values]
+ts = "2026-04-17 21:00:00"
+`
+	cfg := NewConfig()
+	_, err := toml.Decode(tomlData, cfg)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Mydumper.adjustIgnoreColumns())
+
+	cc, err := cfg.Mydumper.ColumnConstants.GetColumnConstants("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"ts": "2026-04-17 21:00:00"}, cc)
+
+	ic, err := cfg.Mydumper.IgnoreColumns.GetIgnoreColumns("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"ts"}, ic.Columns)
+}
+
+// TestColumnConstantsDuplicateKey verifies that duplicate keys in column-constants
+// values (after lowercasing) return an error.
+func TestColumnConstantsDuplicateKey(t *testing.T) {
+	// TOML allows "TS" and "ts" as distinct keys (case-sensitive), but our
+	// normalization in adjustIgnoreColumns lowercases both to "ts", triggering
+	// the duplicate-detection path.
+	tomlData := `
+[[mydumper.column-constants]]
+db    = "mydb"
+table = "mytable"
+[mydumper.column-constants.values]
+TS = "2026-04-17 21:00:00"
+ts = "2026-04-17 22:00:00"
+`
+	cfg := NewConfig()
+	_, err := toml.Decode(tomlData, cfg)
+	require.NoError(t, err)
+	err = cfg.Mydumper.adjustIgnoreColumns()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duplicate column-constants entry for column ts")
+}
