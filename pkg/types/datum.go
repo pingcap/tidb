@@ -57,28 +57,53 @@ const (
 	KindMysqlBit      byte = 11 // Used for BIT table column values.
 	KindMysqlSet      byte = 12
 	KindMysqlTime     byte = 13
-	KindInterface     byte = 14
-	KindMinNotNull    byte = 15
-	KindMaxValue      byte = 16
-	KindRaw           byte = 17
-	KindMysqlJSON     byte = 18
-	KindVectorFloat32 byte = 19
+	// KindInterfaceDeprecated was once a catch-all kind (value 14) for Go
+	// values whose type was not recognized by SetValue / NewDatum. It is
+	// no longer produced or consumed by any code path; the constant and
+	// its value are retained so the kind-space is stable and the value 14
+	// is not accidentally reused by a future kind. This kind must never
+	// be written by new code; any Datum observed with it is a bug.
+	//
+	// The name is kept exported (vs. removed) so external consumers that
+	// enumerate kinds get a compile-time nudge toward the rename. The
+	// plain "Do not use" wording (rather than a `Deprecated:` marker)
+	// avoids triggering `staticcheck/SA1019` at the small number of
+	// legitimate sites that still need to refer to the constant (name
+	// tables, exhaustive "not implemented" restore groups).
+	KindInterfaceDeprecated byte = 14
+	KindMinNotNull          byte = 15
+	KindMaxValue            byte = 16
+	KindRaw                 byte = 17
+	KindMysqlJSON           byte = 18
+	KindVectorFloat32       byte = 19
 )
 
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
+//
+// Field layout is chosen to minimize padding and the per-Datum footprint.
+// The first 8-byte word packs: kind (1B), frac (1B), collationID (2B),
+// flen (4B), where "frac" / "flen" are the MySQL terms for the struct
+// fields named `decimal` and `length` respectively. The collation is
+// stored as a MySQL collation ID (0 = unset); the string-valued
+// Collation() accessor is kept as a facade that resolves the ID via the
+// charset package. After removing KindInterfaceDeprecated and packing
+// Time into d.i, the heterogeneous `x any` slot now only needs to hold
+// a *MyDecimal pointer, so it is typed directly — saving the interface
+// header (16 B) and an allocation for the Time boxing that the old
+// `x any` required.
 type Datum struct {
-	k         byte   // datum kind.
-	decimal   uint16 // decimal can hold uint16 values.
-	length    uint32 // length can hold uint32 values.
-	i         int64  // i can hold int64 uint64 float64 values.
-	collation string // collation hold the collation information for string value.
-	b         []byte // b can hold string or []byte values.
-	x         any    // x hold all other types.
+	k           byte       // datum kind.
+	decimal     uint8      // holds the frac (fractional digits). MySQL fsp <= 6 and DECIMAL frac <= 30.
+	collationID uint16     // MySQL collation id; 0 means unset. Replaces a 16-byte string.
+	length      uint32     // length can hold uint32 values.
+	i           int64      // i can hold int64, uint64, float bits, Duration ticks, Enum/Set Value, JSON TypeCode, and packed Time.
+	b           []byte     // b can hold string or []byte values.
+	decPtr      *MyDecimal // pointer to decimal value; non-nil only when k == KindMysqlDecimal.
 }
 
 // EmptyDatumSize is the size of empty datum.
-// 72 = 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
+// 48 = 1 (byte) + 1 (uint8) + 2 (uint16) + 4 (uint32) + 8 (int64) + 24 ([]byte) + 8 (*MyDecimal)
 const EmptyDatumSize = int64(unsafe.Sizeof(Datum{}))
 
 // Clone create a deep copy of the Datum.
@@ -95,12 +120,11 @@ func (d *Datum) Copy(dst *Datum) {
 		dst.b = make([]byte, len(d.b))
 		copy(dst.b, d.b)
 	}
-	switch dst.Kind() {
-	case KindMysqlDecimal:
+	// Time is stored inline in d.i, so the bitwise copy above already
+	// produced an independent value; no KindMysqlTime branch needed.
+	if dst.Kind() == KindMysqlDecimal {
 		d := *d.GetMysqlDecimal()
 		dst.SetMysqlDecimal(&d)
-	case KindMysqlTime:
-		dst.SetMysqlTime(d.GetMysqlTime())
 	}
 }
 
@@ -109,14 +133,53 @@ func (d *Datum) Kind() byte {
 	return d.k
 }
 
-// Collation gets the collation of the datum.
+// Collation gets the collation name of the datum. It is kept as a string
+// facade for API compatibility; the underlying storage is a uint16 MySQL
+// collation id. Each call resolves the id back to a name via the charset
+// map, so hot-path callers should prefer CollationID() — see the note
+// there for why.
 func (d *Datum) Collation() string {
-	return d.collation
+	if d.collationID == 0 {
+		return ""
+	}
+	if c, err := charset.GetCollationByID(int(d.collationID)); err == nil {
+		return c.Name
+	}
+	return ""
 }
 
-// SetCollation sets the collation of the datum.
+// CollationID returns the MySQL collation id; 0 means the datum has no
+// collation set (previously represented by an empty string).
+//
+// Hot paths use this instead of Collation() because comparing two
+// uint16 ids is cheaper than allocating two strings (via name lookup)
+// and comparing them. Current consumers: ranger/detacher,
+// util/codec.encodeString, planner/cardinality column row counts, and
+// table/tables.mutationChecker on the index probe path. They feed the
+// id straight into collate.GetCollatorByID without round-tripping
+// through the name.
+func (d *Datum) CollationID() uint16 {
+	return d.collationID
+}
+
+// SetCollation sets the collation of the datum by name. Unknown or empty
+// names are stored as id 0 to preserve prior "use default" behavior.
 func (d *Datum) SetCollation(collation string) {
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
+}
+
+// collationNameToID translates a collation name to a MySQL collation id.
+// Returns 0 for the empty string or an unknown name, matching the legacy
+// behavior of storing the raw string and letting the collator lookup fall
+// back to the default.
+func collationNameToID(name string) uint16 {
+	if name == "" {
+		return 0
+	}
+	if c, err := charset.GetCollationByName(name); err == nil {
+		return uint16(c.ID)
+	}
+	return 0
 }
 
 // Frac gets the frac of the datum.
@@ -126,7 +189,7 @@ func (d *Datum) Frac() int {
 
 // SetFrac sets the frac of the datum.
 func (d *Datum) SetFrac(frac int) {
-	d.decimal = uint16(frac)
+	d.decimal = uint8(frac)
 }
 
 // Length gets the length of the datum.
@@ -201,7 +264,7 @@ func (d *Datum) GetString() string {
 
 // GetBinaryStringEncoded gets the string value encoded with given charset.
 func (d *Datum) GetBinaryStringEncoded() string {
-	coll, err := charset.GetCollationByName(d.Collation())
+	coll, err := charset.GetCollationByID(int(d.collationID))
 	if err != nil {
 		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
 		return d.GetString()
@@ -252,7 +315,7 @@ func (d *Datum) SetString(s string, collation string) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 }
 
 // sink prevents s from being allocated on the stack.
@@ -271,7 +334,7 @@ func (d *Datum) GetBytes() []byte {
 func (d *Datum) SetBytes(b []byte) {
 	d.k = KindBytes
 	d.b = b
-	d.collation = charset.CollationBin
+	d.collationID = mysql.BinaryDefaultCollationID
 }
 
 // SetBytesAsString sets bytes value to datum as string type.
@@ -279,30 +342,25 @@ func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 	d.k = KindString
 	d.b = b
 	d.length = length
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 }
 
-// GetInterface gets interface value.
-func (d *Datum) GetInterface() any {
-	return d.x
-}
-
-// SetInterface sets interface to datum.
-func (d *Datum) SetInterface(x any) {
-	d.k = KindInterface
-	d.x = x
-}
+// GetInterface and SetInterface were removed along with the
+// KindInterfaceDeprecated (14) kind. The x field is now only used
+// internally to carry *MyDecimal and the boxed Time value; callers that
+// previously relied on the escape hatch should use the typed Set/Get
+// methods for the value they actually hold.
 
 // SetNull sets datum to nil.
 func (d *Datum) SetNull() {
 	d.k = KindNull
-	d.x = nil
+	d.decPtr = nil
 }
 
 // SetMinNotNull sets datum to minNotNull value.
 func (d *Datum) SetMinNotNull() {
 	d.k = KindMinNotNull
-	d.x = nil
+	d.decPtr = nil
 }
 
 // GetBinaryLiteral4Cmp gets Bit value, and remove it's prefix 0 for comparison.
@@ -335,7 +393,7 @@ func (d *Datum) GetMysqlBit() BinaryLiteral {
 func (d *Datum) SetBinaryLiteral(b BinaryLiteral) {
 	d.k = KindBinaryLiteral
 	d.b = b
-	d.collation = charset.CollationBin
+	d.collationID = mysql.BinaryDefaultCollationID
 }
 
 // SetMysqlBit sets MysqlBit value
@@ -344,18 +402,21 @@ func (d *Datum) SetMysqlBit(b BinaryLiteral) {
 	d.b = b
 }
 
-// GetMysqlDecimal gets decimal value
+// GetMysqlDecimal gets decimal value.
 func (d *Datum) GetMysqlDecimal() *MyDecimal {
-	return d.x.(*MyDecimal)
+	return d.decPtr
 }
 
-// SetMysqlDecimal sets decimal value
+// SetMysqlDecimal sets decimal value.
 func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 	d.k = KindMysqlDecimal
-	d.x = b
+	d.decPtr = b
 }
 
-// GetMysqlDuration gets Duration value
+// GetMysqlDuration gets Duration value. d.decimal is stored as uint8, but
+// callers encode Fsp = -1 as the "unspecified" sentinel (see
+// types.UnspecifiedFsp), which round-trips as 255 in the narrow field.
+// Sign-extend via int8 to recover the original Fsp.
 func (d *Datum) GetMysqlDuration() Duration {
 	return Duration{Duration: time.Duration(d.i), Fsp: int(int8(d.decimal))}
 }
@@ -364,7 +425,7 @@ func (d *Datum) GetMysqlDuration() Duration {
 func (d *Datum) SetMysqlDuration(b Duration) {
 	d.k = KindMysqlDuration
 	d.i = int64(b.Duration)
-	d.decimal = uint16(b.Fsp)
+	d.decimal = uint8(b.Fsp)
 }
 
 // GetMysqlEnum gets Enum value
@@ -378,7 +439,7 @@ func (d *Datum) SetMysqlEnum(b Enum, collation string) {
 	d.k = KindMysqlEnum
 	d.i = int64(b.Value)
 	sink(b.Name)
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 	d.b = hack.Slice(b.Name)
 }
 
@@ -393,7 +454,7 @@ func (d *Datum) SetMysqlSet(b Set, collation string) {
 	d.k = KindMysqlSet
 	d.i = int64(b.Value)
 	sink(b.Name)
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 	d.b = hack.Slice(b.Name)
 }
 
@@ -424,16 +485,24 @@ func (d *Datum) GetVectorFloat32() VectorFloat32 {
 	return v
 }
 
-// GetMysqlTime gets types.Time value
+// GetMysqlTime gets types.Time value. Time is a bit-packed CoreTime
+// (uint64) so it lives directly in d.i
 func (d *Datum) GetMysqlTime() Time {
-	return d.x.(Time)
+	intest.Assert(d.k == KindMysqlTime, "GetMysqlTime called on Datum of kind ", d.k)
+	return Time{coreTime: CoreTime(uint64(d.i))}
 }
 
-// SetMysqlTime sets types.Time value
+// SetMysqlTime sets types.Time value. Keep the representation inside
+// d.i (8 bytes) rather than boxing through d.x; see GetMysqlTime.
 func (d *Datum) SetMysqlTime(b Time) {
 	d.k = KindMysqlTime
-	d.x = b
+	d.i = int64(uint64(b.coreTime))
 }
+
+// Compile-time guard: GetMysqlTime/SetMysqlTime assume Time fits in
+// d.i (8 bytes). If Time ever gains a field beyond coreTime, the
+// pack/unpack would silently drop data — break the build instead.
+var _ [8]byte = [unsafe.Sizeof(Time{})]byte{}
 
 // SetRaw sets raw value.
 func (d *Datum) SetRaw(b []byte) {
@@ -488,8 +557,6 @@ func (d Datum) String() string {
 		t = "KindMysqlSet"
 	case KindMysqlTime:
 		t = "KindMysqlTime"
-	case KindInterface:
-		t = "KindInterface"
 	case KindMinNotNull:
 		t = "KindMinNotNull"
 	case KindMaxValue:
@@ -500,8 +567,10 @@ func (d Datum) String() string {
 		t = "KindMysqlJSON"
 	case KindVectorFloat32:
 		t = "KindVectorFloat32"
+	// No case for KindInterfaceDeprecated (14): unreachable at runtime;
+	// falls through to the default which prints the raw kind value.
 	default:
-		t = "Unknown"
+		t = fmt.Sprintf("Unknown type: %d", int(d.k))
 	}
 	v := d.GetValue()
 	switch v.(type) {
@@ -549,8 +618,14 @@ func (d *Datum) GetValue() any {
 		return d.GetMysqlTime()
 	case KindVectorFloat32:
 		return d.GetVectorFloat32()
+	case KindNull, KindMinNotNull, KindMaxValue, KindRaw:
+		// These kinds carry no inline value; nil matches the prior
+		// behavior where d.x was unset and GetInterface returned nil.
+		return nil
 	default:
-		return d.GetInterface()
+		// Any remaining kind (e.g. KindInterfaceDeprecated, or a stale
+		// byte written to d.k) is a programmer bug.
+		panic(fmt.Sprintf("types.Datum.GetValue: invalid kind %d", d.k))
 	}
 }
 
@@ -637,7 +712,7 @@ func (d *Datum) SetValueWithDefaultCollation(val any) {
 	case VectorFloat32:
 		d.SetVectorFloat32(x)
 	default:
-		d.SetInterface(x)
+		panic(fmt.Sprintf("types.Datum.SetValue: unsupported Go type %T", x))
 	}
 }
 
@@ -687,7 +762,7 @@ func (d *Datum) SetValue(val any, tp *types.FieldType) {
 	case VectorFloat32:
 		d.SetVectorFloat32(x)
 	default:
-		d.SetInterface(x)
+		panic(fmt.Sprintf("types.Datum.SetValue: unsupported Go type %T", x))
 	}
 }
 
@@ -717,7 +792,7 @@ func (d *Datum) Equals(other any) bool {
 		d.decimal == d2.decimal &&
 		d.length == d2.length &&
 		d.i == d2.i &&
-		d.collation == d2.collation &&
+		d.collationID == d2.collationID &&
 		string(d.b) == string(d2.b)
 	if !ok {
 		return false
@@ -1163,7 +1238,7 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 	case KindFloat64:
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
-		fromBinary := d.Collation() == charset.CollationBin
+		fromBinary := d.collationID == mysql.BinaryDefaultCollationID
 		toBinary := target.GetCharset() == charset.CharsetBin
 		if fromBinary && toBinary {
 			s = d.GetString()
@@ -2159,13 +2234,13 @@ func (d *Datum) ToBytes() ([]byte, error) {
 func (d *Datum) ToHashKey() ([]byte, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return collate.GetCollator(d.Collation()).Key(d.GetString()), nil
+		return collate.GetCollatorByID(int(d.collationID)).Key(d.GetString()), nil
 	default:
 		str, err := d.ToString()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return collate.GetCollator(d.Collation()).Key(str), nil
+		return collate.GetCollatorByID(int(d.collationID)).Key(str), nil
 	}
 }
 
@@ -2208,10 +2283,15 @@ func (d *Datum) ToMysqlJSON() (j BinaryJSON, err error) {
 
 // MemUsage gets the memory usage of datum.
 func (d *Datum) MemUsage() (sum int64) {
-	// d.x is not considered now since MemUsage is now only used by analyze samples which is bytesDatum
-	return EmptyDatumSize + int64(cap(d.b)) + int64(len(d.collation))
+	// d.x is not considered now since MemUsage is now only used by analyze samples which is bytesDatum.
+	// The collation is stored inline as a uint16 id, so it no longer
+	// contributes a variable-size term here.
+	return EmptyDatumSize + int64(cap(d.b))
 }
 
+// jsonDatum keeps the on-wire JSON format stable: the Collation field
+// carries the collation name, not the internal uint16 id, so blobs
+// encoded by older versions still round-trip.
 type jsonDatum struct {
 	K         byte       `json:"k"`
 	Decimal   uint16     `json:"decimal,omitempty"`
@@ -2225,21 +2305,36 @@ type jsonDatum struct {
 
 // MarshalJSON implements Marshaler.MarshalJSON interface.
 func (d *Datum) MarshalJSON() ([]byte, error) {
+	// Decimal is uint8 internally but uint16 on the wire for back-compat.
+	// Map the UnspecifiedFsp sentinel (^uint8(0) == 255) back to the legacy
+	// ^uint16(0) == 65535 so older readers — which still treat the field as
+	// signed -1 — don't decode 255 as a real positive frac.
+	jdDecimal := uint16(d.decimal)
+	if d.decimal == ^uint8(0) {
+		jdDecimal = ^uint16(0)
+	}
 	jd := &jsonDatum{
 		K:         d.k,
-		Decimal:   d.decimal,
+		Decimal:   jdDecimal,
 		Length:    d.length,
 		I:         d.i,
-		Collation: d.collation,
+		Collation: d.Collation(),
 		B:         d.b,
 	}
 	switch d.k {
 	case KindMysqlTime:
+		// Time is packed into d.i; emit it through jd.Time only so the
+		// JSON payload doesn't carry the same bits twice. UnmarshalJSON
+		// re-derives d.i from jd.Time via SetMysqlTime.
+		jd.I = 0
 		jd.Time = d.GetMysqlTime()
 	case KindMysqlDecimal:
 		jd.MyDecimal = d.GetMysqlDecimal()
 	default:
-		if d.x != nil {
+		// d.decPtr is only set by SetMysqlDecimal; any other kind that
+		// still has it populated is a bug (stale field from a reused
+		// Datum, perhaps).
+		if d.decPtr != nil {
 			return nil, fmt.Errorf("unsupported type: %d", d.k)
 		}
 	}
@@ -2253,10 +2348,10 @@ func (d *Datum) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	d.k = jd.K
-	d.decimal = jd.Decimal
+	d.decimal = uint8(jd.Decimal)
 	d.length = jd.Length
 	d.i = jd.I
-	d.collation = jd.Collation
+	d.collationID = collationNameToID(jd.Collation)
 	d.b = jd.B
 
 	switch jd.K {
@@ -2409,7 +2504,7 @@ func SortDatums(ctx Context, datums []Datum) error {
 	var err error
 	slices.SortFunc(datums, func(a, b Datum) int {
 		var cmp int
-		cmp, err = a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
+		cmp, err = a.Compare(ctx, &b, collate.GetCollatorByID(int(b.collationID)))
 		if err != nil {
 			return 0
 		}
@@ -2716,7 +2811,6 @@ func ChangeReverseResultByUpperLowerBound(
 
 const (
 	sizeOfEmptyDatum = int(unsafe.Sizeof(Datum{}))
-	sizeOfMysqlTime  = int(unsafe.Sizeof(ZeroTime))
 	sizeOfMyDecimal  = MyDecimalStructSize
 )
 
@@ -2740,7 +2834,7 @@ func (d Datum) EstimatedMemUsage() int64 {
 	case KindMysqlDecimal:
 		bytesConsumed += sizeOfMyDecimal
 	case KindMysqlTime:
-		bytesConsumed += sizeOfMysqlTime
+		// Time is packed inline in d.i, already counted in sizeOfEmptyDatum.
 	case KindVectorFloat32:
 		bytesConsumed += d.GetVectorFloat32().EstimatedMemUsage()
 	default:

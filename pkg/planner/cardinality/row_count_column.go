@@ -125,10 +125,10 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
 		if highVal.Kind() == types.KindString {
-			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
+			highVal.SetBytes(collate.GetCollatorByID(int(highVal.CollationID())).Key(highVal.GetString()))
 		}
 		if lowVal.Kind() == types.KindString {
-			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
+			lowVal.SetBytes(collate.GetCollatorByID(int(lowVal.CollationID())).Key(lowVal.GetString()))
 		}
 		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
 		if err != nil {

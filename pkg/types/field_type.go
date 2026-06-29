@@ -181,12 +181,13 @@ func InferParamTypeFromDatum(d *Datum, tp *FieldType) {
 	InferParamTypeFromUnderlyingValue(d.GetValue(), tp)
 	if IsStringKind(d.k) {
 		// consider charset and collation here
-		c, err := collate.GetCollationByName(d.collation)
+		name := d.Collation()
+		c, err := collate.GetCollationByName(name)
 		if err != nil || c == nil {
 			return // use default charset and collation
 		}
 		tp.SetCharset(c.CharsetName)
-		tp.SetCollate(d.collation)
+		tp.SetCollate(name)
 	}
 }
 

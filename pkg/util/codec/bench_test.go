@@ -38,6 +38,7 @@ func composeEncodedData(size int) []byte {
 func BenchmarkDecodeWithSize(b *testing.B) {
 	b.StopTimer()
 	bs := composeEncodedData(valueCnt)
+	b.ReportAllocs()
 	b.StartTimer()
 	for range b.N {
 		_, err := Decode(bs, valueCnt)
@@ -50,6 +51,7 @@ func BenchmarkDecodeWithSize(b *testing.B) {
 func BenchmarkDecodeWithOutSize(b *testing.B) {
 	b.StopTimer()
 	bs := composeEncodedData(valueCnt)
+	b.ReportAllocs()
 	b.StartTimer()
 	for range b.N {
 		_, err := Decode(bs, 1)
@@ -60,6 +62,7 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 }
 
 func BenchmarkEncodeIntWithSize(b *testing.B) {
+	b.ReportAllocs()
 	for range b.N {
 		data := make([]byte, 0, 8)
 		EncodeInt(data, 10)
@@ -67,6 +70,7 @@ func BenchmarkEncodeIntWithSize(b *testing.B) {
 }
 
 func BenchmarkEncodeIntWithOutSize(b *testing.B) {
+	b.ReportAllocs()
 	for range b.N {
 		EncodeInt(nil, 10)
 	}
@@ -80,6 +84,7 @@ func BenchmarkDecodeDecimal(b *testing.B) {
 	}
 	precision, frac := dec.PrecisionAndFrac()
 	raw, _ := EncodeDecimal([]byte{}, dec, precision, frac)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
 		_, _, _, _, err := DecodeDecimal(raw)
@@ -96,6 +101,7 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	raw = append(raw, bytesFlag)
 	raw = EncodeBytes(raw, str.GetBytes())
 	intType := types.NewFieldType(mysql.TypeLonglong)
+	b.ReportAllocs()
 	b.ResetTimer()
 	decoder := NewDecoder(chunk.New([]*types.FieldType{intType}, 32, 32), nil)
 	for range b.N {

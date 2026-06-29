@@ -308,6 +308,12 @@ func appendDatumForChecksum(loc *time.Location, buf []byte, dat *data.Datum, typ
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		out = appendLengthValue(buf, dat.GetBytes())
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
+		// GetMysqlTime reinterprets d.i as CoreTime without a kind check,
+		// so the defer-recover above cannot turn a mismatched-kind Datum
+		// into an error the way it does for the other boxed getters.
+		if dat.Kind() != data.KindMysqlTime {
+			return buf, errInvalidChecksumTyp
+		}
 		t := dat.GetMysqlTime()
 		if t.Type() == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
 			err = t.ConvertTimeZone(loc, time.UTC)
