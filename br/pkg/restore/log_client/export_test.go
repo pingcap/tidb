@@ -22,6 +22,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -102,12 +103,26 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 	}
 }
 
+func TEST_NewLogClientWithLogFileManager(fm *LogFileManager) *LogClient {
+	return &LogClient{
+		LogFileManager: fm,
+	}
+}
+
 // TEST_NewLogClientWithStorage returns a minimal LogClient whose only
 // dependency is the storage. It is intended for tests that exercise
 // storage-level behavior (lock acquisition, migration loading) and do
 // not need the full domain / session / checkpoint wiring.
 func TEST_NewLogClientWithStorage(s storage.ExternalStorage) *LogClient {
 	return &LogClient{storage: s}
+}
+
+func (rc *LogClient) TEST_ConstructIDMap(
+	ctx context.Context,
+	fs []*backuppb.DataFileInfo,
+	sr *stream.SchemasReplace,
+) error {
+	return rc.constructIDMap(ctx, fs, sr)
 }
 
 func (rc *LogClient) SetUseCheckpoint() {
@@ -125,6 +140,60 @@ func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper stre
 
 func TEST_CountReadableMetaKVFiles(files []*backuppb.DataFileInfo) int {
 	return countReadableMetaKVFiles(files)
+}
+
+func TEST_EstimateCompactedSSTFlowControl(
+	backupFileSets restore.BatchBackupFileSet,
+	storeCount uint,
+	replicaCount uint,
+	snapshotRestoreBytes uint64,
+	checkpointCompactedSSTBytes uint64,
+) (uint64, uint64, uint64, uint64, uint64) {
+	estimate := estimateCompactedSSTFlowControl(
+		backupFileSets,
+		snapshotRestoreBytes,
+		checkpointCompactedSSTBytes,
+		storeCount,
+		replicaCount,
+	)
+	return estimate.snapshotRestoreBytes,
+		estimate.compactedSSTBytes,
+		estimate.l6BytesPerStore,
+		estimate.l5BytesPerStore,
+		estimate.pendingBytes
+}
+
+func TEST_EstimatePendingCompactionBytes(l6BytesPerStore, l5BytesPerStore uint64) uint64 {
+	return estimatePendingCompactionBytes(l6BytesPerStore, l5BytesPerStore)
+}
+
+func TEST_CompactedSSTFlowControlTarget(
+	softConfig, hardConfig []string,
+	pendingBytes uint64,
+) (uint64, uint64) {
+	originConfig := &compactedSSTFlowControlConfig{
+		soft: make([]tikvConfigValue, 0, len(softConfig)),
+		hard: make([]tikvConfigValue, 0, len(hardConfig)),
+	}
+	for _, value := range softConfig {
+		originConfig.soft = append(originConfig.soft, tikvConfigValue{value: value})
+	}
+	for _, value := range hardConfig {
+		originConfig.hard = append(originConfig.hard, tikvConfigValue{value: value})
+	}
+	return compactedSSTFlowControlTarget(originConfig, pendingBytes)
+}
+
+func TEST_AllTiKVConfigsAtLeast(values []string, target uint64) bool {
+	configs := make([]tikvConfigValue, 0, len(values))
+	for _, value := range values {
+		configs = append(configs, tikvConfigValue{value: value})
+	}
+	return allTiKVConfigsAtLeast(configs, target)
+}
+
+func TEST_FormatBytes(bytes uint64) string {
+	return formatBytes(bytes)
 }
 
 type FakeStreamMetadataHelper struct {

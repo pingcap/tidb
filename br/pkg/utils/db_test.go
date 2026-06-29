@@ -40,7 +40,8 @@ func (m *mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts 
 
 	if strings.Contains(sql, "show config") {
 		return m.rows, m.fields, nil
-	} else if strings.Contains(sql, "set config") && strings.Contains(sql, "gc.ratio-threshold") {
+	} else if strings.Contains(sql, "set config") &&
+		(strings.Contains(sql, "gc.ratio-threshold") || strings.Contains(sql, "rocksdb.max-background-jobs")) {
 		value := args[0].(string)
 
 		for _, r := range m.rows {
@@ -98,6 +99,38 @@ func TestGc(t *testing.T) {
 	ratio, err = utils.GetGcRatio(s)
 	require.Nil(t, err)
 	require.Equal(t, ratio, "-1.0")
+}
+
+func TestRocksDBMaxBackgroundJobs(t *testing.T) {
+	fields := make([]*resolve.ResultField, 4)
+	tps := []*types.FieldType{
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+	}
+	for i := 0; i < len(tps); i++ {
+		rf := new(resolve.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *tps[i]
+		fields[i] = rf
+	}
+	rows := make([]chunk.Row, 0, 2)
+	row := chunk.MutRowFromValues("tikv", " 127.0.0.1:20161", "rocksdb.max-background-jobs", "8").ToRow()
+	rows = append(rows, row)
+	row = chunk.MutRowFromValues("tikv", " 127.0.0.1:20162", "rocksdb.max-background-jobs", "8").ToRow()
+	rows = append(rows, row)
+
+	s := &mockRestrictedSQLExecutor{rows: rows, fields: fields}
+	jobs, err := utils.GetRocksDBMaxBackgroundJobs(s)
+	require.NoError(t, err)
+	require.Equal(t, "8", jobs)
+
+	err = utils.SetRocksDBMaxBackgroundJobs(s, utils.RocksDBMaxBackgroundJobsForRestore)
+	require.NoError(t, err)
+	jobs, err = utils.GetRocksDBMaxBackgroundJobs(s)
+	require.NoError(t, err)
+	require.Equal(t, utils.RocksDBMaxBackgroundJobsForRestore, jobs)
 }
 
 func TestRegionSplitInfo(t *testing.T) {

@@ -237,11 +237,8 @@ func (rc *SnapClient) GetSupportPolicy() bool {
 }
 
 func (rc *SnapClient) updateConcurrency() {
-	// we believe 32 is large enough for download worker pool.
-	// it won't reach the limit if sst files distribute evenly.
-	// when restore memory usage is still too high, we should reduce concurrencyPerStore
-	// to sarifice some speed to reduce memory usage.
-	count := uint(rc.storeCount) * rc.concurrencyPerStore * 32
+	const downloadWorkerPoolSizePerStore uint = 7186
+	count := uint(rc.storeCount) * downloadWorkerPoolSizePerStore
 	log.Info("download coarse worker pool", zap.Uint("size", count))
 	rc.workerPool = tidbutil.NewWorkerPool(count, "file")
 }

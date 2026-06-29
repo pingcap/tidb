@@ -169,7 +169,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 	flags.String(flagGranularity, string(restore.CoarseGrained), "(deprecated) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks")
+	flags.Uint(flagConcurrencyPerStore, conn.DefaultImportNumGoroutines, "The size of thread pool on each store that executes tasks")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -289,6 +289,8 @@ type RestoreConfig struct {
 	UseCheckpoint     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
 	upstreamClusterID uint64 `json:"-" toml:"-"`
 	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	// snapshotRestoreDataSize records the filtered snapshot files restored before PITR log restore.
+	snapshotRestoreDataSize uint64
 
 	// for phased PITR restore
 	RestorePhase   uint64 `json:"restore-phase" toml:"restore-phase"`
@@ -932,6 +934,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return err
 	}
 	files, tables, dbs := filterRestoreFiles(client, cfg)
+	cfg.snapshotRestoreDataSize = totalBackupFileSize(files)
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
@@ -1267,6 +1270,21 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	return nil
 }
 
+func adjustRestoreConcurrencyPerStoreFromTiKV(ctx context.Context, mgr *conn.Mgr, cfg *RestoreConfig) {
+	kvConfigs := &pconfig.KVConfig{
+		ImportGoroutines: cfg.ConcurrencyPerStore,
+		MergeRegionSize: pconfig.ConfigTerm[uint64]{
+			Modified: true,
+		},
+		MergeRegionKeyCount: pconfig.ConfigTerm[uint64]{
+			Modified: true,
+		},
+	}
+	httpCli := httputil.NewClient(mgr.GetTLSConfig())
+	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
+	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
+}
+
 func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
 	var resp map[string]any
 	err = utils.WithRetry(ctx, func() error {
@@ -1309,6 +1327,14 @@ func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint6
 	}
 	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
 	return totalSize * replicaCnt / storeCnt
+}
+
+func totalBackupFileSize(files []*backuppb.File) uint64 {
+	totalSize := uint64(0)
+	for _, file := range files {
+		totalSize += file.GetSize_()
+	}
+	return totalSize
 }
 
 func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
