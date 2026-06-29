@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -82,6 +83,12 @@ type BatchPointGetExec struct {
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
+
+	// memTracker tracks the memory usage of the row values buffered in e.values.
+	// Without it the memory held by a large batch point get (e.g. a big `IN`
+	// list over wide rows) is invisible to the query memory quota and to the
+	// instance memory-limit killer, so such queries cannot be canceled.
+	memTracker *memory.Tracker
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -118,6 +125,13 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		}
 	}
 	e.batchGetter = batchGetter
+
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	e.memTracker.AttachTo(sessVars.StmtCtx.MemTracker)
 	return nil
 }
 
@@ -477,6 +491,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			continue
 		}
 		e.values = append(e.values, val.Value)
+		// Account for the buffered row value so the query can be canceled when it
+		// exceeds tidb_mem_quota_query. This fires incrementally as values are
+		// appended, so an oversized batch is stopped as soon as it crosses the quota.
+		e.memTracker.Consume(int64(len(val.Value)))
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)

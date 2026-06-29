@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -230,4 +232,45 @@ func TestPointGetForTemporaryTable(t *testing.T) {
 	// Point get.
 	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
+}
+
+func TestBatchPointGetMemoryTracking(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v varchar(4096))")
+
+	// Insert rows with sizable values so that a batch point get buffering all of
+	// them uses well over a small per-query memory quota.
+	const rows = 200
+	val := strings.Repeat("x", 4000)
+	var insert strings.Builder
+	insert.WriteString("insert into t values ")
+	ids := make([]string, 0, rows)
+	for i := range rows {
+		if i > 0 {
+			insert.WriteByte(',')
+		}
+		fmt.Fprintf(&insert, "(%d, '%s')", i, val)
+		ids = append(ids, fmt.Sprintf("%d", i))
+	}
+	tk.MustExec(insert.String())
+
+	query := fmt.Sprintf("select * from t where id in (%s)", strings.Join(ids, ","))
+	// Ensure the plan is actually a batch point get.
+	require.Contains(t, tk.MustQuery("explain format='brief' " + query).Rows()[0][0].(string), "Batch_Point_Get")
+
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action = default")
+
+	// With a generous quota the query succeeds.
+	tk.MustExec("set @@tidb_mem_quota_query = 1 << 30")
+	require.NoError(t, tk.QueryToErr(query))
+
+	// With a small quota the buffered row values (~800KB) exceed it and the query
+	// is canceled. Before BatchPointGetExec tracked this memory, the query ran to
+	// completion because its memory usage was invisible to the tracker.
+	tk.MustExec("set @@tidb_mem_quota_query = 128 * 1024")
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.QueryToErr(query)))
 }
