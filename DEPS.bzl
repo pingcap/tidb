@@ -9358,11 +9358,11 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sha256 = "f1fa1052808e6bd6eb9c5372c053b2370a582532fac5d6a4600e7a6fab190ff3",
-        strip_prefix = "golang.org/x/sys@v0.44.0",
+        sha256 = "e51c1c88045b4edbe48ad810122131381ff541c89edbd97ef833ed6653b59e6a",
+        strip_prefix = "golang.org/x/sys@v0.45.0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.45.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.45.0.zip",
         ],
     )
     go_repository(
