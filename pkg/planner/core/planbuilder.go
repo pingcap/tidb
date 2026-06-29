@@ -4056,12 +4056,16 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 				}
 				fullUpdateLookupIS = fullUpdateSnapshot.InfoSchema
 			}
-			if err := validateMVFullUpdateSupportingIndex(
+			supportingIndexNames, err := validateMVFullUpdateSupportingIndex(
 				ctx,
 				fullUpdateLookupIS,
 				res.BaseTableID,
 				res.GroupKeyBaseCols,
-			); err != nil {
+			)
+			if err != nil {
+				return nil, err
+			}
+			if err := mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, supportingIndexNames); err != nil {
 				return nil, err
 			}
 			// The lookup template relies on index-join inner-child pattern (Selection/Agg on probe side),
@@ -4173,18 +4177,19 @@ func validateMVFullUpdateSupportingIndex(
 	is infoschema.InfoSchema,
 	baseTableID int64,
 	groupKeyBaseCols []string,
-) error {
+) ([]pmodel.CIStr, error) {
 	if len(groupKeyBaseCols) == 0 {
-		return errors.New("mview full-update lookup template: group key base columns are empty")
+		return nil, errors.New("mview full-update lookup template: group key base columns are empty")
 	}
 	baseTable, ok := is.TableByID(ctx, baseTableID)
 	if !ok || baseTable == nil {
-		return errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
+		return nil, errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
 	}
-	if !mview.HasVisibleIndexWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols) {
-		return errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols)
+	if len(indexNames) == 0 {
+		return nil, errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
 	}
-	return nil
+	return indexNames, nil
 }
 
 // extractMVFullUpdateLookupTemplate extracts executor-facing lookup metadata from the optimized

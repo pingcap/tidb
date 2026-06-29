@@ -2192,6 +2192,63 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	))
 }
 
+func TestMaterializedViewRefreshFastMinMaxUsesSupportingIndex(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`CREATE TABLE t_mv_fast_minmax_hint (
+		id BIGINT NOT NULL,
+		c01 VARCHAR(32) NOT NULL DEFAULT '',
+		c02 VARCHAR(64) NOT NULL DEFAULT '',
+		c03 INT NOT NULL DEFAULT 0,
+		c04 INT NOT NULL DEFAULT 0,
+		c05 INT NOT NULL DEFAULT 0,
+		c06 VARCHAR(16) NOT NULL DEFAULT '',
+		c07 DATE NOT NULL,
+		c08 INT NOT NULL DEFAULT 0,
+		c09 DATETIME NOT NULL,
+		c10 DATETIME DEFAULT '2100-01-01 00:00:00',
+		m01 DECIMAL(19,6) NOT NULL DEFAULT 0,
+		m02 DECIMAL(19,6) NOT NULL DEFAULT 0,
+		m03 DECIMAL(19,6) NOT NULL DEFAULT 0,
+		PRIMARY KEY (id),
+		KEY idx_c02_c09 (c02, c09),
+		KEY idx_mv_minmax (c07, c02, c06, c05, c04, c03, c01, c08, m02, m03)
+	)`)
+	tk.MustExec(`CREATE MATERIALIZED VIEW LOG ON t_mv_fast_minmax_hint(
+		c04, c03, c01, c02, m01, m02, m03, c08, c05, c06, c07
+	)`)
+	tk.MustExec(`CREATE MATERIALIZED VIEW mv_fast_minmax_hint (
+		c01, c02, c03, c04, c05, c06, c07,
+		cnt, sum_m01, sum_m02, sum_m03, max_m02, max_m03, min_m03
+	) REFRESH FAST AS
+	SELECT
+		t.c01, t.c02, t.c03, t.c04, t.c05, t.c06, t.c07,
+		COUNT(1), SUM(t.m01), SUM(t.m02), SUM(t.m03),
+		MAX(t.m02), MAX(t.m03), MIN(t.m03)
+	FROM t_mv_fast_minmax_hint AS t
+	WHERE t.c08 = 2
+		AND t.c01 != 0
+		AND t.c01 != ''
+		AND t.c02 != ''
+		AND t.c06 != '0'
+		AND t.c06 != ''
+		AND t.c05 != 0
+		AND t.c03 != 0
+		AND t.c04 != 0
+		AND t.c01 = 'sample'
+	GROUP BY t.c01, t.c02, t.c03, t.c04, t.c05, t.c06, t.c07`)
+	tk.MustExec(`INSERT INTO t_mv_fast_minmax_hint VALUES (
+		1, 'sample', 'k-1', 20, 10, 30, 'X', '2026-06-26', 2,
+		'2026-06-26 10:00:00', '2026-06-26 10:05:00',
+		100.000000, 80.000000, -5.000000
+	)`)
+
+	tk.MustExec("REFRESH MATERIALIZED VIEW mv_fast_minmax_hint FAST")
+	tk.MustQuery("SELECT * FROM mv_fast_minmax_hint").Check(testkit.Rows())
+}
+
 func TestMaterializedViewRefreshFastMinMaxRequiresSupportingIndex(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

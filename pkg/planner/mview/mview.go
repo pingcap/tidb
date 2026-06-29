@@ -53,11 +53,62 @@ const (
 	diffNewRowPrefix    = "__mvd_n_"
 )
 
-// HasVisibleIndexWithPrefixCoveringColumns reports whether the base table has a usable key layout
-// for MIN/MAX full-update lookup: either PK-is-handle on the single group key, or a public visible
-// index whose leading columns cover all group-by columns without prefix length.
-func HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
-	return mviewutil.HasVisibleIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+// FindVisibleIndexesWithPrefixCoveringColumns returns all usable key layouts for MIN/MAX full-update lookup.
+func FindVisibleIndexesWithPrefixCoveringColumns(
+	baseTableInfo *model.TableInfo,
+	groupByCols []string,
+) []pmodel.CIStr {
+	indexNames := mviewutil.FindVisibleIndexesWithPrefixCoveringColumns(baseTableInfo, groupByCols)
+	if len(indexNames) == 0 {
+		return nil
+	}
+	names := make([]pmodel.CIStr, 0, len(indexNames))
+	for _, indexName := range indexNames {
+		names = append(names, pmodel.NewCIStr(indexName))
+	}
+	return names
+}
+
+// SetFullUpdateLookupIndexHint binds the full-update lookup inner scan to the supporting indexes.
+func SetFullUpdateLookupIndexHint(sel *ast.SelectStmt, indexNames []pmodel.CIStr) error {
+	baseTableName, err := fullUpdateLookupInnerBaseTableName(sel)
+	if err != nil {
+		return err
+	}
+	if len(indexNames) == 0 {
+		return errors.New("mview full-update lookup template: no index hint names")
+	}
+	baseTableName.IndexHints = []*ast.IndexHint{
+		{
+			IndexNames: append([]pmodel.CIStr(nil), indexNames...),
+			HintType:   ast.HintUse,
+			HintScope:  ast.HintForScan,
+		},
+	}
+	return nil
+}
+
+func fullUpdateLookupInnerBaseTableName(sel *ast.SelectStmt) (*ast.TableName, error) {
+	if sel == nil || sel.From == nil || sel.From.TableRefs == nil {
+		return nil, errors.New("mview full-update lookup template: invalid select for index hint")
+	}
+	innerSrc, ok := sel.From.TableRefs.Right.(*ast.TableSource)
+	if !ok {
+		return nil, errors.New("mview full-update lookup template: inner table source not found for index hint")
+	}
+	innerSel, ok := innerSrc.Source.(*ast.SelectStmt)
+	if !ok || innerSel.From == nil || innerSel.From.TableRefs == nil {
+		return nil, errors.New("mview full-update lookup template: inner select not found for index hint")
+	}
+	baseSrc, ok := innerSel.From.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		return nil, errors.New("mview full-update lookup template: inner base table source not found for index hint")
+	}
+	baseTableName, ok := baseSrc.Source.(*ast.TableName)
+	if !ok {
+		return nil, errors.New("mview full-update lookup template: inner base table not found for index hint")
+	}
+	return baseTableName, nil
 }
 
 // SQL construction overview:

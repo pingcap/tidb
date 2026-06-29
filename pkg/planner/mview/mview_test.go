@@ -17,14 +17,12 @@ package mview_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -662,6 +660,120 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 		{Pos: 12, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
 		{Pos: 13, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
+}
+
+func TestFullUpdateLookupIndexHintUsesAllSupportingIndexes(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(101)
+	mlogID := int64(102)
+	mvID := int64(103)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  pmodel.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+			},
+			{
+				ID:    2,
+				Name:  pmodel.NewCIStr("idx_a_b"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+					{Name: pmodel.NewCIStr("b"), Offset: 1},
+				},
+			},
+			{
+				ID:    3,
+				Name:  pmodel.NewCIStr("idx_a_hidden"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+				Invisible: true,
+			},
+			{
+				ID:    4,
+				Name:  pmodel.NewCIStr("idx_b"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("b"), Offset: 1},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_minmax_hint_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "mx", 2, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
+
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(base, res.GroupKeyBaseCols)
+	require.Equal(t, []pmodel.CIStr{pmodel.NewCIStr("idx_a"), pmodel.NewCIStr("idx_a_b")}, indexNames)
+	require.NoError(t, mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, indexNames))
+
+	innerSrc, ok := res.FullUpdateLookupTemplateSelect.From.TableRefs.Right.(*ast.TableSource)
+	require.True(t, ok)
+	innerSel, ok := innerSrc.Source.(*ast.SelectStmt)
+	require.True(t, ok)
+	baseSrc, ok := innerSel.From.TableRefs.Left.(*ast.TableSource)
+	require.True(t, ok)
+	baseTableName, ok := baseSrc.Source.(*ast.TableName)
+	require.True(t, ok)
+	require.Len(t, baseTableName.IndexHints, 1)
+	require.Equal(t, ast.HintUse, baseTableName.IndexHints[0].HintType)
+	require.Equal(t, ast.HintForScan, baseTableName.IndexHints[0].HintScope)
+	require.Equal(t, indexNames, baseTableName.IndexHints[0].IndexNames)
 }
 
 func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
@@ -1522,15 +1634,6 @@ func collectAndPredicates(t *testing.T, expr ast.ExprNode) []*ast.BinaryOperatio
 		return []*ast.BinaryOperationExpr{bin}
 	}
 	return append(collectAndPredicates(t, bin.L), collectAndPredicates(t, bin.R)...)
-}
-
-func restoreNodeForTest(t *testing.T, node ast.Node) string {
-	t.Helper()
-
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	require.NoError(t, node.Restore(ctx))
-	return sb.String()
 }
 
 func columnNameRef(t *testing.T, expr ast.ExprNode) (string, string) {
