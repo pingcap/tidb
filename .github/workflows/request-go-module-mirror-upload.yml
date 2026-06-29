@@ -1,0 +1,42 @@
+name: Request Go Module Mirror Upload
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - go.mod
+      - go.sum
+      - pkg/parser/go.mod
+      - pkg/parser/go.sum
+
+permissions:
+  contents: read
+
+concurrency:
+  group: request-go-module-mirror-upload-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    name: Request Go Module Mirror Upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Accept request
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "A completed run of this workflow requests the privileged mirror upload workflow."
+            echo "PR: #${PR_NUMBER}"
+            echo "Head repository: ${HEAD_REPO}"
+            echo "Head SHA: ${HEAD_SHA}"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
