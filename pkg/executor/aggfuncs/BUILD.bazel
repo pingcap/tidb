@@ -82,6 +82,7 @@ go_test(
         "func_stddevsamp_test.go",
         "func_sum_test.go",
         "func_value_test.go",
+        "func_varpop_internal_test.go",
         "func_varpop_test.go",
         "func_varsamp_test.go",
         "main_test.go",
