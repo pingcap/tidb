@@ -44,10 +44,6 @@ type StepExecutor interface {
 	// RunSubtask is used to run the subtask.
 	// The subtask meta can be updated in place, if no error returned, the subtask
 	// meta will be updated in the task table.
-	// Returning taskexecutor.ErrCancelSubtask directly, for example by propagating
-	// context.Cause(ctx), or returning a context cancellation error indicates an
-	// expected cancellation. The framework logs these returns at info level instead
-	// of treating them as subtask failures.
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
 
 	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
