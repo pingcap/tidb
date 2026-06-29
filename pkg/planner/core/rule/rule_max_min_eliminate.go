@@ -232,10 +232,12 @@ func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan) base.LogicalPlan 
 				return agg
 			}
 		}
-		// Limit+Sort operators are sorted by value, but ENUM/SET field types are sorted by name.
+		// Limit+Sort operators are sorted by value, but ENUM/SET/BIT field types are sorted differently from MAX/MIN.
+		// ENUM/SET are sorted by name, while BIT literals are evaluated as numbers in aggregation.
 		cols := agg.GetUsedCols()
 		for _, col := range cols {
-			if col.RetType.GetType() == mysql.TypeEnum || col.RetType.GetType() == mysql.TypeSet {
+			switch col.RetType.GetType() {
+			case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
 				return agg
 			}
 		}
