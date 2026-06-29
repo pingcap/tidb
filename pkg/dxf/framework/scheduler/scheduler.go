@@ -800,12 +800,16 @@ func isDataErrorForMetric(taskErr error) bool {
 	// from the DXF scheduler. We can replace this when those error definitions are
 	// split out of the Lightning package.
 	//
-	// Examples:
+	// import-into examples:
 	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
 	// encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0
 	// at offset 0: Value conversion failed for column 'event_id'. Expected type:
 	// bigint, received value: ?. Reason: [types:1292]Truncated incorrect DOUBLE value: '?'.
+	//
+	// add-index examples:
 	// [kv:1062]Duplicate entry '1' for key 't.idx'
-	return strings.Contains(errMsg, "ErrEncodeKV") && strings.Contains(errMsg, "Truncated incorrect") ||
-		strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
+	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") && (strings.Contains(errMsg, "Truncated incorrect") ||
+		strings.Contains(errMsg, "Incorrect datetime value"))
+	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
+	return isImportDataErr || isUKDupEntryErr
 }
