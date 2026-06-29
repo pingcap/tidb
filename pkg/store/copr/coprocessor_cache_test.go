@@ -62,22 +62,26 @@ func TestBuildCacheKey(t *testing.T) {
 	expectKey += "\x01\x01\x03"                     // EndKey
 	require.EqualValues(t, []byte(expectKey), key)
 
+	// A paging request (row-count or byte-budget) only appends a single marker
+	// byte; the exact sizes are not part of the key, so every paging variant
+	// shares the same key space and they never collide with the non-paging key
+	// asserted above.
 	req.PagingSizeBytes = bytePagingSize
 	key, err = coprCacheBuildKey(&req)
 	require.NoError(t, err)
-	require.EqualValues(t, []byte(expectKey+"\x00\x00\x00\x00\x00\x00\x00\x00\x08\x07\x06\x05\x04\x03\x02\x01"), key)
+	require.EqualValues(t, []byte(expectKey+"\x01"), key)
 
-	req.PagingSize = bytePagingSize
+	req.PagingSize = rowPagingSize
 	req.PagingSizeBytes = 0
 	key, err = coprCacheBuildKey(&req)
 	require.NoError(t, err)
-	require.EqualValues(t, []byte(expectKey+"\x08\x07\x06\x05\x04\x03\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00"), key)
+	require.EqualValues(t, []byte(expectKey+"\x01"), key)
 
 	req.PagingSize = rowPagingSize
 	req.PagingSizeBytes = bytePagingSize
 	key, err = coprCacheBuildKey(&req)
 	require.NoError(t, err)
-	require.EqualValues(t, []byte(expectKey+"\x18\x17\x16\x15\x14\x13\x12\x11\x08\x07\x06\x05\x04\x03\x02\x01"), key)
+	require.EqualValues(t, []byte(expectKey+"\x01"), key)
 
 	req = coprocessor.Request{
 		Tp:      0xABCC, // Tp too big
@@ -232,8 +236,10 @@ func TestGetSet(t *testing.T) {
 	require.EqualValues(t, []byte("bar"), v.Data)
 
 	t.Run("paging size bytes cache hit keeps range", func(t *testing.T) {
-		worker := &copIteratorWorker{req: &kv.Request{}}
-		task := &copTask{pagingSizeBytes: 1024}
+		req := &kv.Request{}
+		req.Paging.PagingSizeBytes = 1024
+		worker := &copIteratorWorker{req: req}
+		task := &copTask{}
 		resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
 		cacheValue := &coprCacheValue{
 			Data:      []byte("cached"),

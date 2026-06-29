@@ -134,12 +134,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
-	var pagingSizeBytes uint64
-	if req.StoreType == kv.TiKV && req.Tp == kv.ReqTypeDAG && req.Paging.PagingSizeBytes > 0 {
-		pagingSizeBytes = req.Paging.PagingSizeBytes
+	// Byte-budget paging only applies to TiKV DAG requests. Zero it out for any
+	// other case so that req.Paging.PagingSizeBytes stays the single source of
+	// truth downstream, mirroring how req.Paging.Enable is handled above.
+	if req.StoreType != kv.TiKV || req.Tp != kv.ReqTypeDAG {
+		req.Paging.PagingSizeBytes = 0
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
-		if req.Paging.Enable || pagingSizeBytes > 0 {
+		if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
@@ -166,12 +168,11 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	tryRowHint := optRowHint(req)
 	elapsed := time.Duration(0)
 	buildOpt := &buildCopTaskOpt{
-		req:             req,
-		cache:           c.store.GetRegionCache(),
-		eventCb:         eventCb,
-		respChan:        req.KeepOrder,
-		elapsed:         &elapsed,
-		pagingSizeBytes: pagingSizeBytes,
+		req:      req,
+		cache:    c.store.GetRegionCache(),
+		eventCb:  eventCb,
+		respChan: req.KeepOrder,
+		elapsed:  &elapsed,
 	}
 	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
 		keyRanges := NewKeyRanges(ranges)
@@ -296,11 +297,10 @@ type copTask struct {
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
 
-	eventCb         trxevents.EventCallback
-	paging          bool
-	pagingSize      uint64
-	pagingSizeBytes uint64
-	pagingTaskIdx   uint32
+	eventCb       trxevents.EventCallback
+	paging        bool
+	pagingSize    uint64
+	pagingTaskIdx uint32
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
@@ -378,7 +378,6 @@ type buildCopTaskOpt struct {
 	skipBuckets bool
 	// exceedsBoundRetry propagates bounded retry attempts to generated tasks.
 	exceedsBoundRetry int
-	pagingSizeBytes   uint64
 }
 
 const (
@@ -648,7 +647,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	chanSize := 2
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
-	if req.Paging.Enable || opt.pagingSizeBytes > 0 {
+	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		chanSize = 18
 	}
 
@@ -702,7 +701,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				eventCb:           eventCb,
 				paging:            req.Paging.Enable,
 				pagingSize:        pagingSize,
-				pagingSizeBytes:   opt.pagingSizeBytes,
 				requestSource:     req.RequestSource,
 				RowCountHint:      hint,
 				busyThreshold:     req.StoreBusyThreshold,
@@ -1714,7 +1712,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	})
 
-	if task.paging || task.pagingSizeBytes > 0 {
+	if task.paging || worker.req.Paging.PagingSizeBytes > 0 {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
@@ -1737,7 +1735,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
 		MaxKeysRead:     taskMaxKeysRead,
-		PagingSizeBytes: task.pagingSizeBytes,
+		PagingSizeBytes: worker.req.Paging.PagingSizeBytes,
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
@@ -1942,7 +1940,6 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		// If there is region error or lock error, keep the paging size and retry.
 		for _, remainedTask := range result.remains {
 			remainedTask.pagingSize = task.pagingSize
-			remainedTask.pagingSizeBytes = task.pagingSizeBytes
 		}
 		return result, nil
 	}
@@ -2119,7 +2116,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			respChan:                    false,
 			eventCb:                     task.eventCb,
 			ignoreTiKVClientReadTimeout: true,
-			pagingSizeBytes:             task.pagingSizeBytes,
 		})
 		if err != nil {
 			return nil, err
@@ -2180,7 +2176,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 					ignoreTiKVClientReadTimeout: true,
 					skipBuckets:                 true,
 					exceedsBoundRetry:           task.exceedsBoundRetry + 1,
-					pagingSizeBytes:             task.pagingSizeBytes,
 				})
 				if err != nil {
 					return nil, err
@@ -2214,7 +2209,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				ignoreTiKVClientReadTimeout: true,
 				skipBuckets:                 true,
 				exceedsBoundRetry:           task.exceedsBoundRetry + 1,
-				pagingSizeBytes:             task.pagingSizeBytes,
 			})
 			if err != nil {
 				return nil, err
@@ -2369,7 +2363,6 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				ignoreTiKVClientReadTimeout: true,
 				skipBuckets:                 task.skipBuckets,
 				exceedsBoundRetry:           task.exceedsBoundRetry,
-				pagingSizeBytes:             task.pagingSizeBytes,
 			})
 			if err != nil {
 				return batchRespList, nil, err
@@ -2555,7 +2548,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
 		data := slices.Clone(cacheValue.Data)
 		resp.pbResp.Data = data
-		if worker.req.Paging.Enable || task.pagingSizeBytes > 0 {
+		if worker.req.Paging.Enable || worker.req.Paging.PagingSizeBytes > 0 {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
 				start = slices.Clone(cacheValue.PageStart)
