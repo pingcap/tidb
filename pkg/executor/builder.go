@@ -5131,6 +5131,21 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			if err != nil {
 				return nil, err
 			}
+			// Only provide row-count hints when each KV range is guaranteed to be a
+			// full-length point range (exactly 1 row). This requires all PK columns to
+			// be covered by the join keys (keyOff2IdxOff) with no dynamic range
+			// expansion (cwc == nil). A partial join key leaves trailing PK columns
+			// unconstrained, producing a prefix range that spans multiple rows; using
+			// hint=1 in that case would misclassify large tasks as small tasks and cause
+			// over-batching in the store-batch coprocessor.
+			pk := tbInfo.GetPrimaryKey()
+			if cwc == nil && pk != nil && len(keyOff2IdxOff) == len(pk.Columns) {
+				hints := make([]int, len(kvRanges))
+				for i := range hints {
+					hints[i] = 1
+				}
+				return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
+			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
 		handles, _ := dedupHandles(lookUpContents)
@@ -5150,6 +5165,18 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		e.dctx, e.rctx, pt, usedPartitionList, usedPartitions, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal, v.IsCommonHandle)
 	if err != nil {
 		return nil, err
+	}
+	if v.IsCommonHandle {
+		// See the non-partitioned IsCommonHandle branch above for the rationale.
+		pk := tbInfo.GetPrimaryKey()
+		if cwc == nil && pk != nil && len(keyOff2IdxOff) == len(pk.Columns) {
+			hints := make([]int, len(kvRanges))
+			for i := range hints {
+				hints[i] = 1
+			}
+			return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
+		}
+		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
@@ -5289,6 +5316,12 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange) (exec.Executor, error) {
 	var b distsql.RequestBuilder
 	b.SetKeyRanges(ranges)
+	return builder.buildTableReaderBase(ctx, e, b)
+}
+
+func (builder *dataReaderBuilder) buildTableReaderFromKvRangesWithHints(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange, hints []int) (exec.Executor, error) {
+	var b distsql.RequestBuilder
+	b.SetKeyRangesWithHints(ranges, hints)
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 
