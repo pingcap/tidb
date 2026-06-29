@@ -15,75 +15,68 @@
 package session
 
 import (
+	"context"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
 )
+
+type gcv2AbortManager struct {
+	extworkload.Manager
+	role        config.ExternalWorkloadRole
+	abortCalled bool
+}
+
+func (m *gcv2AbortManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+
+func (m *gcv2AbortManager) AbortGCV2(context.Context) error {
+	m.abortCalled = true
+	return nil
+}
 
 type gcv2AbortStore struct {
 	kv.Storage
-	codec tikv.Codec
+	mgr extworkload.Manager
 }
 
-func (s *gcv2AbortStore) GetCodec() tikv.Codec {
-	return s.codec
+func (s *gcv2AbortStore) ExternalWorkloadManager() extworkload.Manager {
+	return s.mgr
 }
 
-func TestAbortGCV2Gate(t *testing.T) {
+func TestAbortGCV2(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("Starter deploy mode is only available in nextgen kernel")
 	}
 
 	originDeployMode := deploymode.Get()
-	restoreConfig := config.RestoreFunc()
+	originInTest := intest.InTest
 	t.Cleanup(func() {
-		restoreConfig()
+		intest.InTest = originInTest
 		require.NoError(t, deploymode.Set(originDeployMode))
 	})
-
-	keyspaceLevelStore := newGCV2AbortStore(t, &keyspacepb.KeyspaceMeta{
-		Id:   1,
-		Name: "ks",
-		Config: map[string]string{
-			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
-		},
-	})
-	unifiedGCStore := newGCV2AbortStore(t, &keyspacepb.KeyspaceMeta{
-		Id:   2,
-		Name: "ks2",
-		Config: map[string]string{
-			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeUnified,
-		},
-	})
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.ExternalWorkload.Enable = true
-		conf.ExternalWorkload.Role = config.RoleGCV2Worker
-	})
-
-	require.NoError(t, deploymode.Set(deploymode.Premium))
-	abortGCV2(keyspaceLevelStore)
-
 	require.NoError(t, deploymode.Set(deploymode.Starter))
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.ExternalWorkload.Role = config.RoleMaster
-	})
-	abortGCV2(keyspaceLevelStore)
+	intest.InTest = true
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.ExternalWorkload.Role = config.RoleGCV2Worker
-	})
-	abortGCV2(unifiedGCStore)
-}
+	mgr := &gcv2AbortManager{role: config.RoleGCV2Worker}
+	store := &gcv2AbortStore{mgr: mgr}
+	abortGCV2(store)
+	require.True(t, mgr.abortCalled)
 
-func newGCV2AbortStore(t *testing.T, meta *keyspacepb.KeyspaceMeta) *gcv2AbortStore {
-	codec, err := tikv.NewCodecV2(tikv.ModeTxn, meta)
-	require.NoError(t, err)
-	return &gcv2AbortStore{codec: codec}
+	mgr.abortCalled = false
+	mgr.role = config.RoleMaster
+	abortGCV2(store)
+	require.False(t, mgr.abortCalled)
+
+	mgr.role = config.RoleGCV2Worker
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	abortGCV2(store)
+	require.False(t, mgr.abortCalled)
 }

@@ -18,38 +18,20 @@ import (
 	"context"
 	"os"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
 func abortGCV2(store kv.Storage) {
-	if !deploymode.IsStarter() {
+	mgr := extworkload.GetManagerFromStore(store)
+	if !extworkload.IsGCV2Worker(mgr) {
 		return
 	}
-	cfg := config.GetGlobalConfig().ExternalWorkload
-	if !cfg.Enable || cfg.Role != config.RoleGCV2Worker {
-		return
-	}
-	meta := store.GetCodec().GetKeyspaceMeta()
-	if !pd.IsKeyspaceUsingKeyspaceLevelGC(meta) {
-		return
-	}
-	mgr, err := extworkload.NewManager(context.Background(), meta, cfg)
-	if err != nil {
-		logutil.BgLogger().Fatal("initialize external workload manager for GCV2 abort failed", zap.Error(err))
-	}
-	abortErr := mgr.AbortGCV2(context.Background())
-	if err := mgr.Close(); err != nil {
-		logutil.BgLogger().Warn("failed to close external workload manager after GCV2 abort", zap.Error(err))
-	}
-	if abortErr != nil {
-		logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(abortErr))
+	if err := mgr.AbortGCV2(context.Background()); err != nil {
+		logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
 	}
 	logutil.BgLogger().Info("GCV2 worker aborted")
 	if intest.InTest {

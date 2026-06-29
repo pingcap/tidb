@@ -329,26 +329,35 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extwor
 	if !cfg.Enable {
 		return nil
 	}
-	// Manager init is non-fatal; TiDB can continue without external workload coordination.
+	// Regular TiDB roles can continue without coordination, but a dedicated
+	// GCV2 worker must not run without the controller.
 	meta := storage.GetCodec().GetKeyspaceMeta()
 	if meta == nil {
+		if cfg.Role == config.RoleGCV2Worker {
+			logutil.BgLogger().Fatal("external workload GCV2 role requires keyspace meta")
+		}
 		logutil.BgLogger().Warn("external workload controller enabled but keyspace meta is unavailable; TiDB will continue without external workload coordination")
 		return nil
 	}
 	if cfg.Role == config.RoleGCV2Worker && !pd.IsKeyspaceUsingKeyspaceLevelGC(meta) {
-		logutil.BgLogger().Warn("external workload GCV2 role requires keyspace-level GC; TiDB will continue without external workload coordination")
-		return nil
+		logutil.BgLogger().Fatal("external workload GCV2 role requires keyspace-level GC")
 	}
 	mgr, err := extworkload.NewManager(ctx, meta, cfg)
 	if err != nil {
+		if cfg.Role == config.RoleGCV2Worker {
+			logutil.BgLogger().Fatal("failed to initialize external workload manager for GCV2 role", zap.Error(err))
+		}
 		logutil.BgLogger().Warn("failed to initialize external workload manager; TiDB will continue without external workload coordination", zap.Error(err))
 		return nil
 	}
 	if !extworkload.SetManagerForStore(storage, mgr) {
-		logutil.BgLogger().Warn("external workload controller enabled but storage does not support external workload coordination; TiDB will continue without it")
 		if err := mgr.Close(); err != nil {
 			logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
 		}
+		if cfg.Role == config.RoleGCV2Worker {
+			logutil.BgLogger().Fatal("external workload GCV2 role requires storage support")
+		}
+		logutil.BgLogger().Warn("external workload controller enabled but storage does not support external workload coordination; TiDB will continue without it")
 		return nil
 	}
 	return mgr
@@ -495,13 +504,13 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
-	repository.SetupRepository(dom)
-	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
+	externalWorkloadManager := extworkload.GetManagerFromStore(storage)
 	if externalWorkloadManager != nil {
 		defer func() {
 			closeExternalWorkloadManager(storage, externalWorkloadManager)
 		}()
 	}
+	repository.SetupRepository(dom)
 	if extworkload.IsMaster(externalWorkloadManager) && extworkload.UseKeyspaceLevelGC(externalWorkloadManager) {
 		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
 			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
@@ -641,17 +650,20 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
+	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
+				closeExternalWorkloadManager(storage, externalWorkloadManager)
 				return nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
+				closeExternalWorkloadManager(storage, externalWorkloadManager)
 				return nil, nil, errors.New("kernel type mismatch")
 			}
 		}
@@ -661,10 +673,12 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	return storage, dom, nil
