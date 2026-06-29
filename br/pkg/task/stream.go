@@ -498,6 +498,38 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 	}, oldRatio, nil
 }
 
+// KeepRocksDBMaxBackgroundJobsLow limits RocksDB compaction jobs during restore and returns a restore function.
+func KeepRocksDBMaxBackgroundJobsLow(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	oldJobs, err := utils.GetRocksDBMaxBackgroundJobs(execCtx)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	if oldJobs == "" {
+		log.Warn("skip setting rocksdb.max-background-jobs because config item is unavailable")
+		return func(string) error {
+			return nil
+		}, oldJobs, nil
+	}
+
+	err = utils.SetRocksDBMaxBackgroundJobs(execCtx, utils.RocksDBMaxBackgroundJobsForRestore)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+
+	return func(jobs string) error {
+		if jobs == "" {
+			return nil
+		}
+		return utils.SetRocksDBMaxBackgroundJobs(execCtx, jobs)
+	}, oldJobs, nil
+}
+
 // RunStreamCommand run all kinds of `stream task`
 func RunStreamCommand(
 	ctx context.Context,
@@ -1288,6 +1320,7 @@ func RunStreamRestore(
 		}
 	}
 	// restore log.
+	adjustRestoreConcurrencyPerStoreFromTiKV(ctx, mgr, cfg)
 	cfg.adjustRestoreConfigForStreamRestore()
 	if err := restoreStream(ctx, mgr, g, cfg, checkInfo.CheckpointInfo); err != nil {
 		return errors.Trace(err)
@@ -1410,13 +1443,45 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
+	restoreRocksDBMaxBackgroundJobs, oldRocksDBMaxBackgroundJobs, err := KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rocksDBMaxBackgroundJobsRestorable := false
+	rocksDBMaxBackgroundJobsCheckpointPersisted := !cfg.UseCheckpoint
+	defer func() {
+		if cfg.UseCheckpoint && rocksDBMaxBackgroundJobsCheckpointPersisted && !rocksDBMaxBackgroundJobsRestorable {
+			log.Info("skip restore the rocksdb.max-background-jobs for next retry")
+			return
+		}
+
+		log.Info("start to restore rocksdb.max-background-jobs", zap.String("jobs", oldRocksDBMaxBackgroundJobs))
+		if err := restoreRocksDBMaxBackgroundJobs(oldRocksDBMaxBackgroundJobs); err != nil {
+			log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
+		}
+		log.Info("finish restoring rocksdb.max-background-jobs")
+	}()
+
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
-		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldRatio, cfg.tiflashRecorder)
+		oldRatioFromCheckpoint, oldRocksDBMaxBackgroundJobsFromCheckpoint, snapshotRestoreDataSize, err := client.InitCheckpointMetadataForLogRestore(
+			ctx,
+			cfg.StartTS,
+			cfg.RestoreTS,
+			oldRatio,
+			oldRocksDBMaxBackgroundJobs,
+			cfg.tiflashRecorder,
+			cfg.snapshotRestoreDataSize,
+		)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		rocksDBMaxBackgroundJobsCheckpointPersisted = true
 		oldRatio = oldRatioFromCheckpoint
+		oldRocksDBMaxBackgroundJobs = oldRocksDBMaxBackgroundJobsFromCheckpoint
+		if snapshotRestoreDataSize > 0 {
+			cfg.snapshotRestoreDataSize = snapshotRestoreDataSize
+		}
 		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1532,6 +1597,7 @@ func restoreStream(
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 
 	var checkpointSSTProgress int64
+	var checkpointSSTSize uint64
 	updateSSTStatsWithCheckpoint := func(kvCount, size uint64) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1540,6 +1606,7 @@ func restoreStream(
 		checkpointTotalKVCount += kvCount
 		checkpointTotalSize += size
 		checkpointSSTProgress += int64(kvCount)
+		checkpointSSTSize += size
 	}
 	compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
 		ctx, compactionIter, rewriteRules, sstCheckpointSets,
@@ -1584,7 +1651,14 @@ func restoreStream(
 			p.IncBy(int64(kvCount))
 		}
 
-		err = client.RestoreSSTFileSets(ctx, sstFileSets, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFileSets(
+			ctx,
+			sstFileSets,
+			importModeSwitcher,
+			cfg.snapshotRestoreDataSize,
+			checkpointSSTSize,
+			p.IncBy,
+		)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1675,6 +1749,7 @@ func restoreStream(
 	})
 
 	gcDisabledRestorable = true
+	rocksDBMaxBackgroundJobsRestorable = true
 
 	return nil
 }
