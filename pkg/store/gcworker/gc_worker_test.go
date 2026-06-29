@@ -152,8 +152,6 @@ type mockGCWorkerSuite struct {
 
 type mockExternalWorkloadManager struct {
 	extworkload.Manager
-	role              config.ExternalWorkloadRole
-	meta              *keyspacepb.KeyspaceMeta
 	registerCalls     int
 	registerSafePoint uint64
 	registerLifeTime  int64
@@ -161,13 +159,6 @@ type mockExternalWorkloadManager struct {
 	recycleSafePoint  uint64
 }
 
-func (m *mockExternalWorkloadManager) Close() error { return nil }
-func (m *mockExternalWorkloadManager) Role() config.ExternalWorkloadRole {
-	return m.role
-}
-func (m *mockExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta {
-	return m.meta
-}
 func (m *mockExternalWorkloadManager) RegisterGCV2(_ context.Context, safePoint uint64, gcLifeTime int64) error {
 	m.registerCalls++
 	m.registerSafePoint = safePoint
@@ -1209,36 +1200,60 @@ func TestUnifiedGCNeedsToWait(t *testing.T) {
 	}
 }
 
-func TestNotifyGCV2AfterGCWithLifeTime(t *testing.T) {
-	meta := &keyspacepb.KeyspaceMeta{
-		Id:     1,
-		Name:   "ks",
-		Config: map[string]string{pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel},
+func TestGCV2NotificationActionForRole(t *testing.T) {
+	cases := []struct {
+		name     string
+		role     config.ExternalWorkloadRole
+		expected gcv2NotificationAction
+	}{
+		{
+			name:     "master registers and recycles",
+			role:     config.RoleMaster,
+			expected: gcv2NotificationAction{register: true, recycle: true},
+		},
+		{
+			name:     "ttl worker registers and recycles",
+			role:     config.RoleTTLTaskWorker,
+			expected: gcv2NotificationAction{register: true, recycle: true},
+		},
+		{
+			name:     "gcv2 worker recycles only",
+			role:     config.RoleGCV2Worker,
+			expected: gcv2NotificationAction{recycle: true},
+		},
+		{
+			name:     "auto analyze worker does not participate",
+			role:     config.RoleAutoAnalyzeWorker,
+			expected: gcv2NotificationAction{},
+		},
 	}
 
-	mgr := &mockExternalWorkloadManager{role: config.RoleMaster, meta: meta}
-	require.NoError(t, notifyGCV2AfterGCWithLifeTime(context.Background(), mgr, 123, 600))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, gcv2NotificationActionForRole(tc.role))
+		})
+	}
+}
+
+func TestNotifyGCV2Controller(t *testing.T) {
+	ctx := context.Background()
+
+	mgr := &mockExternalWorkloadManager{}
+	require.NoError(t, notifyGCV2Controller(ctx, mgr, 123, 600, gcv2NotificationAction{register: true, recycle: true}))
 	require.Equal(t, 1, mgr.registerCalls)
 	require.Equal(t, uint64(123), mgr.registerSafePoint)
 	require.Equal(t, int64(600), mgr.registerLifeTime)
 	require.Equal(t, 1, mgr.recycleCalls)
 	require.Equal(t, uint64(123), mgr.recycleSafePoint)
 
-	mgr = &mockExternalWorkloadManager{role: config.RoleGCV2Worker, meta: meta}
-	require.NoError(t, notifyGCV2AfterGCWithLifeTime(context.Background(), mgr, 456, 0))
+	mgr = &mockExternalWorkloadManager{}
+	require.NoError(t, notifyGCV2Controller(ctx, mgr, 456, 0, gcv2NotificationAction{recycle: true}))
 	require.Zero(t, mgr.registerCalls)
 	require.Equal(t, 1, mgr.recycleCalls)
 	require.Equal(t, uint64(456), mgr.recycleSafePoint)
 
-	mgr = &mockExternalWorkloadManager{
-		role: config.RoleMaster,
-		meta: &keyspacepb.KeyspaceMeta{
-			Id:     2,
-			Name:   "unified",
-			Config: map[string]string{pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeUnified},
-		},
-	}
-	require.NoError(t, notifyGCV2AfterGCWithLifeTime(context.Background(), mgr, 789, 600))
+	mgr = &mockExternalWorkloadManager{}
+	require.NoError(t, notifyGCV2Controller(ctx, mgr, 789, 600, gcv2NotificationAction{}))
 	require.Zero(t, mgr.registerCalls)
 	require.Zero(t, mgr.recycleCalls)
 }
