@@ -17,9 +17,11 @@ package ddl
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -43,11 +46,141 @@ import (
 // GlobalScatterGroupID is used to indicate the global scatter group ID.
 const GlobalScatterGroupID int64 = -1
 
+func shouldWaitTiFlashPlacementBeforeScatter(tbInfo *model.TableInfo, scatterScope string) bool {
+	return scatterScope != vardef.ScatterOff && tbInfo.TiFlashReplica != nil && tbInfo.TiFlashReplica.Count > 0
+}
+
+func waitTiFlashPlacementBeforeScatterIfNeeded(ctx sessionctx.Context, tbInfo *model.TableInfo, scatterScope string, physicalIDs ...int64) {
+	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(ctx, tbInfo, scatterScope,
+		infosync.HasPDHTTPClient,
+		infosync.GetReplicationState,
+		physicalIDs...)
+}
+
+func waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	scatterScope string,
+	hasPDHTTPClient func() (bool, error),
+	getReplicationState func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error),
+	physicalIDs ...int64,
+) {
+	if !shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
+		return
+	}
+	available, err := hasPDHTTPClient()
+	if err != nil {
+		logutil.DDLLogger().Warn("skip wait tiflash placement before scatter because replication state is unavailable",
+			zap.String("table", tbInfo.Name.O),
+			zap.Int64s("physicalIDs", physicalIDs),
+			zap.Error(err))
+		return
+	}
+	if !available {
+		logutil.DDLLogger().Info("skip wait tiflash placement before scatter because replication state is unavailable",
+			zap.String("table", tbInfo.Name.O),
+			zap.Int64s("physicalIDs", physicalIDs))
+		return
+	}
+
+	waitCtx, cancel := newSplitRegionContext(ctx)
+	defer cancel()
+	waitTiFlashPlacementBeforeScatterWithCheck(waitCtx, tbInfo, tiflashCheckTiDBHTTPAPIHalfInterval, getReplicationState, physicalIDs...)
+}
+
+func waitTiFlashPlacementBeforeScatterWithCheck(
+	ctx context.Context,
+	tbInfo *model.TableInfo,
+	checkInterval time.Duration,
+	getReplicationState func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error),
+	physicalIDs ...int64,
+) {
+	if len(physicalIDs) == 0 {
+		return
+	}
+
+	logutil.DDLLogger().Info("wait tiflash placement before scatter",
+		zap.String("table", tbInfo.Name.O),
+		zap.Int64s("physicalIDs", physicalIDs),
+	)
+
+	var warnedErr bool
+	var lastErr error
+	var lastErrPhysicalID int64
+	pendingPhysicalIDs := append([]int64(nil), physicalIDs...)
+	for {
+		lastErr = nil
+		lastErrPhysicalID = 0
+		nextPendingPhysicalIDs := pendingPhysicalIDs[:0]
+		for _, physicalID := range pendingPhysicalIDs {
+			startKey, endKey := tablePlacementRange(physicalID)
+			state, err := getReplicationState(ctx, startKey, endKey)
+			if err != nil {
+				lastErr = err
+				lastErrPhysicalID = physicalID
+				if !warnedErr {
+					logutil.DDLLogger().Warn("wait tiflash placement before scatter failed",
+						zap.String("table", tbInfo.Name.O),
+						zap.Int64("physicalID", physicalID),
+						zap.Error(err))
+					warnedErr = true
+				}
+				nextPendingPhysicalIDs = append(nextPendingPhysicalIDs, physicalID)
+				continue
+			}
+			if state != infosync.PlacementScheduleStateScheduled {
+				nextPendingPhysicalIDs = append(nextPendingPhysicalIDs, physicalID)
+			}
+		}
+		pendingPhysicalIDs = nextPendingPhysicalIDs
+		if len(pendingPhysicalIDs) == 0 {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			fields := []zap.Field{
+				zap.String("table", tbInfo.Name.O),
+				zap.Int64s("physicalIDs", physicalIDs),
+				zap.Int64s("pendingPhysicalIDs", pendingPhysicalIDs),
+				zap.Error(ctx.Err()),
+			}
+			if lastErr != nil {
+				fields = append(fields,
+					zap.Int64("lastErrPhysicalID", lastErrPhysicalID),
+					zap.NamedError("lastReplicationStateErr", lastErr),
+				)
+			}
+			logutil.DDLLogger().Warn("wait tiflash placement before scatter timeout", fields...)
+			return
+		case <-time.After(checkInterval):
+		}
+	}
+}
+
+func tablePlacementRange(physicalID int64) (startKey, endKey []byte) {
+	startKey = codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID))
+	endKey = codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID+1))
+	return startKey, endKey
+}
+
+func newSplitRegionContext(ctx sessionctx.Context) (context.Context, context.CancelFunc) {
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	return kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL), cancel
+}
+
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
-	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	if shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
+		physicalIDs := make([]int64, 0, len(parts))
+		for _, def := range parts {
+			physicalIDs = append(physicalIDs, def.ID)
+		}
+		waitTiFlashPlacementBeforeScatterIfNeeded(ctx, tbInfo, scatterScope, physicalIDs...)
+	}
+
+	ctxWithTimeout, cancel := newSplitRegionContext(ctx)
 	defer cancel()
-	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
@@ -77,9 +210,10 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 }
 
 func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatterScope string) {
-	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	waitTiFlashPlacementBeforeScatterIfNeeded(ctx, tbInfo, scatterScope, tbInfo.ID)
+
+	ctxWithTimeout, cancel := newSplitRegionContext(ctx)
 	defer cancel()
-	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
