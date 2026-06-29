@@ -322,6 +322,9 @@ func initDeployMode(cfg *config.Config) error {
 }
 
 func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extworkload.Manager {
+	if !deploymode.IsStarter() {
+		return nil
+	}
 	cfg := config.GetGlobalConfig().ExternalWorkload
 	if !cfg.Enable {
 		return nil
@@ -492,13 +495,13 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
-	externalWorkloadManager := extworkload.GetManagerFromStore(storage)
+	repository.SetupRepository(dom)
+	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
 	if externalWorkloadManager != nil {
 		defer func() {
 			closeExternalWorkloadManager(storage, externalWorkloadManager)
 		}()
 	}
-	repository.SetupRepository(dom)
 	if extworkload.IsMaster(externalWorkloadManager) && extworkload.UseKeyspaceLevelGC(externalWorkloadManager) {
 		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
 			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
@@ -638,23 +641,17 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
-	var externalWorkloadManager extworkload.Manager
-	if deploymode.IsStarter() {
-		externalWorkloadManager = initExternalWorkloadManager(context.Background(), storage)
-	}
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
-				closeExternalWorkloadManager(storage, externalWorkloadManager)
 				return nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
-				closeExternalWorkloadManager(storage, externalWorkloadManager)
 				return nil, nil, errors.New("kernel type mismatch")
 			}
 		}
@@ -664,12 +661,10 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
-		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
-		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	return storage, dom, nil
