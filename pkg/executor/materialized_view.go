@@ -5392,7 +5392,6 @@ func checkFastRefreshMLogIntegrity(
 type refreshImplementOptions struct {
 	lastSuccessfulRefreshReadTSO uint64
 	targetRefreshReadTSO         uint64
-	refreshReadTSO               uint64
 	mlogRetainedLowerTSO         uint64
 }
 
@@ -5556,7 +5555,6 @@ func executeRefreshMaterializedViewImplement(
 		RefreshStmt:                  s,
 		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
 		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
-		RefreshReadTSO:               implementOpts.refreshReadTSO,
 		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
 	}
 

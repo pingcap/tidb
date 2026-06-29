@@ -16,6 +16,7 @@ package mvrefresh
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -397,9 +398,12 @@ func TestExplainRefreshMVFastPlanUsesMLogCommitTSWindowSelectivity(t *testing.T)
 		},
 		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
 		TargetRefreshReadTSO:         targetTSO,
-		RefreshReadTSO:               txn.StartTS(),
 		MLogRetainedLowerTSO:         retainedLowerTSO,
 	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
 
 	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
@@ -423,7 +427,7 @@ func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T
 	tk.MustExec("create table t_mlog_commit_ts_for_update_est (a int not null, b int not null)")
 	tk.MustExec("create materialized view log on t_mlog_commit_ts_for_update_est (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_mlog_commit_ts_for_update_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_for_update_est group by a")
-	tk.MustExec("begin")
+	tk.MustExec("begin pessimistic")
 	defer tk.MustExec("rollback")
 
 	txn, err := tk.Session().Txn(false)
@@ -431,8 +435,6 @@ func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T
 	startPhysical := oracle.ExtractPhysical(txn.StartTS())
 	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
 	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
-	forUpdateTSO := oracle.ComposeTS(startPhysical+10000, 0)
-	tk.Session().GetSessionVars().TxnCtx.SetForUpdateTS(txn.StartTS())
 	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 		RefreshStmt: &ast.RefreshMaterializedViewStmt{
 			ViewName: &ast.TableName{
@@ -442,9 +444,21 @@ func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T
 			Type: ast.RefreshMaterializedViewTypeFast,
 		},
 		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
-		RefreshReadTSO:               forUpdateTSO,
 		MLogRetainedLowerTSO:         retainedLowerTSO,
 	}
+
+	time.Sleep(20 * time.Millisecond)
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+	retainedUpperTSO, err := txnMgr.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	retainedUpperPhysical := oracle.ExtractPhysical(retainedUpperTSO)
+	require.Greater(t, retainedUpperPhysical, startPhysical)
+	expectedRows := fmt.Sprintf(
+		"%.2f",
+		10000*float64(retainedUpperPhysical-(startPhysical-5000))/float64(retainedUpperPhysical-(startPhysical-10000)),
+	)
 
 	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
@@ -458,7 +472,7 @@ func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 
-	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_for_update_est._tidb_commit_ts", "7500.00")
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_for_update_est._tidb_commit_ts", expectedRows)
 }
 
 func TestExplainRefreshMVFastPlanObtainsForUpdateTSWhenNotProvided(t *testing.T) {
@@ -491,13 +505,11 @@ func TestExplainRefreshMVFastPlanObtainsForUpdateTSWhenNotProvided(t *testing.T)
 	txnMgr := sessiontxn.GetTxnManager(tk.Session())
 	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
 	defer txnMgr.OnStmtEnd()
-	require.Zero(t, implementStmt.RefreshReadTSO)
 
 	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
 	require.NoError(t, err)
-	require.NotZero(t, implementStmt.RefreshReadTSO)
-	require.Equal(t, implementStmt.RefreshReadTSO, tk.Session().GetSessionVars().TxnCtx.GetForUpdateTS())
+	require.NotZero(t, tk.Session().GetSessionVars().TxnCtx.GetForUpdateTS())
 	require.NotNil(t, p)
 }
 

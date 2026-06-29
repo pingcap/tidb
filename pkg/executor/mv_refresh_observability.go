@@ -411,7 +411,6 @@ func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanRows(
 		RefreshStmt:                  refreshStmt,
 		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
 		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
-		RefreshReadTSO:               implementOpts.refreshReadTSO,
 		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
 	}
 	return e.renderPlanRowsForInternalStmt(ctx, implementStmt)

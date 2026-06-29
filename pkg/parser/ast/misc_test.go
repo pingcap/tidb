@@ -110,14 +110,13 @@ func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
 		},
 		LastSuccessfulRefreshReadTSO: 4242,
 		TargetRefreshReadTSO:         5252,
-		RefreshReadTSO:               6262,
 		MLogRetainedLowerTSO:         3131,
 	}
 
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 REFRESH READ TIMESTAMP 6262 MLOG RETAINED LOWER TIMESTAMP 3131", sb.String())
+	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 MLOG RETAINED LOWER TIMESTAMP 3131", sb.String())
 }
 
 func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
