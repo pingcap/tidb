@@ -1512,15 +1512,15 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a, b))")
-		tk.MustExec("set @@tidb_opt_range_max_size=1330") // 1330 is the memory usage of ["aa","aa"], ["bb","bb"], ["cc","cc"], ["dd","dd"], ["ee","ee"].
+		tk.MustExec("set @@tidb_opt_range_max_size=1120") // 1120 is the memory usage of ["aa","aa"], ["bb","bb"], ["cc","cc"], ["dd","dd"], ["ee","ee"].
 		rows := tk.MustQuery("explain format='plan_tree' select * from t where a in ('aa', 'bb', 'cc', 'dd', 'ee')").Rows()
 		require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
 		require.True(t, strings.Contains(rows[1][3].(string), "range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"]"))
 		rows = tk.MustQuery("explain format='plan_tree' select * from t where a in ('aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd', 'eeeeeeeeee')").Rows()
-		// 1330 is not enough for ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"].
+		// 1120 is not enough for ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"].
 		// So it falls back to table full scan.
 		require.True(t, strings.Contains(rows[2][0].(string), "TableFullScan"))
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1120 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 
 		// Test rebuilding ranges for the cached plan doesn't have memory limit.
 		tk.MustExec("prepare stmt1 from 'select * from t where a in (?, ?, ?, ?, ?)'")
@@ -1536,7 +1536,7 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 		// We don't limit range mem usage when rebuilding ranges for the cached plan.
-		// So ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"] can still be built even if its mem usage exceeds 1330.
+		// So ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"] can still be built even if its mem usage exceeds 1120.
 		require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
 		require.True(t, strings.Contains(rows[1][4].(string), "range:[\"aaaaaaaaaa\",\"aaaaaaaaaa\"], [\"bbbbbbbbbb\",\"bbbbbbbbbb\"], [\"cccccccccc\",\"cccccccccc\"], [\"dddddddddd\",\"dddddddddd\"], [\"eeeeeeeeee\",\"eeeeeeeeee\"]"))
 
@@ -1544,7 +1544,7 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 		tk.MustExec("prepare stmt2 from 'select * from t where a in (?, ?, ?, ?, ?) and b in (?, ?, ?, ?, ?)'")
 		tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee', @f='ff', @g='gg', @h='hh', @i='ii', @j='jj'")
 		tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
-		tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
+		tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1120 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
 			"Warning 1105 skip prepared plan-cache: in-list is too long"))
 		tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -1795,14 +1795,14 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 		tk.MustExec("drop table if exists t1, t2")
 		tk.MustExec("create table t1(a int, b varchar(10), c varchar(10), index idx_a_b(a, b))")
 		tk.MustExec("create table t2(d int)")
-		tk.MustExec("set @@tidb_opt_range_max_size=1260")
-		// 1260 is enough for [? a,? a], [? b,? b], [? c,? c] but is not enough for [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc].
+		tk.MustExec("set @@tidb_opt_range_max_size=1014")
+		// 1014 is enough for [? a,? a], [? b,? b], [? c,? c] but is not enough for [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc].
 		rows := tk.MustQuery("explain format='plan_tree' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('a', 'b', 'c')").Rows()
 		require.True(t, strings.Contains(rows[6][3].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, a, b, c)]"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 		rows = tk.MustQuery("explain format='plan_tree' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('aaaaaa', 'bbbbbb', 'cccccc');").Rows()
 		require.Contains(t, rows[6][3].(string), "range: decided by [eq(test.t1.a, test.t2.d)]")
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1260 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1014 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 
 		tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?)'")
 		tk.MustExec("set @a='a', @b='b', @c='c'")
@@ -1823,7 +1823,7 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 		tk.MustExec("prepare stmt2 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?, ?, ?)'")
 		tk.MustExec("set @a='a', @b='b', @c='c', @d='d', @e='e'")
 		tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
-		tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1260 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
+		tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1014 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
 			"Warning 1105 skip prepared plan-cache: in-list is too long"))
 		tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))

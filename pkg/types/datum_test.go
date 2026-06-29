@@ -549,6 +549,45 @@ func TestStringToMysqlBit(t *testing.T) {
 	}
 }
 
+// TestDatumEqualsCollation pins the canonical-id semantics of Datum.Equals
+// for collation. Datums with collation names that differ only in case or
+// alias (e.g. "UTF8MB4_BIN" vs "utf8mb4_bin") resolve to the same MySQL
+// collation id and must compare equal; distinct canonical collations must
+// compare unequal. This is a deliberate shift from the pre-shrink byte-equal
+// string compare, aligning with MySQL's case-insensitive collation names.
+func TestDatumEqualsCollation(t *testing.T) {
+	mk := func(name string) Datum {
+		var d Datum
+		d.SetString("abc", name)
+		return d
+	}
+
+	// Same canonical collation, different name casing → equal. The
+	// non-zero ID assertion guards against the test passing vacuously
+	// if name resolution ever breaks (both names would silently fall
+	// back to id 0, satisfying the equality below for the wrong reason).
+	a := mk("UTF8MB4_BIN")
+	b := mk("utf8mb4_bin")
+	require.NotEqual(t, uint16(0), a.CollationID())
+	require.Equal(t, a.CollationID(), b.CollationID())
+	require.True(t, a.Equals(&b))
+
+	// Different canonical collations → not equal.
+	c := mk(charset.CollationUTF8MB4)
+	d := mk(charset.CollationASCII)
+	require.NotEqual(t, c.CollationID(), d.CollationID())
+	require.False(t, c.Equals(&d))
+
+	// Unknown names both collapse to id 0. The resulting equality is a
+	// documented consequence of lossy name → id storage; pin it so a
+	// future change doesn't accidentally flip it back to string compare.
+	u1 := mk("nonexistent_one")
+	u2 := mk("nonexistent_two")
+	require.Equal(t, uint16(0), u1.CollationID())
+	require.Equal(t, uint16(0), u2.CollationID())
+	require.True(t, u1.Equals(&u2))
+}
+
 func TestMarshalDatum(t *testing.T) {
 	e, err := ParseSetValue([]string{"a", "b", "c", "d", "e"}, uint64(1))
 	require.NoError(t, err)
@@ -585,7 +624,7 @@ func TestMarshalDatum(t *testing.T) {
 		require.Equal(t, tt.decimal, datum.decimal, msg)
 		require.Equal(t, tt.length, datum.length, msg)
 		require.Equal(t, tt.i, datum.i, msg)
-		require.Equal(t, tt.collation, datum.collation, msg)
+		require.Equal(t, tt.collationID, datum.collationID, msg)
 		require.Equal(t, tt.b, datum.b, msg)
 		if tt.x == nil {
 			require.Nil(t, datum.x, msg)
@@ -602,8 +641,31 @@ func TestMarshalDatum(t *testing.T) {
 	}
 }
 
+// TestMarshalDatumUnspecifiedFsp pins the wire-format guarantee that a
+// Datum with UnspecifiedFsp (-1, stored as uint8 255) emits the legacy
+// uint16 sentinel 65535 in JSON. A pre-shrink reader still reads the field
+// as signed -1; emitting the bare 255 would surface as a real positive
+// frac on the other side.
+func TestMarshalDatumUnspecifiedFsp(t *testing.T) {
+	var d Datum
+	d.SetMysqlDuration(Duration{Duration: time.Hour, Fsp: UnspecifiedFsp})
+	require.Equal(t, uint8(0xff), d.decimal)
+
+	bytes, err := gjson.Marshal(&d)
+	require.NoError(t, err)
+	require.Contains(t, string(bytes), `"decimal":65535`,
+		"UnspecifiedFsp must marshal as legacy uint16 sentinel for back-compat")
+
+	var got Datum
+	require.NoError(t, gjson.Unmarshal(bytes, &got))
+	require.Equal(t, uint8(0xff), got.decimal, "sentinel must survive round-trip")
+	require.Equal(t, UnspecifiedFsp, got.GetMysqlDuration().Fsp,
+		"GetMysqlDuration must recover Fsp = -1")
+}
+
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
@@ -615,11 +677,59 @@ func BenchmarkCompareDatum(b *testing.B) {
 	}
 }
 
+// BenchmarkCompareDatumCollation compares collated string datums through
+// an explicit non-binary collator. Unlike BenchmarkCompareDatum, the
+// collator is sourced from charset.CollationUTF8MB4 rather than the
+// binary shortcut, so the cost of the collated comparator dominates the
+// measurement. Note that Compare uses the supplied `coll` directly and
+// never reads d1.Collation() / d1.CollationID() on the hot path.
+func BenchmarkCompareDatumCollation(b *testing.B) {
+	d1 := NewCollationStringDatum("abcdefghij", charset.CollationUTF8MB4)
+	d2 := NewCollationStringDatum("abcdefghik", charset.CollationUTF8MB4)
+	coll := collate.GetCollator(charset.CollationUTF8MB4)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := d1.Compare(DefaultStmtNoWarningContext, &d2, coll); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkCompareDatumByReflect(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reflect.DeepEqual(vals, vals1)
+	}
+}
+
+// BenchmarkDatumCopy exercises Datum.Copy on a heterogeneous slice. This
+// is the most direct measurement of Datum struct size: every byte saved
+// from the struct shows up in B/op here.
+func BenchmarkDatumCopy(b *testing.B) {
+	src, _ := prepareCompareDatums()
+	dst := make([]Datum, len(src))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := range src {
+			src[j].Copy(&dst[j])
+		}
+	}
+}
+
+// BenchmarkDatumSetMysqlTime locks in the allocation cost of SetMysqlTime.
+// Today Time is boxed via d.x (any), which heap-allocates the uint64-sized
+// value. After packing Time into d.i this should drop to 0 allocs/op.
+func BenchmarkDatumSetMysqlTime(b *testing.B) {
+	t := NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)
+	var d Datum
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d.SetMysqlTime(t)
 	}
 }
 
@@ -746,6 +856,7 @@ func BenchmarkDatumsToString(b *testing.B) {
 		MinNotNullDatum(),
 		MaxValueDatum(),
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DatumsToString(datums, true)
@@ -759,6 +870,7 @@ func BenchmarkDatumsToStringStr(b *testing.B) {
 	datums := []Datum{
 		NewStringDatum(strings.Repeat("1", 512)),
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DatumsToString(datums, true)
@@ -772,6 +884,7 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 	datums := []Datum{
 		NewStringDatum(strings.Repeat("1", 1024*10)), // 10KB
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DatumsToString(datums, true)
@@ -784,6 +897,7 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 func BenchmarkDatumTruncatedStringify(b *testing.B) {
 	d1 := NewStringDatum(strings.Repeat("1", 128))
 	d2 := NewIntDatum(2)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = d1.TruncatedStringify()

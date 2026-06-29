@@ -313,7 +313,7 @@ func checkRowInsertionConsistency(
 
 	for columnID, decodedDatum := range decodedData {
 		inputDatum := rowToInsert[columnIDToInfo[columnID].Offset]
-		cmp, err := decodedDatum.Compare(sessVars.StmtCtx.TypeCtx(), &inputDatum, collate.GetCollator(decodedDatum.Collation()))
+		cmp, err := decodedDatum.Compare(sessVars.StmtCtx.TypeCtx(), &inputDatum, collate.GetCollatorByID(int(decodedDatum.CollationID())))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -389,7 +389,7 @@ func compareIndexData(
 		)
 
 		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
-			collate.GetCollator(decodedMutationDatum.Collation()),
+			collate.GetCollatorByID(int(decodedMutationDatum.CollationID())),
 			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
