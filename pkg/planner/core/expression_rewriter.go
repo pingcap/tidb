@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -408,7 +409,11 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return er.newFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
+		buildCtx := er.sctx
+		if er.shouldIgnoreTruncateForDMLWhereCompareRefine(l, r, op) {
+			buildCtx = exprctx.CtxWithHandleTruncateErrLevel(er.sctx, errctx.LevelIgnore)
+		}
+		return er.newFunctionWithBuildCtx(buildCtx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 	}
@@ -473,6 +478,68 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		// Step 2
 		return expression.ComposeDNFCondition(er.sctx, resultDNFList...), nil
 	}
+}
+
+func (er *expressionRewriter) shouldIgnoreTruncateForDMLWhereCompareRefine(l, r expression.Expression, op string) bool {
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return false
+	}
+	// Only WHERE predicates can feed DML access-path range derivation. HAVING is evaluated after grouping,
+	// so relaxing truncation there would only change scalar comparison semantics without improving access paths.
+	if er.planCtx.curClause != whereClause {
+		return false
+	}
+	if !er.planCtx.builder.inUpdateStmt && !er.planCtx.builder.inDeleteStmt {
+		return false
+	}
+	switch op {
+	case ast.EQ, ast.NE, ast.NullEQ, ast.GT, ast.GE, ast.LT, ast.LE:
+	default:
+		return false
+	}
+	if !er.hasDirectDMLWhereCompareRefineLiteral() {
+		return false
+	}
+	return isIntNonConstant(er.sctx, l) && isNonIntConstant(er.sctx, r) ||
+		isIntNonConstant(er.sctx, r) && isNonIntConstant(er.sctx, l)
+}
+
+func (er *expressionRewriter) hasDirectDMLWhereCompareRefineLiteral() bool {
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	binOp, ok := er.astNodeStack[len(er.astNodeStack)-1].(*ast.BinaryOperationExpr)
+	if !ok {
+		return false
+	}
+	return isDMLWhereCompareRefineLiteral(binOp.L) || isDMLWhereCompareRefineLiteral(binOp.R)
+}
+
+func isDMLWhereCompareRefineLiteral(expr ast.ExprNode) bool {
+	for {
+		parenExpr, ok := expr.(*ast.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		expr = parenExpr.Expr
+	}
+	_, ok := expr.(*driver.ValueExpr)
+	return ok
+}
+
+func isIntNonConstant(ctx expression.BuildContext, expr expression.Expression) bool {
+	if _, ok := expr.(*expression.Constant); ok {
+		return false
+	}
+	return expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt
+}
+
+func isNonIntConstant(ctx expression.BuildContext, expr expression.Expression) bool {
+	con, ok := expr.(*expression.Constant)
+	if !ok || con.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+		return false
+	}
+	return con.GetType(ctx.GetEvalCtx()).EvalType() != types.ETInt
 }
 
 // buildSubquery translates the subquery ast to plan.
@@ -1925,6 +1992,28 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 // newFunction is being redirected to newFunctionWithInit.
 func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
 	return er.newFunctionWithInit(funcName, retType, nil, args...)
+}
+
+func (er *expressionRewriter) newFunctionWithBuildCtx(buildCtx expression.BuildContext, funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
+	if buildCtx == er.sctx {
+		return er.newFunction(funcName, retType, args...)
+	}
+	if er.disableFoldCounter > 0 {
+		ret, err = expression.NewFunctionBase(buildCtx, funcName, retType, args...)
+	} else if er.tryFoldCounter > 0 {
+		ret, err = expression.NewFunctionTryFold(buildCtx, funcName, retType, args...)
+	} else {
+		ret, err = expression.NewFunction(buildCtx, funcName, retType, args...)
+	}
+	if err != nil {
+		return
+	}
+	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
+		}
+	}
+	return
 }
 
 func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
