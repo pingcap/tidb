@@ -571,7 +571,7 @@ func splitMLogCommitTSFilterSelectivity(
 	ds *logicalop.DataSource,
 	conds expression.CNFExprs,
 ) (expression.CNFExprs, float64, bool) {
-	if ds.TableInfo.MaterializedViewLog == nil {
+	if ds.TableInfo == nil || ds.TableInfo.MaterializedViewLog == nil {
 		return conds, 0, false
 	}
 	estimationCtx, ok := ds.SCtx().(planctx.MLogCommitTSEstimationContext)
@@ -579,7 +579,7 @@ func splitMLogCommitTSFilterSelectivity(
 		return conds, 0, false
 	}
 	estimation := estimationCtx.GetMLogCommitTSEstimation()
-	if estimation == nil || ds.TableInfo == nil || ds.TableInfo.ID != estimation.MLogTableID {
+	if estimation == nil || ds.TableInfo.ID != estimation.MLogTableID {
 		return conds, 0, false
 	}
 	commitTSFilter := mlogCommitTSFilterWindow{}
