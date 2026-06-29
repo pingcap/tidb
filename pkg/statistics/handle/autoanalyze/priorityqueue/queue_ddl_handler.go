@@ -115,12 +115,11 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 ) error {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobFactory := NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, mlogAutoAnalyzeRatio, currentTs)
+	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
@@ -190,13 +189,12 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobFactory := NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, mlogAutoAnalyzeRatio, currentTs)
+	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()

@@ -37,31 +37,18 @@ const (
 // AnalysisJobFactory is responsible for creating different types of analysis jobs.
 // NOTE: This struct is not thread-safe.
 type AnalysisJobFactory struct {
-	sctx                 sessionctx.Context
-	autoAnalyzeRatio     float64
-	mlogAutoAnalyzeRatio float64
+	sctx             sessionctx.Context
+	autoAnalyzeRatio float64
 	// The current TSO.
 	currentTs uint64
 }
 
 // NewAnalysisJobFactory creates a new AnalysisJobFactory.
 func NewAnalysisJobFactory(sctx sessionctx.Context, autoAnalyzeRatio float64, currentTs uint64) *AnalysisJobFactory {
-	return NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, autoAnalyzeRatio, currentTs)
-}
-
-// NewAnalysisJobFactoryWithMLogRatio creates a new AnalysisJobFactory with a
-// materialized-view-log-specific auto analyze ratio.
-func NewAnalysisJobFactoryWithMLogRatio(
-	sctx sessionctx.Context,
-	autoAnalyzeRatio float64,
-	mlogAutoAnalyzeRatio float64,
-	currentTs uint64,
-) *AnalysisJobFactory {
 	return &AnalysisJobFactory{
-		sctx:                 sctx,
-		autoAnalyzeRatio:     autoAnalyzeRatio,
-		mlogAutoAnalyzeRatio: mlogAutoAnalyzeRatio,
-		currentTs:            currentTs,
+		sctx:             sctx,
+		autoAnalyzeRatio: autoAnalyzeRatio,
+		currentTs:        currentTs,
 	}
 }
 
@@ -77,7 +64,7 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
-	changePercentage := f.CalculateChangePercentageWithTableInfo(tblInfo, tblStats)
+	changePercentage := f.CalculateChangePercentage(tblStats)
 	tableSize := f.CalculateTableSize(tblStats)
 	lastAnalysisDuration := f.GetTableLastAnalyzeDuration(tblStats)
 	indexes := f.CheckIndexesNeedAnalyze(tblInfo, tblStats)
@@ -173,25 +160,14 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 // CalculateChangePercentage calculates the change percentage of the table
 // based on the change count and the analysis count.
 func (f *AnalysisJobFactory) CalculateChangePercentage(tblStats *statistics.Table) float64 {
-	return f.CalculateChangePercentageWithTableInfo(nil, tblStats)
-}
-
-// CalculateChangePercentageWithTableInfo calculates the change percentage and
-// applies table-type specific auto-analyze policies when table metadata is available.
-func (f *AnalysisJobFactory) CalculateChangePercentageWithTableInfo(tblInfo *model.TableInfo, tblStats *statistics.Table) float64 {
 	if !tblStats.IsAnalyzed() {
 		return unanalyzedTableDefaultChangePercentage
-	}
-
-	autoAnalyzeRatio := f.autoAnalyzeRatio
-	if tblInfo != nil && tblInfo.MaterializedViewLog != nil {
-		autoAnalyzeRatio = f.mlogAutoAnalyzeRatio
 	}
 
 	// Auto analyze based on the change percentage is disabled.
 	// However, this check should not affect the analysis of indexes,
 	// as index analysis is still needed for query performance.
-	if autoAnalyzeRatio == 0 {
+	if f.autoAnalyzeRatio == 0 {
 		return 0
 	}
 
@@ -200,7 +176,7 @@ func (f *AnalysisJobFactory) CalculateChangePercentageWithTableInfo(tblInfo *mod
 		tblCnt = histCnt
 	}
 	res := float64(tblStats.ModifyCount) / tblCnt
-	if res > autoAnalyzeRatio {
+	if res > f.autoAnalyzeRatio {
 		return res
 	}
 

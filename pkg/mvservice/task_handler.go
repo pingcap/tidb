@@ -37,6 +37,11 @@ type mvLogAccumulationTask struct {
 	alertRows  uint64
 }
 
+type mvLogAnalyzeTask struct {
+	schemaName string
+	mlogName   string
+}
+
 // MVTaskHandler defines all task operations needed by MVService.
 type MVTaskHandler interface {
 	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error)
@@ -48,6 +53,8 @@ type MVTaskHandler interface {
 	LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
 	LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAccumulationTask, error)
 	LoadTiDBMVLogAccumulationRowCounts(ctx context.Context, sysSessionPool basic.SessionPool, tasks map[int64]*mvLogAccumulationTask) (map[int64]uint64, error)
+	LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAnalyzeTask, error)
+	AnalyzeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) error
 	LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
 	GetCurrentTSO(ctx context.Context, sysSessionPool basic.SessionPool) (uint64, error)
 	PurgeMVHistoryBeforeTSO(

@@ -76,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -1395,12 +1396,21 @@ func (do *Domain) Init(
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 	// Register MVS DDL handler before DDLNotifier may start.
 	do.mvService.ddlNotify = make(chan struct{}, 1)
-	do.mvService.MVService = mvservice.RegisterMVService(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, func() {
-		select {
-		case do.mvService.ddlNotify <- struct{}{}:
-		default:
-		}
-	})
+	do.mvService.MVService = mvservice.RegisterMVService(
+		do.ctx,
+		do.ddlNotifier.RegisterHandler,
+		do.sysSessionPool,
+		func() statstypes.StatsHandle {
+			return do.StatsHandle()
+		},
+		&do.sysProcesses,
+		func() {
+			select {
+			case do.mvService.ddlNotify <- struct{}{}:
+			default:
+			}
+		},
+	)
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(

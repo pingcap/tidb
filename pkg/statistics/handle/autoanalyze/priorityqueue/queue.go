@@ -209,7 +209,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-		mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 		// Query locked tables once to minimize overhead.
 		// Outdated lock info is acceptable as we verify table lock status pre-analysis.
@@ -224,7 +223,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		if err != nil {
 			return err
 		}
-		jobFactory := NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, mlogAutoAnalyzeRatio, currentTs)
+		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
 		// Get all schemas except the memory and system database.
 		tbls := make([]*model.TableInfo, 0, 512)
@@ -440,13 +439,12 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 	}
 
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobFactory := NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, mlogAutoAnalyzeRatio, currentTs)
+	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
@@ -620,16 +618,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		)
 	}
 	// Otherwise, we update the indicators of the job.
-	tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
-	if !ok {
-		statslogutil.StatsLogger().Warn(
-			"Table info not found during updating job",
-			zap.Int64("tableID", stats.PhysicalID),
-			zap.String("job", oldJob.String()),
-		)
-		return nil
-	}
-	indicators.ChangePercentage = jobFactory.CalculateChangePercentageWithTableInfo(tableInfo.Meta(), stats)
+	indicators.ChangePercentage = jobFactory.CalculateChangePercentage(stats)
 	indicators.TableSize = jobFactory.CalculateTableSize(stats)
 	oldJob.SetIndicators(indicators)
 	return oldJob

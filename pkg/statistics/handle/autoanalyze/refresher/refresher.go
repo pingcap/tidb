@@ -56,9 +56,6 @@ type Refresher struct {
 	// lastSeenAutoAnalyzeRatio is the last seen value of the auto analyze ratio.
 	// Used to detect changes in the auto analyze ratio.
 	lastSeenAutoAnalyzeRatio float64
-	// lastSeenMLogAutoAnalyzeRatio is the last seen value of the materialized view log auto analyze ratio.
-	// Used to detect changes in the materialized view log auto analyze ratio.
-	lastSeenMLogAutoAnalyzeRatio float64
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -103,7 +100,6 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 		return false
 	}
 	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	currentMLogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(r.ctx); err != nil {
@@ -111,15 +107,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			return false
 		}
 		r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
-		r.lastSeenMLogAutoAnalyzeRatio = currentMLogAutoAnalyzeRatio
 		r.lastSeenPruneMode = currentPruneMode
 	} else {
 		// Only do this if the queue is already initialized.
-		if currentAutoAnalyzeRatio != r.lastSeenAutoAnalyzeRatio ||
-			currentMLogAutoAnalyzeRatio != r.lastSeenMLogAutoAnalyzeRatio ||
-			currentPruneMode != r.lastSeenPruneMode {
+		if currentAutoAnalyzeRatio != r.lastSeenAutoAnalyzeRatio || currentPruneMode != r.lastSeenPruneMode {
 			r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
-			r.lastSeenMLogAutoAnalyzeRatio = currentMLogAutoAnalyzeRatio
 			r.lastSeenPruneMode = currentPruneMode
 			err := r.jobs.Rebuild()
 			if err != nil {

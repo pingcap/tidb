@@ -219,22 +219,23 @@ func (e *TaskExecutor) SetBackpressureController(controller TaskBackpressureCont
 }
 
 // Submit enqueues one named task if the executor is still accepting work.
-func (e *TaskExecutor) Submit(name string, task func() error) {
+func (e *TaskExecutor) Submit(name string, task func() error) bool {
 	if e == nil || task == nil {
-		return
+		return false
 	}
 	e.queue.mu.Lock()
 	defer e.queue.mu.Unlock()
 
 	if e.lifecycleState.Load() == taskExecutorStateClosed {
 		e.metrics.counters.rejectedCount.Add(1)
-		return
+		return false
 	}
 	e.metrics.counters.submittedCount.Add(1)
 	e.metrics.gauges.waitingCount.Add(1)
 	e.tasksWG.Add(1)
 	e.queue.tasks.push(taskRequest{name: name, task: task})
 	e.queue.cond.Signal()
+	return true
 }
 
 // Close closes the executor.
