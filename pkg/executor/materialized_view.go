@@ -2393,6 +2393,11 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return err
 	}
 	defer e.ReleaseSysSession(releaseCtx, deleteSctx)
+	if collectorAware, ok := deleteSctx.(interface{ AttachStatsCollectorForInternalSession() func() }); ok {
+		// PURGE MATERIALIZED VIEW LOG deletes real MLOG rows through an internal
+		// session, so attach the stats collector to keep mysql.stats_meta.count in sync.
+		defer collectorAware.AttachStatsCollectorForInternalSession()()
+	}
 	deleteSessVars := deleteSctx.GetSessionVars()
 	restoreDeleteMaintenanceVars, err := applyMVMaintenanceSessionVars(
 		deleteSessVars,

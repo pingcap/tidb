@@ -2384,6 +2384,31 @@ func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
 		Check(testkit.Rows("2"))
 }
 
+func TestPurgeMaterializedViewLogUpdatesStatsMetaRowCount(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_stats_meta (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_stats_meta (id, v) purge next date_add(now(), interval 1 hour)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_stats_meta"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	tk.MustExec("insert into t_purge_stats_meta values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mlogID)).
+		Check(testkit.Rows("5 5"))
+
+	tk.MustExec("purge materialized view log on t_purge_stats_meta")
+	tk.MustQuery("select count(*) from `$mlog$t_purge_stats_meta`").Check(testkit.Rows("0"))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mlogID)).
+		Check(testkit.Rows("10 0"))
+}
+
 func TestPurgeMaterializedViewLogNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
