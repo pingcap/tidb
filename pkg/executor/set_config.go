@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -195,6 +196,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var s string
 		s, isNull, err = val.EvalString(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err == nil && !isNull {
+			s = normalizeSizeUnit(s)
 			str = fmt.Sprintf("%q", s)
 		}
 	case types.ETInt:
@@ -233,4 +235,22 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 	}
 	body = fmt.Sprintf(`{"%s":%s}`, key, str)
 	return body, nil
+}
+
+func normalizeSizeUnit(s string) string {
+	replacements := []struct{ from, to string }{
+		{"TB", "TiB"},
+		{"GB", "GiB"},
+		{"MB", "MiB"},
+		{"KB", "KiB"},
+	}
+	for _, r := range replacements {
+		if strings.HasSuffix(s, r.from) && !strings.HasSuffix(s, "i"+r.from) {
+			prefix := strings.TrimSpace(s[:len(s)-len(r.from)])
+			if _, err := strconv.ParseFloat(prefix, 64); err == nil {
+				return prefix + r.to
+			}
+		}
+	}
+	return s
 }

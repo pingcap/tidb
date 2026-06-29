@@ -1684,7 +1684,7 @@ func TestSetClusterConfig(t *testing.T) {
 		body, err := io.ReadAll(req.Body)
 		require.NoError(t, err)
 		// The `raftstore.` prefix is stripped.
-		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MB"}`, string(body))
+		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MiB"}`, string(body))
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tiflash `raftstore-proxy.server.snap-max-write-bytes-per-sec`='500MB'")
@@ -1721,6 +1721,13 @@ func TestSetClusterConfigJSONData(t *testing.T) {
 		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
 		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
 		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("24MB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"24MiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("24MiB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"24MiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("1GB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"1GiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("512KB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"512KiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("2TB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"2TiB"}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("fooMB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"fooMB"}`, true},     // non-size string must not be converted
+		{&expression.Constant{Value: types.NewStringDatum("dataTB"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"dataTB"}`, true},   // non-size string must not be converted
 		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
 		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
 		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
@@ -1736,6 +1743,43 @@ func TestSetClusterConfigJSONData(t *testing.T) {
 		} else {
 			require.Error(t, err)
 		}
+	}
+}
+
+func TestSetConfigUnitNormalizationRoundTrip(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	serversInfo := []infoschema.ServerInfo{
+		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
+	}
+	tk.Session().SetValue(executor.TestSetConfigServerInfoKey,
+		func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
+			return serversInfo, nil
+		})
+
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"24MB", "24MiB"},
+		{"1GB", "1GiB"},
+		{"512KB", "512KiB"},
+		{"24MiB", "24MiB"},
+		{"fooMB", "fooMB"},
+	}
+
+	for _, c := range cases {
+		var gotBody string
+		tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey,
+			func(req *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
+				gotBody = string(body)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
+			})
+		tk.MustExec(fmt.Sprintf("set config tikv `test.size`='%s'", c.input))
+		require.JSONEq(t, fmt.Sprintf(`{"test.size":"%s"}`, c.expected), gotBody)
 	}
 }
 
