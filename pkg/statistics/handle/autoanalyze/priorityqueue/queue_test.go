@@ -126,6 +126,58 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	})
 }
 
+func TestAnalysisPriorityQueueSkipsMaterializedViewLog(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	handle := dom.StatsHandle()
+	tk.MustExec("create table t (a int not null, b int not null)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+
+	originalAutoAnalyzeMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = originalAutoAnalyzeMinCnt
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	baseTable, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	mlogTable, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), model.MaterializedViewLogTableName(pmodel.NewCIStr("t")))
+	require.NoError(t, err)
+	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+	mlogStats, found := handle.GetNonPseudoPhysicalTableStats(mlogTable.Meta().ID)
+	require.True(t, found)
+	require.True(t, mlogStats.IsEligibleForAnalysis())
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize(ctx))
+
+	length, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, length)
+
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	require.Equal(t, baseTable.Meta().ID, job.GetTableID())
+	require.NotEqual(t, mlogTable.Meta().ID, job.GetTableID())
+
+	tk.MustExec("insert into t values (3, 30)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	pq.ProcessDMLChanges()
+	length, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, length)
+}
+
 func TestRefreshLastAnalysisDuration(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
