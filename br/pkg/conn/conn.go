@@ -49,10 +49,10 @@ const (
 	// DefaultMergeRegionKeyCount is the default region key count, 960000.
 	DefaultMergeRegionKeyCount uint64 = 960000
 
-	// DefaultImportNumGoroutines is the default number of threads for import.
-	// use 64 as default value, which is 4 times of the default value of tidb.
-	// we think is proper for IO-bound cases.
-	DefaultImportNumGoroutines uint = 64
+	// DefaultImportNumGoroutines is the default number of goroutines for restore.
+	DefaultImportNumGoroutines uint = 36
+
+	minRestoreConcurrencyOverImportThreads uint = 4
 )
 
 type VersionCheckerType int
@@ -308,7 +308,8 @@ func (mgr *Mgr) GetCurrentTsFromPD(ctx context.Context) (uint64, error) {
 }
 
 // ProcessTiKVConfigs handle the tikv config for region split size, region split keys, and import goroutines in place.
-// It retrieves the config from all alive tikv stores and returns the minimum values.
+// It retrieves the config from all alive tikv stores, keeps conservative split values,
+// and makes restore concurrency no less than import.num-threads plus a small margin.
 // If retrieving the config fails, it returns the default config values.
 func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, client *http.Client) {
 	mergeRegionSize := cfg.MergeRegionSize
@@ -342,9 +343,8 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 				log.Warn("Failed to parse import num-threads from config", logutil.ShortError(e))
 				return e
 			}
-			// We use 4 times the default value because it's an IO-bound case.
-			if importGoroutines.Value == DefaultImportNumGoroutines || (threads > 0 && threads*8 < importGoroutines.Value) {
-				importGoroutines.Value = threads * 4
+			if threads > 0 {
+				importGoroutines.Value = max(importGoroutines.Value, threads+minRestoreConcurrencyOverImportThreads)
 			}
 		}
 		// replace the value

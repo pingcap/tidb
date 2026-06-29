@@ -101,8 +101,8 @@ func SetMetadataWatchProgressForTest(interval, timeout time.Duration) func() {
 }
 
 func GetGlobalCheckpointWithRevisionForTest(
-	c MetaDataClient,
 	ctx context.Context,
+	c MetaDataClient,
 	taskName string,
 ) (uint64, int64, error) {
 	return c.getGlobalCheckpointWithRevision(ctx, taskName)

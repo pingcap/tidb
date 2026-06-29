@@ -386,7 +386,7 @@ func (t MetaDataClient) getGlobalCheckpointWithRevision(ctx context.Context, tas
 			zap.String("task", taskName),
 		},
 		func(requestCtx context.Context) (*clientv3.GetResponse, error) {
-			failpoint.Inject("advancer_get_global_checkpoint_request_timeout", func(val failpoint.Value) {
+			failpoint.Inject("advancer_get_global_checkpoint_request_timeout", func() {
 				failpoint.Return(nil, context.DeadlineExceeded)
 			})
 			return t.KV.Get(requestCtx, key)
@@ -574,12 +574,12 @@ func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskNa
 			zap.Uint64("checkpoint", checkpoint),
 		},
 		func(requestCtx context.Context) (struct{}, error) {
-			failpoint.Inject("advancer_upload_global_checkpoint_request_timeout", func(val failpoint.Value) {
+			failpoint.Inject("advancer_upload_global_checkpoint_request_timeout", func() {
 				failpoint.Return(struct{}{}, context.DeadlineExceeded)
 			})
 			_, err = t.KV.Put(requestCtx, key, value)
 			if err == nil {
-				failpoint.Inject("advancer_upload_global_checkpoint_commit_timeout", func(val failpoint.Value) {
+				failpoint.Inject("advancer_upload_global_checkpoint_commit_timeout", func() {
 					err = context.DeadlineExceeded
 				})
 			}

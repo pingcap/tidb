@@ -1320,6 +1320,7 @@ func RunStreamRestore(
 		}
 	}
 	// restore log.
+	adjustRestoreConcurrencyPerStoreFromTiKV(ctx, mgr, cfg)
 	cfg.adjustRestoreConfigForStreamRestore()
 	if err := restoreStream(ctx, mgr, g, cfg, checkInfo.CheckpointInfo); err != nil {
 		return errors.Trace(err)

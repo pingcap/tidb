@@ -139,7 +139,6 @@ type SstRestoreManager struct {
 	restorer         restore.SstRestorer
 	storeCount       uint
 	replicaCount     uint
-	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
@@ -164,16 +163,16 @@ func NewSstRestoreManager(
 	createCheckpointSessionFn func() (glue.Session, error),
 ) (*SstRestoreManager, error) {
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * storeCount
+	// Keep the global SST restore pool large enough to avoid starving stores when
+	// queued file sets temporarily point to other TiKVs.
+	const sstRestoreWorkerPoolSizePerStore uint = 7186
+	poolSize := sstRestoreWorkerPoolSizePerStore * storeCount
 	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
 	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
 
 	s := &SstRestoreManager{
 		storeCount:   storeCount,
 		replicaCount: replicaCount,
-		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
 	}
 	se, err := createCheckpointSessionFn()
 	if err != nil {

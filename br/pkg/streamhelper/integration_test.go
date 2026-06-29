@@ -416,7 +416,7 @@ func testGlobalCheckpointRevisionSurvivesCompaction(t *testing.T, metaCli stream
 	req := require.New(t)
 
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 100))
-	_, checkpointRev, err := streamhelper.GetGlobalCheckpointWithRevisionForTest(metaCli.MetaDataClient, ctx, task)
+	_, checkpointRev, err := streamhelper.GetGlobalCheckpointWithRevisionForTest(ctx, metaCli.MetaDataClient, task)
 	req.NoError(err)
 
 	advanceRevisionPrefix := "/test/advance-revision/" + task + "/"
@@ -431,7 +431,7 @@ func testGlobalCheckpointRevisionSurvivesCompaction(t *testing.T, metaCli stream
 	_, err = metaCli.KV.Compact(ctx, compactedRev)
 	req.NoError(err)
 
-	checkpoint, rev, err := streamhelper.GetGlobalCheckpointWithRevisionForTest(metaCli.MetaDataClient, ctx, task)
+	checkpoint, rev, err := streamhelper.GetGlobalCheckpointWithRevisionForTest(ctx, metaCli.MetaDataClient, task)
 	req.NoError(err)
 	req.EqualValues(100, checkpoint)
 	req.GreaterOrEqual(rev, compactedRev)
