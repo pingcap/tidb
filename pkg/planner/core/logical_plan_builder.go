@@ -5614,6 +5614,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if viewDepth != 0 &&
 		b.ctx.GetSessionVars().StmtCtx.InExplainStmt &&
 		pm != nil &&
+		!canBypassPlanReplayerPrivilegeCheck(b.ctx, pm) &&
 		!pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, dbName.L, tableInfo.Name.L, "", mysql.SelectPriv) {
 		return nil, plannererrors.ErrViewNoExplain
 	}

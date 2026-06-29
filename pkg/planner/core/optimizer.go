@@ -35,7 +35,6 @@ import (
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -183,8 +183,21 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 	return p, err
 }
 
+func canBypassPlanReplayerPrivilegeCheck(sctx planctx.Common, pm privilege.Manager) bool {
+	if sctx == nil || pm == nil {
+		return false
+	}
+	bypass, ok := sctx.Value(sessionctx.PlanReplayerPrivilegeBypass).(bool)
+	if !ok || !bypass {
+		return false
+	}
+
+	return pm.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "PLAN_REPLAYER_EXPLAIN_ADMIN", false)
+}
+
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
+func CheckPrivilege(sctx planctx.Common, pm privilege.Manager, vs []visitInfo) error {
+	activeRoles := sctx.GetSessionVars().ActiveRoles
 	for _, v := range vs {
 		if v.privilege == mysql.ExtendedPriv {
 			hasPriv := false
@@ -200,7 +213,8 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 				}
 				return v.err
 			}
-		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
+		} else if !canBypassPlanReplayerPrivilegeCheck(sctx, pm) &&
+			!pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
 				return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}

@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -376,4 +377,72 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 			require.Contains(t, names, schemaName, "missing schema file for db=%s table=%s (expected %s)", db, tableName, schemaName)
 		}
 	}
+}
+
+func TestPlanReplayerExplainAdminPrivilege(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("use test")
+	rootTk.MustExec("create table t1(a int)")
+	rootTk.MustExec("insert into t1 values (1)")
+	rootTk.MustExec("create table t2(a int primary key, b int)")
+	rootTk.MustExec("insert into t2 values (1, 10)")
+	rootTk.MustExec("create view v1 as select * from t1")
+	rootTk.MustExec("create view v2 as select * from v1")
+	rootTk.MustExec("create user 'u1'@'localhost'")
+	rootTk.MustExec("create user 'u2'@'localhost'")
+	rootTk.MustExec("grant select on test.t1 to 'u1'@'localhost'")
+	rootTk.MustExec("grant select on test.t2 to 'u1'@'localhost'")
+	rootTk.MustExec("grant PLAN_REPLAYER_EXPLAIN_ADMIN on *.* to 'u2'@'localhost'")
+
+	readZipEntryNames := func(tk *testkit.TestKit, sql string) map[string]struct{} {
+		res := tk.MustQuery(sql)
+		path := testdata.ConvertRowsToStrings(res.Rows())
+		require.Len(t, path, 1)
+
+		filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+		fileReader, err := storage.Open(ctx, filePath, nil)
+		require.NoError(t, err)
+		defer fileReader.Close()
+
+		content, err := io.ReadAll(fileReader)
+		require.NoError(t, err)
+
+		readerAt := bytes.NewReader(content)
+		zr, err := zip.NewReader(readerAt, int64(len(content)))
+		require.NoError(t, err)
+
+		names := make(map[string]struct{}, len(zr.File))
+		for _, f := range zr.File {
+			names[f.Name] = struct{}{}
+		}
+		return names
+	}
+
+	normalTk := testkit.NewTestKit(t, store)
+	require.NoError(t, normalTk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	names := readZipEntryNames(normalTk, "plan replayer dump explain select * from test.t1")
+	require.NotContains(t, names, "errors.txt")
+
+	adminTk := testkit.NewTestKit(t, store)
+	require.NoError(t, adminTk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	adminTk.MustQueryToErr("plan replayer dump explain analyze select * from test.t1")
+	names = readZipEntryNames(adminTk, "plan replayer dump explain select * from test.t1")
+	require.NotContains(t, names, "errors.txt")
+	names = readZipEntryNames(adminTk, "plan replayer dump explain select * from test.t2 where a = 1")
+	require.NotContains(t, names, "errors.txt")
+	names = readZipEntryNames(adminTk, "plan replayer dump explain select * from test.v1")
+	require.NotContains(t, names, "errors.txt")
+	names = readZipEntryNames(adminTk, "plan replayer dump explain select * from test.v2")
+	require.NotContains(t, names, "errors.txt")
 }

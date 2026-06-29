@@ -78,6 +78,7 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
+	"PLAN_REPLAYER_EXPLAIN_ADMIN",     // Can run plan replayer explain helpers without table read privileges
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
