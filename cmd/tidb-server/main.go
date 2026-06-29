@@ -341,15 +341,21 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extwor
 		logutil.BgLogger().Warn("failed to initialize external workload manager; TiDB will continue without external workload coordination", zap.Error(err))
 		return nil
 	}
-	extworkload.SetGlobalManager(mgr)
+	if !extworkload.SetManagerForStore(storage, mgr) {
+		logutil.BgLogger().Warn("external workload controller enabled but storage does not support external workload coordination; TiDB will continue without it")
+		if err := mgr.Close(); err != nil {
+			logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
+		}
+		return nil
+	}
 	return mgr
 }
 
-func closeExternalWorkloadManager(mgr extworkload.Manager) {
+func closeExternalWorkloadManager(storage kv.Storage, mgr extworkload.Manager) {
 	if mgr == nil {
 		return
 	}
-	extworkload.SetGlobalManager(nil)
+	extworkload.SetManagerForStore(storage, nil)
 	if err := mgr.Close(); err != nil {
 		logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
 	}
@@ -486,17 +492,17 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
-	externalWorkloadManager := extworkload.GetGlobalManager()
+	externalWorkloadManager := extworkload.GetManagerFromStore(storage)
 	if externalWorkloadManager != nil {
 		defer func() {
-			closeExternalWorkloadManager(externalWorkloadManager)
+			closeExternalWorkloadManager(storage, externalWorkloadManager)
 		}()
 	}
 	repository.SetupRepository(dom)
 	if extworkload.IsMaster(externalWorkloadManager) && extworkload.UseKeyspaceLevelGC(externalWorkloadManager) {
 		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
 			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
-			closeExternalWorkloadManager(externalWorkloadManager)
+			closeExternalWorkloadManager(storage, externalWorkloadManager)
 			externalWorkloadManager = nil
 		}
 	}
@@ -642,13 +648,13 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
-				closeExternalWorkloadManager(externalWorkloadManager)
+				closeExternalWorkloadManager(storage, externalWorkloadManager)
 				return nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
-				closeExternalWorkloadManager(externalWorkloadManager)
+				closeExternalWorkloadManager(storage, externalWorkloadManager)
 				return nil, nil, errors.New("kernel type mismatch")
 			}
 		}
@@ -658,12 +664,12 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
-		closeExternalWorkloadManager(externalWorkloadManager)
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
-		closeExternalWorkloadManager(externalWorkloadManager)
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	return storage, dom, nil

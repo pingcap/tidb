@@ -4,8 +4,8 @@ go_library(
     name = "extworkload",
     srcs = [
         "external_workload.go",
-        "global.go",
         "manager.go",
+        "store.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/extworkload",

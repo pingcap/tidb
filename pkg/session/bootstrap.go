@@ -76,7 +76,7 @@ func bootstrap(s sessionapi.Session) {
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			abortGCV2()
+			abortGCV2(s.GetStore())
 			upgrade(s)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))

@@ -4597,7 +4597,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			zap.Duration("cost", time.Since(startTime)))
 	}()
 	if startMode == ddl.Upgrade {
-		abortGCV2()
+		abortGCV2(store)
 		// TODO at this time domain must not be created, else it will register server
 		// info, and cause deadlock, we need to make sure this in a clear way
 		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")

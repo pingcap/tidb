@@ -34,6 +34,18 @@ type stubManager struct {
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
 func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return s.meta }
 
+type stubManagerStore struct {
+	mgr Manager
+}
+
+func (s *stubManagerStore) SetExternalWorkloadManager(mgr Manager) {
+	s.mgr = mgr
+}
+
+func (s *stubManagerStore) ExternalWorkloadManager() Manager {
+	return s.mgr
+}
+
 func TestRolePredicatesWhenDisabled(t *testing.T) {
 	require.False(t, IsEnabled(nil))
 	require.False(t, IsMaster(nil))
@@ -77,23 +89,25 @@ func TestUseKeyspaceLevelGC(t *testing.T) {
 	require.True(t, UseKeyspaceLevelGC(mgr))
 }
 
-func TestGlobalManagerStarterGate(t *testing.T) {
+func TestManagerFromStoreStarterGate(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("Starter deploy mode is only available in nextgen kernel")
 	}
 
 	origin := deploymode.Get()
 	t.Cleanup(func() {
-		SetGlobalManager(nil)
 		require.NoError(t, deploymode.Set(origin))
 	})
 
 	mgr := &stubManager{role: config.RoleMaster}
-	SetGlobalManager(mgr)
+	store := &stubManagerStore{}
+	require.True(t, SetManagerForStore(store, mgr))
 
 	require.NoError(t, deploymode.Set(deploymode.Premium))
-	require.Nil(t, GetGlobalManager())
+	require.Nil(t, GetManagerFromStore(store))
 
 	require.NoError(t, deploymode.Set(deploymode.Starter))
-	require.Same(t, mgr, GetGlobalManager())
+	require.Same(t, mgr, GetManagerFromStore(store))
+	require.True(t, SetManagerForStore(store, nil))
+	require.Nil(t, GetManagerFromStore(store))
 }

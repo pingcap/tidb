@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -320,7 +321,25 @@ type tikvStore struct {
 	keyspace  string
 	closed    bool
 
+	externalWorkload struct {
+		sync.RWMutex
+		mgr extworkload.Manager
+	}
 	metaServiceInfo *metaservice.Info
+}
+
+// SetExternalWorkloadManager installs the external workload manager bound to this store.
+func (s *tikvStore) SetExternalWorkloadManager(mgr extworkload.Manager) {
+	s.externalWorkload.Lock()
+	s.externalWorkload.mgr = mgr
+	s.externalWorkload.Unlock()
+}
+
+// ExternalWorkloadManager returns the external workload manager bound to this store.
+func (s *tikvStore) ExternalWorkloadManager() extworkload.Manager {
+	s.externalWorkload.RLock()
+	defer s.externalWorkload.RUnlock()
+	return s.externalWorkload.mgr
 }
 
 // GetOption wraps around sync.Map.

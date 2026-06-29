@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/extworkload"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
@@ -40,6 +41,15 @@ func (m *gcv2AbortManager) AbortGCV2(context.Context) error {
 	return nil
 }
 
+type gcv2AbortStore struct {
+	kv.Storage
+	mgr extworkload.Manager
+}
+
+func (s *gcv2AbortStore) ExternalWorkloadManager() extworkload.Manager {
+	return s.mgr
+}
+
 func TestAbortGCV2(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("Starter deploy mode is only available in nextgen kernel")
@@ -48,7 +58,6 @@ func TestAbortGCV2(t *testing.T) {
 	originDeployMode := deploymode.Get()
 	originInTest := intest.InTest
 	t.Cleanup(func() {
-		extworkload.SetGlobalManager(nil)
 		intest.InTest = originInTest
 		require.NoError(t, deploymode.Set(originDeployMode))
 	})
@@ -56,12 +65,12 @@ func TestAbortGCV2(t *testing.T) {
 	intest.InTest = true
 
 	mgr := &gcv2AbortManager{role: config.RoleGCV2Worker}
-	extworkload.SetGlobalManager(mgr)
-	abortGCV2()
+	store := &gcv2AbortStore{mgr: mgr}
+	abortGCV2(store)
 	require.True(t, mgr.abortCalled)
 
 	mgr.abortCalled = false
 	mgr.role = config.RoleMaster
-	abortGCV2()
+	abortGCV2(store)
 	require.False(t, mgr.abortCalled)
 }
