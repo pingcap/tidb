@@ -98,6 +98,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -331,6 +332,10 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extwor
 		logutil.BgLogger().Warn("external workload controller enabled but keyspace meta is unavailable; TiDB will continue without external workload coordination")
 		return nil
 	}
+	if cfg.Role == config.RoleGCV2Worker && !pd.IsKeyspaceUsingKeyspaceLevelGC(meta) {
+		logutil.BgLogger().Warn("external workload GCV2 role requires keyspace-level GC; TiDB will continue without external workload coordination")
+		return nil
+	}
 	mgr, err := extworkload.NewManager(ctx, meta, cfg)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to initialize external workload manager; TiDB will continue without external workload coordination", zap.Error(err))
@@ -348,13 +353,6 @@ func closeExternalWorkloadManager(mgr extworkload.Manager) {
 	if err := mgr.Close(); err != nil {
 		logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
 	}
-}
-
-func initExternalWorkloadService(ctx context.Context, mgr extworkload.Manager) error {
-	if extworkload.IsMaster(mgr) && extworkload.UseKeyspaceLevelGC(mgr) {
-		return mgr.InitializeGCV2(ctx)
-	}
-	return nil
 }
 
 func main() {
@@ -489,14 +487,18 @@ func main() {
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
 	externalWorkloadManager := extworkload.GetGlobalManager()
-	defer func() {
-		closeExternalWorkloadManager(externalWorkloadManager)
-	}()
+	if externalWorkloadManager != nil {
+		defer func() {
+			closeExternalWorkloadManager(externalWorkloadManager)
+		}()
+	}
 	repository.SetupRepository(dom)
-	if err = initExternalWorkloadService(context.Background(), externalWorkloadManager); err != nil {
-		logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
-		closeExternalWorkloadManager(externalWorkloadManager)
-		externalWorkloadManager = nil
+	if extworkload.IsMaster(externalWorkloadManager) && extworkload.UseKeyspaceLevelGC(externalWorkloadManager) {
+		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
+			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
+			closeExternalWorkloadManager(externalWorkloadManager)
+			externalWorkloadManager = nil
+		}
 	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {

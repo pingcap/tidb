@@ -44,8 +44,6 @@ func upgrade(s sessionapi.Session) {
 		return
 	}
 
-	abortGCV2()
-
 	printClusterState(s, ver)
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,

@@ -33,7 +33,6 @@ type stubManager struct {
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
 func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return s.meta }
-func (s *stubManager) Close() error                      { return nil }
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
 	require.False(t, IsEnabled(nil))

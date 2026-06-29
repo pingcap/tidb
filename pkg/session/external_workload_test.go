@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -33,11 +32,9 @@ type gcv2AbortManager struct {
 	abortCalled bool
 }
 
-func (m *gcv2AbortManager) Close() error { return nil }
 func (m *gcv2AbortManager) Role() config.ExternalWorkloadRole {
 	return m.role
 }
-func (m *gcv2AbortManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
 func (m *gcv2AbortManager) AbortGCV2(context.Context) error {
 	m.abortCalled = true
 	return nil

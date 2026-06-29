@@ -69,7 +69,6 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/infosync",
-        "//pkg/extworkload",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/session",

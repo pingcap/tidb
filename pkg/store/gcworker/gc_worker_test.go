@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -148,27 +147,6 @@ type mockGCWorkerSuite struct {
 		peerIDs  []uint64
 		regionID uint64
 	}
-}
-
-type mockExternalWorkloadManager struct {
-	extworkload.Manager
-	registerCalls     int
-	registerSafePoint uint64
-	registerLifeTime  int64
-	recycleCalls      int
-	recycleSafePoint  uint64
-}
-
-func (m *mockExternalWorkloadManager) RegisterGCV2(_ context.Context, safePoint uint64, gcLifeTime int64) error {
-	m.registerCalls++
-	m.registerSafePoint = safePoint
-	m.registerLifeTime = gcLifeTime
-	return nil
-}
-func (m *mockExternalWorkloadManager) RecycleGCV2(_ context.Context, safePoint uint64) error {
-	m.recycleCalls++
-	m.recycleSafePoint = safePoint
-	return nil
 }
 
 type mockGCWorkerSuiteOptions struct {
@@ -1200,62 +1178,43 @@ func TestUnifiedGCNeedsToWait(t *testing.T) {
 	}
 }
 
-func TestGCV2NotificationActionForRole(t *testing.T) {
+func TestGCV2NotificationActions(t *testing.T) {
 	cases := []struct {
 		name     string
 		role     config.ExternalWorkloadRole
-		expected gcv2NotificationAction
+		register bool
+		recycle  bool
 	}{
 		{
-			name:     "master registers and recycles",
+			name:     "master",
 			role:     config.RoleMaster,
-			expected: gcv2NotificationAction{register: true, recycle: true},
+			register: true,
+			recycle:  true,
 		},
 		{
-			name:     "ttl worker registers and recycles",
+			name:     "ttl worker",
 			role:     config.RoleTTLTaskWorker,
-			expected: gcv2NotificationAction{register: true, recycle: true},
+			register: true,
+			recycle:  true,
 		},
 		{
-			name:     "gcv2 worker recycles only",
-			role:     config.RoleGCV2Worker,
-			expected: gcv2NotificationAction{recycle: true},
+			name:    "gcv2 worker",
+			role:    config.RoleGCV2Worker,
+			recycle: true,
 		},
 		{
-			name:     "auto analyze worker does not participate",
-			role:     config.RoleAutoAnalyzeWorker,
-			expected: gcv2NotificationAction{},
+			name: "auto analyze worker",
+			role: config.RoleAutoAnalyzeWorker,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expected, gcv2NotificationActionForRole(tc.role))
+			register, recycle := gcv2NotificationActions(tc.role)
+			require.Equal(t, tc.register, register)
+			require.Equal(t, tc.recycle, recycle)
 		})
 	}
-}
-
-func TestNotifyGCV2Controller(t *testing.T) {
-	ctx := context.Background()
-
-	mgr := &mockExternalWorkloadManager{}
-	require.NoError(t, notifyGCV2Controller(ctx, mgr, 123, 600, gcv2NotificationAction{register: true, recycle: true}))
-	require.Equal(t, 1, mgr.registerCalls)
-	require.Equal(t, uint64(123), mgr.registerSafePoint)
-	require.Equal(t, int64(600), mgr.registerLifeTime)
-	require.Equal(t, 1, mgr.recycleCalls)
-	require.Equal(t, uint64(123), mgr.recycleSafePoint)
-
-	mgr = &mockExternalWorkloadManager{}
-	require.NoError(t, notifyGCV2Controller(ctx, mgr, 456, 0, gcv2NotificationAction{recycle: true}))
-	require.Zero(t, mgr.registerCalls)
-	require.Equal(t, 1, mgr.recycleCalls)
-	require.Equal(t, uint64(456), mgr.recycleSafePoint)
-
-	mgr = &mockExternalWorkloadManager{}
-	require.NoError(t, notifyGCV2Controller(ctx, mgr, 789, 600, gcv2NotificationAction{}))
-	require.Zero(t, mgr.registerCalls)
-	require.Zero(t, mgr.recycleCalls)
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {

@@ -854,13 +854,13 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) erro
 		return nil
 	}
 
-	action := gcv2NotificationActionForRole(mgr.Role())
-	if !action.register && !action.recycle {
+	shouldRegister, shouldRecycle := gcv2NotificationActions(mgr.Role())
+	if !shouldRegister && !shouldRecycle {
 		return nil
 	}
 
 	var gcLifeTimeSec int64
-	if action.register {
+	if shouldRegister {
 		gcLifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to load GC life time for external workload",
@@ -871,34 +871,8 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) erro
 		gcLifeTimeSec = int64(*gcLifeTime / time.Second)
 	}
 
-	return notifyGCV2Controller(ctx, mgr, safePoint, gcLifeTimeSec, action)
-}
-
-type gcv2NotificationAction struct {
-	register bool
-	recycle  bool
-}
-
-func gcv2NotificationActionForRole(role config.ExternalWorkloadRole) gcv2NotificationAction {
-	switch role {
-	case config.RoleMaster, config.RoleTTLTaskWorker:
-		return gcv2NotificationAction{register: true, recycle: true}
-	case config.RoleGCV2Worker:
-		return gcv2NotificationAction{recycle: true}
-	default:
-		return gcv2NotificationAction{}
-	}
-}
-
-func notifyGCV2Controller(
-	ctx context.Context,
-	mgr extworkload.Manager,
-	safePoint uint64,
-	gcLifeTime int64,
-	action gcv2NotificationAction,
-) error {
-	if action.register {
-		err := mgr.RegisterGCV2(ctx, safePoint, gcLifeTime)
+	if shouldRegister {
+		err := mgr.RegisterGCV2(ctx, safePoint, gcLifeTimeSec)
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to register GCV2 task",
 				zap.String("category", "gc worker"),
@@ -907,7 +881,7 @@ func notifyGCV2Controller(
 			return errors.Trace(err)
 		}
 	}
-	if action.recycle {
+	if shouldRecycle {
 		err := mgr.RecycleGCV2(ctx, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to recycle GCV2 task",
@@ -918,6 +892,17 @@ func notifyGCV2Controller(
 		}
 	}
 	return nil
+}
+
+func gcv2NotificationActions(role config.ExternalWorkloadRole) (register, recycle bool) {
+	switch role {
+	case config.RoleMaster, config.RoleTTLTaskWorker:
+		return true, true
+	case config.RoleGCV2Worker:
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
