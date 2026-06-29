@@ -1489,9 +1489,11 @@ func (p *LogicalJoin) ExtractOnCondition(
 					}
 					switch binop.FuncName.L {
 					case ast.EQ, ast.NullEQ:
-						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
-						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-						continue
+						if p.canUseAsJoinEqualCondition(arg0, arg1) {
+							cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+							eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+							continue
+						}
 					}
 				}
 			}
@@ -1767,6 +1769,9 @@ func (p *LogicalJoin) updateEQCond() {
 				continue
 			}
 			lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
+			if !p.canUseAsJoinEqualCondition(lExpr, rExpr) {
+				continue
+			}
 			if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
 				lKeys = append(lKeys, lExpr)
 				rKeys = append(rKeys, rExpr)
@@ -1894,6 +1899,13 @@ func (p *LogicalJoin) updateEQCond() {
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
+}
+
+func (p *LogicalJoin) canUseAsJoinEqualCondition(lhs, rhs expression.Expression) bool {
+	// Hash join keys use codec hash/equality, which does not model JSON
+	// comparison's numeric precision-loss rules. Keep JSON equality as an
+	// ordinary join filter so it is evaluated through CompareJSON.
+	return expression.GetAccurateCmpType(p.SCtx().GetExprCtx().GetEvalCtx(), lhs, rhs) != types.ETJson
 }
 
 func isCastWrappedJoinKey(expr expression.Expression, originalCol *expression.Column) bool {
