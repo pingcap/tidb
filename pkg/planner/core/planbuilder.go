@@ -4012,9 +4012,13 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if res.MergeSourceSelect == nil {
 			return nil, errors.New("mview: merge source select is nil")
 		}
-		retainedUpperTSO, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
-		if err != nil {
-			return nil, err
+		txnManager := sessiontxn.GetTxnManager(sctx)
+		retainedUpperTSO := refreshTxnStartTS
+		if txnManager.GetContextProvider() != nil {
+			retainedUpperTSO, err = txnManager.GetStmtForUpdateTS()
+			if err != nil {
+				return nil, err
+			}
 		}
 		sourcePlan, err := func() (base.PhysicalPlan, error) {
 			estimation := &planctx.MLogCommitTSEstimation{

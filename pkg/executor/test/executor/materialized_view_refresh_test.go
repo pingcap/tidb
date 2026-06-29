@@ -97,6 +97,16 @@ func requireRowsContainSubstring(t *testing.T, rows [][]any, substr string) {
 	require.Failf(t, "substring not found", "substring=%s rows=%v", substr, rows)
 }
 
+func requireRowsNotContainSubstring(t *testing.T, rows [][]any, substr string) {
+	t.Helper()
+
+	for _, row := range rows {
+		for _, col := range row {
+			require.NotContains(t, fmt.Sprintf("%v", col), substr, "rows=%v", rows)
+		}
+	}
+}
+
 func nextCompareTimestamp(t *testing.T, tk *testkit.TestKit) string {
 	t.Helper()
 
@@ -834,6 +844,7 @@ func TestFastDryRunMaterializedViewRefreshNoopSkipsHazardousPurgeInfo(t *testing
 		targetTime.Format("2006-01-02 15:04:05.000"),
 	)).Rows()
 	requireRowsContainPrefix(t, rows, "[S04 DATA_CHANGE_FAST_MERGE]")
+	requireRowsNotContainSubstring(t, rows, "MViewDeltaMerge")
 
 	tk.MustExec(fmt.Sprintf(
 		"refresh materialized view mv_fast_dry_run_noop_purge_guard fast as of timestamp '%s'",
