@@ -4016,18 +4016,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		refreshUpperTSO := retainedUpperTSO
-		if toTS > 0 {
-			refreshUpperTSO = toTS
-		}
 		sourcePlan, err := func() (base.PhysicalPlan, error) {
 			estimation := &planctx.MLogCommitTSEstimation{
-				MLogTableID:              res.MLogTableID,
-				RefreshLowerTSO:          fromTS,
-				RefreshUpperTSO:          refreshUpperTSO,
-				HasRefreshUpperTSOFilter: toTS > 0,
-				RetainedLowerTSO:         stmt.MLogRetainedLowerTSO,
-				RetainedUpperTSO:         retainedUpperTSO,
+				MLogTableID:      res.MLogTableID,
+				RetainedLowerTSO: stmt.MLogRetainedLowerTSO,
+				RetainedUpperTSO: retainedUpperTSO,
 			}
 			estimationCtx, ok := b.ctx.(planctx.MLogCommitTSEstimationContext)
 			if !ok {

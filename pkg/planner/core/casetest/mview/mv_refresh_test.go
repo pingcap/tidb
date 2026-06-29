@@ -475,6 +475,60 @@ func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T
 	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_for_update_est._tidb_commit_ts", expectedRows)
 }
 
+func TestExplainRefreshMVFastPlanKeepsMLogCommitTSFilterWhenOutsideRetainedWindow(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_clamp_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_clamp_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_clamp_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_clamp_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-20000, 0)
+	targetTSO := oracle.ComposeTS(startPhysical+10000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv_mlog_commit_ts_clamp_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		TargetRefreshReadTSO:         targetTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionContains(
+		t,
+		explain.Rows,
+		"test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
+		"gt(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
+		"le(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
+	)
+}
+
 func TestExplainRefreshMVFastPlanObtainsForUpdateTSWhenNotProvided(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -519,6 +573,20 @@ func requireMLogCommitTSSelectionEstRows(t *testing.T, rows [][]string, commitTS
 	for _, row := range rows {
 		if strings.Contains(row[4], commitTSInfo) {
 			require.Equal(t, estRows, row[1])
+			return
+		}
+	}
+	require.Failf(t, "mlog commit-ts selection not found", "commitTSInfo=%s rows=%v", commitTSInfo, rows)
+}
+
+func requireMLogCommitTSSelectionContains(t *testing.T, rows [][]string, commitTSInfo string, contains ...string) {
+	t.Helper()
+
+	for _, row := range rows {
+		if strings.Contains(row[4], commitTSInfo) {
+			for _, expected := range contains {
+				require.Contains(t, row[4], expected)
+			}
 			return
 		}
 	}
