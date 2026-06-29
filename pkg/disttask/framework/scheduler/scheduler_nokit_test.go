@@ -619,9 +619,15 @@ func TestOnTaskFinished(t *testing.T) {
 		"Reason: [types:1292]Truncated incorrect DOUBLE value: '?'."
 	onTaskFinished(proto.TaskStateReverted, errors.New(valueConversionErr))
 	require.EqualValues(t, map[string]int{"all": 6, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 1}, collectMetricsFn())
-	onTaskFinished(proto.TaskStateReverted, errors.New("[kv:1062]Duplicate entry '1' for key 't.idx'"))
+	datetimeConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
+		"Value conversion failed for column 'created_at'. Expected type: datetime, received value: invalid. " +
+		"Reason: [types:1292]Incorrect datetime value: 'invalid' for column 'created_at' at row 1."
+	onTaskFinished(proto.TaskStateReverted, errors.New(datetimeConversionErr))
 	require.EqualValues(t, map[string]int{"all": 7, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 2}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New("[kv:1062]Duplicate entry '1' for key 't.idx'"))
+	require.EqualValues(t, map[string]int{"all": 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3}, collectMetricsFn())
 	// noop for non-finished state.
 	onTaskFinished(proto.TaskStateRunning, nil)
-	require.EqualValues(t, map[string]int{"all": 7, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 2}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{"all": 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3}, collectMetricsFn())
 }
