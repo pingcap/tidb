@@ -62,6 +62,9 @@ var (
 
 var (
 	// ErrCancelSubtask is the cancel cause when cancelling subtasks.
+	// Step executors may also return this error directly from RunSubtask, for
+	// example when propagating context.Cause(ctx). The framework treats it as an
+	// expected cancellation instead of a subtask failure.
 	ErrCancelSubtask = errors.New("cancel subtasks")
 	// ErrNonIdempotentSubtask means the subtask is left in running state and is not idempotent,
 	// so cannot be run again.
