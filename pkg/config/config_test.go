@@ -1426,6 +1426,10 @@ bootstrap-manifest-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
 	conf.StarterParams.BootstrapManifestFile = "/etc/tidb/starter-bootstrap.json"
 	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")
 	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-manifest-file = ""`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
 bootstrap-manifest-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")

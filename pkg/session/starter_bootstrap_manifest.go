@@ -221,14 +221,6 @@ func validateStarterManifestSQLBlocks(field string, blocks []string) error {
 	return nil
 }
 
-func upgradeStarterBootstrapManifest(s sessionapi.Session, manifest *starterBootstrapManifest) error {
-	storedVersion, err := getStarterBootstrapVersion(s)
-	if err != nil {
-		return err
-	}
-	return upgradeStarterBootstrapManifestFromVersion(s, manifest, storedVersion)
-}
-
 func needUpgradeStarterBootstrapManifest(storedVersion int64, manifest *starterBootstrapManifest) bool {
 	if storedVersion > manifest.Version {
 		logutil.BgLogger().Warn("starter bootstrap manifest is older than cluster state",
@@ -244,7 +236,11 @@ func upgradeStarterBootstrapManifestFromVersion(s sessionapi.Session, manifest *
 		return nil
 	}
 
-	for _, upgrade := range manifest.pendingUpgrades(storedVersion) {
+	pendingUpgrades := manifest.pendingUpgrades(storedVersion)
+	if len(pendingUpgrades) == 0 || pendingUpgrades[len(pendingUpgrades)-1].Version != manifest.Version {
+		return errors.Errorf("starter bootstrap manifest missing upgrade entry for version %d from stored version %d", manifest.Version, storedVersion)
+	}
+	for _, upgrade := range pendingUpgrades {
 		logutil.BgLogger().Info("running starter bootstrap manifest upgrade",
 			zap.Int64("storedVersion", storedVersion),
 			zap.Int64("upgradeVersion", upgrade.Version),

@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -120,6 +121,32 @@ func TestStarterBootstrapManifestLoadNoopOutsideStarter(t *testing.T) {
 	require.Nil(t, manifest)
 }
 
+func TestStarterBootstrapManifestLoadInStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("starter deploy mode is only available in nextgen")
+	}
+
+	manifestFile := filepath.Join(t.TempDir(), "starter-bootstrap.json")
+	require.NoError(t, os.WriteFile(manifestFile, []byte(`{"version": 1, "bootstrap": ["SELECT 1"]}`), 0644))
+
+	originMode := deploymode.Get()
+	originConfig := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originMode))
+		config.StoreGlobalConfig(originConfig)
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.BootstrapManifestFile = manifestFile
+	})
+
+	manifest, err := loadStarterBootstrapManifest()
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+	require.Equal(t, int64(1), manifest.Version)
+	require.Equal(t, []string{"SELECT 1"}, manifest.Bootstrap)
+}
+
 func TestStarterBootstrapManifestBootstrapBlocks(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("classic mock store is sufficient for manifest SQL execution")
@@ -189,11 +216,42 @@ func TestStarterBootstrapManifestUpgrade(t *testing.T) {
 		]
 	}`))
 	require.NoError(t, err)
-	require.NoError(t, upgradeStarterBootstrapManifest(se, manifest))
+	storedVersion, err := getStarterBootstrapVersion(se)
+	require.NoError(t, err)
+	require.NoError(t, upgradeStarterBootstrapManifestFromVersion(se, manifest, storedVersion))
 
 	require.Equal(t, "3", mustGetTiDBVarForStarterManifest(t, se, starterBootstrapVersionVar))
 	require.Equal(t, "test_keyspace.v2", mustGetTiDBVarForStarterManifest(t, se, "starter_manifest_upgrade_v2"))
 	require.Equal(t, "test_keyspace.v3", mustGetTiDBVarForStarterManifest(t, se, "starter_manifest_upgrade_v3"))
+}
+
+func TestStarterBootstrapManifestUpgradeRequiresTargetVersion(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("classic mock store is sufficient for manifest upgrade execution")
+	}
+
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		se.Close()
+	})
+	require.NoError(t, updateStarterBootstrapVersion(se, 1))
+	MustExec(t, se, "COMMIT")
+
+	manifest, err := parseStarterBootstrapManifest([]byte(`{
+		"version": 3,
+		"upgrades": [
+			{"version": 2, "sql": []}
+		]
+	}`))
+	require.NoError(t, err)
+	err = upgradeStarterBootstrapManifestFromVersion(se, manifest, 1)
+	require.ErrorContains(t, err, "starter bootstrap manifest missing upgrade entry for version 3 from stored version 1")
+	require.Equal(t, "1", mustGetTiDBVarForStarterManifest(t, se, starterBootstrapVersionVar))
 }
 
 func TestStarterBootstrapManifestUpgradeSkipsOlderManifest(t *testing.T) {
@@ -215,7 +273,7 @@ func TestStarterBootstrapManifestUpgradeSkipsOlderManifest(t *testing.T) {
 
 	manifest, err := parseStarterBootstrapManifest([]byte(`{"version": 3}`))
 	require.NoError(t, err)
-	require.NoError(t, upgradeStarterBootstrapManifest(se, manifest))
+	require.NoError(t, upgradeStarterBootstrapManifestFromVersion(se, manifest, 5))
 	require.Equal(t, "5", mustGetTiDBVarForStarterManifest(t, se, starterBootstrapVersionVar))
 }
 
