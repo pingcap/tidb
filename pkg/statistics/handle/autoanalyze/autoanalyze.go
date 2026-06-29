@@ -570,7 +570,8 @@ func tryAutoAnalyzeTable(
 	}
 
 	// Check if the table needs to analyze.
-	if needAnalyze, reason := NeedAnalyzeTable(
+	if needAnalyze, reason := NeedAnalyzeTableWithTableInfo(
+		tblInfo,
 		statsTbl,
 		ratio,
 	); needAnalyze {
@@ -626,9 +627,18 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
+	return NeedAnalyzeTableWithTableInfo(nil, tbl, autoAnalyzeRatio)
+}
+
+// NeedAnalyzeTableWithTableInfo checks if the table needs analyze and applies
+// table-type specific auto-analyze policies when table metadata is available.
+func NeedAnalyzeTableWithTableInfo(tblInfo *model.TableInfo, tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
+	}
+	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tbl) {
+		return false, ""
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {

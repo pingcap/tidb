@@ -23,6 +23,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	mockexec "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -179,6 +180,61 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestCreateNonPartitionedTableAnalysisJobForMLog(t *testing.T) {
+	const (
+		tableID = int64(101)
+		indexID = int64(201)
+	)
+	tblInfo := &model.TableInfo{
+		ID:                  tableID,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    indexID,
+				Name:  pmodel.NewCIStr("idx_mlog"),
+				State: model.StatePublic,
+			},
+		},
+	}
+	factory := priorityqueue.NewAnalysisJobFactory(mockexec.NewContext(), 0.5, oracle.GoTimeToTS(time.Now()))
+
+	t.Run("analyzed mlog ignores change ratio", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1)
+		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
+		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
+		require.Nil(t, job)
+	})
+
+	t.Run("unanalyzed mlog still needs analyze", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1)
+		stats.LastAnalyzeVersion = 0
+		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
+		require.NotNil(t, job)
+		require.False(t, job.HasNewlyAddedIndex())
+	})
+
+	t.Run("analyzed mlog still analyzes newly added indexes", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1)
+		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
+		require.NotNil(t, job)
+		require.True(t, job.HasNewlyAddedIndex())
+	})
+}
+
+func newAnalyzedTableStats(realtimeCnt, modifyCnt int64) *statistics.Table {
+	col := &statistics.Column{
+		StatsVer:          statistics.Version2,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	}
+	stats := &statistics.Table{
+		HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, realtimeCnt, modifyCnt, map[int64]*statistics.Column{1: col}, nil),
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
+		LastAnalyzeVersion:    1,
+	}
+	stats.ColAndIdxExistenceMap.InsertCol(1, true)
+	return stats
 }
 
 func TestCalculateIndicatorsForPartitions(t *testing.T) {

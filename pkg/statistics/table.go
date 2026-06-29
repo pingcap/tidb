@@ -749,6 +749,16 @@ func (t *Table) IsEligibleForAnalysis() bool {
 	return true
 }
 
+// ShouldSuppressAutoAnalyzeByChangeRatio checks whether auto analyze should ignore
+// the DML change ratio for the table. The table may still be auto-analyzed if it
+// has never been analyzed or if newly added indexes need statistics.
+func ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo *model.TableInfo, tblStats *Table) bool {
+	return tblInfo != nil &&
+		tblInfo.MaterializedViewLog != nil &&
+		tblStats != nil &&
+		tblStats.IsAnalyzed()
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {

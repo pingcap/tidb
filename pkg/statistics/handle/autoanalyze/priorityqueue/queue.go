@@ -618,7 +618,16 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		)
 	}
 	// Otherwise, we update the indicators of the job.
-	indicators.ChangePercentage = jobFactory.CalculateChangePercentage(stats)
+	tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
+	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table info not found during updating job",
+			zap.Int64("tableID", stats.PhysicalID),
+			zap.String("job", oldJob.String()),
+		)
+		return nil
+	}
+	indicators.ChangePercentage = jobFactory.CalculateChangePercentageWithTableInfo(tableInfo.Meta(), stats)
 	indicators.TableSize = jobFactory.CalculateTableSize(stats)
 	oldJob.SetIndicators(indicators)
 	return oldJob

@@ -323,14 +323,25 @@ func TestTableAnalyzed(t *testing.T) {
 func TestNeedAnalyzeTable(t *testing.T) {
 	columns := map[int64]*statistics.Column{}
 	columns[1] = &statistics.Column{StatsVer: statistics.Version2}
+	newAnalyzedStats := func(realtimeCnt, modifyCnt int64) *statistics.Table {
+		return &statistics.Table{
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, realtimeCnt, modifyCnt, columns, nil),
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 0),
+			LastAnalyzeVersion:    1,
+		}
+	}
+	mlogInfo := &metamodel.TableInfo{MaterializedViewLog: &metamodel.MaterializedViewLogInfo{}}
 	tests := []struct {
-		tbl    *statistics.Table
-		ratio  float64
-		result bool
-		reason string
+		name    string
+		tblInfo *metamodel.TableInfo
+		tbl     *statistics.Table
+		ratio   float64
+		result  bool
+		reason  string
 	}{
 		// table was never analyzed and has reach the limit
 		{
+			name:   "unanalyzed normal table",
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			ratio:  0,
 			result: true,
@@ -338,6 +349,7 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 		// table was never analyzed but has not reached the limit
 		{
+			name:   "unanalyzed normal table below ratio",
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			ratio:  0,
 			result: true,
@@ -345,30 +357,51 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
+			name:   "analyzed normal table with auto analyze disabled",
+			tbl:    newAnalyzedStats(1, 1),
 			ratio:  0,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed but modify count is small
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 0, columns, nil), LastAnalyzeVersion: 1},
+			name:   "analyzed normal table below ratio",
+			tbl:    newAnalyzedStats(1, 0),
 			ratio:  0.3,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
+			name:   "analyzed normal table above ratio",
+			tbl:    newAnalyzedStats(1, 1),
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
+		{
+			name:    "analyzed mlog ignores change ratio",
+			tblInfo: mlogInfo,
+			tbl:     newAnalyzedStats(1, 1),
+			ratio:   0.3,
+			result:  false,
+			reason:  "",
+		},
+		{
+			name:    "unanalyzed mlog still needs analyze",
+			tblInfo: mlogInfo,
+			tbl:     &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
+			ratio:   0.3,
+			result:  true,
+			reason:  "table unanalyzed",
+		},
 	}
 	for _, test := range tests {
-		needAnalyze, reason := autoanalyze.NeedAnalyzeTable(test.tbl, test.ratio)
-		require.Equal(t, test.result, needAnalyze)
-		require.True(t, strings.HasPrefix(reason, test.reason))
+		t.Run(test.name, func(t *testing.T) {
+			needAnalyze, reason := autoanalyze.NeedAnalyzeTableWithTableInfo(test.tblInfo, test.tbl, test.ratio)
+			require.Equal(t, test.result, needAnalyze)
+			require.True(t, strings.HasPrefix(reason, test.reason))
+		})
 	}
 }
 

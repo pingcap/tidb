@@ -64,7 +64,7 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
-	changePercentage := f.CalculateChangePercentage(tblStats)
+	changePercentage := f.CalculateChangePercentageWithTableInfo(tblInfo, tblStats)
 	tableSize := f.CalculateTableSize(tblStats)
 	lastAnalysisDuration := f.GetTableLastAnalyzeDuration(tblStats)
 	indexes := f.CheckIndexesNeedAnalyze(tblInfo, tblStats)
@@ -160,8 +160,18 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 // CalculateChangePercentage calculates the change percentage of the table
 // based on the change count and the analysis count.
 func (f *AnalysisJobFactory) CalculateChangePercentage(tblStats *statistics.Table) float64 {
+	return f.CalculateChangePercentageWithTableInfo(nil, tblStats)
+}
+
+// CalculateChangePercentageWithTableInfo calculates the change percentage and
+// applies table-type specific auto-analyze policies when table metadata is available.
+func (f *AnalysisJobFactory) CalculateChangePercentageWithTableInfo(tblInfo *model.TableInfo, tblStats *statistics.Table) float64 {
 	if !tblStats.IsAnalyzed() {
 		return unanalyzedTableDefaultChangePercentage
+	}
+
+	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tblStats) {
+		return 0
 	}
 
 	// Auto analyze based on the change percentage is disabled.
