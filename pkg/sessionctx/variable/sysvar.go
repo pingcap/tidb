@@ -115,6 +115,21 @@ func setSessionIsolationReadEngines(s *SessionVars, val string) error {
 	return nil
 }
 
+func validateAutoAnalyzeRatio(varName string) func(*SessionVars, string, string, ScopeFlag) (string, error) {
+	return func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		ratio, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		const minRatio = 0.00001
+		const tolerance = 1e-9
+		if ratio < minRatio && math.Abs(ratio-minRatio) > tolerance {
+			return "", errors.Errorf("the value of %s should be greater than or equal to %f", varName, minRatio)
+		}
+		return normalizedValue, nil
+	}
+}
+
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
 //	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
@@ -771,25 +786,22 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{
-		Scope:    ScopeGlobal,
-		Name:     TiDBAutoAnalyzeRatio,
-		Value:    strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64),
-		Type:     TypeFloat,
-		MinValue: 0,
-		MaxValue: math.MaxUint64,
-		// The value of TiDBAutoAnalyzeRatio should be greater than 0.00001 or equal to 0.00001.
-		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			ratio, err := strconv.ParseFloat(normalizedValue, 64)
-			if err != nil {
-				return "", err
-			}
-			const minRatio = 0.00001
-			const tolerance = 1e-9
-			if ratio < minRatio && math.Abs(ratio-minRatio) > tolerance {
-				return "", errors.Errorf("the value of %s should be greater than or equal to %f", TiDBAutoAnalyzeRatio, minRatio)
-			}
-			return normalizedValue, nil
-		},
+		Scope:      ScopeGlobal,
+		Name:       TiDBAutoAnalyzeRatio,
+		Value:      strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64),
+		Type:       TypeFloat,
+		MinValue:   0,
+		MaxValue:   math.MaxUint64,
+		Validation: validateAutoAnalyzeRatio(TiDBAutoAnalyzeRatio),
+	},
+	{
+		Scope:      ScopeGlobal,
+		Name:       TiDBMLogAutoAnalyzeRatio,
+		Value:      strconv.FormatFloat(DefMLogAutoAnalyzeRatio, 'f', -1, 64),
+		Type:       TypeFloat,
+		MinValue:   0,
+		MaxValue:   math.MaxUint64,
+		Validation: validateAutoAnalyzeRatio(TiDBMLogAutoAnalyzeRatio),
 	},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeStartTime, Value: DefAutoAnalyzeStartTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeEndTime, Value: DefAutoAnalyzeEndTime, Type: TypeTime},

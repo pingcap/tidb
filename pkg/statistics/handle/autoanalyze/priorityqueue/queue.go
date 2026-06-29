@@ -209,6 +209,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+		mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 		// Query locked tables once to minimize overhead.
 		// Outdated lock info is acceptable as we verify table lock status pre-analysis.
@@ -223,7 +224,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		if err != nil {
 			return err
 		}
-		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
+		jobFactory := NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, mlogAutoAnalyzeRatio, currentTs)
 
 		// Get all schemas except the memory and system database.
 		tbls := make([]*model.TableInfo, 0, 512)
@@ -439,12 +440,13 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 	}
 
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
+	jobFactory := NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, mlogAutoAnalyzeRatio, currentTs)
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 

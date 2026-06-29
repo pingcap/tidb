@@ -37,18 +37,31 @@ const (
 // AnalysisJobFactory is responsible for creating different types of analysis jobs.
 // NOTE: This struct is not thread-safe.
 type AnalysisJobFactory struct {
-	sctx             sessionctx.Context
-	autoAnalyzeRatio float64
+	sctx                 sessionctx.Context
+	autoAnalyzeRatio     float64
+	mlogAutoAnalyzeRatio float64
 	// The current TSO.
 	currentTs uint64
 }
 
 // NewAnalysisJobFactory creates a new AnalysisJobFactory.
 func NewAnalysisJobFactory(sctx sessionctx.Context, autoAnalyzeRatio float64, currentTs uint64) *AnalysisJobFactory {
+	return NewAnalysisJobFactoryWithMLogRatio(sctx, autoAnalyzeRatio, autoAnalyzeRatio, currentTs)
+}
+
+// NewAnalysisJobFactoryWithMLogRatio creates a new AnalysisJobFactory with a
+// materialized-view-log-specific auto analyze ratio.
+func NewAnalysisJobFactoryWithMLogRatio(
+	sctx sessionctx.Context,
+	autoAnalyzeRatio float64,
+	mlogAutoAnalyzeRatio float64,
+	currentTs uint64,
+) *AnalysisJobFactory {
 	return &AnalysisJobFactory{
-		sctx:             sctx,
-		autoAnalyzeRatio: autoAnalyzeRatio,
-		currentTs:        currentTs,
+		sctx:                 sctx,
+		autoAnalyzeRatio:     autoAnalyzeRatio,
+		mlogAutoAnalyzeRatio: mlogAutoAnalyzeRatio,
+		currentTs:            currentTs,
 	}
 }
 
@@ -170,14 +183,19 @@ func (f *AnalysisJobFactory) CalculateChangePercentageWithTableInfo(tblInfo *mod
 		return unanalyzedTableDefaultChangePercentage
 	}
 
-	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tblStats) {
+	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tblStats, f.GetTableLastAnalyzeDuration(tblStats)) {
 		return 0
+	}
+
+	autoAnalyzeRatio := f.autoAnalyzeRatio
+	if tblInfo != nil && tblInfo.MaterializedViewLog != nil {
+		autoAnalyzeRatio = f.mlogAutoAnalyzeRatio
 	}
 
 	// Auto analyze based on the change percentage is disabled.
 	// However, this check should not affect the analysis of indexes,
 	// as index analysis is still needed for query performance.
-	if f.autoAnalyzeRatio == 0 {
+	if autoAnalyzeRatio == 0 {
 		return 0
 	}
 
@@ -186,7 +204,7 @@ func (f *AnalysisJobFactory) CalculateChangePercentageWithTableInfo(tblInfo *mod
 		tblCnt = histCnt
 	}
 	res := float64(tblStats.ModifyCount) / tblCnt
-	if res > f.autoAnalyzeRatio {
+	if res > autoAnalyzeRatio {
 		return res
 	}
 

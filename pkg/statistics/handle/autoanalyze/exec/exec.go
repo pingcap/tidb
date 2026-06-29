@@ -104,8 +104,16 @@ func RunAnalyzeStmt(
 
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
 func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
-	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?, %?)"
+	rows, _, err := statsutil.ExecWithOpts(
+		sctx,
+		nil,
+		sql,
+		variable.TiDBAutoAnalyzeRatio,
+		variable.TiDBMLogAutoAnalyzeRatio,
+		variable.TiDBAutoAnalyzeStartTime,
+		variable.TiDBAutoAnalyzeEndTime,
+	)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -118,9 +126,18 @@ func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 
 // ParseAutoAnalyzeRatio parses the auto analyze ratio from the string.
 func ParseAutoAnalyzeRatio(ratio string) float64 {
+	return parseAutoAnalyzeRatio(ratio, variable.DefAutoAnalyzeRatio)
+}
+
+// ParseMLogAutoAnalyzeRatio parses the auto analyze ratio for materialized view log tables.
+func ParseMLogAutoAnalyzeRatio(ratio string) float64 {
+	return parseAutoAnalyzeRatio(ratio, variable.DefMLogAutoAnalyzeRatio)
+}
+
+func parseAutoAnalyzeRatio(ratio string, defaultRatio float64) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
-		return variable.DefAutoAnalyzeRatio
+		return defaultRatio
 	}
 	return math.Max(autoAnalyzeRatio, 0)
 }

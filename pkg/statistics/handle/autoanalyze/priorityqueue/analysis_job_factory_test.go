@@ -198,17 +198,33 @@ func TestCreateNonPartitionedTableAnalysisJobForMLog(t *testing.T) {
 			},
 		},
 	}
-	factory := priorityqueue.NewAnalysisJobFactory(mockexec.NewContext(), 0.5, oracle.GoTimeToTS(time.Now()))
+	currentTs := oracle.GoTimeToTS(time.Now())
+	factory := priorityqueue.NewAnalysisJobFactoryWithMLogRatio(mockexec.NewContext(), 0.5, 5, currentTs)
 
-	t.Run("analyzed mlog ignores change ratio", func(t *testing.T) {
-		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1)
+	t.Run("recently analyzed mlog ignores change ratio", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*10, currentTs)
 		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
 		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
 		require.Nil(t, job)
 	})
 
+	t.Run("old analyzed mlog below mlog ratio", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1, 1)
+		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
+		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
+		require.Nil(t, job)
+	})
+
+	t.Run("old analyzed mlog above mlog ratio", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*10, 1)
+		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
+		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
+		require.NotNil(t, job)
+		require.False(t, job.HasNewlyAddedIndex())
+	})
+
 	t.Run("unanalyzed mlog still needs analyze", func(t *testing.T) {
-		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1)
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1, 1)
 		stats.LastAnalyzeVersion = 0
 		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
 		require.NotNil(t, job)
@@ -216,14 +232,14 @@ func TestCreateNonPartitionedTableAnalysisJobForMLog(t *testing.T) {
 	})
 
 	t.Run("analyzed mlog still analyzes newly added indexes", func(t *testing.T) {
-		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1)
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1, currentTs)
 		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
 		require.NotNil(t, job)
 		require.True(t, job.HasNewlyAddedIndex())
 	})
 }
 
-func newAnalyzedTableStats(realtimeCnt, modifyCnt int64) *statistics.Table {
+func newAnalyzedTableStats(realtimeCnt, modifyCnt int64, lastAnalyzeVersion uint64) *statistics.Table {
 	col := &statistics.Column{
 		StatsVer:          statistics.Version2,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -231,7 +247,7 @@ func newAnalyzedTableStats(realtimeCnt, modifyCnt int64) *statistics.Table {
 	stats := &statistics.Table{
 		HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, realtimeCnt, modifyCnt, map[int64]*statistics.Column{1: col}, nil),
 		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
-		LastAnalyzeVersion:    1,
+		LastAnalyzeVersion:    lastAnalyzeVersion,
 	}
 	stats.ColAndIdxExistenceMap.InsertCol(1, true)
 	return stats

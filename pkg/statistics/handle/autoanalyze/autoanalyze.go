@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -349,6 +350,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	mlogAutoAnalyzeRatio := exec.ParseMLogAutoAnalyzeRatio(parameters[variable.TiDBMLogAutoAnalyzeRatio])
 	start, end, ok := checkAutoAnalyzeWindow(parameters)
 	if !ok {
 		return false
@@ -361,6 +363,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 		sa.statsHandle,
 		sa.sysProcTracker,
 		autoAnalyzeRatio,
+		mlogAutoAnalyzeRatio,
 		pruneMode,
 		start,
 		end,
@@ -410,6 +413,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	autoAnalyzeRatio float64,
+	mlogAutoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
 ) bool {
@@ -476,7 +480,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				}
 
 				sql := "analyze table %n.%n"
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, mlogAutoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -511,7 +515,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := partitionStats[def.ID]
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, mlogAutoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -558,6 +562,7 @@ func tryAutoAnalyzeTable(
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
+	mlogRatio float64,
 	sql string,
 	params ...any,
 ) bool {
@@ -574,6 +579,7 @@ func tryAutoAnalyzeTable(
 		tblInfo,
 		statsTbl,
 		ratio,
+		mlogRatio,
 	); needAnalyze {
 		escaped, err := sqlescape.EscapeSQL(sql, params...)
 		if err != nil {
@@ -627,18 +633,21 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
-	return NeedAnalyzeTableWithTableInfo(nil, tbl, autoAnalyzeRatio)
+	return NeedAnalyzeTableWithTableInfo(nil, tbl, autoAnalyzeRatio, autoAnalyzeRatio)
 }
 
 // NeedAnalyzeTableWithTableInfo checks if the table needs analyze and applies
 // table-type specific auto-analyze policies when table metadata is available.
-func NeedAnalyzeTableWithTableInfo(tblInfo *model.TableInfo, tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
+func NeedAnalyzeTableWithTableInfo(tblInfo *model.TableInfo, tbl *statistics.Table, autoAnalyzeRatio, mlogAutoAnalyzeRatio float64) (bool, string) {
 	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
-	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tbl) {
+	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tbl, time.Since(oracle.GetTimeFromTS(tbl.LastAnalyzeVersion))) {
 		return false, ""
+	}
+	if tblInfo != nil && tblInfo.MaterializedViewLog != nil {
+		autoAnalyzeRatio = mlogAutoAnalyzeRatio
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {

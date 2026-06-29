@@ -1434,6 +1434,36 @@ func TestTiDBAutoAnalyzeRatio(t *testing.T) {
 	require.Equal(t, "0.00001", val)
 }
 
+func TestTiDBMLogAutoAnalyzeRatio(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	val, err := mock.GetGlobalSysVar(TiDBMLogAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
+
+	err = mock.SetGlobalSysVar(ctx, TiDBMLogAutoAnalyzeRatio, "20")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBMLogAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "20", val)
+
+	err = mock.SetGlobalSysVar(ctx, TiDBMLogAutoAnalyzeRatio, "0")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBMLogAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "20", val)
+
+	err = mock.SetGlobalSysVar(ctx, TiDBMLogAutoAnalyzeRatio, "0.000009999")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBMLogAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "20", val)
+}
+
 func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

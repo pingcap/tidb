@@ -90,6 +90,8 @@ const (
 
 	// TiDBAutoAnalyzeRatio will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
+	// TiDBMLogAutoAnalyzeRatio is the auto analyze ratio for materialized view log tables.
+	TiDBMLogAutoAnalyzeRatio = "tidb_mlog_auto_analyze_ratio"
 
 	// TiDBAutoAnalyzeStartTime will run if current time is within start time and end time.
 	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
@@ -1312,6 +1314,7 @@ const (
 	DefBuildStatsConcurrency                = 2
 	DefBuildSamplingStatsConcurrency        = 2
 	DefAutoAnalyzeRatio                     = 0.5
+	DefMLogAutoAnalyzeRatio                 = 10.0
 	DefAutoAnalyzeStartTime                 = "00:00 +0000"
 	DefAutoAnalyzeEndTime                   = "23:59 +0000"
 	DefAutoIncrementIncrement               = 1
