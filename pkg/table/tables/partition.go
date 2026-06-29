@@ -1149,9 +1149,75 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(tc types.Context, ec e
 		if lp.defaultPartitionIdx >= 0 {
 			return lp.defaultPartitionIdx, nil
 		}
-		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+		colIndices := make([]int, 0, len(lp.ColPrunes))
+		for _, colPrune := range lp.ColPrunes {
+			colIndices = append(colIndices, colPrune.ExprCol.Index)
+		}
+		valueMsg, err := formatPartitionValues(r, colIndices)
+		if err != nil {
+			return -1, errors.Trace(err)
+		}
+		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return location[0].PartIdx, nil
+}
+
+func formatPartitionValues(row []types.Datum, colIndices []int) (string, error) {
+	if len(colIndices) == 0 {
+		return "from column_list", nil
+	}
+	values := make([]string, 0, len(colIndices))
+	for _, idx := range colIndices {
+		if idx < 0 || idx >= len(row) {
+			return "", errors.Errorf("partition column index %d out of range", idx)
+		}
+		formatted, err := formatPartitionDatum(row[idx])
+		if err != nil {
+			return "", err
+		}
+		values = append(values, formatted)
+	}
+	if len(values) == 1 {
+		return values[0], nil
+	}
+	return "(" + strings.Join(values, ", ") + ")", nil
+}
+
+func formatPartitionDatum(d types.Datum) (string, error) {
+	if d.IsNull() {
+		return "NULL", nil
+	}
+
+	var (
+		str string
+		err error
+	)
+
+	if d.Kind() == types.KindMysqlTime {
+		t := d.GetMysqlTime()
+		str = t.String()
+		if t.Type() == mysql.TypeDatetime && t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Microsecond() == 0 {
+			str, err = t.DateFormat("%Y-%m-%d")
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+		}
+	} else {
+		str, err = d.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+	}
+
+	switch d.Kind() {
+	case types.KindString, types.KindBytes,
+		types.KindMysqlEnum, types.KindMysqlSet, types.KindMysqlJSON,
+		types.KindMysqlTime, types.KindMysqlDuration,
+		types.KindBinaryLiteral, types.KindMysqlBit:
+		str = strings.ReplaceAll(str, "'", "''")
+		return "'" + str + "'", nil
+	}
+	return str, nil
 }
 
 // GetDefaultIdx return the Default partitions index.
@@ -1523,7 +1589,11 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext
 		return 0, errors.Trace(lastError)
 	}
 	if idx >= len(upperBounds) {
-		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+		valueMsg, err := formatPartitionValues(r, partitionExpr.ColumnOffset)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
 }
