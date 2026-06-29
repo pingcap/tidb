@@ -24,18 +24,16 @@ import (
 func IsEnabled(m Manager) bool { return m != nil }
 
 // IsMaster reports whether this TiDB is in the regular TiDB role.
-func IsMaster(m Manager) bool { return IsEnabled(m) && m.Role() == config.RoleMaster }
+func IsMaster(m Manager) bool { return roleIs(m, config.RoleMaster) }
 
 // IsGCV2Worker reports whether this TiDB is a dedicated keyspace-level GC worker.
-func IsGCV2Worker(m Manager) bool { return IsEnabled(m) && m.Role() == config.RoleGCV2Worker }
+func IsGCV2Worker(m Manager) bool { return roleIs(m, config.RoleGCV2Worker) }
 
 // IsTTLTaskWorker reports whether this TiDB should run TTL jobs.
-func IsTTLTaskWorker(m Manager) bool { return IsEnabled(m) && m.Role() == config.RoleTTLTaskWorker }
+func IsTTLTaskWorker(m Manager) bool { return roleIs(m, config.RoleTTLTaskWorker) }
 
 // IsAutoAnalyzeWorker reports whether this TiDB should run auto-analyze jobs.
-func IsAutoAnalyzeWorker(m Manager) bool {
-	return IsEnabled(m) && m.Role() == config.RoleAutoAnalyzeWorker
-}
+func IsAutoAnalyzeWorker(m Manager) bool { return roleIs(m, config.RoleAutoAnalyzeWorker) }
 
 type managerStoreKey struct{}
 
@@ -61,4 +59,8 @@ func GetManagerFromStore(store kv.Storage) Manager {
 	}
 	mgr, _ := v.(Manager)
 	return mgr
+}
+
+func roleIs(m Manager, role config.ExternalWorkloadRole) bool {
+	return IsEnabled(m) && m.Role() == role
 }
