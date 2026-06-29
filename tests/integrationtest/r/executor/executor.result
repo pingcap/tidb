@@ -4344,7 +4344,6 @@ Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed m
 set @@tidb_mem_quota_query=1000000000;
 select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )';
 stmt_type
-Update
 set @@tidb_mem_quota_query=default;
 set global tidb_mem_oom_action=default;
 drop table if exists t;
