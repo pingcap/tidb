@@ -375,6 +375,73 @@ const (
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"
 
+	// Geospatial functions.
+	StGeomFromText = "st_geomfromtext"
+	// Typed WKT constructors (like ST_GeomFromText but the result must be of the named
+	// type, else an error — MySQL parity).
+	StPointFromText      = "st_pointfromtext"
+	StLineFromText       = "st_linefromtext"
+	StLineStringFromText = "st_linestringfromtext"
+	StPolyFromText       = "st_polyfromtext"
+	StPolygonFromText    = "st_polygonfromtext"
+	StAsText             = "st_astext"
+	StAsWKT              = "st_aswkt"
+	StDistance           = "st_distance"
+	StDistanceSphere     = "st_distance_sphere"
+	StContains           = "st_contains"
+	StWithin             = "st_within"
+	StIntersects         = "st_intersects"
+	StEquals             = "st_equals"
+	StDisjoint           = "st_disjoint"
+	StTouches            = "st_touches"
+	StCrosses            = "st_crosses"
+	StOverlaps           = "st_overlaps"
+	StX                  = "st_x"
+	StY                  = "st_y"
+	StSRID               = "st_srid"
+	StGeometryType       = "st_geometrytype"
+	StAsBinary           = "st_asbinary"
+	StAsWKB              = "st_aswkb"
+	StGeomFromWKB        = "st_geomfromwkb"
+	StEnvelope           = "st_envelope"
+	StIsValid            = "st_isvalid"
+	StIsEmpty            = "st_isempty"
+	StCovers             = "st_covers"
+	StCoveredBy          = "st_coveredby"
+	StAsGeoJSON          = "st_asgeojson"
+	StGeomFromGeoJSON    = "st_geomfromgeojson"
+	StArea               = "st_area"
+	StLength             = "st_length"
+	StCentroid           = "st_centroid"
+	StDimension          = "st_dimension"
+	StStartPoint         = "st_startpoint"
+	StEndPoint           = "st_endpoint"
+	StExteriorRing       = "st_exteriorring"
+	StNumInteriorRings   = "st_numinteriorrings"
+	StNumPoints          = "st_numpoints"
+	StPointN             = "st_pointn"
+	StLongitude          = "st_longitude"
+	StLatitude           = "st_latitude"
+	// Geometry constructor functions (MySQL): build a geometry (SRID 0) from
+	// coordinates / sub-geometries. POINT(x,y), LineString(pt, ...), Polygon(ring, ...).
+	GeomPoint      = "point"
+	GeomLineString = "linestring"
+	GeomPolygon    = "polygon"
+	// TiDBSpatialKey is an internal function: it maps a POINT to its
+	// order-preserving spatial index CellKey. It backs the hidden generated
+	// column of a points-only spatial index and is not intended for direct use.
+	TiDBSpatialKey = "tidb_spatial_key"
+	// TiDBSpatialKeys is an internal function: it maps a general geometry to the
+	// JSON array of fixed-level cell keys covering it, backing the multi-valued
+	// (general-geometry) spatial index. Not intended for direct user use.
+	TiDBSpatialKeys = "tidb_spatial_keys"
+	// TiDBSpatialBBox is an internal function: it returns one component of a
+	// geometry's minimum bounding rectangle (0=minX, 1=minY, 2=maxX, 3=maxY). It
+	// backs the hidden MBR index columns of a general-geometry spatial index, so
+	// candidates can be pruned by bbox intersection before the table lookup. Not
+	// intended for direct user use.
+	TiDBSpatialBBox = "tidb_spatial_bbox"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"

@@ -1165,6 +1165,12 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		// (FulltextSearchModifierNaturalLanguageMode). TiFlash must derive the
 		// search mode from other context when executing this expression.
 		f = &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: base}
+	case tipb.ScalarFuncSig_StWithin, tipb.ScalarFuncSig_StContains, tipb.ScalarFuncSig_StIntersects,
+		tipb.ScalarFuncSig_StEquals, tipb.ScalarFuncSig_StDisjoint, tipb.ScalarFuncSig_StTouches,
+		tipb.ScalarFuncSig_StCrosses, tipb.ScalarFuncSig_StOverlaps, tipb.ScalarFuncSig_StCovers,
+		tipb.ScalarFuncSig_StCoveredBy:
+		pred, name := geomRelFromPbCode(sigCode)
+		f = &builtinGeomRelSig{baseBuiltinFunc: base, pred: pred, funcName: name}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e

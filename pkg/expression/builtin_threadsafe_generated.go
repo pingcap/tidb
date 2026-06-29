@@ -1075,6 +1075,21 @@ func (s *builtinGTVectorFloat32Sig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomLineStringSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomPointSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomPolygonSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinGetDecimalVarSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
@@ -2090,6 +2105,136 @@ func (s *builtinSqrtSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStAreaSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStAsBinarySig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStAsGeoJSONSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStAsTextSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStCentroidSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStDimensionSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStDistanceSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStDistanceSphereSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStEnvelopeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStExteriorRingSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStGeomFromGeoJSONSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStGeomFromTextSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStGeomFromWKBSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStGeometryTypeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStIsEmptySig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStIsValidSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStLatitudeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStLengthSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStLongitudeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStNumInteriorRingsSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStNumPointsSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStPointNSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStSRIDSetSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStSRIDSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStXSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStYSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinStrToDateDateSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
@@ -2241,6 +2386,21 @@ func (s *builtinTiDBDecodePlanSig) SafeToShareAcrossSession() bool {
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinTiDBEncodeSQLDigestSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinTiDBSpatialBBoxSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinTiDBSpatialKeySig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinTiDBSpatialKeysSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
 

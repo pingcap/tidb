@@ -2898,6 +2898,13 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_golang_geo",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/golang/geo",
+        sum = "h1:KeIaDS/+VEy/bhDYjG3Z78dOyLAU4HXcVxmd0WYHJTE=",
+        version = "v0.0.0-20260625163123-7c0e84413537",
+    )
+    go_repository(
         name = "com_github_golang_glog",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/glog",
@@ -3193,6 +3200,13 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/google/go-querystring/com_github_google_go_querystring-v1.1.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/go-querystring/com_github_google_go_querystring-v1.1.0.zip",
         ],
+    )
+    go_repository(
+        name = "com_github_google_go_units",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/google/go-units",
+        sum = "h1:hM8xVjUr4Iv/iQIx4Jq1xckZkKlXu51Gqku5HlEpQAE=",
+        version = "v0.0.0-20250612230646-eddd77f68220",
     )
     go_repository(
         name = "com_github_google_gofuzz",
@@ -4612,6 +4626,13 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_lib_pq",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/lib/pq",
+        sum = "h1:sJZmqHoEaY7f+NPP8pgLB/WxulyR3fewgCM2qaSlBb4=",
+        version = "v1.1.1",
+    )
+    go_repository(
         name = "com_github_linode_linodego",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/linode/linodego",
@@ -5448,6 +5469,13 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_peterstace_simplefeatures",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/peterstace/simplefeatures",
+        sum = "h1:pmn+uh75K3CCGsJCLHnpBqgQmDECLYX3u5hfymVbqmQ=",
+        version = "v0.59.0",
+    )
+    go_repository(
         name = "com_github_phayes_freeport",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/phayes/freeport",
@@ -5572,12 +5600,9 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "5a8c6a6e4487592fea5550c2a550826bd0ad7025c7bbec12365ecc7aed81db0d",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20260617071407-7c071244534b",
-        urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260617071407-7c071244534b.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260617071407-7c071244534b.zip",
-        ],
+        replace = "github.com/mjonss/tipb",
+        sum = "h1:YutAZ5DDaz4X1xVRixmGrMWUusuhMP7y7xcGG2eJG2g=",
+        version = "v0.0.0-20260626151721-eacc7e94342e",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -9270,11 +9295,11 @@ def go_deps():
         name = "org_golang_x_image",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/image",
-        sha256 = "4a44b498934a95e8f84e8374530de0cab38d81fcd558898d4880c3c5ce1efe47",
-        strip_prefix = "golang.org/x/image@v0.0.0-20190802002840-cff245a6509b",
+        sha256 = "2201f668d99bd26e0bc5c159521bff041a67e022d335f79cbb7bfc9da047d66a",
+        strip_prefix = "golang.org/x/image@v0.23.0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/image/org_golang_x_image-v0.23.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/image/org_golang_x_image-v0.23.0.zip",
         ],
     )
     go_repository(

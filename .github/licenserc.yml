@@ -28,6 +28,7 @@ header:
     - "**/*.crt"
     - "**/*.test"
     - "**/*.result"
+    - "**/*.result.mysql"
     - "**/*.example"
     - "**/*.patch"
     - "**/*.bzl"

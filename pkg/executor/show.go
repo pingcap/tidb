@@ -1049,6 +1049,47 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
+// spatialIndexSourceColumn reports whether idxInfo is a spatial index (a single
+// hidden generated column whose expression is tidb_spatial_key(col) for points,
+// or cast(tidb_spatial_keys(col, ...) as ... array) for general geometries) and,
+// if so, returns the back-quoted source column for SHOW CREATE TABLE rendering.
+func spatialIndexSourceColumn(idxInfo *model.IndexInfo, tableInfo *model.TableInfo) (string, bool) {
+	// The cell-key is the leading index column; for a point index it is followed
+	// by the hidden ST_X/ST_Y bbox columns (a composite spatial index instead has
+	// real prefix columns first, so its leading column is not hidden and falls
+	// through to the normal KEY rendering).
+	if len(idxInfo.Columns) == 0 {
+		return "", false
+	}
+	col := tableInfo.Columns[idxInfo.Columns[0].Offset]
+	if !col.Hidden {
+		return "", false
+	}
+	expr := col.GeneratedExprString
+	// Find the spatial-key call (the MVI form is wrapped in cast(... as ... array)).
+	var marker string
+	switch {
+	case strings.Contains(expr, ast.TiDBSpatialKeys+"("):
+		marker = ast.TiDBSpatialKeys + "("
+	case strings.Contains(expr, ast.TiDBSpatialKey+"("):
+		marker = ast.TiDBSpatialKey + "("
+	default:
+		return "", false
+	}
+	// The first argument after the marker is the (already-escaped) source column;
+	// the tuning args, if any, are surfaced via the index comment instead.
+	inner := expr[strings.Index(expr, marker)+len(marker):]
+	end := strings.IndexAny(inner, ",)")
+	if end < 0 {
+		return "", false
+	}
+	colRef := strings.TrimSpace(inner[:end])
+	if colRef == "" {
+		return "", false
+	}
+	return colRef, true
+}
+
 func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
@@ -1111,6 +1152,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			} else {
 				buf.WriteString(" VIRTUAL")
 			}
+		}
+		if mysql.HasSridFlag(col.GetFlag()) {
+			fmt.Fprintf(buf, " /*!80003 SRID %d */", col.Srid)
 		}
 		if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 			hasAutoIncID = true
@@ -1225,6 +1269,24 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	}
 
 	for i, idxInfo := range publicIndices {
+		// A spatial index is internally an expression index on
+		// tidb_spatial_key(col); render it in the MySQL-compatible SPATIAL KEY
+		// form so SHOW CREATE TABLE round-trips, hiding the implementation detail.
+		if spatialCol, ok := spatialIndexSourceColumn(idxInfo, tableInfo); ok {
+			fmt.Fprintf(buf, "  SPATIAL KEY %s (%s)", stringutil.Escape(idxInfo.Name.O, sqlMode), spatialCol)
+			// The cell-tuning lives in the index comment (e.g. 'spatial:...'), so
+			// rendering it keeps SHOW CREATE TABLE round-trippable.
+			if idxInfo.Comment != "" {
+				fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+			}
+			if idxInfo.Invisible {
+				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			}
+			if i != len(publicIndices)-1 {
+				buf.WriteString(",\n")
+			}
+			continue
+		}
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {

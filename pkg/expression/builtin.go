@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/geomrel"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1000,6 +1001,58 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// Geospatial functions (spatial-index POC prerequisite).
+	ast.StGeomFromText:       &stGeomFromTextFunctionClass{baseFunctionClass{ast.StGeomFromText, 1, 2}},
+	ast.StPointFromText:      &stTypedFromTextFunctionClass{baseFunctionClass{ast.StPointFromText, 1, 2}},
+	ast.StLineFromText:       &stTypedFromTextFunctionClass{baseFunctionClass{ast.StLineFromText, 1, 2}},
+	ast.StLineStringFromText: &stTypedFromTextFunctionClass{baseFunctionClass{ast.StLineStringFromText, 1, 2}},
+	ast.StPolyFromText:       &stTypedFromTextFunctionClass{baseFunctionClass{ast.StPolyFromText, 1, 2}},
+	ast.StPolygonFromText:    &stTypedFromTextFunctionClass{baseFunctionClass{ast.StPolygonFromText, 1, 2}},
+	ast.StAsText:             &stAsTextFunctionClass{baseFunctionClass{ast.StAsText, 1, 1}},
+	ast.StAsWKT:              &stAsTextFunctionClass{baseFunctionClass{ast.StAsWKT, 1, 1}},
+	ast.StDistance:           &stDistanceFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDistance, 2, 2}},
+	ast.StDistanceSphere:     &stDistanceSphereFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDistanceSphere, 2, 2}},
+	ast.StContains:           &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StContains, 2, 2}, pred: geomrel.Contains, setsSpatialFlag: true},
+	ast.StWithin:             &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StWithin, 2, 2}, pred: geomrel.Within, setsSpatialFlag: true},
+	ast.StIntersects:         &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StIntersects, 2, 2}, pred: geomrel.Intersects, setsSpatialFlag: true},
+	ast.StEquals:             &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StEquals, 2, 2}, pred: geomrel.Equals},
+	ast.StDisjoint:           &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StDisjoint, 2, 2}, pred: geomrel.Disjoint},
+	ast.StTouches:            &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StTouches, 2, 2}, pred: geomrel.Touches},
+	ast.StCrosses:            &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StCrosses, 2, 2}, pred: geomrel.Crosses},
+	ast.StOverlaps:           &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StOverlaps, 2, 2}, pred: geomrel.Overlaps},
+	ast.StX:                  &stXFunctionClass{baseFunctionClass{ast.StX, 1, 1}},
+	ast.StY:                  &stYFunctionClass{baseFunctionClass{ast.StY, 1, 1}},
+	ast.StSRID:               &stSRIDFunctionClass{baseFunctionClass{ast.StSRID, 1, 2}},
+	ast.StGeometryType:       &stGeometryTypeFunctionClass{baseFunctionClass{ast.StGeometryType, 1, 1}},
+	ast.StAsBinary:           &stAsBinaryFunctionClass{baseFunctionClass{ast.StAsBinary, 1, 1}},
+	ast.StAsWKB:              &stAsBinaryFunctionClass{baseFunctionClass{ast.StAsWKB, 1, 1}},
+	ast.StGeomFromWKB:        &stGeomFromWKBFunctionClass{baseFunctionClass{ast.StGeomFromWKB, 1, 2}},
+	ast.StEnvelope:           &stEnvelopeFunctionClass{baseFunctionClass{ast.StEnvelope, 1, 1}},
+	ast.StIsValid:            &stIsValidFunctionClass{baseFunctionClass{ast.StIsValid, 1, 1}},
+	ast.StIsEmpty:            &stIsEmptyFunctionClass{baseFunctionClass{ast.StIsEmpty, 1, 1}},
+	ast.StCovers:             &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StCovers, 2, 2}, pred: geomrel.Covers, setsSpatialFlag: true},
+	ast.StCoveredBy:          &geomRelFunctionClass{baseFunctionClass: baseFunctionClass{ast.StCoveredBy, 2, 2}, pred: geomrel.CoveredBy, setsSpatialFlag: true},
+	ast.StAsGeoJSON:          &stAsGeoJSONFunctionClass{baseFunctionClass{ast.StAsGeoJSON, 1, 1}},
+	ast.StGeomFromGeoJSON:    &stGeomFromGeoJSONFunctionClass{baseFunctionClass{ast.StGeomFromGeoJSON, 1, 1}},
+	ast.StArea:               &stAreaFunctionClass{baseFunctionClass{ast.StArea, 1, 1}},
+	ast.StLength:             &stLengthFunctionClass{baseFunctionClass{ast.StLength, 1, 1}},
+	ast.StCentroid:           &stCentroidFunctionClass{baseFunctionClass{ast.StCentroid, 1, 1}},
+	ast.StDimension:          &stDimensionFunctionClass{baseFunctionClass{ast.StDimension, 1, 1}},
+	ast.StStartPoint:         &stStartPointFunctionClass{baseFunctionClass{ast.StStartPoint, 1, 1}},
+	ast.StEndPoint:           &stEndPointFunctionClass{baseFunctionClass{ast.StEndPoint, 1, 1}},
+	ast.StExteriorRing:       &stExteriorRingFunctionClass{baseFunctionClass{ast.StExteriorRing, 1, 1}},
+	ast.StNumInteriorRings:   &stNumInteriorRingsFunctionClass{baseFunctionClass{ast.StNumInteriorRings, 1, 1}},
+	ast.StNumPoints:          &stNumPointsFunctionClass{baseFunctionClass{ast.StNumPoints, 1, 1}},
+	ast.StPointN:             &stPointNFunctionClass{baseFunctionClass{ast.StPointN, 2, 2}},
+	ast.StLongitude:          &stLongitudeFunctionClass{baseFunctionClass{ast.StLongitude, 1, 1}},
+	ast.StLatitude:           &stLatitudeFunctionClass{baseFunctionClass{ast.StLatitude, 1, 1}},
+	ast.GeomPoint:            &geomPointFunctionClass{baseFunctionClass{ast.GeomPoint, 2, 2}},
+	ast.GeomLineString:       &geomLineStringFunctionClass{baseFunctionClass{ast.GeomLineString, 2, -1}},
+	ast.GeomPolygon:          &geomPolygonFunctionClass{baseFunctionClass{ast.GeomPolygon, 1, -1}},
+	ast.TiDBSpatialKey:       &tidbSpatialKeyFunctionClass{baseFunctionClass{ast.TiDBSpatialKey, 1, 6}},
+	ast.TiDBSpatialKeys:      &tidbSpatialKeysFunctionClass{baseFunctionClass{ast.TiDBSpatialKeys, 1, 6}},
+	ast.TiDBSpatialBBox:      &tidbSpatialBBoxFunctionClass{baseFunctionClass{ast.TiDBSpatialBBox, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

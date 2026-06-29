@@ -163,7 +163,11 @@ func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 		d.SetFloat32(r.GetFloat32(colIdx))
 	case mysql.TypeDouble:
 		d.SetFloat64(r.GetFloat64(colIdx))
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeGeometry:
+		// Geometry values are stored as a binary string (EWKB); read them as such.
+		// Without this case GetDatum returns a NULL datum for geometry, which breaks
+		// INSERT ... SELECT of a geometry column (it builds row datums via GetDatum).
 		d.SetString(r.GetString(colIdx), tp.GetCollate())
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		d.SetMysqlTime(r.GetTime(colIdx))

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -49,6 +50,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/spatial"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -1307,6 +1309,162 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
 }
 
+// buildSpatialKeyExpr builds the generated expression for a spatial index's
+// hidden column: tidb_spatial_key(col), optionally tuned with per-index cell
+// parameters parsed from the index comment. The comment form is
+//
+//	spatial:<level>,<minX>,<minY>,<maxX>,<maxY>
+//
+// (e.g. COMMENT 'spatial:18,-180,-90,180,90'); without it the column uses the
+// default coverer. Baking the params into the expression args makes them the
+// single source of truth shared by the write path and the planner.
+func buildSpatialKeyExpr(colName ast.CIStr, comment string, isPoint bool) (ast.ExprNode, error) {
+	args := []ast.ExprNode{&ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}}
+	if params, ok, err := parseSpatialComment(comment); err != nil {
+		return nil, err
+	} else if ok {
+		args = append(args,
+			ast.NewValueExpr(int64(params.Level), "", ""),
+			ast.NewValueExpr(params.MinX, "", ""),
+			ast.NewValueExpr(params.MinY, "", ""),
+			ast.NewValueExpr(params.MaxX, "", ""),
+			ast.NewValueExpr(params.MaxY, "", ""),
+		)
+	}
+	if isPoint {
+		// A POINT maps to exactly one cell: a plain (non-MVI) index on the scalar
+		// cell key.
+		return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TiDBSpatialKey), Args: args}, nil
+	}
+	// A general geometry covers many cells: a multi-valued index over the JSON
+	// array of cell keys, i.e. CAST(tidb_spatial_keys(col, ...) AS CHAR(16) ARRAY).
+	keysCall := &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TiDBSpatialKeys), Args: args}
+	castType := types.NewFieldType(mysql.TypeString)
+	castType.SetFlen(spatialKeyHexLen)
+	castType.SetCharset(charset.CharsetUTF8MB4)
+	castType.SetCollate(charset.CollationUTF8MB4)
+	castType.SetArray(true)
+	return &ast.FuncCastExpr{Expr: keysCall, Tp: castType, FunctionType: ast.CastFunction}, nil
+}
+
+// buildSpatialBBoxKeyParts returns extra index part specifications that carry the
+// geometry's minimum bounding rectangle as ordinary numeric index columns, so the
+// planner can prune candidates by MBR intersection *during the index scan, before
+// the table lookup* (the coverer cells are coarse and produce false positives).
+// For a POINT the MBR is the point itself, so the columns are ST_X(col)/ST_Y(col).
+// For a general geometry the four columns are tidb_spatial_bbox(col, 0..3) =
+// minX, minY, maxX, maxY, appended after the cell-key array (multi-valued) column.
+func buildSpatialBBoxKeyParts(colName ast.CIStr, isPoint bool) []*ast.IndexPartSpecification {
+	colExpr := func() ast.ExprNode {
+		return &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: colName}}
+	}
+	part := func(expr ast.ExprNode) *ast.IndexPartSpecification {
+		return &ast.IndexPartSpecification{Expr: expr, Length: types.UnspecifiedLength}
+	}
+	call := func(fn string, args ...ast.ExprNode) ast.ExprNode {
+		return &ast.FuncCallExpr{FnName: ast.NewCIStr(fn), Args: args}
+	}
+	if isPoint {
+		return []*ast.IndexPartSpecification{
+			part(call(ast.StX, colExpr())),
+			part(call(ast.StY, colExpr())),
+		}
+	}
+	parts := make([]*ast.IndexPartSpecification, 4)
+	for i := range parts {
+		parts[i] = part(call(ast.TiDBSpatialBBox, colExpr(), ast.NewValueExpr(int64(i), "", "")))
+	}
+	return parts
+}
+
+// spatialKeyHexLen is the CHAR width of a hex-encoded cell key (8 bytes).
+const spatialKeyHexLen = 16
+
+// parseSpatialComment extracts per-index cell tuning from an index comment.
+func parseSpatialComment(comment string) (spatial.PlanarParams, bool, error) {
+	const prefix = "spatial:"
+	trimmed := strings.TrimSpace(comment)
+	if !strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+		return spatial.PlanarParams{}, false, nil
+	}
+	fields := strings.Split(trimmed[len(prefix):], ",")
+	p, err := spatial.ParsePlanarParams(fields)
+	if err != nil {
+		return spatial.PlanarParams{}, false, err
+	}
+	return p, true, nil
+}
+
+// validateSpatialColumn checks a column is indexable by a SPATIAL index and
+// reports whether it is a POINT (plain index) vs a general geometry (MVI). A
+// general-geometry MVI is SRID 0 only in the POC; POINT supports SRID 0 or 4326.
+func validateSpatialColumn(col *table.Column) (isPoint bool, err error) {
+	if col.FieldType.GetType() != mysql.TypeGeometry {
+		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is only supported on geometry columns")
+	}
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
+		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index requires a NOT NULL column")
+	}
+	isPoint = col.FieldType.GetGeometryType() == field_types.GeomPoint
+	if isPoint {
+		if col.Srid != 0 && col.Srid != 4326 {
+			return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index on a POINT supports SRID 0 or 4326 in the POC, got SRID %d", col.Srid)
+		}
+		return true, nil
+	}
+	if col.Srid != 0 {
+		return false, dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index on a general geometry supports SRID 0 in the POC, got SRID %d", col.Srid)
+	}
+	return false, nil
+}
+
+// rewriteSpatialConstraints validates each inline SPATIAL constraint and
+// rewrites it into an ordinary (expression) index on tidb_spatial_key(col),
+// mirroring the standalone CREATE SPATIAL INDEX path.
+func rewriteSpatialConstraints(cols []*table.Column, constraints []*ast.Constraint) error {
+	for _, constr := range constraints {
+		if constr.Tp != ast.ConstraintSpatial {
+			continue
+		}
+		if len(constr.Keys) == 0 {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+		}
+		// The trailing key is the geometry; preceding keys are ordinary prefix
+		// columns (composite spatial index).
+		geomKey := constr.Keys[len(constr.Keys)-1]
+		if geomKey.Column == nil {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+		}
+		col := table.FindCol(cols, geomKey.Column.Name.L)
+		if col == nil {
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(geomKey.Column.Name)
+		}
+		isPoint, err := validateSpatialColumn(col)
+		if err != nil {
+			return err
+		}
+		if len(constr.Keys) > 1 && !isPoint {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("composite SPATIAL index requires the geometry column to be a POINT in the POC")
+		}
+		comment := ""
+		if constr.Option != nil {
+			comment = constr.Option.Comment
+		}
+		keyExpr, err := buildSpatialKeyExpr(col.Name, comment, isPoint)
+		if err != nil {
+			return err
+		}
+		geomKey.Expr = keyExpr
+		geomKey.Column = nil
+		geomKey.Length = types.UnspecifiedLength
+		// Carry the geometry's MBR as trailing numeric index columns for pre-lookup
+		// pruning (see buildSpatialBBoxKeyParts).
+		constr.Keys = append(constr.Keys, buildSpatialBBoxKeyParts(col.Name, isPoint)...)
+		constr.Tp = ast.ConstraintIndex
+	}
+	return nil
+}
+
 // BuildTableInfo creates a TableInfo.
 func BuildTableInfo(
 	ctx *metabuild.Context,
@@ -1331,6 +1489,14 @@ func BuildTableInfo(
 		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
+
+	// Rewrite inline SPATIAL constraints into expression indexes on
+	// tidb_spatial_key(col), so the rest of the build (hidden-column generation,
+	// BuildIndexInfo) treats them as ordinary expression indexes. POC scope:
+	// a single NOT NULL SRID-0 POINT column.
+	if err := rewriteSpatialConstraints(tblColumns, constraints); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// This pre-scan is necessary because index building in the main loop may need to check
 	// tbInfo.HasClusteredIndex() before the PRIMARY KEY constraint is fully processed.

@@ -5062,12 +5062,67 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 	return nil
 }
 
+// createSpatialIndex implements `CREATE SPATIAL INDEX` for the points-only POC.
+// A spatial index on a POINT column is modeled as an ordinary expression index
+// on a hidden virtual generated column `tidb_spatial_key(col)`, reusing the
+// expression-index DDL and the plain (non-MVI) index write path. The planner
+// recognizes such an index structurally (a single hidden column whose generated
+// expression is tidb_spatial_key(...)).
+func (e *executor) createSpatialIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	if len(indexPartSpecifications) == 0 {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+	}
+	_, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The trailing column is the geometry; any preceding columns are ordinary
+	// prefix columns (a composite spatial index, e.g. (tenant_id, position)).
+	geomPart := indexPartSpecifications[len(indexPartSpecifications)-1]
+	if geomPart.Column == nil {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index must be defined on a column")
+	}
+	col := table.FindCol(t.Cols(), geomPart.Column.Name.L)
+	if col == nil {
+		return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(geomPart.Column.Name)
+	}
+	isPoint, err := validateSpatialColumn(col)
+	if err != nil {
+		return err
+	}
+	if len(indexPartSpecifications) > 1 && !isPoint {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("composite SPATIAL index requires the geometry column to be a POINT in the POC")
+	}
+
+	// Rewrite the geometry part into the spatial key expression (a scalar
+	// tidb_spatial_key for POINTs -> plain index, or CAST(tidb_spatial_keys(...)
+	// AS CHAR ARRAY) for general geometries -> multi-valued index), reusing the
+	// expression-index path. Per-index cell tuning comes from the index comment.
+	comment := ""
+	if indexOption != nil {
+		comment = indexOption.Comment
+	}
+	keyExpr, err := buildSpatialKeyExpr(col.Name, comment, isPoint)
+	if err != nil {
+		return err
+	}
+	geomPart.Expr = keyExpr
+	geomPart.Column = nil
+	geomPart.Length = types.UnspecifiedLength
+	// Carry the geometry's MBR as trailing numeric index columns for pre-lookup
+	// pruning (see buildSpatialBBoxKeyParts).
+	indexPartSpecifications = append(indexPartSpecifications, buildSpatialBBoxKeyParts(col.Name, isPoint)...)
+
+	return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, indexPartSpecifications, indexOption, ifNotExists)
+}
+
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	switch keyType {
 	case ast.IndexKeyTypeSpatial:
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
+		return e.createSpatialIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	case ast.IndexKeyTypeColumnar:
 		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}

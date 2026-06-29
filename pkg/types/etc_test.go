@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +54,9 @@ func testTypeStr(t *testing.T, tp byte, expect string) {
 }
 
 func testTypeToStr(t *testing.T, tp byte, charset string, expect string) {
-	v := TypeToStr(tp, charset)
+	// The geometry-type arg is only consulted for mysql.TypeGeometry; these
+	// cases all use non-geometry types, so the zero value is fine.
+	v := TypeToStr(tp, charset, ast.GeomGeometry)
 	require.Equal(t, expect, v)
 }
 
