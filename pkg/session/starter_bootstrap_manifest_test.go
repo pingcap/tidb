@@ -225,35 +225,6 @@ func TestStarterBootstrapManifestUpgrade(t *testing.T) {
 	require.Equal(t, "test_keyspace.v3", mustGetTiDBVarForStarterManifest(t, se, "starter_manifest_upgrade_v3"))
 }
 
-func TestStarterBootstrapManifestUpgradeRequiresTargetVersion(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("classic mock store is sufficient for manifest upgrade execution")
-	}
-
-	store, dom := CreateStoreAndBootstrap(t)
-	t.Cleanup(func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	})
-	se := CreateSessionAndSetID(t, store)
-	t.Cleanup(func() {
-		se.Close()
-	})
-	require.NoError(t, updateStarterBootstrapVersion(se, 1))
-	MustExec(t, se, "COMMIT")
-
-	manifest, err := parseStarterBootstrapManifest([]byte(`{
-		"version": 3,
-		"upgrades": [
-			{"version": 2, "sql": []}
-		]
-	}`))
-	require.NoError(t, err)
-	err = upgradeStarterBootstrapManifestFromVersion(se, manifest, 1)
-	require.ErrorContains(t, err, "starter bootstrap manifest missing upgrade entry for version 3 from stored version 1")
-	require.Equal(t, "1", mustGetTiDBVarForStarterManifest(t, se, starterBootstrapVersionVar))
-}
-
 func TestStarterBootstrapManifestUpgradeSkipsOlderManifest(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("classic mock store is sufficient for manifest upgrade execution")

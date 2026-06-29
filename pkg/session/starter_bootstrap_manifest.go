@@ -236,11 +236,7 @@ func upgradeStarterBootstrapManifestFromVersion(s sessionapi.Session, manifest *
 		return nil
 	}
 
-	pendingUpgrades := manifest.pendingUpgrades(storedVersion)
-	if len(pendingUpgrades) == 0 || pendingUpgrades[len(pendingUpgrades)-1].Version != manifest.Version {
-		return errors.Errorf("starter bootstrap manifest missing upgrade entry for version %d from stored version %d", manifest.Version, storedVersion)
-	}
-	for _, upgrade := range pendingUpgrades {
+	for _, upgrade := range manifest.pendingUpgrades(storedVersion) {
 		logutil.BgLogger().Info("running starter bootstrap manifest upgrade",
 			zap.Int64("storedVersion", storedVersion),
 			zap.Int64("upgradeVersion", upgrade.Version),
