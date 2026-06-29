@@ -37,29 +37,11 @@ func IsAutoAnalyzeWorker(m Manager) bool { return roleIs(m, config.RoleAutoAnaly
 
 // UseKeyspaceLevelGC reports whether the manager is bound to a keyspace-level GC keyspace.
 func UseKeyspaceLevelGC(m Manager) bool {
-	return IsEnabled(m) && m.Meta() != nil && pd.IsKeyspaceUsingKeyspaceLevelGC(m.Meta())
-}
-
-// ManagerProvider is implemented by storage instances that carry an external
-// workload manager.
-type ManagerProvider interface {
-	ExternalWorkloadManager() Manager
-}
-
-// ManagerSetter is implemented by storage instances that can install an
-// external workload manager.
-type ManagerSetter interface {
-	SetExternalWorkloadManager(Manager)
-}
-
-// SetManagerForStore installs the manager on a storage instance that supports it.
-func SetManagerForStore(store any, mgr Manager) bool {
-	setter, ok := store.(ManagerSetter)
-	if !ok {
+	if !IsEnabled(m) {
 		return false
 	}
-	setter.SetExternalWorkloadManager(mgr)
-	return true
+	meta := m.Meta()
+	return meta != nil && pd.IsKeyspaceUsingKeyspaceLevelGC(meta)
 }
 
 // GetManagerFromStore returns the manager bound to store only in Starter deploy mode.
@@ -67,11 +49,15 @@ func GetManagerFromStore(store any) Manager {
 	if !deploymode.IsStarter() {
 		return nil
 	}
-	provider, ok := store.(ManagerProvider)
+	provider, ok := store.(managerProvider)
 	if !ok {
 		return nil
 	}
 	return provider.ExternalWorkloadManager()
+}
+
+type managerProvider interface {
+	ExternalWorkloadManager() Manager
 }
 
 func roleIs(m Manager, role config.ExternalWorkloadRole) bool {

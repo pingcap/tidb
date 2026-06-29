@@ -350,7 +350,8 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extwor
 		logutil.BgLogger().Warn("failed to initialize external workload manager; TiDB will continue without external workload coordination", zap.Error(err))
 		return nil
 	}
-	if !extworkload.SetManagerForStore(storage, mgr) {
+	managerStore, ok := storage.(externalWorkloadManagerSetter)
+	if !ok {
 		if err := mgr.Close(); err != nil {
 			logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
 		}
@@ -360,14 +361,21 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extwor
 		logutil.BgLogger().Warn("external workload controller enabled but storage does not support external workload coordination; TiDB will continue without it")
 		return nil
 	}
+	managerStore.SetExternalWorkloadManager(mgr)
 	return mgr
+}
+
+type externalWorkloadManagerSetter interface {
+	SetExternalWorkloadManager(extworkload.Manager)
 }
 
 func closeExternalWorkloadManager(storage kv.Storage, mgr extworkload.Manager) {
 	if mgr == nil {
 		return
 	}
-	extworkload.SetManagerForStore(storage, nil)
+	if managerStore, ok := storage.(externalWorkloadManagerSetter); ok {
+		managerStore.SetExternalWorkloadManager(nil)
+	}
 	if err := mgr.Close(); err != nil {
 		logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
 	}

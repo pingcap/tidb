@@ -38,10 +38,6 @@ type stubManagerStore struct {
 	mgr Manager
 }
 
-func (s *stubManagerStore) SetExternalWorkloadManager(mgr Manager) {
-	s.mgr = mgr
-}
-
 func (s *stubManagerStore) ExternalWorkloadManager() Manager {
 	return s.mgr
 }
@@ -100,14 +96,13 @@ func TestManagerFromStoreStarterGate(t *testing.T) {
 	})
 
 	mgr := &stubManager{role: config.RoleMaster}
-	store := &stubManagerStore{}
-	require.True(t, SetManagerForStore(store, mgr))
+	store := &stubManagerStore{mgr: mgr}
 
 	require.NoError(t, deploymode.Set(deploymode.Premium))
 	require.Nil(t, GetManagerFromStore(store))
 
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	require.Same(t, mgr, GetManagerFromStore(store))
-	require.True(t, SetManagerForStore(store, nil))
+	store.mgr = nil
 	require.Nil(t, GetManagerFromStore(store))
 }
