@@ -74,6 +74,9 @@ type ExtraParams struct {
 	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
 	// then the user can recover the task manually or fail it if it's not recoverable.
 	ManualRecovery bool `json:"manual_recovery,omitempty"`
+	// PauseOnKVDiskFull indicates whether the task should be paused instead of
+	// reverted when TiKV reports disk full.
+	PauseOnKVDiskFull bool `json:"pause_on_kv_disk_full,omitempty"`
 	// MaxRuntimeSlots is the max slots when running subtasks of this task in
 	// TargetSteps steps.
 	// normally it's 0, means we will use the RequiredSlots to run the subtasks.

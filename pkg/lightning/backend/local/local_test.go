@@ -2433,6 +2433,29 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+
+	store = &http.StoreInfo{
+		Store:  http.MetaStore{Address: "127.0.0.1:20160"},
+		Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"},
+	}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+	require.Contains(t, err.Error(), "TiKV(127.0.0.1:20160)")
+	require.Contains(t, err.Error(), "increase the storage capacity of TiKV")
+
+	store = &http.StoreInfo{
+		Store: http.MetaStore{
+			Address: "127.0.0.1:3930",
+			Labels: []http.StoreLabel{
+				{Key: "engine", Value: "tiflash"},
+			},
+		},
+		Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"},
+	}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+	require.Contains(t, err.Error(), "TiFlash(127.0.0.1:3930)")
+	require.Contains(t, err.Error(), "increase the storage capacity of TiFlash")
 }
 
 func TestBackendCloseWithoutTiKVClient(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
@@ -188,6 +189,126 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	taskErr := errdef.ErrKVDiskFull.GenWithStack("store 1 disk full")
+	taskErr2 := errdef.ErrKVDiskFull.GenWithStack("store 2 disk full")
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	sch := createScheduler(&task, true, taskMgr, ctrl)
+
+	schExt := schmock.NewMockExtension(ctrl)
+	sch.Extension = schExt
+	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePending: 1,
+		proto.SubtaskStateRunning: 1,
+	}, nil, nil)
+	schExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return()
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStateRunning, sch.GetTask().State)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 2,
+	}, []error{taskErr, taskErr2}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, task.State, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, proto.TaskStatePausing, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePaused: 1,
+	}, nil)
+	taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePaused, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	tests := []struct {
+		name        string
+		cntByState  map[proto.SubtaskState]int64
+		subTaskErrs []error
+	}{
+		{
+			name: "canceled subtasks present",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed:   1,
+				proto.SubtaskStateCanceled: 1,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+		{
+			name: "mixed error types",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr, errors.New("network error")},
+		},
+		{
+			name: "failed count and error count mismatch",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.False(t, shouldPauseOnKVDiskFull(&task, test.cntByState, test.subTaskErrs))
+		})
+	}
+
+	missingErrTask := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    2,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	missingErrSch := createScheduler(&missingErrTask, true, taskMgr, ctrl)
+	taskMgr.EXPECT().GetSubtaskStateCntAndErrorsByStep(gomock.Any(), missingErrTask.ID, missingErrTask.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil, nil)
+	taskMgr.EXPECT().RevertTask(gomock.Any(), missingErrTask.ID, proto.TaskStateRunning, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ int64, _ proto.TaskState, err error) error {
+			require.ErrorContains(t, err, "without error")
+			return nil
+		})
+	require.NoError(t, missingErrSch.onRunning())
+	require.Equal(t, proto.TaskStateReverting, missingErrSch.GetTask().State)
+	require.ErrorContains(t, missingErrSch.GetTask().Error, "without error")
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestSchedulerNotAllocateSlots(t *testing.T) {

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1349,7 +1350,7 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 		if engine.IsTiFlashHTTPResp(&store.Store) {
 			storeType = "TiFlash"
 		}
-		return errors.Errorf("the remaining storage capacity of %s(%s) is less than 10%%; please increase the storage capacity of %s and try again",
+		return errdef.ErrKVDiskFull.GenWithStack("the remaining storage capacity of %s(%s) is less than 10%%; please increase the storage capacity of %s and try again",
 			storeType, store.Store.Address, storeType)
 	}
 	return nil
