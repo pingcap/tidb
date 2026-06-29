@@ -60,17 +60,17 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}
-	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
+	nameDump, orgnameDump := hack.Slice(column.Name), hack.Slice(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
 	}
 	if len(orgnameDump) > maxColumnNameSize {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
-	buffer = dump.LengthEncodedString(buffer, []byte("def"))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = dump.LengthEncodedString(buffer, hack.Slice("def"))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(hack.Slice(column.Schema)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(hack.Slice(column.Table)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(hack.Slice(column.OrgTable)))
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(nameDump))
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
@@ -88,7 +88,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 			buffer = append(buffer, 251) // NULL
 		default:
 			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-			buffer = dump.LengthEncodedString(buffer, []byte(defaultValStr))
+			buffer = dump.LengthEncodedString(buffer, hack.Slice(defaultValStr))
 		}
 	}
 
