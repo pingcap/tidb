@@ -504,13 +504,13 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
+	repository.SetupRepository(dom)
 	externalWorkloadManager := extworkload.GetManagerFromStore(storage)
 	if externalWorkloadManager != nil {
 		defer func() {
 			closeExternalWorkloadManager(storage, externalWorkloadManager)
 		}()
 	}
-	repository.SetupRepository(dom)
 	if extworkload.IsMaster(externalWorkloadManager) && extworkload.UseKeyspaceLevelGC(externalWorkloadManager) {
 		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
 			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
