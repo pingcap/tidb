@@ -64,7 +64,8 @@ type readIndexStepExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	summary *execute.SubtaskSummary
+	summary      *execute.SubtaskSummary
+	ingestedSSTs *ingestedSSTRecorder
 
 	summaryMap sync.Map // subtaskID => readIndexSummary
 	backendCfg *local.BackendConfig
@@ -90,8 +91,10 @@ func newReadIndexExecutor(
 	jc *ReorgContext,
 	cloudStorageURI string,
 	avgRowSize int,
+	observeIngestedSST bool,
 ) (*readIndexStepExecutor, error) {
-	return &readIndexStepExecutor{
+	summary := &execute.SubtaskSummary{}
+	executor := &readIndexStepExecutor{
 		store:           store,
 		etcdCli:         etcdCli,
 		sessPool:        sessPool,
@@ -101,8 +104,12 @@ func newReadIndexExecutor(
 		jc:              jc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
-		summary:         &execute.SubtaskSummary{},
-	}, nil
+		summary:         summary,
+	}
+	if observeIngestedSST {
+		executor.ingestedSSTs = newIngestedSSTRecorder(summary)
+	}
+	return executor, nil
 }
 
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
@@ -160,6 +167,9 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
+	if r.ingestedSSTs != nil {
+		r.backend.SetCollector(r.ingestedSSTs)
+	}
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.store, r.job).
 		WithImportDistributedLock(r.etcdCli, sm.TS).
 		WithDistTaskCheckpointManagerParam(
@@ -247,6 +257,10 @@ func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 func (r *readIndexStepExecutor) ResetSummary() {
+	if r.ingestedSSTs != nil {
+		r.ingestedSSTs.Reset()
+		return
+	}
 	r.summary.Reset()
 }
 
