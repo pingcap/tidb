@@ -222,7 +222,7 @@ func (b *builtinCastRealAsStringSig) vecEvalString(ctx EvalContext, input *chunk
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, tc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(formatRealForCastAsString(v, bits), b.tp, tc, false)
 		if err != nil {
 			return err
 		}
