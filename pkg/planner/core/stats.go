@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -45,7 +45,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -550,7 +549,9 @@ func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, fi
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	selectivityConds, mlogCommitTSSelectivity, hasMLogCommitTSSelectivity := splitMLogCommitTSFilterSelectivity(ds, conds)
+	// TODO: Move the mview-specific selectivity hook out of the main stats derivation path.
+	selectivityConds, mlogCommitTSSelectivity, hasMLogCommitTSSelectivity :=
+		mview.SplitMLogCommitTSFilterSelectivity(ds.SCtx(), ds.TableInfo, ds.Schema(), conds)
 	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, selectivityConds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
@@ -565,163 +566,6 @@ func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, fi
 	// stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.SCtx(), nodes)
 	// }
 	return ds.TableStats.Scale(selectivity)
-}
-
-func splitMLogCommitTSFilterSelectivity(
-	ds *logicalop.DataSource,
-	conds expression.CNFExprs,
-) (expression.CNFExprs, float64, bool) {
-	if ds.TableInfo == nil || ds.TableInfo.MaterializedViewLog == nil {
-		return conds, 0, false
-	}
-	estimationCtx, ok := ds.SCtx().(planctx.MLogCommitTSEstimationContext)
-	if !ok {
-		return conds, 0, false
-	}
-	estimation := estimationCtx.GetMLogCommitTSEstimation()
-	if estimation == nil || ds.TableInfo.ID != estimation.MLogTableID {
-		return conds, 0, false
-	}
-	commitTSFilter := mlogCommitTSFilterWindow{}
-	remainingConds := make(expression.CNFExprs, 0, len(conds))
-	for _, cond := range conds {
-		if commitTSFilter.addCond(ds, cond) {
-			continue
-		}
-		remainingConds = append(remainingConds, cond)
-	}
-	if !commitTSFilter.hasBound() {
-		return conds, 0, false
-	}
-	selectivity, ok := estimateMLogCommitTSSelectivity(estimation, ds.TableInfo, commitTSFilter)
-	if !ok {
-		return conds, 0, false
-	}
-	return remainingConds, selectivity, true
-}
-
-type mlogCommitTSFilterWindow struct {
-	lowerTSO uint64
-	hasLower bool
-	upperTSO uint64
-	hasUpper bool
-}
-
-func (w *mlogCommitTSFilterWindow) hasBound() bool {
-	return w.hasLower || w.hasUpper
-}
-
-func (w *mlogCommitTSFilterWindow) addCond(ds *logicalop.DataSource, expr expression.Expression) bool {
-	sf, ok := expr.(*expression.ScalarFunction)
-	if !ok {
-		return false
-	}
-	switch sf.FuncName.L {
-	case ast.GT, ast.GE, ast.LT, ast.LE:
-	default:
-		return false
-	}
-	args := sf.GetArgs()
-	if len(args) != 2 {
-		return false
-	}
-	op, value, ok := extractMLogCommitTSFilterBound(ds.SCtx().GetExprCtx().GetEvalCtx(), sf.FuncName.L, args)
-	if !ok {
-		return false
-	}
-	switch op {
-	case ast.GT, ast.GE:
-		if !w.hasLower || value > w.lowerTSO {
-			w.lowerTSO = value
-			w.hasLower = true
-		}
-	case ast.LT, ast.LE:
-		if !w.hasUpper || value < w.upperTSO {
-			w.upperTSO = value
-			w.hasUpper = true
-		}
-	}
-	return true
-}
-
-func extractMLogCommitTSFilterBound(
-	evalCtx expression.EvalContext,
-	op string,
-	args []expression.Expression,
-) (string, uint64, bool) {
-	if col, ok := args[0].(*expression.Column); ok && col.ID == model.ExtraCommitTSID {
-		value, isNull, ok := expression.GetUint64FromConstant(evalCtx, args[1])
-		if !ok || isNull {
-			return "", 0, false
-		}
-		return op, value, true
-	}
-	if col, ok := args[1].(*expression.Column); ok && col.ID == model.ExtraCommitTSID {
-		value, isNull, ok := expression.GetUint64FromConstant(evalCtx, args[0])
-		if !ok || isNull {
-			return "", 0, false
-		}
-		switch op {
-		case ast.GT:
-			return ast.LT, value, true
-		case ast.GE:
-			return ast.LE, value, true
-		case ast.LT:
-			return ast.GT, value, true
-		case ast.LE:
-			return ast.GE, value, true
-		}
-	}
-	return "", 0, false
-}
-
-func estimateMLogCommitTSSelectivity(
-	estimation *planctx.MLogCommitTSEstimation,
-	mlogTableInfo *model.TableInfo,
-	filter mlogCommitTSFilterWindow,
-) (float64, bool) {
-	if estimation.RetainedUpperTSO == 0 {
-		return 0, false
-	}
-	retainedLowerTSO := estimation.RetainedLowerTSO
-	if retainedLowerTSO == 0 && mlogTableInfo != nil {
-		retainedLowerTSO = mlogTableInfo.UpdateTS
-	}
-	if retainedLowerTSO == 0 {
-		return 0, false
-	}
-	if (filter.hasLower && (filter.lowerTSO < retainedLowerTSO || filter.lowerTSO > estimation.RetainedUpperTSO)) ||
-		(filter.hasUpper && (filter.upperTSO < retainedLowerTSO || filter.upperTSO > estimation.RetainedUpperTSO)) {
-		return 0, false
-	}
-
-	// Missing filter bounds are unbounded on that side, so use the retained mlog window boundary.
-	filterLowerTSO := retainedLowerTSO
-	if filter.hasLower {
-		filterLowerTSO = filter.lowerTSO
-	}
-	filterUpperTSO := estimation.RetainedUpperTSO
-	if filter.hasUpper {
-		filterUpperTSO = filter.upperTSO
-	}
-
-	retainedLowerPhysical := oracle.ExtractPhysical(retainedLowerTSO)
-	retainedUpperPhysical := oracle.ExtractPhysical(estimation.RetainedUpperTSO)
-	filterLowerPhysical := oracle.ExtractPhysical(filterLowerTSO)
-	filterUpperPhysical := oracle.ExtractPhysical(filterUpperTSO)
-	retainedDuration := retainedUpperPhysical - retainedLowerPhysical
-	filterDuration := filterUpperPhysical - filterLowerPhysical
-	if retainedDuration <= 0 || filterDuration <= 0 {
-		return 0, false
-	}
-
-	selectivity := float64(filterDuration) / float64(retainedDuration)
-	if selectivity < 0 {
-		selectivity = 0
-	} else if selectivity > 1 {
-		selectivity = 1
-	}
-	return selectivity, true
 }
 
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need

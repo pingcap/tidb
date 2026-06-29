@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mview",
-    srcs = ["mview.go"],
+    srcs = [
+        "mview.go",
+        "stats.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/mview",
     visibility = ["//visibility:public"],
     deps = [
@@ -21,18 +24,24 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/mviewutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )
 
 go_test(
     name = "mview_test",
     timeout = "short",
-    srcs = ["mview_test.go"],
+    srcs = [
+        "mview_test.go",
+        "stats_test.go",
+    ],
+    embed = [":mview"],
     flaky = True,
-    shard_count = 18,
+    shard_count = 19,
     deps = [
-        ":mview",
         "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/expression/exprstatic",
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",

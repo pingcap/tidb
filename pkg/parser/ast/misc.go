@@ -540,7 +540,7 @@ type RefreshMaterializedViewImplementStmt struct {
 	LastSuccessfulRefreshReadTSO uint64
 	TargetRefreshReadTSO         uint64
 	// MLogRetainedLowerTSO is the effective lower bound of retained mlog data read from purge metadata.
-	// If it is zero, the planner falls back to the mlog TableInfo.UpdateTS.
+	// If it is zero, the planner may use the mlog TableInfo.UpdateTS schema-update timestamp as a heuristic.
 	MLogRetainedLowerTSO uint64
 }
 

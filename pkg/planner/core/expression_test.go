@@ -94,56 +94,6 @@ func runTests(t *testing.T, tests []testCase) {
 	}
 }
 
-func TestExtractMLogCommitTSFilterBound(t *testing.T) {
-	sctx := MockContext()
-	defer func() {
-		domain.GetDomain(sctx).StatsHandle().Close()
-	}()
-	commitTSCol := &expression.Column{
-		ID:      model.ExtraCommitTSID,
-		RetType: model.NewExtraCommitTSColInfo().FieldType.Clone(),
-	}
-	constant := &expression.Constant{
-		Value:   types.NewUintDatum(42),
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-
-	testCases := []struct {
-		name     string
-		op       string
-		args     []expression.Expression
-		expected string
-	}{
-		{
-			name:     "column on left",
-			op:       ast.GT,
-			args:     []expression.Expression{commitTSCol, constant},
-			expected: ast.GT,
-		},
-		{
-			name:     "column on right",
-			op:       ast.GT,
-			args:     []expression.Expression{constant, commitTSCol},
-			expected: ast.LT,
-		},
-		{
-			name:     "column on right inclusive",
-			op:       ast.LE,
-			args:     []expression.Expression{constant, commitTSCol},
-			expected: ast.GE,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			op, value, ok := extractMLogCommitTSFilterBound(sctx.GetExprCtx().GetEvalCtx(), tc.op, tc.args)
-			require.True(t, ok)
-			require.Equal(t, tc.expected, op)
-			require.Equal(t, uint64(42), value)
-		})
-	}
-}
-
 func TestBetween(t *testing.T) {
 	tests := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},

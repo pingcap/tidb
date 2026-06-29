@@ -98,8 +98,12 @@ type MLogCommitTSEstimationContext interface {
 // The planner infers the filtered commit-ts window from the actual `_tidb_commit_ts`
 // predicates and estimates its selectivity against this retained window.
 type MLogCommitTSEstimation struct {
-	MLogTableID      int64
+	MLogTableID int64
+	// RetainedLowerTSO is the lower bound from mlog purge metadata. When it is 0,
+	// stats derivation may fall back to the mlog table schema-update timestamp as a
+	// planner-only heuristic, not a durable creation-time boundary.
 	RetainedLowerTSO uint64
+	// RetainedUpperTSO is the upper bound visible to the refresh source plan.
 	RetainedUpperTSO uint64
 }
 

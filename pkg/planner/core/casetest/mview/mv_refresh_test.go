@@ -475,7 +475,7 @@ func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T
 	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_for_update_est._tidb_commit_ts", expectedRows)
 }
 
-func TestExplainRefreshMVFastPlanKeepsMLogCommitTSFilterWhenOutsideRetainedWindow(t *testing.T) {
+func TestExplainRefreshMVFastPlanClampsMLogCommitTSFilterToRetainedWindow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -520,12 +520,68 @@ func TestExplainRefreshMVFastPlanKeepsMLogCommitTSFilterWhenOutsideRetainedWindo
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts", "10000.00")
 	requireMLogCommitTSSelectionContains(
 		t,
 		explain.Rows,
 		"test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
-		"gt(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
-		"le(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
+		fmt.Sprintf("gt(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts, %d)", lastSuccessTSO),
+		fmt.Sprintf("le(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts, %d)", targetTSO),
+	)
+}
+
+func TestExplainRefreshMVFastPlanEstimatesZeroRowsForDisjointMLogCommitTSFilter(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_disjoint_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_disjoint_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_disjoint_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_disjoint_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-20000, 0)
+	targetTSO := oracle.ComposeTS(startPhysical-15000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("mv_mlog_commit_ts_disjoint_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		TargetRefreshReadTSO:         targetTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts", "0.00")
+	requireMLogCommitTSSelectionContains(
+		t,
+		explain.Rows,
+		"test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts",
+		fmt.Sprintf("gt(test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts, %d)", lastSuccessTSO),
+		fmt.Sprintf("le(test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts, %d)", targetTSO),
 	)
 }
 
