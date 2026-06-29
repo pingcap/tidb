@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	tidbtypes "github.com/pingcap/tidb/pkg/types"
 )
 
 // DistanceMetric is the distance metric used by the vector index.
@@ -359,6 +360,21 @@ func (index *IndexInfo) GetChangingOriginName() string {
 func (index *IndexInfo) HasPrefixIndex() bool {
 	for _, ic := range index.Columns {
 		if ic.Length != types.UnspecifiedLength {
+			return true
+		}
+	}
+	return false
+}
+
+// ContainsVirtualGeneratedTemporalWithDateColumn reports whether the index contains
+// a virtual generated temporal-with-date column.
+func (index *IndexInfo) ContainsVirtualGeneratedTemporalWithDateColumn(tblInfo *TableInfo) bool {
+	for _, idxCol := range index.Columns {
+		if idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
+			continue
+		}
+		col := tblInfo.Columns[idxCol.Offset]
+		if col.IsVirtualGenerated() && tidbtypes.IsTemporalWithDate(col.GetType()) {
 			return true
 		}
 	}
