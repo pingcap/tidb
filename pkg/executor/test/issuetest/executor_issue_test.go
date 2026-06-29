@@ -70,6 +70,35 @@ func TestIssue24210(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSelectionExecBaseExecutorOpenReturnedError"))
 }
 
+func TestPrepareExecutePreprocessChecksAfterSysvarChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+
+	err := tk.ExecToErr("select * from t where a = 1 for share")
+	require.ErrorContains(t, err, "use tidb_enable_noop_functions to enable")
+	tk.MustExec("set @@tidb_enable_shared_lock_promotion = 1")
+	tk.MustQuery("select * from t where a = 1 for share").Check(testkit.Rows())
+	tk.MustExec("prepare stmt from 'select * from t where a = 1 for share'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustExec("set @@tidb_enable_shared_lock_promotion = 0")
+	err = tk.ExecToErr("execute stmt")
+	require.ErrorContains(t, err, "use tidb_enable_noop_functions to enable")
+	err = tk.ExecToErr("select * from t where a = 1 for share")
+	require.ErrorContains(t, err, "use tidb_enable_noop_functions to enable")
+
+	tk.MustExec("set @@tidb_enable_shared_lock_promotion = 1")
+	tk.MustExec("set sql_mode = 'oracle'")
+	tk.MustQuery("select count(*) from t t1 join t t1").Check(testkit.Rows("0"))
+	tk.MustExec("prepare stmt1 from 'select count(*) from t t1 join t t1'")
+	tk.MustExec("set sql_mode = default")
+	err = tk.ExecToErr("execute stmt1")
+	require.ErrorContains(t, err, "Not unique table/alias")
+	err = tk.ExecToErr("select count(*) from t t1 join t t1")
+	require.ErrorContains(t, err, "Not unique table/alias")
+}
+
 func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

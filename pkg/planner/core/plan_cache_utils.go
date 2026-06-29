@@ -212,23 +212,26 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	preparedObj := &PlanCacheStmt{
-		PreparedAst:         prepared,
-		ResolveCtx:          nodeW.GetResolveContext(),
-		StmtDB:              vars.CurrentDB,
-		StmtText:            paramSQL,
-		VisitInfos:          destBuilder.GetVisitInfo(),
-		NormalizedSQL:       normalizedSQL,
-		SQLDigest:           digest,
-		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
-		StmtCacheable:       cacheable,
-		UncacheableReason:   reason,
-		HasUsePlanCacheHint: hasUsePlanCacheHint,
-		dbName:              dbName,
-		tbls:                tbls,
-		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
-		RelateVersion:       relateVersion,
-		Params:              extractor.markers,
+		PreparedAst:                   prepared,
+		ResolveCtx:                    nodeW.GetResolveContext(),
+		StmtDB:                        vars.CurrentDB,
+		StmtText:                      paramSQL,
+		VisitInfos:                    destBuilder.GetVisitInfo(),
+		NormalizedSQL:                 normalizedSQL,
+		SQLDigest:                     digest,
+		ForUpdateRead:                 destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator:           ret.SnapshotTSEvaluator,
+		PreprocessSQLMode:             vars.SQLMode,
+		PreprocessNoopFuncsMode:       vars.NoopFuncsMode,
+		PreprocessSharedLockPromotion: vars.SharedLockPromotion,
+		StmtCacheable:                 cacheable,
+		UncacheableReason:             reason,
+		HasUsePlanCacheHint:           hasUsePlanCacheHint,
+		dbName:                        dbName,
+		tbls:                          tbls,
+		SchemaVersion:                 ret.InfoSchema.SchemaMetaVersion(),
+		RelateVersion:                 relateVersion,
+		Params:                        extractor.markers,
 	}
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
@@ -764,6 +767,10 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
+
+	PreprocessSQLMode             mysql.SQLMode
+	PreprocessNoopFuncsMode       int
+	PreprocessSharedLockPromotion bool
 
 	// BindingInfo caches normalization results for binding matching across executions.
 	BindingInfo bindinfo.BindingMatchInfo

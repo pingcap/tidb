@@ -149,8 +149,12 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
 
-	// step 4: check schema version
-	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
+	// step 4: check schema version and sysvars that affect Preprocess checks
+	preprocessVarsChanged := stmt.PreprocessSQLMode != vars.SQLMode ||
+		stmt.PreprocessNoopFuncsMode != vars.NoopFuncsMode ||
+		stmt.PreprocessSharedLockPromotion != vars.SharedLockPromotion
+	schemaVersionChanged := schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion()
+	if schemaVersionChanged || preprocessVarsChanged {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
@@ -167,10 +171,16 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
 		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			if schemaVersionChanged {
+				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			return err
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
+		stmt.PreprocessSQLMode = vars.SQLMode
+		stmt.PreprocessNoopFuncsMode = vars.NoopFuncsMode
+		stmt.PreprocessSharedLockPromotion = vars.SharedLockPromotion
 	}
 
 	// step 5: handle expiration
