@@ -486,8 +486,9 @@ func main() {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom, externalWorkloadManager, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
+	externalWorkloadManager := extworkload.GetGlobalManager()
 	defer func() {
 		closeExternalWorkloadManager(externalWorkloadManager)
 	}()
@@ -624,7 +625,7 @@ func registerStores() error {
 	return err
 }
 
-func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, extworkload.Manager, error) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
 	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		kv.StandAloneTiDB = true
 	}
@@ -640,13 +641,13 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
 				closeExternalWorkloadManager(externalWorkloadManager)
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
 				closeExternalWorkloadManager(externalWorkloadManager)
-				return nil, nil, nil, errors.New("kernel type mismatch")
+				return nil, nil, errors.New("kernel type mismatch")
 			}
 		}
 	}
@@ -656,14 +657,14 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
 		closeExternalWorkloadManager(externalWorkloadManager)
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
 		closeExternalWorkloadManager(externalWorkloadManager)
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	return storage, dom, externalWorkloadManager, nil
+	return storage, dom, nil
 }
 
 // Prometheus push.
