@@ -686,13 +686,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
 			} else {
 				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
-				isValueExpr2 := false
-				switch x.Args[1].(type) {
-				case *driver.ValueExpr, *ast.UnaryOperationExpr:
-					isValueExpr2 = true
-				}
-
-				if !isValueExpr1 || !isValueExpr2 {
+				if !isValueExpr1 || !isValidNameConstValue(x.Args[1]) {
 					p.err = plannererrors.ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 				}
 			}
@@ -749,6 +743,42 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	}
 
 	return in, p.err == nil
+}
+
+// NAME_CONST follows MySQL's narrow constant contract: ordinary literals are accepted,
+// TRUE/FALSE pseudo-literals are rejected, unary literals are checked separately, and
+// zero-argument PI() is the only allowed function special case.
+func isValidNameConstValue(arg ast.ExprNode) bool {
+	switch v := arg.(type) {
+	case *driver.ValueExpr:
+		// MySQL rejects TRUE/FALSE pseudo-literals here even though the parser represents them as value expressions.
+		return !mysql.HasIsBooleanFlag(v.Type.GetFlag())
+	case *ast.UnaryOperationExpr:
+		return isValidNameConstUnaryValue(v)
+	case *ast.FuncCallExpr:
+		return v.FnName.L == ast.PI && len(v.Args) == 0
+	default:
+		return false
+	}
+}
+
+// Unary plus/minus may wrap parenthesized literal values in the AST, but NAME_CONST
+// should not accept boolean pseudo-literals or more complex unary expressions through that wrapper.
+func isValidNameConstUnaryValue(arg *ast.UnaryOperationExpr) bool {
+	expr := arg.V
+	for {
+		parenthesized, ok := expr.(*ast.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		expr = parenthesized.Expr
+	}
+	switch v := expr.(type) {
+	case *driver.ValueExpr:
+		return !mysql.HasIsBooleanFlag(v.Type.GetFlag())
+	default:
+		return false
+	}
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
