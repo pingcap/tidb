@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -642,9 +641,6 @@ func NeedAnalyzeTableWithTableInfo(tblInfo *model.TableInfo, tbl *statistics.Tab
 	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
-	}
-	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tbl, time.Since(oracle.GetTimeFromTS(tbl.LastAnalyzeVersion))) {
-		return false, ""
 	}
 	if tblInfo != nil && tblInfo.MaterializedViewLog != nil {
 		autoAnalyzeRatio = mlogAutoAnalyzeRatio

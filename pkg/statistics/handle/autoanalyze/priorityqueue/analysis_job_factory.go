@@ -183,10 +183,6 @@ func (f *AnalysisJobFactory) CalculateChangePercentageWithTableInfo(tblInfo *mod
 		return unanalyzedTableDefaultChangePercentage
 	}
 
-	if statistics.ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo, tblStats, f.GetTableLastAnalyzeDuration(tblStats)) {
-		return 0
-	}
-
 	autoAnalyzeRatio := f.autoAnalyzeRatio
 	if tblInfo != nil && tblInfo.MaterializedViewLog != nil {
 		autoAnalyzeRatio = f.mlogAutoAnalyzeRatio

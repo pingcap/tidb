@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -45,10 +44,6 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
 // Exported for testing.
 var AutoAnalyzeMinCnt int64 = 1000
-
-// MLogAutoAnalyzeMinInterval is the minimum interval between two change-ratio
-// triggered auto analyze operations for a materialized view log table.
-const MLogAutoAnalyzeMinInterval = time.Hour
 
 var (
 	// Below functions are used to solve cycle import problem.
@@ -752,18 +747,6 @@ func (t *Table) IsEligibleForAnalysis() bool {
 	}
 
 	return true
-}
-
-// ShouldSuppressAutoAnalyzeByChangeRatio checks whether auto analyze should ignore
-// the DML change ratio for the table. The table may still be auto-analyzed if it
-// has never been analyzed, newly added indexes need statistics, or enough time
-// has passed since the last analysis.
-func ShouldSuppressAutoAnalyzeByChangeRatio(tblInfo *model.TableInfo, tblStats *Table, lastAnalysisDuration time.Duration) bool {
-	return tblInfo != nil &&
-		tblInfo.MaterializedViewLog != nil &&
-		tblStats != nil &&
-		tblStats.IsAnalyzed() &&
-		lastAnalysisDuration < MLogAutoAnalyzeMinInterval
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.

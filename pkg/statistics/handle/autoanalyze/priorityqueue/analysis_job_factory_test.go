@@ -201,22 +201,15 @@ func TestCreateNonPartitionedTableAnalysisJobForMLog(t *testing.T) {
 	currentTs := oracle.GoTimeToTS(time.Now())
 	factory := priorityqueue.NewAnalysisJobFactoryWithMLogRatio(mockexec.NewContext(), 0.5, 5, currentTs)
 
-	t.Run("recently analyzed mlog ignores change ratio", func(t *testing.T) {
+	t.Run("analyzed mlog below mlog ratio", func(t *testing.T) {
+		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1, currentTs)
+		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
+		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
+		require.Nil(t, job)
+	})
+
+	t.Run("analyzed mlog above mlog ratio", func(t *testing.T) {
 		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*10, currentTs)
-		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
-		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
-		require.Nil(t, job)
-	})
-
-	t.Run("old analyzed mlog below mlog ratio", func(t *testing.T) {
-		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, statistics.AutoAnalyzeMinCnt+1, 1)
-		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
-		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
-		require.Nil(t, job)
-	})
-
-	t.Run("old analyzed mlog above mlog ratio", func(t *testing.T) {
-		stats := newAnalyzedTableStats(statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*10, 1)
 		stats.ColAndIdxExistenceMap.InsertIndex(indexID, true)
 		job := factory.CreateNonPartitionedTableAnalysisJob(tblInfo, stats)
 		require.NotNil(t, job)

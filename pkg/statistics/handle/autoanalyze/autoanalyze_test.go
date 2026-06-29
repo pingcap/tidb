@@ -330,8 +330,7 @@ func TestNeedAnalyzeTable(t *testing.T) {
 			LastAnalyzeVersion:    lastAnalyzeVersion,
 		}
 	}
-	oldAnalyzeVersion := oracle.GoTimeToTS(time.Now().Add(-2 * statistics.MLogAutoAnalyzeMinInterval))
-	recentAnalyzeVersion := oracle.GoTimeToTS(time.Now())
+	analyzeVersion := oracle.GoTimeToTS(time.Now())
 	mlogInfo := &metamodel.TableInfo{MaterializedViewLog: &metamodel.MaterializedViewLogInfo{}}
 	tests := []struct {
 		name      string
@@ -361,7 +360,7 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed but auto analyze is disabled
 		{
 			name:   "analyzed normal table with auto analyze disabled",
-			tbl:    newAnalyzedStats(1, 1, oldAnalyzeVersion),
+			tbl:    newAnalyzedStats(1, 1, analyzeVersion),
 			ratio:  0,
 			result: false,
 			reason: "",
@@ -369,7 +368,7 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed but modify count is small
 		{
 			name:   "analyzed normal table below ratio",
-			tbl:    newAnalyzedStats(1, 0, oldAnalyzeVersion),
+			tbl:    newAnalyzedStats(1, 0, analyzeVersion),
 			ratio:  0.3,
 			result: false,
 			reason: "",
@@ -377,33 +376,24 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed
 		{
 			name:   "analyzed normal table above ratio",
-			tbl:    newAnalyzedStats(1, 1, oldAnalyzeVersion),
+			tbl:    newAnalyzedStats(1, 1, analyzeVersion),
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 		{
-			name:      "recently analyzed mlog ignores change ratio",
+			name:      "analyzed mlog below mlog ratio",
 			tblInfo:   mlogInfo,
-			tbl:       newAnalyzedStats(1, 10, recentAnalyzeVersion),
+			tbl:       newAnalyzedStats(1, 1, analyzeVersion),
 			ratio:     0.3,
 			mlogRatio: 5,
 			result:    false,
 			reason:    "",
 		},
 		{
-			name:      "old analyzed mlog below mlog ratio",
+			name:      "analyzed mlog above mlog ratio",
 			tblInfo:   mlogInfo,
-			tbl:       newAnalyzedStats(1, 1, oldAnalyzeVersion),
-			ratio:     0.3,
-			mlogRatio: 5,
-			result:    false,
-			reason:    "",
-		},
-		{
-			name:      "old analyzed mlog above mlog ratio",
-			tblInfo:   mlogInfo,
-			tbl:       newAnalyzedStats(1, 10, oldAnalyzeVersion),
+			tbl:       newAnalyzedStats(1, 10, analyzeVersion),
 			ratio:     0.3,
 			mlogRatio: 5,
 			result:    true,
