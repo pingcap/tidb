@@ -528,6 +528,10 @@ func doDMLWorks(s sessionapi.Session) {
 
 	writeClusterID(s)
 
+	if err := doStarterBootstrapManifest(s); err != nil {
+		logutil.BgLogger().Fatal("starter bootstrap manifest failed", zap.Error(err))
+	}
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
 	if err != nil {

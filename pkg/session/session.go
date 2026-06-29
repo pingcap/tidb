@@ -4351,6 +4351,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
+	if err = runStarterBootstrapManifestUpgrade(store); err != nil {
+		return nil, err
+	}
 
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
