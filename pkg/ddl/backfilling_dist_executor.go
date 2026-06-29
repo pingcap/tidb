@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -226,7 +227,50 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	}
 
 	s.taskMeta = bgm
+	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
+		runningLocalSortJobs, err := s.getRunningLocalSortJobDiskRequirements(ctx)
+		if err != nil {
+			return err
+		}
+		if err := ingest.CheckLocalSortFreeDisk(runningLocalSortJobs, s.task.RequiredSlots); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *backfillDistExecutor) getRunningLocalSortJobDiskRequirements(
+	ctx context.Context,
+) ([]ingest.LocalSortJobDiskRequirement, error) {
+	taskSlots := s.ExecutorTaskSlotsSnapshot()
+	requirements := make([]ingest.LocalSortJobDiskRequirement, 0, len(taskSlots))
+	for _, taskSlot := range taskSlots {
+		if taskSlot.ID == s.task.ID {
+			continue
+		}
+
+		task, err := s.GetTaskTable().GetTaskByID(ctx, taskSlot.ID)
+		if err != nil {
+			return nil, err
+		}
+		if task.Type != proto.Backfill || task.Step != proto.BackfillStepReadIndex {
+			continue
+		}
+
+		taskMeta := &BackfillTaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(taskMeta.CloudStorageURI) > 0 {
+			continue
+		}
+
+		requirements = append(requirements, ingest.LocalSortJobDiskRequirement{
+			RequiredSlots: taskSlot.RequiredSlots,
+			UsedBytes:     ingest.GetTrackedJobDiskUsage(taskMeta.Job.ID),
+		})
+	}
+	return requirements, nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
