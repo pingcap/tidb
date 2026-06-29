@@ -2592,6 +2592,12 @@ func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
 	s.preferRangeScan = val
 }
 
+// GetAlwaysKeepJoinKey gets AlwaysKeepJoinKey and records it for plan cache keys.
+func (s *SessionVars) GetAlwaysKeepJoinKey() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptAlwaysKeepJoinKey)
+	return s.AlwaysKeepJoinKey
+}
+
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
 func (s *SessionVars) GetEnableCascadesPlanner() bool {
 	if s.StmtCtx.HasEnableCascadesPlannerHint {
