@@ -451,19 +451,35 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			requiredRows = parentRequired
 		}
 	}
+<<<<<<< HEAD
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
 		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, maxChunkSize, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
+=======
+	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
+	if nextChunkCap <= 0 {
+		nextChunkCap = chunk.InitialCapacity
+	}
+	for remainingRows := requiredRows - task.outerResult.Len(); remainingRows > 0; remainingRows = requiredRows - task.outerResult.Len() {
+		fetchRequiredRows := min(remainingRows, maxChunkSize)
+		chkCap := min(nextChunkCap, fetchRequiredRows)
+		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, chkCap, maxChunkSize)
+		chk = chk.SetRequiredRows(fetchRequiredRows, maxChunkSize)
+>>>>>>> 128130e72c8 (executor: optimize join chunk initial capacity (#69049))
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
 			return task, err
 		}
-		if chk.NumRows() == 0 {
+		rows := chk.NumRows()
+		if rows == 0 {
 			break
 		}
 
 		task.outerResult.Add(chk)
+		if rows >= chkCap && nextChunkCap < maxChunkSize {
+			nextChunkCap = min(max(nextChunkCap*2, rows), maxChunkSize)
+		}
 	}
 	if task.outerResult.Len() == 0 {
 		return nil, nil

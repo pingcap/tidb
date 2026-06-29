@@ -183,8 +183,13 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := 0; i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
+<<<<<<< HEAD
 		for j := 0; j < numResChkHold; j++ {
 			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.RetFieldTypes(), e.MaxChunkSize())
+=======
+		for range numResChkHold {
+			e.joinChkResourceCh[i] <- e.NewChunk()
+>>>>>>> 128130e72c8 (executor: optimize join chunk initial capacity (#69049))
 		}
 	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -712,7 +717,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*IndexJoinLoo
 
 // fetchNextInnerResult collects a chunk of inner results from inner child executor.
 func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
-	task.innerResult = imw.innerExec.NewChunkWithCapacity(imw.innerExec.RetFieldTypes(), imw.innerExec.MaxChunkSize(), imw.innerExec.MaxChunkSize())
+	task.innerResult = imw.innerExec.NewChunkWithCapacity(imw.innerExec.RetFieldTypes(), imw.innerExec.InitCap(), imw.innerExec.MaxChunkSize())
 	err = exec.Next(ctx, imw.innerExec, task.innerResult)
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
 	beginRow = task.innerIter.Begin()

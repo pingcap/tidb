@@ -303,13 +303,17 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		}
 	})
 
-	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
 	failpoint.Inject("issue51998", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(2 * time.Second)
 		}
 	})
 
+	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
+	nextChunkCap, maxChunkSize := sessVars.InitChunkSize, sessVars.MaxChunkSize
+	if nextChunkCap <= 0 {
+		nextChunkCap = chunk.InitialCapacity
+	}
 	for {
 		err := checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer, spillHelper)
 		issue59377Intest(&err)
@@ -330,7 +334,8 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 			return
 		}
 
-		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
+		chkCap := min(nextChunkCap, maxChunkSize)
+		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), chkCap, maxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
 
 		failpoint.Inject("issue51998", func(val failpoint.Value) {
@@ -349,10 +354,14 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 
-		if chk.NumRows() == 0 {
+		rows := chk.NumRows()
+		if rows == 0 {
 			return
 		}
 
+		if rows >= chkCap && nextChunkCap < maxChunkSize {
+			nextChunkCap = min(max(nextChunkCap*2, rows), maxChunkSize)
+		}
 		syncerAdd(fetcherAndWorkerSyncer)
 		select {
 		case <-doneCh:
