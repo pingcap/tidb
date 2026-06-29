@@ -19,7 +19,7 @@ require (
 	github.com/apache/arrow-go/v18 v18.0.0
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/ashanbrown/forbidigo/v2 v2.3.0
+	github.com/ashanbrown/forbidigo/v2 v2.3.1
 	github.com/ashanbrown/makezero v1.2.0
 	github.com/aws/aws-sdk-go-v2 v1.38.1
 	github.com/aws/aws-sdk-go-v2/config v1.31.2
@@ -52,7 +52,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/docker/go-units v0.5.0
 	github.com/emirpasic/gods v1.18.1
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/felixge/fgprof v0.9.3
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
@@ -63,7 +63,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
-	github.com/golangci/golangci-lint/v2 v2.11.3
+	github.com/golangci/golangci-lint/v2 v2.12.2
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.8.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -76,7 +76,7 @@ require (
 	github.com/gostaticanalysis/forcetypeassert v0.2.0
 	github.com/grafana/pyroscope-go v1.2.7
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
-	github.com/hashicorp/go-version v1.8.0
+	github.com/hashicorp/go-version v1.9.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/jellydator/ttlcache/v3 v3.0.1
 	github.com/jfcg/sorty/v2 v2.1.0
@@ -125,7 +125,7 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20260617030124-661db4f5f4e8
 	github.com/tikv/pd/client v0.0.0-20260601035915-3ef6a3b10c84
-	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
+	github.com/timakin/bodyclose v0.0.0-20260129054331-73d1f95b84b4
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
@@ -190,6 +190,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.28.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.33.2 // indirect
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240606204812-0bbfbd93a7ce // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
@@ -213,6 +214,7 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
@@ -228,7 +230,7 @@ require (
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
 	github.com/DataDog/zstd v1.5.5 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Masterminds/sprig/v3 v3.2.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
@@ -295,7 +297,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mitchellh/copystructure v1.0.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -311,7 +313,6 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
