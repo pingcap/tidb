@@ -4,6 +4,7 @@ go_library(
     name = "extworkload",
     srcs = [
         "external_workload.go",
+        "global.go",
         "manager.go",
         "util.go",
     ],
@@ -11,11 +12,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/extworkload/client",
         "//pkg/metrics",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
     ],
@@ -33,6 +36,8 @@ go_test(
     shard_count = 6,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/extworkload/client",
         "//pkg/metrics",
         "@com_github_pingcap_kvproto//pkg/externalworkloadpb",

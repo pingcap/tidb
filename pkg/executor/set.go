@@ -17,12 +17,14 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -189,6 +191,18 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			logstr = "set instance var"
 		}
 		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		if v.IsGlobal && name == vardef.TiDBGCLifetime {
+			mgr := extworkload.GetGlobalManager()
+			if extworkload.IsMaster(mgr) && extworkload.UseKeyspaceLevelGC(mgr) {
+				gcLifeTime, err := time.ParseDuration(valStr)
+				if err != nil {
+					return err
+				}
+				if err = mgr.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second)); err != nil {
+					return err
+				}
+			}
+		}
 		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			// SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.

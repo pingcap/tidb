@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -147,6 +148,36 @@ type mockGCWorkerSuite struct {
 		peerIDs  []uint64
 		regionID uint64
 	}
+}
+
+type mockExternalWorkloadManager struct {
+	extworkload.Manager
+	role              config.ExternalWorkloadRole
+	meta              *keyspacepb.KeyspaceMeta
+	registerCalls     int
+	registerSafePoint uint64
+	registerLifeTime  int64
+	recycleCalls      int
+	recycleSafePoint  uint64
+}
+
+func (m *mockExternalWorkloadManager) Close() error { return nil }
+func (m *mockExternalWorkloadManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+func (m *mockExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta {
+	return m.meta
+}
+func (m *mockExternalWorkloadManager) RegisterGCV2(_ context.Context, safePoint uint64, gcLifeTime int64) error {
+	m.registerCalls++
+	m.registerSafePoint = safePoint
+	m.registerLifeTime = gcLifeTime
+	return nil
+}
+func (m *mockExternalWorkloadManager) RecycleGCV2(_ context.Context, safePoint uint64) error {
+	m.recycleCalls++
+	m.recycleSafePoint = safePoint
+	return nil
 }
 
 type mockGCWorkerSuiteOptions struct {
@@ -1176,6 +1207,40 @@ func TestUnifiedGCNeedsToWait(t *testing.T) {
 			require.Equal(t, tc.expected, worker.needsToWait())
 		})
 	}
+}
+
+func TestNotifyGCV2AfterGCWithLifeTime(t *testing.T) {
+	meta := &keyspacepb.KeyspaceMeta{
+		Id:     1,
+		Name:   "ks",
+		Config: map[string]string{pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel},
+	}
+
+	mgr := &mockExternalWorkloadManager{role: config.RoleMaster, meta: meta}
+	require.NoError(t, notifyGCV2AfterGCWithLifeTime(context.Background(), mgr, 123, 600))
+	require.Equal(t, 1, mgr.registerCalls)
+	require.Equal(t, uint64(123), mgr.registerSafePoint)
+	require.Equal(t, int64(600), mgr.registerLifeTime)
+	require.Equal(t, 1, mgr.recycleCalls)
+	require.Equal(t, uint64(123), mgr.recycleSafePoint)
+
+	mgr = &mockExternalWorkloadManager{role: config.RoleGCV2Worker, meta: meta}
+	require.NoError(t, notifyGCV2AfterGCWithLifeTime(context.Background(), mgr, 456, 0))
+	require.Zero(t, mgr.registerCalls)
+	require.Equal(t, 1, mgr.recycleCalls)
+	require.Equal(t, uint64(456), mgr.recycleSafePoint)
+
+	mgr = &mockExternalWorkloadManager{
+		role: config.RoleMaster,
+		meta: &keyspacepb.KeyspaceMeta{
+			Id:     2,
+			Name:   "unified",
+			Config: map[string]string{pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeUnified},
+		},
+	}
+	require.NoError(t, notifyGCV2AfterGCWithLifeTime(context.Background(), mgr, 789, 600))
+	require.Zero(t, mgr.registerCalls)
+	require.Zero(t, mgr.recycleCalls)
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {

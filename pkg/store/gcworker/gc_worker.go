@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -305,6 +306,14 @@ func (w *GCWorker) tick(ctx context.Context) {
 		metrics.GCConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
 		metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
 	}
+}
+
+func (w *GCWorker) currentKeyspaceUsesKeyspaceLevelGC() bool {
+	if w == nil || w.store == nil || w.store.GetCodec() == nil {
+		return false
+	}
+	meta := w.store.GetCodec().GetKeyspaceMeta()
+	return meta != nil && pd.IsKeyspaceUsingKeyspaceLevelGC(meta)
 }
 
 // getGCSafePoint returns the current gc safe point.
@@ -837,7 +846,57 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 		return errors.Trace(err)
 	}
 
+	err = w.notifyGCV2AfterGC(ctx, gcSafePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	metrics.GCHistogram.WithLabelValues(metrics.StageTotal).Observe(time.Since(startTime).Seconds())
+	return nil
+}
+
+func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) error {
+	mgr := extworkload.GetGlobalManager()
+	if !extworkload.IsEnabled(mgr) || !w.currentKeyspaceUsesKeyspaceLevelGC() {
+		return nil
+	}
+	if extworkload.IsMaster(mgr) || extworkload.IsTTLTaskWorker(mgr) {
+		gcLifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to load GC life time for external workload",
+				zap.String("category", "gc worker"),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
+		return notifyGCV2AfterGCWithLifeTime(ctx, mgr, safePoint, int64(*gcLifeTime/time.Second))
+	}
+	return notifyGCV2AfterGCWithLifeTime(ctx, mgr, safePoint, 0)
+}
+
+func notifyGCV2AfterGCWithLifeTime(ctx context.Context, mgr extworkload.Manager, safePoint uint64, gcLifeTime int64) error {
+	if !extworkload.UseKeyspaceLevelGC(mgr) {
+		return nil
+	}
+	if extworkload.IsMaster(mgr) || extworkload.IsTTLTaskWorker(mgr) {
+		err := mgr.RegisterGCV2(ctx, safePoint, gcLifeTime)
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to register GCV2 task",
+				zap.String("category", "gc worker"),
+				zap.Uint64("safePoint", safePoint),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
+	}
+	if extworkload.IsMaster(mgr) || extworkload.IsGCV2Worker(mgr) || extworkload.IsTTLTaskWorker(mgr) {
+		err := mgr.RecycleGCV2(ctx, safePoint)
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to recycle GCV2 task",
+				zap.String("category", "gc worker"),
+				zap.Uint64("safePoint", safePoint),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 

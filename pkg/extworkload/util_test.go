@@ -19,16 +19,20 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
 
 type stubManager struct {
 	Manager
 	role config.ExternalWorkloadRole
+	meta *keyspacepb.KeyspaceMeta
 }
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
-func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return nil }
+func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return s.meta }
 func (s *stubManager) Close() error                      { return nil }
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
@@ -58,4 +62,39 @@ func TestRolePredicatesDedicated(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUseKeyspaceLevelGC(t *testing.T) {
+	mgr := &stubManager{
+		role: config.RoleMaster,
+	}
+	require.False(t, UseKeyspaceLevelGC(mgr))
+
+	mgr.meta = &keyspacepb.KeyspaceMeta{
+		Id:     1,
+		Name:   "ks",
+		Config: map[string]string{pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel},
+	}
+	require.True(t, UseKeyspaceLevelGC(mgr))
+}
+
+func TestGlobalManagerStarterGate(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Starter deploy mode is only available in nextgen kernel")
+	}
+
+	origin := deploymode.Get()
+	t.Cleanup(func() {
+		SetGlobalManager(nil)
+		require.NoError(t, deploymode.Set(origin))
+	})
+
+	mgr := &stubManager{role: config.RoleMaster}
+	SetGlobalManager(mgr)
+
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	require.Nil(t, GetGlobalManager())
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	require.Same(t, mgr, GetGlobalManager())
 }

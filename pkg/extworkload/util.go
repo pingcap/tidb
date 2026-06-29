@@ -14,7 +14,10 @@
 
 package extworkload
 
-import "github.com/pingcap/tidb/pkg/config"
+import (
+	"github.com/pingcap/tidb/pkg/config"
+	pd "github.com/tikv/pd/client"
+)
 
 // IsEnabled reports whether a Manager is present.
 func IsEnabled(m Manager) bool { return m != nil }
@@ -30,6 +33,11 @@ func IsTTLTaskWorker(m Manager) bool { return roleIs(m, config.RoleTTLTaskWorker
 
 // IsAutoAnalyzeWorker reports whether this TiDB should run auto-analyze jobs.
 func IsAutoAnalyzeWorker(m Manager) bool { return roleIs(m, config.RoleAutoAnalyzeWorker) }
+
+// UseKeyspaceLevelGC reports whether the manager is bound to a keyspace-level GC keyspace.
+func UseKeyspaceLevelGC(m Manager) bool {
+	return IsEnabled(m) && m.Meta() != nil && pd.IsKeyspaceUsingKeyspaceLevelGC(m.Meta())
+}
 
 func roleIs(m Manager, role config.ExternalWorkloadRole) bool {
 	return IsEnabled(m) && m.Role() == role
