@@ -850,7 +850,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 
 func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) error {
 	mgr := extworkload.GetManagerFromStore(w.store)
-	if !extworkload.UseKeyspaceLevelGC(mgr) {
+	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
 		return nil
 	}
 

@@ -17,22 +17,18 @@ package extworkload
 import (
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
 )
 
 type stubManager struct {
 	Manager
 	role config.ExternalWorkloadRole
-	meta *keyspacepb.KeyspaceMeta
 }
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
-func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return s.meta }
 
 type stubManagerStore struct {
 	mgr Manager
@@ -69,20 +65,6 @@ func TestRolePredicatesDedicated(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestUseKeyspaceLevelGC(t *testing.T) {
-	mgr := &stubManager{
-		role: config.RoleMaster,
-	}
-	require.False(t, UseKeyspaceLevelGC(mgr))
-
-	mgr.meta = &keyspacepb.KeyspaceMeta{
-		Id:     1,
-		Name:   "ks",
-		Config: map[string]string{pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel},
-	}
-	require.True(t, UseKeyspaceLevelGC(mgr))
 }
 
 func TestManagerFromStoreStarterGate(t *testing.T) {

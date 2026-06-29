@@ -519,7 +519,7 @@ func main() {
 			closeExternalWorkloadManager(storage, externalWorkloadManager)
 		}()
 	}
-	if extworkload.IsMaster(externalWorkloadManager) && extworkload.UseKeyspaceLevelGC(externalWorkloadManager) {
+	if extworkload.IsMaster(externalWorkloadManager) && pd.IsKeyspaceUsingKeyspaceLevelGC(externalWorkloadManager.Meta()) {
 		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
 			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
 			closeExternalWorkloadManager(storage, externalWorkloadManager)
