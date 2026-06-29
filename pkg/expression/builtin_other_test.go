@@ -325,7 +325,7 @@ func TestInFunc(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
-		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args))
+		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args...))
 	}
 	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci")
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")

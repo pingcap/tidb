@@ -256,7 +256,8 @@ func TestIntervalFunc(t *testing.T) {
 		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0, false},
 		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
-		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
+		// uint32(...) row retired; MakeDatums now panics on unsupported
+		// narrow int types (KindInterfaceDeprecated escape hatch removed).
 		{types.MakeDatums(-1, 2333, nil), 0, false},
 		{types.MakeDatums(1, nil, nil, nil), 3, false},
 		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
@@ -354,10 +355,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 			[]any{"123", nil, "123"},
 			nil, nil, true, false,
 		},
-		{
-			[]any{errors.New("must error"), 123},
-			nil, nil, false, true,
-		},
+		// errors.New(...) row retired; see KindInterfaceDeprecated removal.
 		{
 			[]any{794755072.0, 4556, "2000-01-09"},
 			"794755072", "2000-01-09", false, false,

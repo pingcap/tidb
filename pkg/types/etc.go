@@ -19,6 +19,7 @@
 package types
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/pingcap/errors"
@@ -159,34 +160,39 @@ func IsStringKind(kind byte) bool {
 }
 
 var kind2Str = map[byte]string{
-	KindNull:          "null",
-	KindInt64:         "bigint",
-	KindUint64:        "unsigned bigint",
-	KindFloat32:       "float",
-	KindFloat64:       "double",
-	KindString:        "char",
-	KindBytes:         "bytes",
-	KindBinaryLiteral: "bit/hex literal",
-	KindMysqlDecimal:  "decimal",
-	KindMysqlDuration: "time",
-	KindMysqlEnum:     "enum",
-	KindMysqlBit:      "bit",
-	KindMysqlSet:      "set",
-	KindMysqlTime:     "datetime",
-	KindInterface:     "interface",
-	KindMinNotNull:    "min_not_null",
-	KindMaxValue:      "max_value",
-	KindRaw:           "raw",
-	KindMysqlJSON:     "json",
-	KindVectorFloat32: "vector",
+	KindNull:                "null",
+	KindInt64:               "bigint",
+	KindUint64:              "unsigned bigint",
+	KindFloat32:             "float",
+	KindFloat64:             "double",
+	KindString:              "char",
+	KindBytes:               "bytes",
+	KindBinaryLiteral:       "bit/hex literal",
+	KindMysqlDecimal:        "decimal",
+	KindMysqlDuration:       "time",
+	KindMysqlEnum:           "enum",
+	KindMysqlBit:            "bit",
+	KindMysqlSet:            "set",
+	KindMysqlTime:           "datetime",
+	KindInterfaceDeprecated: "interface(deprecated)",
+	KindMinNotNull:          "min_not_null",
+	KindMaxValue:            "max_value",
+	KindRaw:                 "raw",
+	KindMysqlJSON:           "json",
+	KindVectorFloat32:       "vector",
 }
 
 // TypeStr converts tp to a string.
 var TypeStr = ast.TypeStr
 
-// KindStr converts kind to a string.
-func KindStr(kind byte) (r string) {
-	return kind2Str[kind]
+// KindStr converts kind to a string. Only called from error-message
+// construction today (see invalidConv in datum.go); the caller expects
+// a soft, non-panicking return even if the kind is unexpected.
+func KindStr(kind byte) string {
+	if s, ok := kind2Str[kind]; ok {
+		return s
+	}
+	return fmt.Sprintf("Unknown kind %d", kind)
 }
 
 // TypeToStr converts a field to a string.
