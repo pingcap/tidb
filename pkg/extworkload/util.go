@@ -23,33 +23,29 @@ import (
 func IsEnabled(m Manager) bool { return m != nil }
 
 // IsMaster reports whether this TiDB is in the regular TiDB role.
-func IsMaster(m Manager) bool { return roleIs(m, config.RoleMaster) }
+func IsMaster(m Manager) bool { return IsEnabled(m) && m.Role() == config.RoleMaster }
 
 // IsGCV2Worker reports whether this TiDB is a dedicated keyspace-level GC worker.
-func IsGCV2Worker(m Manager) bool { return roleIs(m, config.RoleGCV2Worker) }
+func IsGCV2Worker(m Manager) bool { return IsEnabled(m) && m.Role() == config.RoleGCV2Worker }
 
 // IsTTLTaskWorker reports whether this TiDB should run TTL jobs.
-func IsTTLTaskWorker(m Manager) bool { return roleIs(m, config.RoleTTLTaskWorker) }
+func IsTTLTaskWorker(m Manager) bool { return IsEnabled(m) && m.Role() == config.RoleTTLTaskWorker }
 
 // IsAutoAnalyzeWorker reports whether this TiDB should run auto-analyze jobs.
-func IsAutoAnalyzeWorker(m Manager) bool { return roleIs(m, config.RoleAutoAnalyzeWorker) }
+func IsAutoAnalyzeWorker(m Manager) bool {
+	return IsEnabled(m) && m.Role() == config.RoleAutoAnalyzeWorker
+}
 
 // GetManagerFromStore returns the manager bound to store only in Starter deploy mode.
 func GetManagerFromStore(store any) Manager {
 	if !deploymode.IsStarter() {
 		return nil
 	}
-	provider, ok := store.(managerProvider)
+	provider, ok := store.(interface {
+		ExternalWorkloadManager() Manager
+	})
 	if !ok {
 		return nil
 	}
 	return provider.ExternalWorkloadManager()
-}
-
-type managerProvider interface {
-	ExternalWorkloadManager() Manager
-}
-
-func roleIs(m Manager, role config.ExternalWorkloadRole) bool {
-	return IsEnabled(m) && m.Role() == role
 }
