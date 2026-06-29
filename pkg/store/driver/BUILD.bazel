@@ -10,7 +10,6 @@ go_library(
         "//pkg/metaservice",
         "//pkg/metrics",
         "//pkg/metrics/common",
-        "//pkg/extworkload",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/store/driver/error",

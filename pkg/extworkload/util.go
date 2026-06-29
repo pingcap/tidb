@@ -17,6 +17,7 @@ package extworkload
 import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/kv"
 )
 
 // IsEnabled reports whether a Manager is present.
@@ -36,16 +37,28 @@ func IsAutoAnalyzeWorker(m Manager) bool {
 	return IsEnabled(m) && m.Role() == config.RoleAutoAnalyzeWorker
 }
 
+type managerStoreKey struct{}
+
+// SetManagerForStore binds the manager to store. Passing nil removes it.
+func SetManagerForStore(store kv.Storage, mgr Manager) {
+	if store == nil {
+		return
+	}
+	store.SetOption(managerStoreKey{}, mgr)
+}
+
 // GetManagerFromStore returns the manager bound to store only in Starter deploy mode.
-func GetManagerFromStore(store any) Manager {
+func GetManagerFromStore(store kv.Storage) Manager {
 	if !deploymode.IsStarter() {
 		return nil
 	}
-	provider, ok := store.(interface {
-		ExternalWorkloadManager() Manager
-	})
+	if store == nil {
+		return nil
+	}
+	v, ok := store.GetOption(managerStoreKey{})
 	if !ok {
 		return nil
 	}
-	return provider.ExternalWorkloadManager()
+	mgr, _ := v.(Manager)
+	return mgr
 }

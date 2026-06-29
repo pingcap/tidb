@@ -13,6 +13,7 @@ go_library(
         "//pkg/config",
         "//pkg/config/deploymode",
         "//pkg/extworkload/client",
+        "//pkg/kv",
         "//pkg/metrics",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -34,8 +35,6 @@ go_test(
     shard_count = 6,
     deps = [
         "//pkg/config",
-        "//pkg/config/deploymode",
-        "//pkg/config/kerneltype",
         "//pkg/extworkload/client",
         "//pkg/metrics",
         "@com_github_pingcap_kvproto//pkg/externalworkloadpb",

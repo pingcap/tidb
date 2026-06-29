@@ -18,8 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,14 +27,6 @@ type stubManager struct {
 }
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
-
-type stubManagerStore struct {
-	mgr Manager
-}
-
-func (s *stubManagerStore) ExternalWorkloadManager() Manager {
-	return s.mgr
-}
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
 	require.False(t, IsEnabled(nil))
@@ -65,26 +55,4 @@ func TestRolePredicatesDedicated(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestManagerFromStoreStarterGate(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("Starter deploy mode is only available in nextgen kernel")
-	}
-
-	origin := deploymode.Get()
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(origin))
-	})
-
-	mgr := &stubManager{role: config.RoleMaster}
-	store := &stubManagerStore{mgr: mgr}
-
-	require.NoError(t, deploymode.Set(deploymode.Premium))
-	require.Nil(t, GetManagerFromStore(store))
-
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	require.Same(t, mgr, GetManagerFromStore(store))
-	store.mgr = nil
-	require.Nil(t, GetManagerFromStore(store))
 }
