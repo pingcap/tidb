@@ -67,7 +67,7 @@ func collectAbortSnapshotRestoreModeTables(
 	}
 
 	_, loadStatsPhysical := isRestoreSysTablesPhysically(&SnapshotRestoreConfig{RestoreConfig: &restoreCfg})
-	isIncremental := !(backupMeta.StartVersion == backupMeta.EndVersion || backupMeta.StartVersion == 0)
+	isIncremental := backupMeta.StartVersion != backupMeta.EndVersion && backupMeta.StartVersion != 0
 	if isIncremental || restoreCfg.ExplicitFilter || !isFullRestore(snapshotCmdName) {
 		loadStatsPhysical = false
 	}

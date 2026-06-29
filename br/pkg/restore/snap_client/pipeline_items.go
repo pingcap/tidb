@@ -600,10 +600,7 @@ func (rc *SnapClient) registerSetTableModeToNormal(
 		select {
 		case <-c.Done():
 			return c.Err()
-		case se, ok := <-sessionPool:
-			if !ok {
-				return errors.New("session pool closed before pipeline finished")
-			}
+		case se := <-sessionPool:
 			session = se
 		}
 

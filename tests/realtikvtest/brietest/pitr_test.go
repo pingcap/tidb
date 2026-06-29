@@ -433,13 +433,14 @@ func runFullRestoreModeAbortCase(t *testing.T, kit *LogBackupKit, tableName stri
 	kit.WithChecker(func(err error) {
 		require.ErrorContains(t, err, "fail after protected tables are created")
 	}, func() {
-		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, true, nil, func() {
-			kit.RunFullRestore(func(rc *task.RestoreConfig) {
-				rc.Storage = kit.LocalURI(fullStorage)
-				rc.UseCheckpoint = true
-				kit.SetFilter(&rc.Config, filterStr)
+		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, true,
+			fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 'during')", tableName), nil, func() {
+				kit.RunFullRestore(func(rc *task.RestoreConfig) {
+					rc.Storage = kit.LocalURI(fullStorage)
+					rc.UseCheckpoint = true
+					kit.SetFilter(&rc.Config, filterStr)
+				})
 			})
-		})
 	})
 	require.Equal(t, restoreID, requireRestoreRegistryID(t, kit.tk, task.FullRestoreCmd, filterStr, "paused"))
 	requireCheckpointMetadata(t, kit.tk, restoreID, true, checkpoint.SnapshotRestoreCheckpointDatabaseName)
@@ -458,13 +459,14 @@ func runFullRestoreModeSuccessCase(t *testing.T, kit *LogBackupKit, tableName st
 	fullStorage := tableName + "_full"
 	prepareRestoreModeFullBackup(t, kit, tableName, fullStorage)
 
-	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, false, nil, func() {
-		kit.RunFullRestore(func(rc *task.RestoreConfig) {
-			rc.Storage = kit.LocalURI(fullStorage)
-			rc.UseCheckpoint = true
-			kit.SetFilter(&rc.Config, filterStr)
+	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.FullRestoreCmd, filterStr, false,
+		fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 'during')", tableName), nil, func() {
+			kit.RunFullRestore(func(rc *task.RestoreConfig) {
+				rc.Storage = kit.LocalURI(fullStorage)
+				rc.UseCheckpoint = true
+				kit.SetFilter(&rc.Config, filterStr)
+			})
 		})
-	})
 	requireCheckpointMetadata(t, kit.tk, restoreID, false, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	requireNoRestoreRegistryEntry(t, kit.tk, restoreID)
 	kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", tableName)).Check(testkit.Rows("1"))
@@ -479,14 +481,15 @@ func runPointRestoreModeAbortCase(t *testing.T, kit *LogBackupKit, tableName str
 	kit.WithChecker(func(err error) {
 		require.ErrorContains(t, err, "fail after protected tables are created")
 	}, func() {
-		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, true, nil, func() {
-			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-				rc.Storage = kit.LocalURI(logStorage)
-				rc.FullBackupStorage = kit.LocalURI(fullStorage)
-				rc.UseCheckpoint = true
-				kit.SetFilter(&rc.Config, filterStr)
+		restoreID = runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, true,
+			fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 'during')", tableName), nil, func() {
+				kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+					rc.Storage = kit.LocalURI(logStorage)
+					rc.FullBackupStorage = kit.LocalURI(fullStorage)
+					rc.UseCheckpoint = true
+					kit.SetFilter(&rc.Config, filterStr)
+				})
 			})
-		})
 	})
 	require.Equal(t, restoreID, requireRestoreRegistryID(t, kit.tk, task.PointRestoreCmd, filterStr, "paused"))
 	requireCheckpointMetadata(t, kit.tk, restoreID, true, checkpoint.SnapshotRestoreCheckpointDatabaseName)
@@ -508,14 +511,15 @@ func runPointRestoreModeExplicitFilterSuccessCase(t *testing.T, kit *LogBackupKi
 	filterStr := "test." + tableName
 	fullStorage, logStorage := prepareRestoreModePointBackup(t, kit, tableName)
 
-	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false, nil, func() {
-		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-			rc.Storage = kit.LocalURI(logStorage)
-			rc.FullBackupStorage = kit.LocalURI(fullStorage)
-			rc.UseCheckpoint = true
-			kit.SetFilter(&rc.Config, filterStr)
+	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false,
+		fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 'during')", tableName), nil, func() {
+			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+				rc.Storage = kit.LocalURI(logStorage)
+				rc.FullBackupStorage = kit.LocalURI(fullStorage)
+				rc.UseCheckpoint = true
+				kit.SetFilter(&rc.Config, filterStr)
+			})
 		})
-	})
 	requireCheckpointMetadata(t, kit.tk, restoreID, false,
 		checkpoint.SnapshotRestoreCheckpointDatabaseName,
 		checkpoint.LogRestoreCheckpointDatabaseName,
@@ -529,17 +533,18 @@ func runPointRestoreModeNoFilterSuccessCase(t *testing.T, kit *LogBackupKit, tab
 	filterStr := "*.*"
 	fullStorage, logStorage := prepareRestoreModePointBackupWithBinding(t, kit, tableName)
 
-	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false, func(checkTK *testkit.TestKit) {
-		requireBindInfoTableMode(t, checkTK, "Normal")
-		requireRestoreModeBinding(t, checkTK, tableName)
-	}, func() {
-		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-			rc.Storage = kit.LocalURI(logStorage)
-			rc.FullBackupStorage = kit.LocalURI(fullStorage)
-			rc.UseCheckpoint = true
-			rc.WithSysTable = true
+	restoreID := runWithSnapshotRestoreModeCheck(t, kit, tableName, task.PointRestoreCmd, filterStr, false,
+		fmt.Sprintf("INSERT INTO test.%s VALUES (9999, 9999, 'during')", tableName), func(checkTK *testkit.TestKit) {
+			requireBindInfoTableMode(t, checkTK, "Normal")
+			requireRestoreModeBinding(t, checkTK, tableName)
+		}, func() {
+			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+				rc.Storage = kit.LocalURI(logStorage)
+				rc.FullBackupStorage = kit.LocalURI(fullStorage)
+				rc.UseCheckpoint = true
+				rc.WithSysTable = true
+			})
 		})
-	})
 	requireCheckpointMetadata(t, kit.tk, restoreID, false,
 		checkpoint.SnapshotRestoreCheckpointDatabaseName,
 		checkpoint.LogRestoreCheckpointDatabaseName,
@@ -645,6 +650,7 @@ func runWithSnapshotRestoreModeCheck(
 	cmdName string,
 	filterStr string,
 	failRestore bool,
+	insertSQL string,
 	snapshotFinishCheck func(*testkit.TestKit),
 	restore func(),
 ) (restoreID uint64) {
@@ -652,7 +658,7 @@ func runWithSnapshotRestoreModeCheck(
 	snapshotFinishCheckEnabled := false
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-after-create-tables", func(errP *error) {
 		checkTK := testkit.NewTestKit(t, kit.tk.Session().GetStore())
-		checkTK.MustGetErrCode(fmt.Sprintf("DROP TABLE test.%s", tableName), errno.ErrProtectedTableMode)
+		requireRestoreModeProtection(t, checkTK, tableName, insertSQL)
 		restoreID = requireRestoreRegistryID(t, checkTK, cmdName, filterStr, "running")
 		requireCheckpointMetadata(t, checkTK, restoreID, true, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		if failRestore {
@@ -668,7 +674,7 @@ func runWithSnapshotRestoreModeCheck(
 	if checkAfterSnapshotPipeline {
 		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish", func(errP *error) {
 			checkTK := testkit.NewTestKit(t, kit.tk.Session().GetStore())
-			checkTK.MustGetErrCode(fmt.Sprintf("DROP TABLE test.%s", tableName), errno.ErrProtectedTableMode)
+			requireRestoreModeProtection(t, checkTK, tableName, insertSQL)
 			if snapshotFinishCheck != nil {
 				snapshotFinishCheck(checkTK)
 			}
@@ -680,6 +686,13 @@ func runWithSnapshotRestoreModeCheck(
 	restore()
 	require.NotZero(t, restoreID)
 	return restoreID
+}
+
+func requireRestoreModeProtection(t *testing.T, tk *testkit.TestKit, tableName, insertSQL string) {
+	t.Helper()
+	tk.MustGetErrCode(insertSQL, errno.ErrProtectedTableMode)
+	tk.MustGetErrCode(fmt.Sprintf("DROP TABLE test.%s", tableName), errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("DROP DATABASE test", errno.ErrProtectedTableMode)
 }
 
 func requireRestoreRegistryID(t *testing.T, tk *testkit.TestKit, cmdName, filterStr, status string) uint64 {

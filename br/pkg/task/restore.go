@@ -1558,7 +1558,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// stay writable because snapshot system table restore updates them. Incremental
 	// snapshot restore may reuse existing normal tables via CREATE TABLE IF NOT
 	// EXISTS, so it cannot request Restore mode there.
-	if cfg.ProtectTables && !client.IsIncremental() && (!isPiTR || keepTableModeRestore) {
+	if cfg.ProtectTables && !client.IsIncremental() {
 		for i, table := range tables {
 			if table.Info.IsSequence() || table.Info.IsView() {
 				continue
@@ -2949,10 +2949,10 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	// clean up checkpoint data
 	cleanUpCheckpoints(ctx, cfg)
 
-	if cfg.UseCheckpoint && checkpointManagerInitErr != nil {
-		return errors.Trace(checkpointManagerInitErr)
-	}
 	if cfg.UseCheckpoint {
+		if checkpointManagerInitErr != nil {
+			return errors.Trace(checkpointManagerInitErr)
+		}
 		checkpointPersisted, err := hasCheckpointPersisted(ctx, cfg)
 		if err != nil {
 			return errors.Trace(err)
