@@ -137,6 +137,11 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 		if err != nil {
 			return err
 		}
+		// Strict cast passes NULL through; reject it here when the new type
+		// carries NotNullFlag so reorg surfaces existing NULL rows.
+		if indexedValues[i].IsNull() && mysql.HasNotNullFlag(tblCol.ChangingFieldType.GetFlag()) {
+			return table.ErrColumnCantNull.FastGenByArgs(tblCol.Name)
+		}
 	}
 	return nil
 }
