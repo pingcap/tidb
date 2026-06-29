@@ -94,6 +94,13 @@ func runStarterBootstrapManifestUpgrade(store kv.Storage) error {
 		domap.Delete(store)
 	}()
 
+	if err = dom.Start(ddl.Normal); err != nil {
+		return errors.Trace(err)
+	}
+	s.sessionVars.EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+	s.SetValue(sessionctx.Initing, true)
+	defer s.ClearValue(sessionctx.Initing)
+
 	storedVersion, err := getStarterBootstrapVersion(s)
 	if err != nil {
 		return err
@@ -114,14 +121,6 @@ func runStarterBootstrapManifestUpgrade(store kv.Storage) error {
 	if !needUpgradeStarterBootstrapManifest(storedVersion, manifest) {
 		return nil
 	}
-
-	if err = dom.Start(ddl.Normal); err != nil {
-		return errors.Trace(err)
-	}
-
-	s.sessionVars.EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
-	s.SetValue(sessionctx.Initing, true)
-	defer s.ClearValue(sessionctx.Initing)
 
 	if err = upgradeStarterBootstrapManifestFromVersion(s, manifest, storedVersion); err != nil {
 		return err
