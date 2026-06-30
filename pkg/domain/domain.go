@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -213,6 +214,7 @@ type Domain struct {
 	// resourceGroupsController can be changed via `SetResourceGroupsController`
 	// in unit test.
 	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]
+	externalWorkloadManager  extworkload.Manager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1746,6 +1748,16 @@ func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
 	do.resourceGroupsController.Store(controller)
+}
+
+// ExternalWorkloadManager returns the external workload manager bound to this domain.
+func (do *Domain) ExternalWorkloadManager() extworkload.Manager {
+	return do.externalWorkloadManager
+}
+
+// SetExternalWorkloadManager binds the external workload manager to this domain.
+func (do *Domain) SetExternalWorkloadManager(mgr extworkload.Manager) {
+	do.externalWorkloadManager = mgr
 }
 
 // GetRUVersion returns the current RU calculation version for this keyspace.

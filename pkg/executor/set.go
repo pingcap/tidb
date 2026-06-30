@@ -193,7 +193,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if v.IsGlobal && name == vardef.TiDBGCLifetime {
-			mgr := extworkload.GetManagerFromStore(e.Ctx().GetStore())
+			mgr := domain.GetDomain(e.Ctx()).ExternalWorkloadManager()
 			if extworkload.IsMaster(mgr) && pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
 				gcLifeTime, err := time.ParseDuration(valStr)
 				if err != nil {

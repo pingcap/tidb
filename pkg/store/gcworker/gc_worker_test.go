@@ -215,7 +215,7 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 
 	s.tikvStore = s.store.(tikv.Storage)
 
-	gcWorker, err := NewGCWorker(s.store, s.pdClient)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient, nil)
 	require.NoError(t, err)
 	gcWorker.Start()
 	gcWorker.Close()
