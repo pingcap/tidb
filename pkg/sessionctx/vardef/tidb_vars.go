@@ -768,6 +768,9 @@ const (
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 
+	// TiDBEnableReadBillingDemo enables the first-version read billing demo base-unit metrics.
+	TiDBEnableReadBillingDemo = "tidb_enable_read_billing_demo"
+
 	// TiDBExecutorConcurrency is used for controlling the concurrency of all types of executors.
 	TiDBExecutorConcurrency = "tidb_executor_concurrency"
 
@@ -1594,6 +1597,7 @@ const (
 	DefTiDBFoundInPlanCache                 = false
 	DefTiDBFoundInBinding                   = false
 	DefTiDBEnableCollectExecutionInfo       = true
+	DefTiDBEnableReadBillingDemo            = false
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
 	DefTiDBRedactLog                        = Off

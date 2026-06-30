@@ -153,6 +153,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		OutputNames:   names,
 		Ti:            &TelemetryInfo{},
 	}
+	if preparedObj != nil && preparedObj.PreparedAst != nil {
+		stmt.resolvedPreparedStmt = preparedObj.PreparedAst.Stmt
+	}
 	// Use cached plan if possible.
 	if preparedObj != nil && plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
 		if exec, isExec := finalPlan.(*plannercore.Execute); isExec {

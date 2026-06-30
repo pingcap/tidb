@@ -651,8 +651,9 @@ type Explain struct {
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows            [][]string
-	BriefBinaryPlan string
+	Rows             [][]string
+	BriefBinaryPlan  string
+	ruStatusRecorded bool
 }
 
 // GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
@@ -735,6 +736,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatRU && e.Analyze:
+		fieldNames = []string{"section", "id", "component", "operatorClass", "actRows", "inputRows", "outputRows", "rowWidth", "rowWidthSource", "workRows", "workBytes", "unit", "count", "weight", "previewRU", "source", "note"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
@@ -932,6 +935,11 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatRU:
+		if err := e.renderRUExplain(); err != nil {
+			e.recordExplainRUStatus(explainRUStatusError)
+			return err
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

@@ -609,6 +609,10 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableReadBillingDemo, Value: BoolToOnOff(vardef.DefTiDBEnableReadBillingDemo), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableReadBillingDemo = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.PluginLoad, Value: "", ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginLoad, nil
 	}},

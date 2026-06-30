@@ -366,11 +366,12 @@ type ExecStmt struct {
 	Ctx sessionctx.Context
 
 	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority     bool
-	isPreparedStmt    bool
-	isSelectForUpdate bool
-	retryCount        uint
-	retryStartTime    time.Time
+	LowerPriority        bool
+	isPreparedStmt       bool
+	isSelectForUpdate    bool
+	resolvedPreparedStmt ast.StmtNode
+	retryCount           uint
+	retryStartTime       time.Time
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -770,9 +771,17 @@ func (a *ExecStmt) inheritContextFromExecuteStmt() {
 		a.Ctx.SetValue(sessionctx.QueryString, executePlan.Stmt.Text())
 		a.OutputNames = executePlan.OutputNames()
 		a.isPreparedStmt = true
+		a.resolvedPreparedStmt = executePlan.Stmt
 		a.Plan = executePlan.Plan
 		a.Ctx.GetSessionVars().StmtCtx.SetPlan(executePlan.Plan)
 	}
+}
+
+func (a *ExecStmt) readBillingDemoStmtNode() ast.StmtNode {
+	if a.resolvedPreparedStmt != nil {
+		return a.resolvedPreparedStmt
+	}
+	return a.StmtNode
 }
 
 func (a *ExecStmt) getSQLForProcessInfo() string {
@@ -1689,6 +1698,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.finalizeStatementRUV2Metrics()
+	// Lazy SELECT metrics are emitted when the record set is closed. If a
+	// client abandons a result without closing/draining it, this first demo can
+	// miss that statement instead of guessing an incomplete status.
+	plannercore.RecordReadBillingDemoForStatement(a.Ctx, a.Plan, a.readBillingDemoStmtNode(), err)
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)

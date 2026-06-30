@@ -2424,10 +2424,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return rs, err
 }
 
-func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (recordSet sqlexec.RecordSet, err error) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 	ctx = execdetails.ContextWithMissingExecDetailsInitialized(ctx)
+	readBillingDemoHandledByStmt := false
+	defer func() {
+		if err != nil && !readBillingDemoHandledByStmt {
+			s.recordReadBillingDemoEarlyError(stmtNode, err)
+		}
+	}()
 
 	if err := s.PrepareTxnCtx(ctx, stmtNode); err != nil {
 		return nil, err
@@ -2572,7 +2578,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 
 	var stmt *executor.ExecStmt
-	var err error
 
 	{
 		// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -2678,7 +2683,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}()
 	}
 
-	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
 		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
@@ -2711,6 +2715,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
 	} else {
+		readBillingDemoHandledByStmt = true
 		recordSet, err = runStmt(ctx, s, stmt)
 	}
 
@@ -2764,6 +2769,17 @@ func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.Stm
 		return nil, nil
 	}
 	return prepareStmt.PreparedAst.Stmt, nil
+}
+
+func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err error) {
+	if err == nil {
+		return
+	}
+	metricsStmt := stmtNode
+	if resolvedStmt, resolveErr := resolvePreparedStmt(stmtNode, s.sessionVars); resolveErr == nil && resolvedStmt != nil {
+		metricsStmt = resolvedStmt
+	}
+	plannercore.RecordReadBillingDemoForStatement(s, nil, metricsStmt, err)
 }
 
 func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
@@ -2992,6 +3008,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)
 	if err != nil {
+		se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
 		return nil, err
 	}
 	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
@@ -2999,6 +3016,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		// otherwise, the stmt won't be add into stmt history, and also don't need check.
 		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
 		if err := checkStmtLimit(ctx, se, false); err != nil {
+			se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
 			return nil, err
 		}
 	}

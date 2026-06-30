@@ -5712,6 +5712,18 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest, replayerFile string) (base.Plan, error) {
 	format = strings.ToLower(format)
+	if format == types.ExplainFormatRU && !analyze {
+		recordExplainRUStatus(explainRUStatusUnsupportedNonAnalyze)
+		return nil, explainRUUnsupportedFormatError(format)
+	}
+	if format == types.ExplainFormatRU && analyze {
+		// Secondary guard for callers that already have a target plan. The main
+		// SQL path below rejects before optimization or no-delay execution.
+		if status := explainRUSelectGateStatus(execStmt); status != explainRUStatusSuccess {
+			recordExplainRUStatus(status)
+			return nil, explainRUError(status)
+		}
+	}
 	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
@@ -5748,6 +5760,12 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 
 	targetPlan, ok := processInfo.Plan.(base.Plan)
 	explainForFormat := strings.ToLower(explainFor.Format)
+	// Check RU before the missing-plan branch so idle and running connections
+	// return the same unsupported status.
+	if explainForFormat == types.ExplainFormatRU {
+		recordExplainRUStatus(explainRUStatusUnsupportedForConnection)
+		return nil, errors.Errorf("explain format '%s' for connection is not supported now: %s", explainForFormat, explainRUStatusUnsupportedForConnection)
+	}
 	if !ok || targetPlan == nil {
 		return &Explain{Format: explainForFormat}, nil
 	}
@@ -5800,6 +5818,23 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 			return nil, err
 		}
 		explain.Stmt = hintedStmt
+	}
+	if isExplainRUFormat(explain.Format) {
+		// This is the primary FORMAT='RU' safety boundary. It runs after plan
+		// digest expansion but before target optimization/execution, which keeps
+		// DML no-delay paths and side-effecting SELECT forms from running first.
+		if !explain.Analyze {
+			recordExplainRUStatus(explainRUStatusUnsupportedNonAnalyze)
+			return nil, explainRUUnsupportedFormatError(strings.ToLower(explain.Format))
+		}
+		if explain.Explore {
+			recordExplainRUStatus(explainRUStatusUnsupportedNonSelect)
+			return nil, explainRUError(explainRUStatusUnsupportedNonSelect)
+		}
+		if status := explainRUSelectGateStatus(explain.Stmt); status != explainRUStatusSuccess {
+			recordExplainRUStatus(status)
+			return nil, explainRUError(status)
+		}
 	}
 
 	sctx, err := AsSctx(b.ctx)

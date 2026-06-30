@@ -231,6 +231,14 @@ func (crs *CopRuntimeStats) GetTasks() int32 {
 	return int32(crs.stats.procTimes.size)
 }
 
+// GetScanDetail returns a copy of the coprocessor scan detail collected for this plan.
+func (crs *CopRuntimeStats) GetScanDetail() util.ScanDetail {
+	if crs == nil {
+		return util.ScanDetail{}
+	}
+	return crs.scanDetail
+}
+
 var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
