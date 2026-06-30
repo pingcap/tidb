@@ -200,7 +200,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 					return err
 				}
 				if err = mgr.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second)); err != nil {
-					return err
+					logutil.BgLogger().Warn("failed to update external workload GC life time",
+						zap.String("name", name),
+						zap.String("val", showValStr),
+						zap.Error(err))
 				}
 			}
 		}

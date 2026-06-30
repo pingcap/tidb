@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -61,7 +60,7 @@ import (
 var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 
 // bootstrap initiates system DB for a store.
-func bootstrap(s sessionapi.Session, externalWorkloadManager extworkload.Manager) {
+func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
@@ -77,7 +76,6 @@ func bootstrap(s sessionapi.Session, externalWorkloadManager extworkload.Manager
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			abortGCV2(externalWorkloadManager)
 			upgrade(s)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))

@@ -499,14 +499,6 @@ func main() {
 			closeExternalWorkloadManager(externalWorkloadManager)
 		}()
 	}
-	if extworkload.IsMaster(externalWorkloadManager) && pd.IsKeyspaceUsingKeyspaceLevelGC(externalWorkloadManager.Meta()) {
-		if err = externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
-			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
-			closeExternalWorkloadManager(externalWorkloadManager)
-			externalWorkloadManager = nil
-			dom.SetExternalWorkloadManager(nil)
-		}
-	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
 		svr.StandbyController = standbyController
@@ -655,6 +647,13 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		}
 	}
 	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
+	if extworkload.IsMaster(externalWorkloadManager) && pd.IsKeyspaceUsingKeyspaceLevelGC(externalWorkloadManager.Meta()) {
+		if err := externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
+			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
+			closeExternalWorkloadManager(externalWorkloadManager)
+			externalWorkloadManager = nil
+		}
+	}
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.

@@ -4614,8 +4614,10 @@ func runInBootstrapSession(store kv.Storage, ver int64, externalWorkloadManager 
 			zap.String("bootMode", string(startMode)),
 			zap.Duration("cost", time.Since(startTime)))
 	}()
-	if startMode == ddl.Upgrade {
+	if startMode != ddl.Normal {
 		abortGCV2(externalWorkloadManager)
+	}
+	if startMode == ddl.Upgrade {
 		// TODO at this time domain must not be created, else it will register server
 		// info, and cause deadlock, we need to make sure this in a clear way
 		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")
@@ -4655,7 +4657,7 @@ func runInBootstrapSession(store kv.Storage, ver int64, externalWorkloadManager 
 	s.SetValue(sessionctx.Initing, true)
 	switch startMode {
 	case ddl.Bootstrap:
-		bootstrap(s, externalWorkloadManager)
+		bootstrap(s)
 	case ddl.Upgrade:
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
