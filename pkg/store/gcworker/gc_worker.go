@@ -854,13 +854,8 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) erro
 		return nil
 	}
 
-	shouldRegister, shouldRecycle := gcv2NotificationActions(mgr.Role())
-	if !shouldRegister && !shouldRecycle {
-		return nil
-	}
-
-	var gcLifeTimeSec int64
-	if shouldRegister {
+	switch mgr.Role() {
+	case config.RoleMaster, config.RoleTTLTaskWorker:
 		gcLifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to load GC life time for external workload",
@@ -868,41 +863,26 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) erro
 				zap.Error(err))
 			return errors.Trace(err)
 		}
-		gcLifeTimeSec = int64(*gcLifeTime / time.Second)
-	}
-
-	if shouldRegister {
-		err := mgr.RegisterGCV2(ctx, safePoint, gcLifeTimeSec)
-		if err != nil {
+		if err := mgr.RegisterGCV2(ctx, safePoint, int64(*gcLifeTime/time.Second)); err != nil {
 			logutil.Logger(ctx).Error("failed to register GCV2 task",
 				zap.String("category", "gc worker"),
 				zap.Uint64("safePoint", safePoint),
 				zap.Error(err))
 			return errors.Trace(err)
 		}
+	case config.RoleGCV2Worker:
+	default:
+		return nil
 	}
-	if shouldRecycle {
-		err := mgr.RecycleGCV2(ctx, safePoint)
-		if err != nil {
-			logutil.Logger(ctx).Error("failed to recycle GCV2 task",
-				zap.String("category", "gc worker"),
-				zap.Uint64("safePoint", safePoint),
-				zap.Error(err))
-			return errors.Trace(err)
-		}
+
+	if err := mgr.RecycleGCV2(ctx, safePoint); err != nil {
+		logutil.Logger(ctx).Error("failed to recycle GCV2 task",
+			zap.String("category", "gc worker"),
+			zap.Uint64("safePoint", safePoint),
+			zap.Error(err))
+		return errors.Trace(err)
 	}
 	return nil
-}
-
-func gcv2NotificationActions(role config.ExternalWorkloadRole) (register, recycle bool) {
-	switch role {
-	case config.RoleMaster, config.RoleTTLTaskWorker:
-		return true, true
-	case config.RoleGCV2Worker:
-		return false, true
-	default:
-		return false, false
-	}
 }
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`

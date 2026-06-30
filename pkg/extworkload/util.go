@@ -16,7 +16,6 @@ package extworkload
 
 import (
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/kv"
 )
 
@@ -45,9 +44,9 @@ func SetManagerForStore(store kv.Storage, mgr Manager) {
 	store.SetOption(managerStoreKey{}, mgr)
 }
 
-// GetManagerFromStore returns the manager bound to store only in Starter deploy mode.
+// GetManagerFromStore returns the manager bound to store.
 func GetManagerFromStore(store kv.Storage) Manager {
-	if !deploymode.IsStarter() || store == nil {
+	if store == nil {
 		return nil
 	}
 	v, ok := store.GetOption(managerStoreKey{})

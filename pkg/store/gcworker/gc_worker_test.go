@@ -1178,45 +1178,6 @@ func TestUnifiedGCNeedsToWait(t *testing.T) {
 	}
 }
 
-func TestGCV2NotificationActions(t *testing.T) {
-	cases := []struct {
-		name     string
-		role     config.ExternalWorkloadRole
-		register bool
-		recycle  bool
-	}{
-		{
-			name:     "master",
-			role:     config.RoleMaster,
-			register: true,
-			recycle:  true,
-		},
-		{
-			name:     "ttl worker",
-			role:     config.RoleTTLTaskWorker,
-			register: true,
-			recycle:  true,
-		},
-		{
-			name:    "gcv2 worker",
-			role:    config.RoleGCV2Worker,
-			recycle: true,
-		},
-		{
-			name: "auto analyze worker",
-			role: config.RoleAutoAnalyzeWorker,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			register, recycle := gcv2NotificationActions(tc.role)
-			require.Equal(t, tc.register, register)
-			require.Equal(t, tc.recycle, recycle)
-		})
-	}
-}
-
 func TestResolveLockRangeInfine(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
