@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
@@ -44,6 +45,23 @@ func TestMaskingPolicyMissingSysTableRequiresBootstrapOrUpgrade(t *testing.T) {
 			name: "drop_table",
 			run: func(w *worker, jobCtx *jobContext) error {
 				return w.dropMaskingPoliciesOnTable(jobCtx, 1)
+			},
+		},
+		{
+			name: "truncate_table",
+			run: func(w *worker, jobCtx *jobContext) error {
+				return w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, 1, 2)
+			},
+		},
+		{
+			name: "rename_table",
+			run: func(w *worker, jobCtx *jobContext) error {
+				return w.updateMaskingPolicyNamesAfterRename(
+					jobCtx,
+					1,
+					ast.NewCIStr("old_db"), ast.NewCIStr("new_db"),
+					ast.NewCIStr("old_table"), ast.NewCIStr("new_table"),
+				)
 			},
 		},
 		{
