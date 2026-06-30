@@ -4,7 +4,6 @@ go_library(
     name = "extworkload",
     srcs = [
         "external_workload.go",
-        "gcv2.go",
         "manager.go",
         "util.go",
     ],
