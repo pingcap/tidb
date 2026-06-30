@@ -101,7 +101,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers)
 
 	err = client.GetRestorer(nil).GoRestore(onProgress, restore.CreateUniqueFileSets(files))
 	if err != nil {
