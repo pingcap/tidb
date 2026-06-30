@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -35,6 +36,26 @@ type fakeAutoSplitStatsProvider map[int64]*statistics.Table
 
 func (p fakeAutoSplitStatsProvider) GetPhysicalTableStats(physicalTableID int64, _ *model.TableInfo) *statistics.Table {
 	return p[physicalTableID]
+}
+
+type fakeAutoSplitStore struct {
+	kv.Storage
+
+	regionIDs  []uint64
+	splitErr   error
+	scatterErr error
+}
+
+func (s *fakeAutoSplitStore) SplitRegions(context.Context, [][]byte, bool, *int64) ([]uint64, error) {
+	return s.regionIDs, s.splitErr
+}
+
+func (s *fakeAutoSplitStore) WaitScatterRegionFinish(context.Context, uint64, int) error {
+	return s.scatterErr
+}
+
+func (*fakeAutoSplitStore) CheckRegionInScattering(uint64) (bool, error) {
+	return false, nil
 }
 
 func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
@@ -158,13 +179,53 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 		reorgMeta, args, statsProvider, false)
 	require.NoError(t, err)
 	require.Empty(t, capturedKeys)
+	require.Empty(t, reorgMeta.AutoSplitHotRegionResults)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(25)")
+	store := &fakeAutoSplitStore{regionIDs: []uint64{1, 2, 3}}
+	err = preSplitIndexRegions(
+		context.Background(), sctx, store, tblInfo, []*model.IndexInfo{idxInfo},
+		reorgMeta, args, statsProvider, true)
+	require.NoError(t, err)
+	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	require.Equal(t, []model.AutoSplitHotRegionResult{{
+		IndexName:            "idx",
+		IndexID:              idxInfo.ID,
+		Status:               model.AutoSplitHotRegionStatusSplit,
+		SplitKeyCount:        4,
+		SplitRegionCount:     3,
+		ScatteredRegionCount: 3,
+	}}, reorgMeta.AutoSplitHotRegionResults)
+
+	capturedKeys = nil
+	store = &fakeAutoSplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded}
+	err = preSplitIndexRegions(
+		context.Background(), sctx, store, tblInfo, []*model.IndexInfo{idxInfo},
+		reorgMeta, args, statsProvider, true)
+	require.NoError(t, err)
+	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	require.Equal(t, []model.AutoSplitHotRegionResult{{
+		IndexName:        "idx",
+		IndexID:          idxInfo.ID,
+		Status:           model.AutoSplitHotRegionStatusFailed,
+		SplitKeyCount:    4,
+		SplitRegionCount: 1,
+		Reason:           context.DeadlineExceeded.Error(),
+	}}, reorgMeta.AutoSplitHotRegionResults)
+
+	capturedKeys = nil
 	err = preSplitIndexRegions(
 		context.Background(), sctx, nil, tblInfo, []*model.IndexInfo{idxInfo},
 		reorgMeta, args, statsProvider, true)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	require.Equal(t, []model.AutoSplitHotRegionResult{{
+		IndexName:     "idx",
+		IndexID:       idxInfo.ID,
+		Status:        model.AutoSplitHotRegionStatusUnsupported,
+		SplitKeyCount: 4,
+		Reason:        "storage does not support split regions",
+	}}, reorgMeta.AutoSplitHotRegionResults)
 
 	capturedKeys = nil
 	manualArgs := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{{
@@ -175,6 +236,7 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 		reorgMeta, manualArgs, nil, true)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	require.Empty(t, reorgMeta.AutoSplitHotRegionResults)
 }
 
 func buildAutoSplitTestTableInfo() (*model.TableInfo, *model.IndexInfo) {
