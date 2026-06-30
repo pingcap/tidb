@@ -3,6 +3,3 @@ options:
   no_parent_owners: true
 approvers:
   - sig-approvers-stats
-labels:
-  - sig/planner
-  - component/statistics
