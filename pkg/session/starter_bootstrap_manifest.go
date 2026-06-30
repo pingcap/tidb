@@ -305,6 +305,13 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 
 func executeStarterManifestSQLBlocks(s sessionapi.Session, blocks []string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	sessionVars := s.GetSessionVars()
+	originalInRestrictedSQL := sessionVars.InRestrictedSQL
+	sessionVars.InRestrictedSQL = true
+	defer func() {
+		sessionVars.InRestrictedSQL = originalInRestrictedSQL
+	}()
+
 	for blockIdx, block := range blocks {
 		rendered := renderStarterManifestSQL(block)
 		stmts, err := s.Parse(ctx, rendered)
