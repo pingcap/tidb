@@ -9,7 +9,7 @@ go_library(
         "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",
-        "starter_bootstrap_manifest.go",
+        "starter_bootstrap_file.go",
         "sync_upgrade.go",
         "testutil.go",  #keep
         "tidb.go",
@@ -162,7 +162,7 @@ go_test(
         "bootstrap_test.go",
         "main_test.go",
         "session_test.go",
-        "starter_bootstrap_manifest_test.go",
+        "starter_bootstrap_file_test.go",
         "tidb_test.go",
         "upgrade_backfill_test.go",
         "upgrade_test.go",

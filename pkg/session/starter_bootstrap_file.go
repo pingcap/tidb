@@ -45,38 +45,38 @@ import (
 )
 
 const (
-	starterBootstrapVersionVar             = "starter_version"
-	starterBootstrapKeyspacePlaceholder    = "<keyspace>"
-	starterBootstrapManifestVersionComment = "Starter bootstrap version. Do not delete."
+	starterBootstrapVersionVar          = "starter_version"
+	starterBootstrapKeyspacePlaceholder = "<keyspace>"
+	starterBootstrapFileVersionComment  = "Starter bootstrap version. Do not delete."
 )
 
 var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
 
-type starterBootstrapManifest struct {
-	Version   int64                             `json:"version"`
-	Bootstrap []string                          `json:"bootstrap,omitempty"`
-	Upgrades  []starterBootstrapManifestUpgrade `json:"upgrades,omitempty"`
+type starterBootstrapFile struct {
+	Version   int64                         `json:"version"`
+	Bootstrap []string                      `json:"bootstrap,omitempty"`
+	Upgrades  []starterBootstrapFileUpgrade `json:"upgrades,omitempty"`
 }
 
-type starterBootstrapManifestUpgrade struct {
+type starterBootstrapFileUpgrade struct {
 	Version int64    `json:"version"`
 	SQL     []string `json:"sql,omitempty"`
 }
 
-func doStarterBootstrapManifest(s sessionapi.Session) error {
-	manifest, err := loadStarterBootstrapManifest()
-	if err != nil || manifest == nil {
+func doStarterBootstrapFile(s sessionapi.Session) error {
+	bootstrapFile, err := loadStarterBootstrapFile()
+	if err != nil || bootstrapFile == nil {
 		return err
 	}
-	if err := executeStarterManifestSQLBlocks(s, manifest.Bootstrap); err != nil {
+	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.Bootstrap); err != nil {
 		return err
 	}
-	return updateStarterBootstrapVersion(s, manifest.Version)
+	return updateStarterBootstrapVersion(s, bootstrapFile.Version)
 }
 
-func runStarterBootstrapManifestUpgrade(store kv.Storage) error {
-	manifest, err := loadStarterBootstrapManifest()
-	if err != nil || manifest == nil {
+func runStarterBootstrapFileUpgrade(store kv.Storage) error {
+	bootstrapFile, err := loadStarterBootstrapFile()
+	if err != nil || bootstrapFile == nil {
 		return err
 	}
 
@@ -105,81 +105,81 @@ func runStarterBootstrapManifestUpgrade(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	if !needUpgradeStarterBootstrapManifest(storedVersion, manifest) {
+	if !needUpgradeStarterBootstrapFile(storedVersion, bootstrapFile) {
 		return nil
 	}
 
 	releaseFn, err := acquireLock(store)
 	if err != nil {
-		return errors.Annotate(err, "acquire starter bootstrap manifest upgrade lock")
+		return errors.Annotate(err, "acquire starter bootstrap file upgrade lock")
 	}
 	defer releaseFn()
 	storedVersion, err = getStarterBootstrapVersion(s)
 	if err != nil {
 		return err
 	}
-	if !needUpgradeStarterBootstrapManifest(storedVersion, manifest) {
+	if !needUpgradeStarterBootstrapFile(storedVersion, bootstrapFile) {
 		return nil
 	}
 
-	if err = upgradeStarterBootstrapManifestFromVersion(s, manifest, storedVersion); err != nil {
+	if err = upgradeStarterBootstrapFileFromVersion(s, bootstrapFile, storedVersion); err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("starter bootstrap manifest upgrade finished",
-		zap.Int64("version", manifest.Version),
+	logutil.BgLogger().Info("starter bootstrap file upgrade finished",
+		zap.Int64("version", bootstrapFile.Version),
 		zap.Duration("cost", time.Since(startTime)))
 	return nil
 }
 
-func loadStarterBootstrapManifest() (*starterBootstrapManifest, error) {
+func loadStarterBootstrapFile() (*starterBootstrapFile, error) {
 	if !deploymode.IsStarter() {
 		return nil, nil
 	}
-	manifestFile := config.GetGlobalConfig().StarterParams.BootstrapManifestFile
-	if manifestFile == "" {
+	bootstrapFilePath := config.GetGlobalConfig().StarterParams.BootstrapFile
+	if bootstrapFilePath == "" {
 		return nil, nil
 	}
-	data, err := os.ReadFile(manifestFile) //nolint:gosec
+	data, err := os.ReadFile(bootstrapFilePath) //nolint:gosec
 	if err != nil {
-		return nil, errors.Annotatef(err, "read starter bootstrap manifest %s", manifestFile)
+		return nil, errors.Annotatef(err, "read starter bootstrap file %s", bootstrapFilePath)
 	}
-	manifest, err := parseStarterBootstrapManifest(data)
+	bootstrapFile, err := parseStarterBootstrapFile(data)
 	if err != nil {
-		return nil, errors.Annotatef(err, "parse starter bootstrap manifest %s", manifestFile)
+		return nil, errors.Annotatef(err, "parse starter bootstrap file %s", bootstrapFilePath)
 	}
-	logutil.BgLogger().Info("loaded starter bootstrap manifest",
-		zap.String("file", manifestFile),
-		zap.Int64("version", manifest.Version),
-		zap.Int("bootstrapBlocks", len(manifest.Bootstrap)),
-		zap.Int("upgradeEntries", len(manifest.Upgrades)))
-	return manifest, nil
+	logutil.BgLogger().Info("loaded starter bootstrap file",
+		zap.String("file", bootstrapFilePath),
+		zap.Int64("version", bootstrapFile.Version),
+		zap.Int("bootstrapBlocks", len(bootstrapFile.Bootstrap)),
+		zap.Int("upgradeEntries", len(bootstrapFile.Upgrades)))
+	return bootstrapFile, nil
 }
 
-func parseStarterBootstrapManifest(data []byte) (*starterBootstrapManifest, error) {
+func parseStarterBootstrapFile(data []byte) (*starterBootstrapFile, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var manifest starterBootstrapManifest
-	if err := decoder.Decode(&manifest); err != nil {
+	var bootstrapFile starterBootstrapFile
+	if err := decoder.Decode(&bootstrapFile); err != nil {
 		return nil, err
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return nil, errors.New("manifest must contain a single JSON object")
+			return nil, errors.New("bootstrap file must contain a single JSON object")
 		}
 		return nil, err
 	}
-	if err := manifest.validate(); err != nil {
+	if err := bootstrapFile.validate(); err != nil {
 		return nil, err
 	}
-	return &manifest, nil
+	return &bootstrapFile, nil
 }
 
-func (m *starterBootstrapManifest) validate() error {
+func (m *starterBootstrapFile) validate() error {
 	if m.Version <= 0 {
-		return errors.New("manifest version must be greater than 0")
+		return errors.New("bootstrap file version must be greater than 0")
 	}
-	if err := validateStarterManifestSQLBlocks("bootstrap", m.Bootstrap); err != nil {
+	if err := validateStarterBootstrapSQLBlocks("bootstrap", m.Bootstrap); err != nil {
 		return err
 	}
 	seenUpgradeVersions := make(map[int64]struct{}, len(m.Upgrades))
@@ -189,13 +189,13 @@ func (m *starterBootstrapManifest) validate() error {
 			return errors.Errorf("upgrades[%d].version must be greater than 0", i)
 		}
 		if upgrade.Version > m.Version {
-			return errors.Errorf("upgrades[%d].version %d is greater than manifest version %d", i, upgrade.Version, m.Version)
+			return errors.Errorf("upgrades[%d].version %d is greater than bootstrap file version %d", i, upgrade.Version, m.Version)
 		}
 		if _, ok := seenUpgradeVersions[upgrade.Version]; ok {
 			return errors.Errorf("duplicated upgrade version %d", upgrade.Version)
 		}
 		seenUpgradeVersions[upgrade.Version] = struct{}{}
-		if err := validateStarterManifestSQLBlocks(fmt.Sprintf("upgrades[%d].sql", i), upgrade.SQL); err != nil {
+		if err := validateStarterBootstrapSQLBlocks(fmt.Sprintf("upgrades[%d].sql", i), upgrade.SQL); err != nil {
 			return err
 		}
 	}
@@ -205,7 +205,7 @@ func (m *starterBootstrapManifest) validate() error {
 	return nil
 }
 
-func validateStarterManifestSQLBlocks(field string, blocks []string) error {
+func validateStarterBootstrapSQLBlocks(field string, blocks []string) error {
 	for i, block := range blocks {
 		if strings.TrimSpace(block) == "" {
 			return errors.Errorf("%s[%d] must not be empty", field, i)
@@ -220,31 +220,31 @@ func validateStarterManifestSQLBlocks(field string, blocks []string) error {
 	return nil
 }
 
-func needUpgradeStarterBootstrapManifest(storedVersion int64, manifest *starterBootstrapManifest) bool {
-	if storedVersion > manifest.Version {
-		logutil.BgLogger().Warn("starter bootstrap manifest is older than cluster state",
+func needUpgradeStarterBootstrapFile(storedVersion int64, bootstrapFile *starterBootstrapFile) bool {
+	if storedVersion > bootstrapFile.Version {
+		logutil.BgLogger().Warn("starter bootstrap file is older than cluster state",
 			zap.Int64("storedVersion", storedVersion),
-			zap.Int64("manifestVersion", manifest.Version))
+			zap.Int64("bootstrapFileVersion", bootstrapFile.Version))
 		return false
 	}
-	return storedVersion < manifest.Version
+	return storedVersion < bootstrapFile.Version
 }
 
-func upgradeStarterBootstrapManifestFromVersion(s sessionapi.Session, manifest *starterBootstrapManifest, storedVersion int64) error {
-	if !needUpgradeStarterBootstrapManifest(storedVersion, manifest) {
+func upgradeStarterBootstrapFileFromVersion(s sessionapi.Session, bootstrapFile *starterBootstrapFile, storedVersion int64) error {
+	if !needUpgradeStarterBootstrapFile(storedVersion, bootstrapFile) {
 		return nil
 	}
 
-	for _, upgrade := range manifest.pendingUpgrades(storedVersion) {
-		logutil.BgLogger().Info("running starter bootstrap manifest upgrade",
+	for _, upgrade := range bootstrapFile.pendingUpgrades(storedVersion) {
+		logutil.BgLogger().Info("running starter bootstrap file upgrade",
 			zap.Int64("storedVersion", storedVersion),
 			zap.Int64("upgradeVersion", upgrade.Version),
-			zap.Int64("targetVersion", manifest.Version))
-		if err := executeStarterManifestSQLBlocks(s, upgrade.SQL); err != nil {
-			return errors.Annotatef(err, "upgrade starter bootstrap manifest to version %d", upgrade.Version)
+			zap.Int64("targetVersion", bootstrapFile.Version))
+		if err := executeStarterBootstrapSQLBlocks(s, upgrade.SQL); err != nil {
+			return errors.Annotatef(err, "upgrade starter bootstrap file to version %d", upgrade.Version)
 		}
 	}
-	if err := updateStarterBootstrapVersion(s, manifest.Version); err != nil {
+	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
 		return err
 	}
 
@@ -254,20 +254,20 @@ func upgradeStarterBootstrapManifestFromVersion(s sessionapi.Session, manifest *
 		return nil
 	}
 	sleepTime := time.Second
-	logutil.BgLogger().Info("update starter bootstrap manifest version failed",
+	logutil.BgLogger().Info("update starter bootstrap file version failed",
 		zap.Error(err), zap.Duration("sleeping time", sleepTime))
 	time.Sleep(sleepTime)
 	latestVersion, err1 := getStarterBootstrapVersion(s)
 	if err1 != nil {
-		return errors.Annotate(err1, "check starter bootstrap manifest version after commit failure")
+		return errors.Annotate(err1, "check starter bootstrap file version after commit failure")
 	}
-	if latestVersion >= manifest.Version {
+	if latestVersion >= bootstrapFile.Version {
 		return nil
 	}
-	return errors.Annotatef(err, "upgrade starter bootstrap manifest from version %d to %d", storedVersion, manifest.Version)
+	return errors.Annotatef(err, "upgrade starter bootstrap file from version %d to %d", storedVersion, bootstrapFile.Version)
 }
 
-func (m *starterBootstrapManifest) pendingUpgrades(storedVersion int64) []starterBootstrapManifestUpgrade {
+func (m *starterBootstrapFile) pendingUpgrades(storedVersion int64) []starterBootstrapFileUpgrade {
 	idx := sort.Search(len(m.Upgrades), func(i int) bool {
 		return m.Upgrades[i].Version > storedVersion
 	})
@@ -293,7 +293,7 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx,
 		`INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
-		mysql.SystemDB, mysql.TiDBTable, starterBootstrapVersionVar, version, starterBootstrapManifestVersionComment, version)
+		mysql.SystemDB, mysql.TiDBTable, starterBootstrapVersionVar, version, starterBootstrapFileVersionComment, version)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -303,7 +303,7 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 	return nil
 }
 
-func executeStarterManifestSQLBlocks(s sessionapi.Session, blocks []string) error {
+func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	sessionVars := s.GetSessionVars()
 	originalInRestrictedSQL := sessionVars.InRestrictedSQL
@@ -313,7 +313,7 @@ func executeStarterManifestSQLBlocks(s sessionapi.Session, blocks []string) erro
 	}()
 
 	for blockIdx, block := range blocks {
-		rendered := renderStarterManifestSQL(block)
+		rendered := renderStarterBootstrapSQL(block)
 		stmts, err := s.Parse(ctx, rendered)
 		if err != nil {
 			return errors.Annotatef(err, "parse SQL block %d", blockIdx)
@@ -333,7 +333,7 @@ func executeStarterManifestSQLBlocks(s sessionapi.Session, blocks []string) erro
 	return nil
 }
 
-func renderStarterManifestSQL(sql string) string {
+func renderStarterBootstrapSQL(sql string) string {
 	keyspaceName := sqlescape.EscapeString(config.GetGlobalKeyspaceName())
 	return strings.ReplaceAll(sql, starterBootstrapKeyspacePlaceholder, keyspaceName)
 }

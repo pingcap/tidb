@@ -1413,26 +1413,26 @@ max-import-data-size = "1MiB"`), 0644))
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
 [starter-params]
-bootstrap-manifest-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapManifestFile)
+	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapFile)
 	require.NoError(t, conf.Valid())
 
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true
 	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	conf = NewConfig()
-	conf.StarterParams.BootstrapManifestFile = "/etc/tidb/starter-bootstrap.json"
-	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")
+	conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
+	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-file can only be configured for starter deploy mode")
 	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
-bootstrap-manifest-file = ""`), 0644))
+bootstrap-file = ""`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
-bootstrap-manifest-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
 	conf = NewConfig()
-	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")
+	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-file can only be configured for starter deploy mode")
 	conf = NewConfig()
 	conf.StarterParams.MaxImportDataSize = 1
 	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")

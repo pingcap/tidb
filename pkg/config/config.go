@@ -1088,8 +1088,8 @@ type Standby struct {
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id,omitempty"`
-	// BootstrapManifestFile is a starter-only JSON manifest with bootstrap and upgrade SQL blocks.
-	BootstrapManifestFile string `toml:"bootstrap-manifest-file" json:"bootstrap-manifest-file,omitempty"`
+	// BootstrapFile is a starter-only JSON file with bootstrap and upgrade SQL blocks.
+	BootstrapFile string `toml:"bootstrap-file" json:"bootstrap-file,omitempty"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
 	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier,omitempty"`
@@ -1583,8 +1583,8 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
 	}
-	if metaData.IsDefined("starter-params", "bootstrap-manifest-file") && c.StarterParams.BootstrapManifestFile != "" && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")
+	if metaData.IsDefined("starter-params", "bootstrap-file") && c.StarterParams.BootstrapFile != "" && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.bootstrap-file can only be configured for starter deploy mode")
 	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
@@ -1718,8 +1718,8 @@ func (c *Config) Valid() error {
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	}
-	if c.StarterParams.BootstrapManifestFile != "" && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")
+	if c.StarterParams.BootstrapFile != "" && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.bootstrap-file can only be configured for starter deploy mode")
 	}
 	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
