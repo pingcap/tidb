@@ -336,6 +336,28 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
 }
 
+func TestExplainRUForConnectionUnsupported(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	connIDRows := tk.MustQuery("select connection_id()").Rows()
+	require.Len(t, connIDRows, 1)
+	connID := connIDRows[0][0].(string)
+
+	tkProcess := tk.Session().ShowProcess()
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{tkProcess}})
+	err := tk.ExecToErr(fmt.Sprintf("explain format='ru' for connection %s", connID))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_for_connection")
+
+	tk.MustQuery("select 1")
+	tkProcess = tk.Session().ShowProcess()
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{tkProcess}})
+	err = tk.ExecToErr(fmt.Sprintf("explain format='ru' for connection %s", connID))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_for_connection")
+}
+
 func TestExplainDotForQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -95,6 +95,95 @@ func TestRUV2ExecutorCounterReturnsCachedKnownLabels(t *testing.T) {
 	}
 }
 
+func TestExplainRUMetrics(t *testing.T) {
+	InitExplainRUMetrics()
+
+	RecordExplainRUStatus("success")
+	ObserveExplainRURenderDuration("success", 0.01)
+	RecordExplainRUComponentSnapshot("ok")
+	ObserveExplainRURow("plan", "", "projection", "read_billing_model", "plan_stats", 1.25, 3, 24, 8)
+	RecordReadBillingDemoStatement("success", "v1")
+	RecordReadBillingDemoOperatorStatus("tidb", "projection_eval", "projection", "ok", "none", "v1")
+	AddReadBillingDemoBaseUnits("tidb", "projection_eval", "projection", "input_rows", "runtime_act_rows", "all", "v1", 3)
+	ObserveReadBillingDemoRowWidth("tidb", "projection_eval", "projection", "plan_stats", "v1", 8)
+
+	require.Equal(t, 1.0, readCounterValue(t, ExplainRUStatementsCounter.WithLabelValues("success")))
+	require.Equal(t, 1.0, readCounterValue(t, ExplainRUComponentSnapshotCounter.WithLabelValues("ok")))
+	require.Equal(t, 1.25, readCounterValue(t, ExplainRUPreviewRUCounter.WithLabelValues("plan", "", "projection", "read_billing_model")))
+	require.Equal(t, 3.0, readCounterValue(t, ExplainRUWorkRowsCounter.WithLabelValues("plan", "", "projection", "read_billing_model")))
+	require.Equal(t, 24.0, readCounterValue(t, ExplainRUWorkBytesCounter.WithLabelValues("plan", "", "projection", "read_billing_model")))
+	require.Equal(t, 1.0, readCounterValue(t, ReadBillingDemoStatementsCounter.WithLabelValues("success", "v1")))
+	require.Equal(t, 1.0, readCounterValue(t, ReadBillingDemoOperatorStatusCounter.WithLabelValues("tidb", "projection_eval", "projection", "ok", "none", "v1")))
+	require.Equal(t, 3.0, readCounterValue(t, ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "input_rows", "runtime_act_rows", "all", "v1")))
+
+	registry := prometheus.NewRegistry()
+	require.NoError(t, registry.Register(ExplainRUPreviewRUCounter))
+	require.NoError(t, registry.Register(ExplainRUWorkRowsCounter))
+	require.NoError(t, registry.Register(ExplainRUWorkBytesCounter))
+	require.NoError(t, registry.Register(ExplainRURowWidthHistogram))
+	require.NoError(t, registry.Register(ExplainRUStatementsCounter))
+	require.NoError(t, registry.Register(ExplainRURenderDurationHistogram))
+	require.NoError(t, registry.Register(ExplainRUComponentSnapshotCounter))
+	require.NoError(t, registry.Register(ReadBillingDemoStatementsCounter))
+	require.NoError(t, registry.Register(ReadBillingDemoOperatorStatusCounter))
+	require.NoError(t, registry.Register(ReadBillingDemoBaseUnitsCounter))
+	require.NoError(t, registry.Register(ReadBillingDemoRowWidthHistogram))
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	require.NotNil(t, findMetricFamily(families, "tidb_explain_ru_preview_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_explain_ru_work_rows_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_explain_ru_work_bytes_total"))
+	rowWidthFamily := findMetricFamily(families, "tidb_explain_ru_row_width_bytes")
+	require.NotNil(t, rowWidthFamily)
+	requireMetricFamilyHasLabels(t, rowWidthFamily, "component", "operator", "source")
+	require.True(t, metricHasLabelValue(rowWidthFamily.GetMetric()[0], "source", "plan_stats"))
+	statementFamily := findMetricFamily(families, "tidb_explain_ru_statements_total")
+	require.NotNil(t, statementFamily)
+	requireMetricFamilyHasLabels(t, statementFamily, "status")
+	require.NotNil(t, findMetricFamily(families, "tidb_explain_ru_render_duration_seconds"))
+	componentSnapshotFamily := findMetricFamily(families, "tidb_explain_ru_component_snapshot_total")
+	require.NotNil(t, componentSnapshotFamily)
+	requireMetricFamilyHasLabels(t, componentSnapshotFamily, "component_snapshot_status")
+	readBillingStatementFamily := findMetricFamily(families, "tidb_read_billing_demo_statements_total")
+	require.NotNil(t, readBillingStatementFamily)
+	requireMetricFamilyHasLabels(t, readBillingStatementFamily, "status", "model_version")
+	readBillingOperatorFamily := findMetricFamily(families, "tidb_read_billing_demo_operator_status_total")
+	require.NotNil(t, readBillingOperatorFamily)
+	requireMetricFamilyHasLabels(t, readBillingOperatorFamily, "site", "op_class", "operator_kind", "status", "reason", "model_version")
+	readBillingBaseUnitFamily := findMetricFamily(families, "tidb_read_billing_demo_base_units_total")
+	require.NotNil(t, readBillingBaseUnitFamily)
+	requireMetricFamilyHasLabels(t, readBillingBaseUnitFamily, "site", "op_class", "operator_kind", "unit", "input_source", "input_side", "model_version")
+	readBillingRowWidthFamily := findMetricFamily(families, "tidb_read_billing_demo_row_width_bytes")
+	require.NotNil(t, readBillingRowWidthFamily)
+	requireMetricFamilyHasLabels(t, readBillingRowWidthFamily, "site", "op_class", "operator_kind", "row_width_source", "model_version")
+}
+
+func TestExplainRUMetricsIgnoreEmptyLabelsAndMissingValues(t *testing.T) {
+	InitExplainRUMetrics()
+
+	RecordExplainRUStatus("")
+	ObserveExplainRURenderDuration("", 0.01)
+	RecordExplainRUComponentSnapshot("")
+	ObserveExplainRURow("summary", "total_preview_ru", "", "summary_total", "", 0, -1, -1, -1)
+	ObserveExplainRURow("plan", "", "", "read_billing_model", "operator_helper", -1, -1, -1, 32)
+	RecordReadBillingDemoStatement("", "v1")
+	RecordReadBillingDemoOperatorStatus("tidb", "projection_eval", "projection", "", "none", "v1")
+	AddReadBillingDemoBaseUnits("tidb", "projection_eval", "projection", "input_rows", "runtime_act_rows", "all", "v1", 0)
+	ObserveReadBillingDemoRowWidth("tidb", "projection_eval", "projection", "plan_stats", "v1", 0)
+
+	require.Equal(t, 0, countCollectedMetrics(ExplainRUStatementsCounter))
+	require.Equal(t, 0, countCollectedMetrics(ExplainRURenderDurationHistogram))
+	require.Equal(t, 0, countCollectedMetrics(ExplainRUComponentSnapshotCounter))
+	require.Equal(t, 1, countCollectedMetrics(ExplainRUPreviewRUCounter))
+	require.Equal(t, 0, countCollectedMetrics(ExplainRUWorkRowsCounter))
+	require.Equal(t, 0, countCollectedMetrics(ExplainRUWorkBytesCounter))
+	require.Equal(t, 0, countCollectedMetrics(ExplainRURowWidthHistogram))
+	require.Equal(t, 0, countCollectedMetrics(ReadBillingDemoStatementsCounter))
+	require.Equal(t, 0, countCollectedMetrics(ReadBillingDemoOperatorStatusCounter))
+	require.Equal(t, 0, countCollectedMetrics(ReadBillingDemoBaseUnitsCounter))
+	require.Equal(t, 0, countCollectedMetrics(ReadBillingDemoRowWidthHistogram))
+}
+
 func TestStmtSummaryMetricLabels(t *testing.T) {
 	InitStmtSummaryMetrics()
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))
@@ -217,4 +306,17 @@ func metricHasLabelValue(metric *dto.Metric, name string, value string) bool {
 		}
 	}
 	return false
+}
+
+func requireMetricFamilyHasLabels(t *testing.T, family *dto.MetricFamily, names ...string) {
+	t.Helper()
+	require.NotEmpty(t, family.GetMetric())
+	labels := make(map[string]struct{}, len(family.GetMetric()[0].GetLabel()))
+	for _, label := range family.GetMetric()[0].GetLabel() {
+		labels[label.GetName()] = struct{}{}
+	}
+	for _, name := range names {
+		_, ok := labels[name]
+		require.Truef(t, ok, "metric %s missing label %s", family.GetName(), name)
+	}
 }

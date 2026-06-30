@@ -16,8 +16,11 @@ package executor_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,9 +28,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -496,6 +505,7 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatTiDBJSON,
 		types.ExplainFormatCostTrace,
 		types.ExplainFormatPlanCache,
+		types.ExplainFormatRU,
 	}
 
 	tk.MustExec("select * from t")
@@ -513,6 +523,357 @@ func TestExplainFormatInCtx(t *testing.T) {
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
 	}
+}
+
+func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	rows := tk.MustQuery("explain analyze format='ru' select 1").Rows()
+	require.NotEmpty(t, rows)
+	require.Equal(t, "summary", rows[0][0])
+	require.Equal(t, "total_preview_ru", rows[0][2])
+	require.Equal(t, "summary_total", rows[0][15])
+	requireExplainRUPlanRow(t, rows)
+
+	tk.MustExec("drop table if exists explain_ru_t")
+	tk.MustExec("create table explain_ru_t(a int primary key, b varchar(20))")
+	tk.MustExec("insert into explain_ru_t values (1, 'x'), (2, 'yy')")
+	rows = tk.MustQuery("explain analyze format='ru' select * from explain_ru_t where a > 0").Rows()
+	requireExplainRUPlanRow(t, rows)
+	requireExplainRUOperatorClass(t, rows, "tikv/kv_range_scan")
+
+	rows = tk.MustQuery("explain analyze format='ru' select * from explain_ru_t where a = 1").Rows()
+	requireExplainRUWeightedOperatorClass(t, rows, "tikv/kv_point_lookup")
+}
+
+func TestExplainAnalyzeFormatRUTiKVCopOperatorClasses(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists explain_ru_cop")
+	tk.MustExec("create table explain_ru_cop(a int primary key, b int, c varchar(20), key idx_b(b))")
+	tk.MustExec("insert into explain_ru_cop values (1, 10, 'a'), (2, 20, 'bb'), (3, 20, 'ccc'), (4, 30, 'dddd')")
+
+	cases := []struct {
+		sql       string
+		opClasses []string
+	}{
+		{
+			sql: "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) where b > 10",
+			opClasses: []string{
+				"tikv/filter_eval",
+				"tikv/kv_range_scan",
+			},
+		},
+		{
+			sql: "explain analyze format='ru' select a from explain_ru_cop where b > 10",
+			opClasses: []string{
+				"tikv/projection_eval",
+				"tikv/kv_range_scan",
+			},
+		},
+		{
+			sql: "explain analyze format='ru' select * from explain_ru_cop limit 2",
+			opClasses: []string{
+				"tikv/row_limit",
+				"tikv/kv_range_scan",
+			},
+		},
+		{
+			sql: "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) order by c limit 2",
+			opClasses: []string{
+				"tikv/bounded_topn",
+				"tikv/kv_range_scan",
+			},
+		},
+		{
+			sql: "explain analyze format='ru' select /*+ agg_to_cop(), hash_agg() */ b, count(*) from explain_ru_cop group by b",
+			opClasses: []string{
+				"tikv/agg_hash",
+				"tikv/kv_range_scan",
+			},
+		},
+		{
+			sql: "explain analyze format='ru' select /*+ agg_to_cop(), stream_agg() */ b, count(*) from explain_ru_cop group by b",
+			opClasses: []string{
+				"tikv/agg_stream",
+				"tikv/kv_range_scan",
+			},
+		},
+	}
+	for _, tc := range cases {
+		rows := tk.MustQuery(tc.sql).Rows()
+		for _, opClass := range tc.opClasses {
+			requireExplainRUWeightedOperatorClass(t, rows, opClass)
+		}
+	}
+}
+
+func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
+	t.Helper()
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" {
+			continue
+		}
+		require.NotEmpty(t, row[1])
+		require.NotEmpty(t, row[2])
+		require.Contains(t, fmt.Sprint(row[3]), "/")
+		require.NotEmpty(t, row[4])
+		require.NotEmpty(t, row[7])
+		require.NotEmpty(t, row[8])
+		require.NotEmpty(t, row[11])
+		require.NotEmpty(t, row[12])
+		require.NotEmpty(t, row[13])
+		require.NotEmpty(t, row[14])
+		require.NotEmpty(t, row[15])
+		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v1")
+		return
+	}
+	require.Fail(t, "missing FORMAT='RU' plan row")
+}
+
+func requireExplainRUOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
+	t.Helper()
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" || row[3] != operatorClass {
+			continue
+		}
+		return
+	}
+	require.Failf(t, "missing FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
+}
+
+func requireExplainRUWeightedOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
+	t.Helper()
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" || row[3] != operatorClass {
+			continue
+		}
+		require.NotEmpty(t, row[13], "missing weight for %s row %v", operatorClass, row)
+		require.NotEmpty(t, row[14], "missing preview RU for %s row %v", operatorClass, row)
+		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v1")
+		return
+	}
+	require.Failf(t, "missing weighted FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
+}
+
+func TestExplainAnalyzeFormatRUPlanDigest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+
+	originEnableStmtSummary := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_stmt_summary").Rows()[0][0])
+	originStmtSummaryRefreshInterval := fmt.Sprint(tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Rows()[0][0])
+	originStmtSummaryHistorySize := fmt.Sprint(tk.MustQuery("select @@global.tidb_stmt_summary_history_size").Rows()[0][0])
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary = %s", originEnableStmtSummary))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %s", originStmtSummaryRefreshInterval))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_history_size = %s", originStmtSummaryHistorySize))
+	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec("drop table if exists explain_ru_digest")
+	tk.MustExec("create table explain_ru_digest(a int primary key, b int)")
+	tk.MustExec("insert into explain_ru_digest values (1, 10)")
+	tk.MustQuery("select b from explain_ru_digest where a = 1").Check(testkit.Rows("10"))
+
+	digestRows := tk.MustQuery("select plan_digest from information_schema.statements_summary_history where digest_text like 'select `b` from `explain_ru_digest`%' and plan_digest != ''").Rows()
+	require.NotEmpty(t, digestRows)
+	planDigest := fmt.Sprint(digestRows[0][0])
+	rows := tk.MustQuery(fmt.Sprintf("explain analyze format='ru' '%s'", planDigest)).Rows()
+	require.NotEmpty(t, rows)
+	require.Equal(t, "summary", rows[0][0])
+	requireExplainRUPlanRow(t, rows)
+}
+
+func TestExplainAnalyzeFormatRUUnsupportedTargetsBeforeExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists explain_ru_dml")
+	tk.MustExec("create table explain_ru_dml(a int primary key)")
+	tk.MustExec("insert into explain_ru_dml values (1)")
+
+	err := tk.ExecToErr("explain format='ru' select 1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot work without 'analyze'")
+	require.Contains(t, err.Error(), "format=ru")
+
+	err = tk.ExecToErr("explain analyze format=ru select 1")
+	require.Error(t, err)
+
+	err = tk.ExecToErr("explain analyze format='ru' insert into explain_ru_dml values (2)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_non_select")
+	tk.MustQuery("select * from explain_ru_dml order by a").Check(testkit.Rows("1"))
+
+	for _, sql := range []string{
+		"explain analyze format='ru' update explain_ru_dml set a = 2 where a = 1",
+		"explain analyze format='ru' delete from explain_ru_dml where a = 1",
+		"explain analyze format='ru' replace into explain_ru_dml values (2)",
+		"explain analyze format='ru' alter table explain_ru_dml add column b int",
+		"explain analyze format='ru' import into explain_ru_dml from select * from explain_ru_dml",
+	} {
+		err = tk.ExecToErr(sql)
+		require.Error(t, err, sql)
+		require.Contains(t, err.Error(), "unsupported_non_select", sql)
+		tk.MustQuery("select * from explain_ru_dml order by a").Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("show columns from explain_ru_dml").Check(testkit.Rows("a int(11) NO PRI <nil> "))
+
+	err = tk.ExecToErr("explain analyze format='ru' values (1)")
+	require.Error(t, err)
+
+	err = tk.ExecToErr("explain analyze format='ru' table explain_ru_dml")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_non_select")
+
+	tk.MustExec("set @explain_ru_var := 7")
+	err = tk.ExecToErr("explain analyze format='ru' select @explain_ru_var := 9")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	tk.MustQuery("select @explain_ru_var").Check(testkit.Rows("7"))
+
+	tk.MustQuery("select last_insert_id(11)").Check(testkit.Rows("11"))
+	err = tk.ExecToErr("explain analyze format='ru' select last_insert_id(123)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
+
+	outFile := filepath.Join(t.TempDir(), "explain_ru.csv")
+	err = tk.ExecToErr(fmt.Sprintf("explain analyze format='ru' select 1 into outfile %q", outFile))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	_, statErr := os.Stat(outFile)
+	require.True(t, os.IsNotExist(statErr))
+
+	err = tk.ExecToErr("explain analyze format='ru' select * from explain_ru_dml for update skip locked")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_locking_select")
+
+	err = tk.ExecToErr("explain analyze format='ru' select get_lock('explain_ru', 0)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	tk.MustQuery("select is_free_lock('explain_ru')").Check(testkit.Rows("1"))
+}
+
+func TestReadBillingDemoMetricsHook(t *testing.T) {
+	metrics.InitExplainRUMetrics()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select @@tidb_enable_read_billing_demo").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists read_billing_demo")
+	tk.MustExec("create table read_billing_demo(a int primary key)")
+	tk.MustExec("insert into read_billing_demo values (1), (2)")
+
+	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v1")
+	unsupported := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unsupported", "v1")
+	unknownInput := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unknown_input", "v1")
+	errorStatus := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("error", "v1")
+	projectionFixedEvents := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "fixed_events", "runtime_act_rows", "all", "v1")
+
+	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
+	require.Equal(t, 0.0, readExecutorCounterValue(t, success))
+
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
+	require.Equal(t, 1.0, readExecutorCounterValue(t, success))
+	require.Equal(t, 1.0, readExecutorCounterValue(t, projectionFixedEvents))
+
+	beforeRestrictedSuccess := readExecutorCounterValue(t, success)
+	beforeRestrictedBaseUnits := readExecutorCounterValue(t, projectionFixedEvents)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, restrictedErr := tk.Session().GetRestrictedSQLExecutor().ExecRestrictedSQL(internalCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select 1 + 1")
+	require.NoError(t, restrictedErr)
+	require.Equal(t, beforeRestrictedSuccess, readExecutorCounterValue(t, success))
+	require.Equal(t, beforeRestrictedBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
+
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustExec("prepare read_billing_demo_stmt from 'select ? + 1'")
+	tk.MustExec("set @read_billing_demo_param := 2")
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	tk.MustQuery("execute read_billing_demo_stmt using @read_billing_demo_param").Check(testkit.Rows("3"))
+	require.Equal(t, 2.0, readExecutorCounterValue(t, success))
+
+	beforeBaseUnits := readExecutorCounterValue(t, projectionFixedEvents)
+	beforeBaseUnitsTotal := readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	beforeUnsupported := readExecutorCounterValue(t, unsupported)
+	tk.MustExec("insert into read_billing_demo values (3)")
+	require.Equal(t, beforeUnsupported+1, readExecutorCounterValue(t, unsupported))
+	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	beforeUnknownInput := readExecutorCounterValue(t, unknownInput)
+	beforeBaseUnits = readExecutorCounterValue(t, projectionFixedEvents)
+	beforeBaseUnitsTotal = readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	plannercore.RecordReadBillingDemoForStatement(tk.Session(), nil, nil, nil)
+	require.Equal(t, beforeUnknownInput+1, readExecutorCounterValue(t, unknownInput))
+	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustExec("create table read_billing_compile_error(a int)")
+	tk.MustExec("prepare read_billing_compile_error_stmt from 'select * from read_billing_compile_error'")
+	tk.MustExec("drop table read_billing_compile_error")
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	beforeError := readExecutorCounterValue(t, errorStatus)
+	beforeBaseUnitsTotal = readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	err := tk.ExecToErr("execute read_billing_compile_error_stmt")
+	require.Error(t, err)
+	require.Equal(t, beforeError+1, readExecutorCounterValue(t, errorStatus))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	beforeEarlyError := readExecutorCounterValue(t, errorStatus)
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = tk.ExecWithContext(canceledCtx, "select 1")
+	require.Error(t, err)
+	require.Equal(t, beforeEarlyError+1, readExecutorCounterValue(t, errorStatus))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	tk.MustExec("drop table if exists read_billing_outer")
+	tk.MustExec("create table read_billing_outer(a int)")
+	tk.MustExec("insert into read_billing_outer values (0)")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	rs, err := tk.Exec("select (select t.a from read_billing_demo t where t.a > o.a) from read_billing_outer o")
+	require.NoError(t, err)
+	err = rs.Next(context.TODO(), rs.NewChunk(nil))
+	require.Error(t, err)
+	require.NoError(t, rs.Close())
+	require.Equal(t, beforeEarlyError+2, readExecutorCounterValue(t, errorStatus))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+}
+
+func readExecutorCounterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, counter.Write(m))
+	return m.GetCounter().GetValue()
+}
+
+func readExecutorCounterVecTotal(t *testing.T, collector prometheus.Collector) float64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric)
+	go func() {
+		collector.Collect(ch)
+		close(ch)
+	}()
+	var total float64
+	for metric := range ch {
+		m := &dto.Metric{}
+		require.NoError(t, metric.Write(m))
+		total += m.GetCounter().GetValue()
+	}
+	return total
 }
 
 func TestExplainImportFromSelect(t *testing.T) {
