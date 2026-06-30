@@ -1395,7 +1395,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	w := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
-	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {}, logclient.SplitFileThresholdDefault)
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
 	require.NoError(t, err)
 	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
@@ -1815,7 +1815,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	}
 
 	// Create a log split strategy with the given rewrite rules.
-	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {}, logclient.SplitFileThresholdDefault)
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
 	require.NoError(t, err)
 
 	// Set up a mock strategy to control split behavior.
