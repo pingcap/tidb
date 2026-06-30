@@ -440,9 +440,6 @@ func setTaskPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) {
 const (
 	// PlanReplayerPresignExpire is how long a plan replayer presigned download URL stays valid.
 	PlanReplayerPresignExpire = time.Hour
-	// PlanReplayerPresignExpireDesc is the human-readable form of PlanReplayerPresignExpire shown
-	// to users. It MUST be kept in sync with PlanReplayerPresignExpire.
-	PlanReplayerPresignExpireDesc = "1 hour"
 )
 
 func getPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) (string, error) {

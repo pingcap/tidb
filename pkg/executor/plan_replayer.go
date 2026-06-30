@@ -140,7 +140,7 @@ func appendPlanReplayerDumpResult(req *chunk.Chunk, token string) {
 	if isPlanReplayerDownloadURL(token) {
 		rows := [][2]string{
 			{"Download URL", token},
-			{"Expires in", domain.PlanReplayerPresignExpireDesc},
+			{"Expires in", domain.PlanReplayerPresignExpire.String()},
 			{"Browser", "Open the Download URL directly before it expires"},
 			{"curl", fmt.Sprintf("curl -L '%s' -o plan_replayer.zip", token)},
 			{"Note", "If the URL expires, rerun PLAN REPLAYER DUMP to get a new one"},

@@ -302,7 +302,7 @@ func TestPlanReplayerDumpPresignedURLOutput(t *testing.T) {
 	tk.MustExec("create table t_presign(a int)")
 	tk.MustQuery("plan replayer dump explain select * from t_presign").Check(testkit.RowsWithSep("|",
 		"Download URL|"+presignedURL,
-		"Expires in|1 hour",
+		"Expires in|1h0m0s",
 		"Browser|Open the Download URL directly before it expires",
 		"curl|curl -L '"+presignedURL+"' -o plan_replayer.zip",
 		"Note|If the URL expires, rerun PLAN REPLAYER DUMP to get a new one",
