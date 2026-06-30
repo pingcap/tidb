@@ -335,6 +335,7 @@ type ddlCtx struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	uuid              string
+	startMode         StartMode
 	store             kv.Storage
 	ownerManager      owner.Manager
 	schemaVerSyncer   schemaver.Syncer
@@ -888,6 +889,7 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	failpoint.Inject("mockBRStartMode", func() {
 		d.executor.startMode = BR
 	})
+	d.ddlCtx.startMode = d.executor.startMode
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool

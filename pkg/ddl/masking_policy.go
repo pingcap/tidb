@@ -564,6 +564,13 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 	return nil
 }
 
+func allowMissingMaskingPolicyTableDuringBootstrap(jobCtx *jobContext, err error) bool {
+	if !infoschema.ErrTableNotExists.Equal(err) || jobCtx == nil || jobCtx.oldDDLCtx == nil {
+		return false
+	}
+	return jobCtx.oldDDLCtx.startMode == Bootstrap || jobCtx.oldDDLCtx.startMode == Upgrade
+}
+
 // updateMaskingPolicyTableIDAfterTruncate updates the table_id in
 // mysql.tidb_masking_policy from the old table ID to the new one after TRUNCATE TABLE.
 // Column IDs remain the same across truncate, so column bindings are preserved.
@@ -572,7 +579,7 @@ func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, old
 	if err != nil {
 		// If the masking policy system table itself doesn't exist during bootstrap
 		// upgrade, there are no policies to migrate.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)
@@ -613,16 +620,17 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 // updateMaskingPolicyNamesAfterRename updates the db_name and table_name in
 // mysql.tidb_masking_policy after a table is renamed.
 func (w *worker) updateMaskingPolicyNamesAfterRename(
-	ctx context.Context,
+	jobCtx *jobContext,
 	tableID int64,
 	_ /* oldDBName */, newDBName ast.CIStr,
 	_ /* oldTableName */, newTableName ast.CIStr,
 ) error {
+	ctx := jobCtx.stepCtx
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
 	if err != nil {
 		// If the masking policy system table itself doesn't exist during bootstrap
 		// upgrade, there are no policies to update.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)
@@ -674,7 +682,7 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 	if err != nil {
 		// If the masking policy system table itself doesn't exist during bootstrap
 		// upgrade, there are no policies to sync.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)
