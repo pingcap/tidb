@@ -1105,6 +1105,50 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestConnExecutionTimeoutForDML(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	connID := uint64(1)
+	tk.Session().SetConnectionID(connID)
+	tc := &TiDBContext{
+		Session: tk.Session(),
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: connID,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		alloc:      arena.NewAllocator(32 * 1024),
+		chunkAlloc: chunk.NewAllocator(),
+	}
+	cc.SetCtx(tc)
+	srv := &Server{
+		clients: map[uint64]*clientConn{
+			connID: cc,
+		},
+		dom: dom,
+	}
+	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE dmlTimeout (id bigint PRIMARY KEY, v int)")
+	for i := range 3 {
+		tk.MustExec("insert into dmlTimeout values(?, ?)", i, i)
+	}
+
+	tk.MustExec("set @@max_execution_time = 500;")
+	tk.MustExec("update dmlTimeout set v = v + 1 where id < 2 and sleep(1);")
+
+	tk.MustExec("set @@tidb_enable_max_execution_time_for_dml = 1;")
+	err := tk.ExecToErr("update dmlTimeout set v = v + 1 where id < 3 and sleep(1);")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+}
+
 func TestShutDown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

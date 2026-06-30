@@ -1302,10 +1302,13 @@ type SessionVars struct {
 	// Do not use it directly, use the `UseLowResolutionTSO` method below.
 	lowResolutionTSO bool
 
-	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// MaxExecutionTime is the timeout for statements that max_execution_time applies to, in milliseconds.
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+
+	// EnableMaxExecutionTimeForDML controls whether max_execution_time also applies to DML statements.
+	EnableMaxExecutionTimeForDML bool
 
 	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
 	// may examine. 0 means unlimited. Only applies to SELECT statements.
@@ -3728,17 +3731,24 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
-// GetMaxExecutionTime get the max execution timeout value for select statement.
+// GetMaxExecutionTime get the max execution timeout value for the current statement.
 // Make sure this function is called after s.StmtCtx is already set, otherwise it will always return 0
 func (s *SessionVars) GetMaxExecutionTime() uint64 {
-	// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-	if !s.StmtCtx.InSelectStmt {
+	if !s.maxExecutionTimeAppliesToCurrentStmt() {
 		return 0
 	}
 	if s.StmtCtx.HasMaxExecutionTime {
 		return s.StmtCtx.MaxExecutionTime
 	}
 	return s.MaxExecutionTime
+}
+
+func (s *SessionVars) maxExecutionTimeAppliesToCurrentStmt() bool {
+	if s.StmtCtx.InSelectStmt {
+		return true
+	}
+	return s.EnableMaxExecutionTimeForDML &&
+		(s.StmtCtx.InInsertStmt || s.StmtCtx.InUpdateStmt || s.StmtCtx.InDeleteStmt)
 }
 
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
