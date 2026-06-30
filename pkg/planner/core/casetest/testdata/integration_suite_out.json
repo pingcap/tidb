@@ -39,7 +39,7 @@
       {
         "SQL": "explain format = 'verbose' select * from t3 order by a limit 1",
         "Plan": [
-          "TopN_10 1.00 60.74 root  test.t3.a, offset:0, count:1",
+          "TopN_7 1.00 60.74 root  test.t3.a, offset:0, count:1",
           "└─TableReader_17 1.00 54.34 root  data:TopN_16",
           "  └─TopN_16 1.00 688.32 cop[tikv]  test.t3.a, offset:0, count:1",
           "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
@@ -48,10 +48,10 @@
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b limit 1",
         "Plan": [
-          "TopN_10 1.00 60.74 root  test.t3.b, offset:0, count:1",
-          "└─TableReader_27 1.00 54.34 root  data:TopN_26",
-          "  └─TopN_26 1.00 688.32 cop[tikv]  test.t3.b, offset:0, count:1",
-          "    └─TableFullScan_25 3.00 681.92 cop[tikv] table:t3 keep order:false"
+          "TopN_7 1.00 60.74 root  test.t3.b, offset:0, count:1",
+          "└─TableReader_17 1.00 54.34 root  data:TopN_16",
+          "  └─TopN_16 1.00 688.32 cop[tikv]  test.t3.b, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {

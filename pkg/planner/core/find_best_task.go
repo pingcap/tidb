@@ -1002,17 +1002,25 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// scanResult/globalResult: scanResult is biased (a table scan always scores +1, so the guard
 	// would not stop the case it appears to target) and globalResult is a niche partition-index
 	// preference; neither reflects the order-vs-limit risk this rule arbitrates.
-	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
-		!orderRatioMayPenalize(lhs.path) &&
-		lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
-		max(rhs.path.CountAfterAccess, rhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
-		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
-	}
-	if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
-		!orderRatioMayPenalize(rhs.path) &&
-		rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
-		max(lhs.path.CountAfterAccess, lhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
-		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+	//
+	// This rule is part of the cross-skyline feature and is gated on the same flag
+	// (tidb_opt_enable_alternative_logical_plans): it exists to protect an ordered, LIMIT-bounded
+	// path for the alternative-logical-plan framework, and is the dominance signal crossSkylinePrune
+	// relies on. Keeping it behind the flag guarantees skyline pruning is identical to master when
+	// the framework is off.
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
+			!orderRatioMayPenalize(lhs.path) &&
+			lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
+			max(rhs.path.CountAfterAccess, rhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
+			!orderRatioMayPenalize(rhs.path) &&
+			rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
+			max(lhs.path.CountAfterAccess, lhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
 }
@@ -1927,6 +1935,11 @@ func (c *skylineCrossCache) addEntryIfAbsent(candidates []*candidatePath, prop *
 // maxCrossCacheEntries) so cross-pruning does not depend on the order in which properties are
 // explored.
 func cacheSortPropSkyline(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidates []*candidatePath, producedValidTask bool) {
+	// Only the alternative-logical-plan framework consumes this cache (see the cross-prune call
+	// site in findBestTask4LogicalDataSource); skip populating it otherwise.
+	if !ds.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+		return
+	}
 	if !producedValidTask || prop.IsSortItemEmpty() || prop.PartialOrderInfo != nil ||
 		prop.ExpectedCnt == math.MaxFloat64 {
 		return
@@ -2455,7 +2468,14 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	// (e.g. the sole double-read index under CopMultiReadTaskType, where a table scan or covering
 	// index returns InvalidTask), and the wipeout fallbacks in crossSkylinePrune do not catch that
 	// partial over-pruning.
-	if prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil && prop.TaskTp == property.RootTaskType {
+	//
+	// Cross-skyline pruning only benefits the alternative-logical-plan framework
+	// (tidb_opt_enable_alternative_logical_plans), where the same DataSource is costed under
+	// correlated-Apply vs decorrelated shapes and an ordered, LIMIT-bounded plan must survive to
+	// compete. Outside that mode it is a no-op on the final plan, so it is gated off to avoid the
+	// pruning pass and any enumeration churn. The property-independent SkylineBaseCache is always on.
+	if ds.SCtx().GetSessionVars().EnableAlternativeLogicalPlans &&
+		prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil && prop.TaskTp == property.RootTaskType {
 		if cache, ok := ds.CrossSkylineCache.(*skylineCrossCache); ok {
 			candidates = crossSkylinePrune(ds, candidates, cache)
 		}

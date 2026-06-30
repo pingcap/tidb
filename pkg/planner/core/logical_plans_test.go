@@ -2239,6 +2239,8 @@ func TestCompareCandidatesLimitAware(t *testing.T) {
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
+	// The limit-aware rule is gated on tidb_opt_enable_alternative_logical_plans.
+	sctx.GetSessionVars().EnableAlternativeLogicalPlans = true
 
 	col1 := &expression.Column{UniqueID: 1}
 
@@ -2406,6 +2408,9 @@ func TestCrossSkylinePrune(t *testing.T) {
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
+	// crossSkylinePrune relies on the limit-aware rule in compareCandidates, which is gated on
+	// tidb_opt_enable_alternative_logical_plans.
+	sctx.GetSessionVars().EnableAlternativeLogicalPlans = true
 
 	col1 := &expression.Column{UniqueID: 1}
 
