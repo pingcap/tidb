@@ -570,6 +570,11 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, oldTableID, newTableID int64) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist during bootstrap
+		// upgrade, there are no policies to migrate.
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
@@ -615,6 +620,11 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 ) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist during bootstrap
+		// upgrade, there are no policies to update.
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
@@ -662,6 +672,11 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tblInfo.ID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist during bootstrap
+		// upgrade, there are no policies to sync.
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
