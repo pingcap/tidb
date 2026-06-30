@@ -8,13 +8,17 @@ go_test(
         "plan_replayer_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 9,
+>>>>>>> 693e52cd51b (executor, planner: improve plan replayer dump URL output (#69439))
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
+        "//pkg/objstore/storeapi",
         "//pkg/planner/extstore",
         "//pkg/testkit",
-        "//pkg/testkit/testdata",
         "//pkg/testkit/testsetup",
         "//pkg/util/replayer",
         "@com_github_pingcap_failpoint//:failpoint",
