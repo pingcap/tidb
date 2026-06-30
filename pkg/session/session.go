@@ -2848,7 +2848,6 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 
 // fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
 var fileTransInConnKeys = []fmt.Stringer{
-	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
