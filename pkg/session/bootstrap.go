@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -528,8 +529,10 @@ func doDMLWorks(s sessionapi.Session) {
 
 	writeClusterID(s)
 
-	if err := doStarterBootstrapFile(s); err != nil {
-		logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
+	if deploymode.IsStarter() {
+		if err := doStarterBootstrapFile(s); err != nil {
+			logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
+		}
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)

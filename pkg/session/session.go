@@ -4351,8 +4351,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
-	if err = runStarterBootstrapFileUpgrade(store); err != nil {
-		return nil, err
+	if deploymode.IsStarter() {
+		if err = runStarterBootstrapFileUpgrade(store); err != nil {
+			return nil, err
+		}
 	}
 
 	// initiate disttask framework components which need a store

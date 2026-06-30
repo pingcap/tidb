@@ -47,7 +47,7 @@ import (
 const (
 	starterBootstrapVersionVar          = "starter_version"
 	starterBootstrapKeyspacePlaceholder = "<keyspace>"
-	starterBootstrapFileVersionComment  = "Starter bootstrap version. Do not delete."
+	starterBootstrapFileVersionComment  = "Starter bootstrap file version. Do not delete."
 )
 
 var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
@@ -65,8 +65,11 @@ type starterBootstrapFileUpgrade struct {
 
 func doStarterBootstrapFile(s sessionapi.Session) error {
 	bootstrapFile, err := loadStarterBootstrapFile()
-	if err != nil || bootstrapFile == nil {
+	if err != nil {
 		return err
+	}
+	if bootstrapFile == nil {
+		return nil
 	}
 	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.Bootstrap); err != nil {
 		return err
@@ -76,8 +79,11 @@ func doStarterBootstrapFile(s sessionapi.Session) error {
 
 func runStarterBootstrapFileUpgrade(store kv.Storage) error {
 	bootstrapFile, err := loadStarterBootstrapFile()
-	if err != nil || bootstrapFile == nil {
+	if err != nil {
 		return err
+	}
+	if bootstrapFile == nil {
+		return nil
 	}
 
 	startTime := time.Now()
@@ -304,6 +310,9 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 }
 
 func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) error {
+	if len(blocks) == 0 {
+		return nil
+	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	sessionVars := s.GetSessionVars()
 	originalInRestrictedSQL := sessionVars.InRestrictedSQL
