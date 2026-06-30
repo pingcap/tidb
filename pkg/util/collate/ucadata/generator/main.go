@@ -35,9 +35,15 @@ type cetEntry struct {
 	// single char.
 	char rune
 
-	// weights is the first level of each collation element
-	// as we only implement 'ai_ci' collation, so other levels are ignored directly
+	// weights is the first level (primary weight) of each collation element. It is used by the
+	// accent-insensitive, case-insensitive ('ai_ci') collations, which ignore the other levels.
 	weights []uint16
+
+	// ces holds every collation element with all three levels {primary, secondary, tertiary}.
+	// Unlike `weights`, collation elements with a zero primary weight (e.g. combining accents)
+	// are preserved here, because the secondary/tertiary levels are required by accent- and
+	// case-sensitive ('as_cs') collations.
+	ces [][3]uint16
 }
 
 func parseCETHex(input string) (bool, uint32, string) {
@@ -60,11 +66,12 @@ func parseCETHex(input string) (bool, uint32, string) {
 	return hasValidHex, currentRune, input[end:]
 }
 
-func parseCETWeights(input string) (bool, []uint16, string) {
+func parseCETWeights(input string) (bool, []uint16, [][3]uint16, string) {
 	var left string
 	ok := true
 
 	weights := make([]uint16, 0, 1)
+	ces := make([][3]uint16, 0, 1)
 outer:
 	for {
 		left = input
@@ -93,14 +100,23 @@ outer:
 			break
 		}
 
-		// then ignore all weight with higher level
+		// The primary weight is followed by the secondary and tertiary levels, e.g.
+		// "[.1C47.0020.0008]". Keep them for the multi-level table; `weights` keeps the
+		// primary only for backward compatibility with the ai_ci tables.
+		ce := [3]uint16{uint16(weight), 0, 0}
+		level := 1
 		for {
 			if input[0] == '.' {
-				ok, _, input = parseCETHex(input[1:])
+				var higher uint32
+				ok, higher, input = parseCETHex(input[1:])
 				if !ok {
 					ok = false
 					break outer
 				}
+				if level <= 2 {
+					ce[level] = uint16(higher)
+				}
+				level++
 			} else if input[0] == ']' {
 				input = input[1:]
 				break
@@ -111,9 +127,10 @@ outer:
 		}
 
 		weights = append(weights, uint16(weight))
+		ces = append(ces, ce)
 	}
 
-	return ok, weights, left
+	return ok, weights, ces, left
 }
 
 func parseCETEntry(input string) (bool, *cetEntry, string) {
@@ -121,6 +138,7 @@ func parseCETEntry(input string) (bool, *cetEntry, string) {
 		ok      bool
 		char    uint32
 		weights []uint16
+		ces     [][3]uint16
 
 		left string
 	)
@@ -143,13 +161,14 @@ outer:
 		}
 	}
 	// then parse the weights
-	ok, weights, input = parseCETWeights(input)
+	ok, weights, ces, input = parseCETWeights(input)
 	if !ok {
 		return false, nil, left
 	}
 	return true, &cetEntry{
 		char:    rune(char),
 		weights: weights,
+		ces:     ces,
 	}, input
 }
 
@@ -167,11 +186,34 @@ type cet struct {
 	MapTable4   []uint64
 	LongRuneMap map[rune][2]uint64
 
+	// explicitCEs holds the full multi-level collation elements for every explicitly-listed
+	// character, used to generate the accent/case-sensitive ('as_cs') table. Implicit weights
+	// are NOT stored here; the multi-level collator computes them on demand.
+	explicitCEs map[rune][][3]uint16
+
 	URL string
 
 	// explicitRune indicates whether this character is set in the `MapTable/LongRuneMap`.
 	explicitRune map[rune]bool
 	version      unicodeVersion
+}
+
+func (c *cet) insertCEs(char rune, ces [][3]uint16) {
+	if char == 0xFDFA {
+		// Mirror insertWeights: unicode 4.0.0 does not handle this character, and 9.0.0 caps it.
+		switch c.version {
+		case unicode0400:
+			return
+		case unicode0900:
+			if len(ces) > 8 {
+				ces = ces[:8]
+			}
+		}
+	}
+
+	cp := make([][3]uint16, len(ces))
+	copy(cp, ces)
+	c.explicitCEs[char] = cp
 }
 
 func (c *cet) insertWeights(char rune, weights []uint16) {
@@ -240,6 +282,7 @@ func parseAllKeys(input string, length rune, version unicodeVersion) cet {
 		Length:       length,
 		MapTable4:    make([]uint64, length),
 		LongRuneMap:  make(map[rune][2]uint64),
+		explicitCEs:  make(map[rune][][3]uint16),
 		explicitRune: make(map[rune]bool),
 		version:      version,
 	}
@@ -254,6 +297,7 @@ func parseAllKeys(input string, length rune, version unicodeVersion) cet {
 		}
 		if entry != nil && entry.char < length {
 			cet.insertWeights(entry.char, entry.weights)
+			cet.insertCEs(entry.char, entry.ces)
 		}
 		// just go to the next line
 		for {
@@ -400,6 +444,58 @@ func generateFile(filename string, d *cet) {
 	}
 }
 
+// multiData is the template input for the multi-level (primary/secondary/tertiary) table.
+// It uses a compressed-sparse-row layout: rune r's collation elements are
+// CEData[Offset[r]:Offset[r+1]], where each element packs (primary<<32 | secondary<<16 | tertiary).
+// Only explicitly-listed runes are stored; implicit weights are computed on demand by the collator.
+type multiData struct {
+	Name   string
+	URL    string
+	Length rune
+
+	CEData []uint64
+	Offset []uint32
+}
+
+func (c *cet) buildMulti(name, url string) *multiData {
+	d := &multiData{Name: name, URL: url, Length: c.Length}
+	d.Offset = make([]uint32, c.Length+1)
+	for r := rune(0); r < c.Length; r++ {
+		d.Offset[r] = uint32(len(d.CEData))
+		for _, ce := range c.explicitCEs[r] {
+			d.CEData = append(d.CEData, uint64(ce[0])<<32|uint64(ce[1])<<16|uint64(ce[2]))
+		}
+	}
+	d.Offset[c.Length] = uint32(len(d.CEData))
+	return d
+}
+
+//go:embed data_multi.go.tpl
+var unicodeMultiDataTemplate string
+
+func generateMultiFile(filename string, d *multiData) {
+	tpl, err := template.New("unicode_multi_template").
+		Funcs(template.FuncMap{"mod": func(i, j int) bool { return i%j == 0 }}).
+		Parse(unicodeMultiDataTemplate)
+	if err != nil {
+		panic(err)
+	}
+
+	output := bytes.Buffer{}
+	err = tpl.Execute(&output, d)
+	if err != nil {
+		panic(err)
+	}
+	formattedSource, err := format.Source(output.Bytes())
+	if err != nil {
+		panic(err)
+	}
+	err = os.WriteFile(filename, formattedSource, 0666)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func main() {
 	switch os.Args[len(os.Args)-1] {
 	case "unicode_0900_ai_ci_data_generated.go":
@@ -415,6 +511,11 @@ func main() {
 		ducet0400Table.URL = "https://www.unicode.org/Public/UCA/4.0.0/allkeys-4.0.0.txt"
 		ducet0400Table.calcImplicitWeight()
 		generateFile("unicode_ci_data_generated.go", &ducet0400Table)
+	case "unicode_0900_as_cs_data_generated.go":
+		// Reuse the 9.0.0 DUCET, but keep all three weight levels for accent/case sensitivity.
+		ducet0900Multi := parseAllKeys(allkeys0900, 0x2CEA1, unicode0900)
+		md := ducet0900Multi.buildMulti("DUCET0900MultiTable", "https://www.unicode.org/Public/UCA/9.0.0/allkeys.txt")
+		generateMultiFile("unicode_0900_as_cs_data_generated.go", md)
 	default:
 		panic("unreachable")
 	}
