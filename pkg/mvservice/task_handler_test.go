@@ -34,8 +34,10 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
@@ -96,6 +98,28 @@ func (p recordingSessionPool) Get() (pools.Resource, error) { return p.se, nil }
 func (recordingSessionPool) Put(pools.Resource)             {}
 func (recordingSessionPool) Close()                         {}
 
+type recordingStatsHandle struct {
+	statstypes.StatsHandle
+	stats map[int64]*statistics.Table
+}
+
+func (h *recordingStatsHandle) GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool) {
+	statsTbl, ok := h.stats[physicalTableID]
+	return statsTbl, ok
+}
+
+func (*recordingStatsHandle) AutoAnalyzeProcID() uint64 { return 1 }
+
+func (*recordingStatsHandle) ReleaseAutoAnalyzeProcID(uint64) {}
+
+type recordingSysProcTracker struct {
+	sysproctrack.Tracker
+}
+
+func (*recordingSysProcTracker) Track(uint64, sysproctrack.TrackProc) error { return nil }
+
+func (*recordingSysProcTracker) UnTrack(uint64) {}
+
 type recordingSessionContext struct {
 	*mock.Context
 	executedSQL                            []string
@@ -118,6 +142,7 @@ type recordingSessionContext struct {
 	restrictedMLogPurgeBatchSize           []int
 	restrictedMLogPurgeMinRate             []int
 	restrictedMLogPurgeRateBudgetRatio     []float64
+	restrictedAnalyzePartitionConcurrency  []int
 	restrictedRows                         map[string][]chunk.Row
 	restrictedErrs                         map[string]error
 	restrictedAffectedRows                 map[string][]uint64
@@ -215,6 +240,7 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	s.restrictedMLogPurgeBatchSize = append(s.restrictedMLogPurgeBatchSize, s.GetSessionVars().MLogPurgeBatchSize)
 	s.restrictedMLogPurgeMinRate = append(s.restrictedMLogPurgeMinRate, s.GetSessionVars().MLogPurgeMinRate)
 	s.restrictedMLogPurgeRateBudgetRatio = append(s.restrictedMLogPurgeRateBudgetRatio, s.GetSessionVars().MLogPurgeRateBudgetRatio)
+	s.restrictedAnalyzePartitionConcurrency = append(s.restrictedAnalyzePartitionConcurrency, s.GetSessionVars().AnalyzePartitionConcurrency)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
 		if pos < len(seq) {
@@ -1263,6 +1289,56 @@ func TestNeedAnalyzeMLog(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T) {
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+	_, mlogTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	withMockInfoSchema(t, mlogTable)
+
+	vars := se.GetSessionVars()
+	mockGlobalAccessor := variable.NewMockGlobalAccessor4Tests()
+	mockGlobalAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = mockGlobalAccessor
+	vars.AnalyzePartitionConcurrency = 0
+	vars.AnalyzeVersion = statistics.Version1
+	vars.EnableAnalyzeSnapshot = false
+	vars.PartitionPruneMode.Store("static")
+	vars.AnalyzeSkipColumnTypes = map[string]struct{}{"json": {}}
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzePartitionConcurrency, "3"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzeVersion, "2"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAnalyzeSnapshot, "on"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBPartitionPruneMode, "dynamic"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzeSkipColumnTypes, "blob"))
+	oldAnalyzeSkipColumnTypes := vars.AnalyzeSkipColumnTypes
+
+	statsHandle := &recordingStatsHandle{
+		stats: map[int64]*statistics.Table{
+			201: {
+				HistColl: statistics.HistColl{
+					StatsVer: statistics.Version2,
+				},
+			},
+		},
+	}
+	helper := &serviceHelper{
+		statsHandleGetter: func() statstypes.StatsHandle {
+			return statsHandle
+		},
+		sysProcTracker: &recordingSysProcTracker{},
+	}
+
+	err := helper.AnalyzeMVLog(context.Background(), pool, 201)
+	require.NoError(t, err)
+	require.Equal(t, []string{`ANALYZE TABLE %n.%n`}, se.executedRestrictedSQL)
+	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[0])
+	require.Equal(t, []int{3}, se.restrictedAnalyzePartitionConcurrency)
+	require.Equal(t, 0, vars.AnalyzePartitionConcurrency)
+	require.Equal(t, statistics.Version1, vars.AnalyzeVersion)
+	require.False(t, vars.EnableAnalyzeSnapshot)
+	require.Equal(t, "static", vars.PartitionPruneMode.Load())
+	require.Equal(t, oldAnalyzeSkipColumnTypes, vars.AnalyzeSkipColumnTypes)
 }
 
 func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {

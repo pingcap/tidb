@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statsautoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1633,6 +1634,11 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	defer sysSessionPool.Put(se)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	sctx := se.(sessionctx.Context)
+	restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sctx)
+	if err != nil {
+		return err
+	}
+	defer restoreStatsVars()
 
 	schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mvLogID)
 	if err != nil {
