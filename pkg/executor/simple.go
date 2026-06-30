@@ -1694,6 +1694,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		// Use AuthHostname to search the user record, set Hostname as AuthHostname.
 		userCopy := *user
+		userCopy.Username = userCopy.AuthUsername
 		userCopy.Hostname = userCopy.AuthHostname
 		spec := &ast.UserSpec{
 			User:    &userCopy,
@@ -1776,7 +1777,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 	for _, spec := range s.Specs {
 		user := e.Ctx().GetSessionVars().User
-		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.AuthUsername == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
 		alterPassword := false
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
 			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
@@ -1784,7 +1785,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if alterCurrentUser && alterPassword {
-			spec.User.Username = user.Username
+			spec.User.Username = user.AuthUsername
 			spec.User.Hostname = user.AuthHostname
 		}
 		needAdminPrivCheck := !(alterCurrentUser && alterPassword)
