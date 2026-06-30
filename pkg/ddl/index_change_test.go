@@ -152,6 +152,9 @@ func TestAddIndexAutoSplitLoadsLeadingColumnStatsFromStorage(t *testing.T) {
 
 	tk.MustExec("alter table t_auto_split add index idx_b(b)")
 	require.NotEmpty(t, capturedKeys)
+	comments := tk.MustQuery("admin show ddl jobs 1").Rows()[0][12].(string)
+	require.Contains(t, comments, "auto_split_hot_region=idx_b(")
+	require.Contains(t, comments, "split_keys=")
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
