@@ -43,7 +43,6 @@ go_library(
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/errno",
-        "//pkg/extworkload",
         "//pkg/infoschema",
         "//pkg/infoschema/issyncer",
         "//pkg/infoschema/isvalidator",

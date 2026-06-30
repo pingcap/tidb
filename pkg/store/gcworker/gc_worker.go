@@ -77,7 +77,6 @@ type GCWorker struct {
 	tikvStore            tikv.Storage
 	pdClient             pd.Client
 	pdGCControllerClient pdgc.InternalController
-	externalWorkload     extworkload.Manager
 	gcIsRunning          bool
 	lastFinish           time.Time
 	cancel               context.CancelFunc
@@ -91,7 +90,7 @@ type GCWorker struct {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store kv.Storage, pdClient pd.Client, externalWorkloadManager extworkload.Manager) (*GCWorker, error) {
+func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -116,7 +115,6 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client, externalWorkloadManager e
 		tikvStore:            tikvStore,
 		pdClient:             gcPDClient,
 		pdGCControllerClient: gcPDClient.GetGCInternalController(keyspaceID),
-		externalWorkload:     externalWorkloadManager,
 		gcIsRunning:          false,
 		lastFinish:           time.Now(),
 		regionLockResolver:   tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
@@ -851,7 +849,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 }
 
 func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) error {
-	mgr := w.externalWorkload
+	mgr := extworkload.GetManagerFromStore(w.store)
 	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
 		return nil
 	}

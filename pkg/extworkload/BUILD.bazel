@@ -11,7 +11,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/extworkload/client",
+        "//pkg/kv",
         "//pkg/metrics",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

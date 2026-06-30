@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -390,16 +389,11 @@ func (s *tikvStore) TLSConfig() *tls.Config {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
-	return s.StartGCWorkerWithExternalWorkload(nil)
-}
-
-// StartGCWorkerWithExternalWorkload starts GC worker with an external workload manager.
-func (s *tikvStore) StartGCWorkerWithExternalWorkload(externalWorkloadManager extworkload.Manager) error {
 	if !s.enableGC {
 		return nil
 	}
 
-	gcWorker, err := gcworker.NewGCWorker(s, s.GetPDClient(), externalWorkloadManager)
+	gcWorker, err := gcworker.NewGCWorker(s, s.GetPDClient())
 	if err != nil {
 		return derr.ToTiDBErr(err)
 	}

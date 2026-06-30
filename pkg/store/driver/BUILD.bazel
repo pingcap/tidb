@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/driver",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/extworkload",
         "//pkg/kv",
         "//pkg/metaservice",
         "//pkg/metrics",

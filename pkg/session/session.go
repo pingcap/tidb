@@ -66,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
-	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -4285,17 +4284,12 @@ func InitMDLVariable(store kv.Storage) error {
 
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, nil, createSessions)
-}
-
-// BootstrapSessionWithExternalWorkloadManager bootstraps session and domain with an external workload manager.
-func BootstrapSessionWithExternalWorkloadManager(store kv.Storage, externalWorkloadManager extworkload.Manager) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, externalWorkloadManager, createSessions)
+	return bootstrapSessionImpl(context.Background(), store, createSessions)
 }
 
 // BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing.
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, nil, createSessions4DistExecution)
+	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution)
 }
 
 // bootstrapSessionImpl bootstraps session and domain.
@@ -4310,7 +4304,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
-func bootstrapSessionImpl(ctx context.Context, store kv.Storage, externalWorkloadManager extworkload.Manager, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
@@ -4349,7 +4343,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, externalWorkloa
 		return nil, err
 	}
 	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver, externalWorkloadManager)
+		runInBootstrapSession(store, ver)
 	} else {
 		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 		err = InitMDLVariable(store)
@@ -4415,7 +4409,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, externalWorkloa
 
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
-	dom.SetExternalWorkloadManager(externalWorkloadManager)
 	err = dom.Start(ddl.Normal)
 	if err != nil {
 		return nil, err
@@ -4551,8 +4544,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, externalWorkloa
 
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
-	if err = startGCWorker(store, externalWorkloadManager); err != nil {
-		return nil, err
+	if raw, ok := store.(kv.EtcdBackend); ok {
+		err = raw.StartGCWorker()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// This only happens in testing, since the failure of loading or parsing sql file
@@ -4566,20 +4562,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, externalWorkloa
 		return nil, err
 	}
 	return dom, err
-}
-
-type gcWorkerStarterWithExternalWorkload interface {
-	StartGCWorkerWithExternalWorkload(extworkload.Manager) error
-}
-
-func startGCWorker(store kv.Storage, externalWorkloadManager extworkload.Manager) error {
-	if raw, ok := store.(gcWorkerStarterWithExternalWorkload); ok {
-		return raw.StartGCWorkerWithExternalWorkload(externalWorkloadManager)
-	}
-	if raw, ok := store.(kv.EtcdBackend); ok {
-		return raw.StartGCWorker()
-	}
-	return nil
 }
 
 // GetDomain gets the associated domain for store.
@@ -4606,7 +4588,7 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64, externalWorkloadManager extworkload.Manager) {
+func runInBootstrapSession(store kv.Storage, ver int64) {
 	startMode := getStartMode(ver)
 	startTime := time.Now()
 	defer func() {
@@ -4615,7 +4597,7 @@ func runInBootstrapSession(store kv.Storage, ver int64, externalWorkloadManager 
 			zap.Duration("cost", time.Since(startTime)))
 	}()
 	if startMode != ddl.Normal {
-		abortGCV2(externalWorkloadManager)
+		abortGCV2(store)
 	}
 	if startMode == ddl.Upgrade {
 		// TODO at this time domain must not be created, else it will register server
@@ -4643,7 +4625,6 @@ func runInBootstrapSession(store kv.Storage, ver int64, externalWorkloadManager 
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
-	dom.SetExternalWorkloadManager(externalWorkloadManager)
 	err = dom.Start(startMode)
 	if err != nil {
 		// Bootstrap fail will cause program exit.

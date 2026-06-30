@@ -19,12 +19,14 @@ import (
 	"os"
 
 	"github.com/pingcap/tidb/pkg/extworkload"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-func abortGCV2(mgr extworkload.Manager) {
+func abortGCV2(store kv.Storage) {
+	mgr := extworkload.GetManagerFromStore(store)
 	if !extworkload.IsGCV2Worker(mgr) {
 		return
 	}
