@@ -2885,25 +2885,25 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 		Cmd:               cmdName,
 	}
 
-	// find and delete matching paused task atomically
-	// this will first resolve the restoredTS (similar to resumeOrCreate) then find and delete the task
-	deletedRestoreID, resolvedRestoreTS, err := restoreRegistry.FindAndDeleteMatchingTask(ctx, registrationInfo, isRestoredTSUserSpecified)
+	// find matching paused task atomically and keep its registry entry until
+	// all abort cleanup steps finish successfully.
+	abortingRestoreID, resolvedRestoreTS, err := restoreRegistry.FindMatchingTaskForAbort(ctx, registrationInfo, isRestoredTSUserSpecified)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if deletedRestoreID == 0 {
+	if abortingRestoreID == 0 {
 		log.Info("no paused restore task found with matching parameters")
 		return nil
 	}
 
-	log.Info("successfully deleted matching paused restore task", zap.Uint64("restoreId", deletedRestoreID))
+	log.Info("successfully found matching restore task to abort", zap.Uint64("restoreId", abortingRestoreID))
 
-	// clean up checkpoint data for the deleted task
-	log.Info("cleaning up checkpoint data", zap.Uint64("restoreId", deletedRestoreID))
+	// clean up checkpoint data for the aborted task
+	log.Info("cleaning up checkpoint data", zap.Uint64("restoreId", abortingRestoreID))
 
 	// update config with restore ID to clean up checkpoint
-	cfg.RestoreID = deletedRestoreID
+	cfg.RestoreID = abortingRestoreID
 	cfg.RestoreTS = resolvedRestoreTS
 
 	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
@@ -2911,13 +2911,13 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	if len(cfg.CheckpointStorage) > 0 {
 		clusterID := mgr.GetPDClient().GetClusterID(ctx)
 		log.Info("initializing storage checkpoint meta managers for cleanup",
-			zap.Uint64("restoreID", deletedRestoreID),
+			zap.Uint64("restoreID", abortingRestoreID),
 			zap.Uint64("clusterID", clusterID))
 		var err error
 		if IsStreamRestore(cmdName) {
-			err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, deletedRestoreID)
+			err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, abortingRestoreID)
 		} else {
-			err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID, deletedRestoreID)
+			err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID, abortingRestoreID)
 		}
 		if err != nil {
 			log.Warn("failed to initialize storage checkpoint meta managers for cleanup", zap.Error(err))
@@ -2925,12 +2925,12 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 		}
 	} else {
 		log.Info("initializing table checkpoint meta managers for cleanup",
-			zap.Uint64("restoreID", deletedRestoreID))
+			zap.Uint64("restoreID", abortingRestoreID))
 		var err error
 		if IsStreamRestore(cmdName) {
-			err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), deletedRestoreID)
+			err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), abortingRestoreID)
 		} else {
-			err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), deletedRestoreID)
+			err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), abortingRestoreID)
 		}
 		if err != nil {
 			log.Warn("failed to initialize table checkpoint meta managers for cleanup", zap.Error(err))
@@ -2965,15 +2965,22 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	if collectTablesErr != nil {
 		return errors.Trace(collectTablesErr)
 	}
+	failpoint.Inject("run-restore-abort-before-reset-table-mode", func() {
+		log.Info("failpoint run-restore-abort-before-reset-table-mode injected")
+		failpoint.Return(errors.New("fail before resetting table mode after abort"))
+	})
 	if err := setAbortRestoreTablesToNormal(ctx, g, mgr, tablesToNormal); err != nil {
 		return errors.Trace(err)
 	}
 	if err := dropTemporarySystemSchemasAfterAbort(ctx, g, mgr, cfg); err != nil {
 		return errors.Trace(err)
 	}
+	if err := restoreRegistry.Unregister(ctx, abortingRestoreID); err != nil {
+		return errors.Trace(err)
+	}
 
 	log.Info("successfully aborted restore task and cleaned up checkpoint data. "+
 		"Use drop statements to clean up the restored data from the cluster if you want to.",
-		zap.Uint64("restoreId", deletedRestoreID))
+		zap.Uint64("restoreId", abortingRestoreID))
 	return nil
 }
