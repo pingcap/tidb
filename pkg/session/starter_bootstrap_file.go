@@ -71,10 +71,41 @@ func runStarterBootstrap(s sessionapi.Session) error {
 	if bootstrapFile == nil {
 		return nil
 	}
+
+	storedVersion, err := getStarterBootstrapVersion(s)
+	if err != nil {
+		return err
+	}
+	// Bootstrap blocks only run before starter_version is initialized.
+	// Later file versions are handled by upgradeStarterBootstrap.
+	if storedVersion > 0 {
+		return nil
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	if _, err = s.ExecuteInternal(ctx, "BEGIN"); err != nil {
+		return errors.Annotate(err, "begin starter bootstrap file")
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if _, err := s.ExecuteInternal(ctx, "ROLLBACK"); err != nil {
+			logutil.BgLogger().Warn("rollback starter bootstrap file failed", zap.Error(err))
+		}
+	}()
 	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.Bootstrap); err != nil {
 		return err
 	}
-	return updateStarterBootstrapVersion(s, bootstrapFile.Version)
+	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
+		return err
+	}
+	if _, err = s.ExecuteInternal(ctx, "COMMIT"); err != nil {
+		return errors.Annotate(err, "commit starter bootstrap file")
+	}
+	committed = true
+	return nil
 }
 
 func upgradeStarterBootstrap(store kv.Storage) error {

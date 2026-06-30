@@ -78,6 +78,11 @@ func bootstrap(s sessionapi.Session) {
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
 			upgrade(s)
+			if deploymode.IsStarter() {
+				if err := runStarterBootstrap(s); err != nil {
+					logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
+				}
+			}
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -87,6 +92,11 @@ func bootstrap(s sessionapi.Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			if deploymode.IsStarter() {
+				if err := runStarterBootstrap(s); err != nil {
+					logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
+				}
+			}
 			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
@@ -528,12 +538,6 @@ func doDMLWorks(s sessionapi.Session) {
 	writeDDLTableVersion(s)
 
 	writeClusterID(s)
-
-	if deploymode.IsStarter() {
-		if err := runStarterBootstrap(s); err != nil {
-			logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
-		}
-	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
