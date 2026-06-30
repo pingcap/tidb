@@ -1429,7 +1429,7 @@ func TestInitStatsLite(t *testing.T) {
 	checkAllEvicted(t, statsTbl0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	statsTbl1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, statsTbl1)
 	require.Equal(t, int(statistics.Version2), statsTbl1.StatsVer)
@@ -1486,6 +1486,63 @@ func TestInitStatsLite(t *testing.T) {
 	require.Greater(t, idxCStats2.LastUpdateVersion, idxCStats1.LastUpdateVersion)
 }
 
+<<<<<<< HEAD
+=======
+func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	h := dom.StatsHandle()
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("flush stats_delta *.*")
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	ctx := context.Background()
+	tk.MustExec("alter table t add column b int default 10")
+	addColEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddColumn)
+	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, addColEvent))
+	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colB := tblInfo.Columns[1]
+	colBID := colB.ID
+	statsTbl, found := h.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+	require.True(t, found)
+	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(colBID, false))
+	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
+	// NOTE: The column stats will be created by the DDL handler after adding the column.
+	// But it should contain no topN and only one bucket in histogram since the column stats is synthesized.
+	require.NotNil(t, statsTbl.GetCol(colBID))
+	require.True(t, statsTbl.IsInitialized())
+	require.True(t, statsTbl.GetCol(colBID).IsFullLoad())
+	require.Nil(t, statsTbl.GetCol(colBID).TopN)
+	require.Equal(t, statsTbl.GetCol(colBID).Histogram.Len(), 1)
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(ctx, dom.InfoSchema(), tblInfo.ID))
+
+	statsTblLite := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, statsTblLite.ColAndIdxExistenceMap.Has(colBID, false))
+	require.True(t, statsTblLite.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
+	// NOTE: lite init stats does not load column stats and only records their existence.
+	require.Nil(t, statsTblLite.GetCol(colBID))
+	require.False(t, statsTblLite.IsInitialized())
+
+	// Analyze again to load the real stats.
+	tk.MustExec("insert into t values (4, 4),(5, 5)")
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	statsTblAfterAnalyze := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, statsTblAfterAnalyze.ColAndIdxExistenceMap.Has(colBID, false))
+	require.True(t, statsTblAfterAnalyze.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
+	require.NotNil(t, statsTblAfterAnalyze.GetCol(colBID))
+	require.True(t, statsTblAfterAnalyze.GetCol(colBID).IsFullLoad())
+	require.NotNil(t, statsTblAfterAnalyze.GetCol(colBID).TopN)
+}
+
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 func TestSkipMissingPartitionStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1684,7 +1741,7 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	checkAllEvicted(t, tblStats0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check stats are evicted
 	tblStats1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1784,7 +1841,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	checkAllEvicted(t, globalStats0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check global stats are evicted
 	globalStats1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1885,7 +1942,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 		checkAllEvicted(t, partStats)
 	}
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 	// After InitStatsLite, check partition stats are evicted
 	for _, pid := range partitionIDs {
 		partStats := h.GetPhysicalTableStats(pid, tblInfo)

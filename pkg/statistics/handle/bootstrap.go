@@ -51,6 +51,7 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
+<<<<<<< HEAD
 var maxTidRecord MaxTidRecord
 
 // GetMaxTidRecordForTest gets the max tid record for test.
@@ -66,8 +67,21 @@ type MaxTidRecord struct {
 
 func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID, maxPhysicalID int64
+=======
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
+	var (
+		physicalID    int64
+		maxPhysicalID int64
+	)
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
+		// Use the init-stats helper so InfoSchema V1 avoids the expensive
+		// TableItemByPartitionID full partition scan when filtering stats_meta.
+		if _, found := h.TableItemByIDForInitStats(is, physicalID); !found {
+			// The table corresponding to this physical ID has been dropped but the stats meta has not yet been garbage collected.
+			continue
+		}
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		snapshot := row.GetUint64(4)
@@ -100,7 +114,11 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
+<<<<<<< HEAD
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
+=======
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -122,7 +140,12 @@ func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, erro
 		if req.NumRows() == 0 {
 			break
 		}
+<<<<<<< HEAD
 		h.initStatsMeta4Chunk(tables, iter)
+=======
+		chunkMax := h.initStatsMeta4Chunk(is, cache, iter)
+		maxPhysicalID = max(maxPhysicalID, chunkMax)
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	}
 	return tables, nil
 }
@@ -763,7 +786,19 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
+<<<<<<< HEAD
 func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
+=======
+func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsLiteWithSession(ctx, sctx, is, tableIDs...)
+		})
+	})
+}
+
+func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -776,7 +811,11 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
+<<<<<<< HEAD
 	cache, err := h.initStatsMeta(ctx)
+=======
+	cache, _, err := h.initStatsMeta(ctx, sctx, is, tableIDs...)
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -816,7 +855,11 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	failpoint.Inject("beforeInitStats", func() {})
 	start := time.Now()
+<<<<<<< HEAD
 	cache, err := h.initStatsMeta(ctx)
+=======
+	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, is, tableIDs...)
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	if err != nil {
 		return errors.Trace(err)
 	}
