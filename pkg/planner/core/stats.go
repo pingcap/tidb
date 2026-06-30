@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -548,10 +549,16 @@ func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, fi
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
+	// TODO: Move the mview-specific selectivity hook out of the main stats derivation path.
+	selectivityConds, mlogCommitTSSelectivity, hasMLogCommitTSSelectivity :=
+		mview.SplitMLogCommitTSFilterSelectivity(ds.SCtx(), ds.TableInfo, ds.Schema(), conds)
+	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, selectivityConds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = cost.SelectionFactor
+	}
+	if hasMLogCommitTSSelectivity {
+		selectivity *= mlogCommitTSSelectivity
 	}
 	// TODO: remove NewHistCollBySelectivity later on.
 	// if ds.SCtx().GetSessionVars().OptimizerSelectivityLevel >= 1 {

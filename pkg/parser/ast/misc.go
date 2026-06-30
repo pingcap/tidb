@@ -539,6 +539,9 @@ type RefreshMaterializedViewImplementStmt struct {
 	RefreshStmt                  *RefreshMaterializedViewStmt
 	LastSuccessfulRefreshReadTSO uint64
 	TargetRefreshReadTSO         uint64
+	// MLogRetainedLowerTSO is the effective lower bound of retained mlog data read from purge metadata.
+	// If it is zero, the planner may use the mlog TableInfo.UpdateTS schema-update timestamp as a heuristic.
+	MLogRetainedLowerTSO uint64
 }
 
 // Restore implements Node interface.
@@ -555,6 +558,10 @@ func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) e
 	if n.TargetRefreshReadTSO > 0 {
 		ctx.WriteKeyWord(" UP TO TIMESTAMP ")
 		ctx.WritePlain(strconv.FormatUint(n.TargetRefreshReadTSO, 10))
+	}
+	if n.MLogRetainedLowerTSO > 0 {
+		ctx.WriteKeyWord(" MLOG RETAINED LOWER TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.MLogRetainedLowerTSO, 10))
 	}
 	return nil
 }
