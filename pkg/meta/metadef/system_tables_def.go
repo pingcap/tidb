@@ -463,6 +463,25 @@ const (
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id) CLUSTERED);`
 
+	// CreateAutoAnalyzeTasksTable stores auto analyze tasks scheduled for external workers.
+	CreateAutoAnalyzeTasksTable = `CREATE TABLE IF NOT EXISTS mysql.auto_analyze_tasks (
+		id BIGINT(64) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		table_id BIGINT(64) NOT NULL,
+		start_time BIGINT(64),
+		KEY idx_auto_analyze_tasks_table_id (table_id)
+	);`
+
+	// CreateAutoAnalyzeTasksHistoryTable stores finished auto analyze tasks.
+	CreateAutoAnalyzeTasksHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.auto_analyze_tasks_history (
+		id BIGINT(64) UNSIGNED PRIMARY KEY,
+		table_id BIGINT(64) NOT NULL,
+		analyzed BOOLEAN NOT NULL DEFAULT FALSE,
+		statement TEXT,
+		err TEXT,
+		start_time BIGINT(64),
+		end_time BIGINT(64)
+	);`
+
 	// CreatePasswordHistoryTable is a table save history passwd.
 	CreatePasswordHistoryTable = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
          Host char(255)  NOT NULL DEFAULT '',

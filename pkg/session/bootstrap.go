@@ -335,6 +335,12 @@ var (
 	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
 	}
+	// systemTablesOfAutoAnalyzeTasksNextGenVersion contains system tables introduced
+	// in the auto-analyze-tasks bootstrap version.
+	systemTablesOfAutoAnalyzeTasksNextGenVersion = []TableBasicInfo{
+		{ID: metadef.AutoAnalyzeTasksTableID, Name: "auto_analyze_tasks", SQL: metadef.CreateAutoAnalyzeTasksTable},
+		{ID: metadef.AutoAnalyzeTasksHistoryTableID, Name: "auto_analyze_tasks_history", SQL: metadef.CreateAutoAnalyzeTasksHistoryTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -354,6 +360,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
+	}},
+	{ver: meta.AutoAnalyzeTasksNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfAutoAnalyzeTasksNextGenVersion},
 	}},
 }
 

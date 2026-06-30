@@ -50,6 +50,10 @@ const (
 	StatsOwnerKey = "/tidb/stats/owner"
 	// StatsPrompt is the prompt for stats owner manager.
 	StatsPrompt = "stats"
+	// AutoAnalyzeExecutorOwnerKey is the auto-analyze worker owner path saved to etcd.
+	AutoAnalyzeExecutorOwnerKey = "/tidb/stats/auto-analyze/owner"
+	// AutoAnalyzeExecutorPrompt is the prompt for auto-analyze worker owner manager.
+	AutoAnalyzeExecutorPrompt = "auto-analyze"
 )
 
 // AttachStatsCollector attaches the stats collector for the session.
@@ -91,6 +95,9 @@ type Handle struct {
 
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	types.StatsAnalyze
+
+	// StatsAutoAnalyzeWorker is used to manage external auto-analyze worker tasks.
+	types.StatsAutoAnalyzeWorker
 
 	// StatsSyncLoad is used to load stats syncly.
 	types.StatsSyncLoad
@@ -168,6 +175,7 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
+	handle.StatsAutoAnalyzeWorker = autoanalyze.NewStatAutoAnalyzeWorker(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)

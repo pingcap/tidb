@@ -343,6 +343,7 @@ func closeExternalWorkloadManager(mgr extworkload.Manager) {
 	if mgr == nil {
 		return
 	}
+	defer extworkload.ClearManager(mgr)
 	if err := mgr.Close(); err != nil {
 		logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
 	}
@@ -482,6 +483,7 @@ func main() {
 	repository.SetupRepository(dom)
 	if deploymode.IsStarter() {
 		externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
+		extworkload.InstallManager(externalWorkloadManager)
 		defer closeExternalWorkloadManager(externalWorkloadManager)
 	}
 	svr := createServer(storage, dom)

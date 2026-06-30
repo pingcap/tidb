@@ -198,6 +198,24 @@ type StatsAnalyze interface {
 	Close()
 }
 
+// StatsAutoAnalyzeWorker is used to manage auto-analyze tasks for external workers.
+type StatsAutoAnalyzeWorker interface {
+	// RegisterAutoAnalyzeTask registers an auto-analyze task for the target table.
+	RegisterAutoAnalyzeTask(tableID int64, reason string) error
+
+	// GetAutoAnalyzeTask returns one pending auto-analyze task.
+	GetAutoAnalyzeTask() (*statistics.AutoAnalyzeTask, error)
+
+	// FinishAutoAnalyzeTask moves a task to history and recycles it from the external controller.
+	FinishAutoAnalyzeTask(task *statistics.AutoAnalyzeTask) error
+
+	// UpdateLastExecution records the latest auto analyze execution result.
+	UpdateLastExecution(success bool, sql string)
+
+	// GetLastExecution returns the latest auto analyze execution result.
+	GetLastExecution() (success bool, sql string)
+}
+
 // CacheUpdate encapsulates changes to be made to the stats cache
 type CacheUpdate struct {
 	Updated []*statistics.Table
@@ -519,6 +537,9 @@ type StatsHandle interface {
 
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	StatsAnalyze
+
+	// StatsAutoAnalyzeWorker is used to manage external auto-analyze worker tasks.
+	StatsAutoAnalyzeWorker
 
 	// StatsCache is used to manage all table statistics in memory.
 	StatsCache
