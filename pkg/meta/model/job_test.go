@@ -193,13 +193,26 @@ func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 	parentJob := &Job{
 		ID:           100,
 		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+		ReorgMeta:    &DDLReorgMeta{},
 	}
 	subJob := &SubJob{
-		Type:  ActionAddIndex,
-		State: JobStateQueueing,
+		Type:    ActionAddIndex,
+		State:   JobStateQueueing,
+		ReorgTp: ReorgTypeTxn,
+		AutoSplitHotRegionResults: []AutoSplitHotRegionResult{{
+			IndexName:     "idx",
+			IndexID:       1,
+			Status:        AutoSplitHotRegionStatusSplit,
+			SplitKeyCount: 3,
+		}},
 	}
 	proxyJob := subJob.ToProxyJob(parentJob, 0)
 	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
+	require.Equal(t, subJob.AutoSplitHotRegionResults, proxyJob.ReorgMeta.AutoSplitHotRegionResults)
+
+	proxyJob.ReorgMeta.AutoSplitHotRegionResults[0].Status = AutoSplitHotRegionStatusFailed
+	subJob.FromProxyJob(&proxyJob, 1)
+	require.Equal(t, AutoSplitHotRegionStatusFailed, subJob.AutoSplitHotRegionResults[0].Status)
 }
 
 func TestJobSize(t *testing.T) {
@@ -208,7 +221,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	require.Equal(t, 416, int(unsafe.Sizeof(Job{})), msg)
-	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
+	require.Equal(t, 168, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {

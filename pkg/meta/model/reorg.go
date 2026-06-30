@@ -101,6 +101,8 @@ type DDLReorgMeta struct {
 	// captured value instead of the executor process default. Nil means old metadata
 	// and should fall back to the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
+	// AutoSplitHotRegionResults records the best-effort auto split summary for ADD INDEX.
+	AutoSplitHotRegionResults []AutoSplitHotRegionResult `json:"auto_split_hot_region_results,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
@@ -112,7 +114,34 @@ type DDLReorgMeta struct {
 // ShallowCopy creates a shallow copy of DDLReorgMeta.
 func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
 	newMeta := *dm
+	newMeta.AutoSplitHotRegionResults = append(
+		[]AutoSplitHotRegionResult(nil), dm.AutoSplitHotRegionResults...)
 	return &newMeta
+}
+
+// AutoSplitHotRegionStatus is the status of best-effort ADD INDEX auto split.
+type AutoSplitHotRegionStatus string
+
+const (
+	// AutoSplitHotRegionStatusSplit means split keys were generated and split succeeded.
+	AutoSplitHotRegionStatusSplit AutoSplitHotRegionStatus = "split"
+	// AutoSplitHotRegionStatusSkipped means auto split was enabled but no split was attempted.
+	AutoSplitHotRegionStatusSkipped AutoSplitHotRegionStatus = "skipped"
+	// AutoSplitHotRegionStatusFailed means split keys were generated but the split attempt failed.
+	AutoSplitHotRegionStatusFailed AutoSplitHotRegionStatus = "failed"
+	// AutoSplitHotRegionStatusUnsupported means the storage does not support region split.
+	AutoSplitHotRegionStatusUnsupported AutoSplitHotRegionStatus = "unsupported"
+)
+
+// AutoSplitHotRegionResult records a compact result for one index auto split attempt.
+type AutoSplitHotRegionResult struct {
+	IndexName            string                   `json:"index_name,omitempty"`
+	IndexID              int64                    `json:"index_id,omitempty"`
+	Status               AutoSplitHotRegionStatus `json:"status,omitempty"`
+	SplitKeyCount        int                      `json:"split_key_count,omitempty"`
+	SplitRegionCount     int                      `json:"split_region_count,omitempty"`
+	ScatteredRegionCount int                      `json:"scattered_region_count,omitempty"`
+	Reason               string                   `json:"reason,omitempty"`
 }
 
 // GetConcurrency gets the concurrency from DDLReorgMeta.
