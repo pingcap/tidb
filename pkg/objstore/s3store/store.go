@@ -240,6 +240,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 			if qs.Endpoint != "" {
 				o.UsePathStyle = client.Options().UsePathStyle
 			}
+			o.Retryer = newBucketRegionDetectionRetryer()
 		})
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)

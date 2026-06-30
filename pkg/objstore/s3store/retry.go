@@ -31,7 +31,15 @@ const (
 )
 
 func newRetryer() *s3like.Retryer {
-	return s3like.NewRetryer(&retryer{
+	return newRetryerWithLogSuppressor(nil)
+}
+
+func newBucketRegionDetectionRetryer() *s3like.Retryer {
+	return newRetryerWithLogSuppressor(s3like.IsBucketRegionRedirectError)
+}
+
+func newRetryerWithLogSuppressor(suppressRetryableErrorLog func(error) bool) *s3like.Retryer {
+	return s3like.NewRetryerWithLogSuppressor(&retryer{
 		Retryer: retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = maxAttempts
 			// Standard uses exponential backoff with jitter by default, it will
@@ -44,7 +52,7 @@ func newRetryer() *s3like.Retryer {
 			// network issue might exhaust the bucket.
 			so.RateLimiter = ratelimit.None
 		}),
-	})
+	}, suppressRetryableErrorLog)
 }
 
 type retryer struct {
