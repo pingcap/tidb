@@ -23,12 +23,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +57,25 @@ func checkFileName(s string) bool {
 		}
 	}
 	return false
+}
+
+type planReplayerPresignStorage struct {
+	storeapi.Storage
+	url string
+}
+
+func (s planReplayerPresignStorage) PresignFile(context.Context, string, time.Duration) (string, error) {
+	return s.url, nil
+}
+
+func requirePlanReplayerFileToken(t *testing.T, rows [][]any) string {
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 2)
+	require.Equal(t, "File token", rows[0][0])
+	token, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, token)
+	return token
 }
 
 func TestPlanReplayer(t *testing.T) {
@@ -209,9 +229,9 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	path := testdata.ConvertRowsToStrings(res.Rows())
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
-	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 	fileReader, err := storage.Open(ctx, filePath, nil)
 	require.NoError(t, err)
 	defer fileReader.Close()
@@ -246,12 +266,11 @@ func TestExplainExploreReplayer(t *testing.T) {
 	tk.MustExec("analyze table t_explain_explore_replayer")
 	tk.MustExec("create global binding using select * from test.t_explain_explore_replayer where b=1")
 	res := tk.MustQuery("plan replayer dump explain select * from test.t_explain_explore_replayer where b=1")
-	path := testdata.ConvertRowsToStrings(res.Rows())
-	require.Len(t, path, 1)
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
 	loadStore := testkit.CreateMockStore(t)
 	loadTK := testkit.NewTestKit(t, loadStore)
-	replayerPath := filepath.Join(tempDir, replayer.GetPlanReplayerDirName(), path[0])
+	replayerPath := filepath.Join(tempDir, replayer.GetPlanReplayerDirName(), fileName)
 	replayerPath = strings.ReplaceAll(replayerPath, "'", "''")
 	for range 2 {
 		rows := loadTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows()
@@ -260,6 +279,35 @@ func TestExplainExploreReplayer(t *testing.T) {
 			require.NotEmpty(t, row[3])
 		}
 	}
+}
+
+func TestPlanReplayerDumpPresignedURLOutput(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	const presignedURL = "https://example.com/replayer.zip?X-Amz-Expires=3600&X-Amz-Signature=test"
+	extstore.SetGlobalExtStorageForTest(planReplayerPresignStorage{
+		Storage: storage,
+		url:     presignedURL,
+	})
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_presign(a int)")
+	tk.MustQuery("plan replayer dump explain select * from t_presign").Check(testkit.RowsWithSep("|",
+		"Download URL|"+presignedURL,
+		"Expires in|1h0m0s",
+		"Browser|Open the Download URL directly before it expires",
+		"curl|curl -L '"+presignedURL+"' -o plan_replayer.zip",
+		"Note|If the URL expires, rerun PLAN REPLAYER DUMP to get a new one",
+	))
+	require.Equal(t, presignedURL, tk.Session().GetSessionVars().LastPlanReplayerToken)
 }
 
 func TestPlanReplayerDumpMultipleError(t *testing.T) {
@@ -341,10 +389,9 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 	}
 	sqlCmd := "plan replayer dump explain (" + strings.Join(stmts, ", ") + ")"
 	res := tk.MustQuery(sqlCmd)
-	path := testdata.ConvertRowsToStrings(res.Rows())
-	require.Len(t, path, 1)
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
-	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 	fileReader, err := storage.Open(ctx, filePath, nil)
 	require.NoError(t, err)
 	defer fileReader.Close()
