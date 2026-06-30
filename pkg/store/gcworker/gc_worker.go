@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/label"
@@ -853,13 +854,8 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) erro
 		return nil
 	}
 
-	shouldRegister := extworkload.IsMaster(mgr) || extworkload.IsTTLTaskWorker(mgr)
-	shouldRecycle := shouldRegister || extworkload.IsGCV2Worker(mgr)
-	if !shouldRecycle {
-		return nil
-	}
-
-	if shouldRegister {
+	role := mgr.Role()
+	if role == config.RoleMaster || role == config.RoleTTLTaskWorker {
 		gcLifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to load GC life time for external workload",
@@ -876,12 +872,14 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) erro
 		}
 	}
 
-	if err := mgr.RecycleGCV2(ctx, safePoint); err != nil {
-		logutil.Logger(ctx).Error("failed to recycle GCV2 task",
-			zap.String("category", "gc worker"),
-			zap.Uint64("safePoint", safePoint),
-			zap.Error(err))
-		return errors.Trace(err)
+	if role == config.RoleMaster || role == config.RoleTTLTaskWorker || role == config.RoleGCV2Worker {
+		if err := mgr.RecycleGCV2(ctx, safePoint); err != nil {
+			logutil.Logger(ctx).Error("failed to recycle GCV2 task",
+				zap.String("category", "gc worker"),
+				zap.Uint64("safePoint", safePoint),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

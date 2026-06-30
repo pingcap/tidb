@@ -6,7 +6,6 @@ go_library(
         "advisory_locks.go",
         "bootstrap.go",
         "contextimpl.go",
-        "external_workload.go",
         "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",

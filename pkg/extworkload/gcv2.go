@@ -12,22 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package extworkload
 
 import (
 	"context"
 	"os"
 
-	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-func abortGCV2(store kv.Storage) {
-	mgr := extworkload.GetManagerFromStore(store)
-	if !extworkload.IsGCV2Worker(mgr) {
+// AbortGCV2ForUpgrade aborts GCV2 work and exits when this TiDB is the dedicated
+// GCV2 worker, which must not run normal bootstrap upgrade work.
+func AbortGCV2ForUpgrade(store kv.Storage) {
+	mgr := GetManagerFromStore(store)
+	if !IsGCV2Worker(mgr) {
 		return
 	}
 	if err := mgr.AbortGCV2(context.Background()); err != nil {

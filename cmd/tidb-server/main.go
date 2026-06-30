@@ -661,12 +661,10 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
-		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
-		closeExternalWorkloadManager(storage, externalWorkloadManager)
 		return nil, nil, err
 	}
 	return storage, dom, nil

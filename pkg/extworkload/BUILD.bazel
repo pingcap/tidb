@@ -4,6 +4,7 @@ go_library(
     name = "extworkload",
     srcs = [
         "external_workload.go",
+        "gcv2.go",
         "manager.go",
         "util.go",
     ],
@@ -14,6 +15,7 @@ go_library(
         "//pkg/extworkload/client",
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
