@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -93,13 +94,13 @@ func ResetWithTaskRuntime(
 	return runtime.AlterTableMode(ctx, BuildRequest(plan, model.TableModeNormal))
 }
 
-// BuildRequest build a AlterTableModeRequest for the given plan and mode.
-func BuildRequest(plan *importer.Plan, mode model.TableMode) model.AlterTableModeRequest {
-	return model.AlterTableModeRequest{
-		SchemaID:           plan.DBID,
-		TableID:            plan.TableInfo.ID,
-		ExpectedSchemaName: plan.DBName,
-		ExpectedTableName:  plan.TableInfo.Name.L,
-		TableMode:          mode,
+// BuildRequest builds an AlterTableModeTarget for the given plan and mode.
+func BuildRequest(plan *importer.Plan, mode model.TableMode) model.AlterTableModeTarget {
+	return model.AlterTableModeTarget{
+		SchemaID:   plan.DBID,
+		SchemaName: ast.NewCIStr(plan.DBName),
+		TableID:    plan.TableInfo.ID,
+		TableName:  plan.TableInfo.Name,
+		TargetMode: mode,
 	}
 }

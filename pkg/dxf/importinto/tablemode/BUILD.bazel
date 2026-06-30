@@ -11,6 +11,7 @@ go_library(
         "//pkg/dxf/framework/storage",
         "//pkg/executor/importer",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

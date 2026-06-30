@@ -128,12 +128,12 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	d := sch.MockScheduler(task)
 	var taskMgr scheduler.TaskManager = manager
 	runtime := newImportTestRuntime(ctrl, store, pool)
-	runtime.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeRequest{
-		SchemaID:           0,
-		TableID:            0,
-		ExpectedSchemaName: "test",
-		ExpectedTableName:  "t",
-		TableMode:          model.TableModeNormal,
+	runtime.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeTarget{
+		SchemaID:   0,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    0,
+		TableName:  ast.NewCIStr("t"),
+		TargetMode: model.TableModeNormal,
 	}).Return(nil).Times(4)
 	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, runtime))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
@@ -496,12 +496,12 @@ func TestSchedulerOnDoneRoutesTableModeResetByTaskKeyspace(t *testing.T) {
 
 	var taskMgr scheduler.TaskManager = mgr
 	runtime := newImportTestRuntime(ctrl, store, pool)
-	runtime.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeRequest{
-		SchemaID:           101,
-		TableID:            202,
-		ExpectedSchemaName: "test",
-		ExpectedTableName:  "t",
-		TableMode:          model.TableModeNormal,
+	runtime.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeTarget{
+		SchemaID:   101,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    202,
+		TableName:  ast.NewCIStr("t"),
+		TargetMode: model.TableModeNormal,
 	}).Return(nil)
 	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, runtime))
 	require.NoError(t, ext.OnDone(ctx, nil, task))

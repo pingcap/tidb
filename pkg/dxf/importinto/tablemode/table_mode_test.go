@@ -69,12 +69,12 @@ func TestResetTableModeOnCleanUpRoutesCrossKeyspace(t *testing.T) {
 	}
 
 	runtimeHandle := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
-	runtimeHandle.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeRequest{
-		SchemaID:           100,
-		TableID:            200,
-		ExpectedSchemaName: "test",
-		ExpectedTableName:  "t",
-		TableMode:          model.TableModeNormal,
+	runtimeHandle.EXPECT().AlterTableMode(gomock.Any(), model.AlterTableModeTarget{
+		SchemaID:   100,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    200,
+		TableName:  ast.NewCIStr("t"),
+		TargetMode: model.TableModeNormal,
 	}).Return(nil)
 	runtimeHandle.EXPECT().Release()
 	server := sqlsvrapimock.NewMockServer(ctrl)
