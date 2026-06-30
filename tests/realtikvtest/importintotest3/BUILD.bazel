@@ -4,6 +4,7 @@ go_test(
     name = "importintotest3_test",
     timeout = "moderate",
     srcs = [
+        "cleanup_on_error_test.go",
         "file_compression_test.go",
         "from_server_test.go",
         "main_test.go",
@@ -17,7 +18,9 @@ go_test(
         "//pkg/disttask/importinto",
         "//pkg/kv",
         "//pkg/lightning/mydump",
+        "//pkg/store/driver/error",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_snappy//:snappy",

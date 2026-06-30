@@ -87,6 +87,7 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
 	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
 	drivererr.ErrRegionUnavailable.ID(): {},
+	drivererr.ErrPDServerTimeout.ID():   {},
 	drivererr.ErrTiKVStaleCommand.ID():  {},
 	drivererr.ErrTiKVServerTimeout.ID(): {},
 	drivererr.ErrTiKVServerBusy.ID():    {},
