@@ -14,9 +14,7 @@
 
 package extworkload
 
-import (
-	"github.com/pingcap/tidb/pkg/config"
-)
+import "github.com/pingcap/tidb/pkg/config"
 
 // IsEnabled reports whether a Manager is present.
 func IsEnabled(m Manager) bool { return m != nil }

@@ -639,24 +639,22 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
-	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
-				closeExternalWorkloadManager(externalWorkloadManager)
 				return nil, nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
-				closeExternalWorkloadManager(externalWorkloadManager)
 				return nil, nil, nil, errors.New("kernel type mismatch")
 			}
 		}
 	}
+	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
