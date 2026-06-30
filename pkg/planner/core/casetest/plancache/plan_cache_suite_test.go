@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
@@ -2146,4 +2147,125 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 
 	tk.MustExec(`drop binding for select * from t where b=1`)
+}
+
+// TestPlanCacheStatsIndependentPlansSurviveAnalyze verifies that plans whose shape can
+// never be affected by statistics (PointGet, BatchPointGet, INSERT ... VALUES) exclude
+// the stats version from their plan cache key, so ANALYZE does not invalidate their
+// cached entries. Stats-dependent plans must still be invalidated, and a schema change
+// must reset the classification so invalidation resumes if the plan shape changes.
+func TestPlanCacheStatsIndependentPlansSurviveAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int primary key, b int, unique key idx_b(b))`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`set @@tidb_plan_cache_invalidation_on_fresh_stats = ON`)
+
+	// -- PointGet on the primary key: ANALYZE must NOT bust the cache. --
+	tk.MustExec(`prepare st_point from 'select * from t where a = ?'`)
+	tk.MustExec(`set @v1=1, @v2=2`)
+	tk.MustQuery(`execute st_point using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`execute st_point using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_point using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// -- BatchPointGet: ANALYZE must NOT bust the cache. --
+	tk.MustExec(`prepare st_batch from 'select * from t where a in (?, ?)'`)
+	tk.MustQuery(`execute st_batch using @v1, @v2`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`execute st_batch using @v1, @v2`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_batch using @v1, @v2`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// -- INSERT ... VALUES: ANALYZE must NOT bust the cache. --
+	tk.MustExec(`prepare st_insert from 'insert into t values (?, ?)'`)
+	tk.MustExec(`set @i1=101, @i2=102, @i3=103`)
+	tk.MustExec(`execute st_insert using @i1, @i1`)
+	tk.MustExec(`execute st_insert using @i2, @i2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st_insert using @i3, @i3`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// -- Control: a stats-dependent range query must still be invalidated by ANALYZE. --
+	tk.MustExec(`prepare st_range from 'select * from t where b >= ?'`)
+	tk.MustExec(`set @r=100`)
+	tk.MustQuery(`execute st_range using @r`).Sort().Check(testkit.Rows("101 101", "102 102", "103 103"))
+	tk.MustQuery(`execute st_range using @r`).Sort().Check(testkit.Rows("101 101", "102 102", "103 103"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_range using @r`).Sort().Check(testkit.Rows("101 101", "102 102", "103 103"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// -- Schema change resets the classification: a point get on a unique key that is
+	// later dropped becomes a stats-dependent scan, and ANALYZE must invalidate again. --
+	tk.MustExec(`prepare st_upoint from 'select * from t where b = ?'`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // survives while it is a point get
+	tk.MustExec(`alter table t drop index idx_b`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1")) // schema changed → replan as a scan
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`execute st_upoint using @v1`).Check(testkit.Rows("1 1"))
+	// The plan is stats-dependent again, so ANALYZE busts the cache.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+// TestPlanCacheStatsIndependentSkipsStatsLoad verifies that replanning a statement whose
+// plan is known to be stats-independent does not trigger synchronous or asynchronous
+// statistics loading, and that the classification is re-derived in both directions when
+// a planning input outside the cache key (here fix control 52592, which disables the
+// point-get fast path) changes the plan shape to a stats-dependent one.
+func TestPlanCacheStatsIndependentSkipsStatsLoad(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tsl (a int primary key, b int)`)
+	tk.MustExec(`insert into tsl values (1,1),(2,2),(3,3)`)
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema='test' and table_name='tsl'`).Rows()[0][0].(string)
+
+	tk.MustExec(`prepare st from 'select * from tsl where a = ?'`)
+	tk.MustExec(`set @v=1`)
+	// First execution: point get via the fast path, classified stats-independent when
+	// stored. The classification is not known during its own optimization, so no skip yet.
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.SkipStatsLoad)
+
+	// Disable the point-get fast path so the next replan goes through the full optimizer
+	// (the path that triggers stats loading), flush the cache to force that replan, and
+	// drain any async-load items registered for this table so far.
+	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
+	defer tk.MustExec(`set @@tidb_opt_fix_control = ""`)
+	tk.MustExec(`admin flush session plan_cache`)
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		if fmt.Sprintf("%d", item.TableID) == tblID {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+		}
+	}
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	// The replan ran under the stats-independent classification: the full optimizer must
+	// skip stats loading entirely and register no async-load items for this table.
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.SkipStatsLoad)
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		require.NotEqual(t, tblID, fmt.Sprintf("%d", item.TableID))
+	}
+
+	// With the fast path disabled, the full optimizer produced a stats-dependent plan (a
+	// range scan), so the classification must have flipped back when it was stored: the
+	// entry is reachable under the stats-inclusive key and ANALYZE invalidates it again.
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`analyze table tsl`)
+	tk.MustQuery(`execute st using @v`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }

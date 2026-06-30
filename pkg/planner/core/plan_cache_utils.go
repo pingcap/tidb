@@ -391,13 +391,17 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	// statsIndependent
+	hashLen++
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
 	}
-	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
-		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
-		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && !stmt.statsIndependent && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when the cached plan is stats-independent (PointGet,
+		// BatchPointGet, INSERT ... VALUES), or when a binding is matched and
+		// PlanCacheSkipStatsOnBinding is on, because in both cases stats changes
+		// cannot alter the chosen plan.
 		hashLen += 8
 	}
 	// dirty tables
@@ -471,9 +475,18 @@ func newPlanCacheKeyWithMatchedBinding(
 		hash = append(hash, '|')
 	}
 
-	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
-	// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
-	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+	// The statsIndependent byte partitions the key space: entries whose stats version hash
+	// is omitted because the plan is stats-independent (see isPlanStatsIndependent) must not
+	// collide with entries whose hash is absent for any other reason (a binding with
+	// PlanCacheSkipStatsOnBinding, or PlanCacheInvalidationOnFreshStats being off), since
+	// the probe in GetPlanFromPlanCache infers stats-independence from a hit on this key.
+	hash = append(hash, bool2Byte(stmt.statsIndependent))
+
+	// stats ver can affect cached plan, unless the plan is stats-independent (its shape can
+	// never change with statistics, see isPlanStatsIndependent), or a binding is active and
+	// PlanCacheSkipStatsOnBinding is enabled — a binding pins the plan via hints, so stats
+	// changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && !stmt.statsIndependent && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
@@ -757,6 +770,14 @@ type PlanCacheStmt struct {
 	limits      []*ast.Limit
 	hasSubquery bool
 	tables      []table.Table // to capture table stats changes
+
+	// statsIndependent indicates that the plan generated for this statement cannot be
+	// affected by statistics changes (e.g. PointGet/BatchPointGet or INSERT ... VALUES),
+	// so the stats version hash is excluded from its plan cache key and ANALYZE won't
+	// invalidate its cached plan. It is set when such a plan is put into the cache and
+	// must be reset whenever the schema version changes, since a schema change (e.g.
+	// dropping an index) can change the plan shape into a stats-dependent one.
+	statsIndependent bool
 
 	NormalizedSQL       string
 	NormalizedPlan      string
