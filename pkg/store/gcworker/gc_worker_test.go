@@ -74,6 +74,7 @@ type stubGCV2Manager struct {
 
 	role             config.ExternalWorkloadRole
 	meta             *keyspacepb.KeyspaceMeta
+	err              error
 	recycleSafePoint uint64
 	registerCount    int
 	recycleCount     int
@@ -84,13 +85,13 @@ func (m *stubGCV2Manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
 
 func (m *stubGCV2Manager) RegisterGCV2(_ context.Context, _ uint64, _ int64) error {
 	m.registerCount++
-	return nil
+	return m.err
 }
 
 func (m *stubGCV2Manager) RecycleGCV2(_ context.Context, safePoint uint64) error {
 	m.recycleSafePoint = safePoint
 	m.recycleCount++
-	return nil
+	return m.err
 }
 
 func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
@@ -254,11 +255,18 @@ func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		gcManagementType string
+		recycleErr       error
 		wantRecycleCount int
 	}{
 		{
 			name:             "keyspace level GC",
 			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "recycle failure is best effort",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			recycleErr:       errors.New("mock recycle GCV2 failure"),
 			wantRecycleCount: 1,
 		},
 		{
@@ -281,11 +289,12 @@ func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
 			mgr := &stubGCV2Manager{
 				role: config.RoleGCV2Worker,
 				meta: store.GetCodec().GetKeyspaceMeta(),
+				err:  tc.recycleErr,
 			}
 			extworkload.SetManagerForStore(store, mgr)
 			worker := &GCWorker{store: store}
 
-			require.NoError(t, worker.notifyGCV2AfterGC(context.Background(), safePoint))
+			worker.notifyGCV2AfterGC(context.Background(), safePoint)
 			require.Zero(t, mgr.registerCount)
 			require.Equal(t, tc.wantRecycleCount, mgr.recycleCount)
 			if tc.wantRecycleCount > 0 {
