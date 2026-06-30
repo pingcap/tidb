@@ -860,7 +860,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_opt_prefix_index_single_scan").Check(testkit.Rows("1"))
 
 	// test tidb_opt_range_max_size
-	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows("67108864"))
+	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows(strconv.FormatInt(vardef.DefTiDBOptRangeMaxSize, 10)))
 	tk.MustExec("set global tidb_opt_range_max_size = -1")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_size value: '-1'"))
 	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("0"))

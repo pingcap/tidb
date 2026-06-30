@@ -1462,21 +1462,21 @@ select /*+ set_var(tidb_opt_range_max_size=0) */ @@tidb_opt_range_max_size;
 0
 select @@tidb_opt_range_max_size;
 @@tidb_opt_range_max_size
-67108864
+8388608
 set @@tidb_opt_range_max_size=default;
 select @@tidb_opt_range_max_size;
 @@tidb_opt_range_max_size
-67108864
+8388608
 select /*+ set_var(tidb_opt_range_max_size=1) */ @@tidb_opt_range_max_size;
 @@tidb_opt_range_max_size
 1
 select @@tidb_opt_range_max_size;
 @@tidb_opt_range_max_size
-67108864
+8388608
 set @@tidb_opt_range_max_size=default;
 select @@tidb_opt_range_max_size;
 @@tidb_opt_range_max_size
-67108864
+8388608
 select /*+ set_var(tidb_opt_advanced_join_hint=0) */ @@tidb_opt_advanced_join_hint;
 @@tidb_opt_advanced_join_hint
 0
