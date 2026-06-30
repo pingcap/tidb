@@ -530,7 +530,7 @@ func doDMLWorks(s sessionapi.Session) {
 	writeClusterID(s)
 
 	if deploymode.IsStarter() {
-		if err := doStarterBootstrapFile(s); err != nil {
+		if err := runStarterBootstrap(s); err != nil {
 			logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
 		}
 	}

@@ -47,7 +47,7 @@ import (
 const (
 	starterBootstrapVersionVar          = "starter_version"
 	starterBootstrapKeyspacePlaceholder = "<keyspace>"
-	starterBootstrapFileVersionComment  = "Starter bootstrap file version. Do not delete."
+	starterBootstrapVersionComment      = "Starter bootstrap file version. Do not delete."
 )
 
 var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
@@ -63,7 +63,7 @@ type starterBootstrapFileUpgrade struct {
 	SQL     []string `json:"sql,omitempty"`
 }
 
-func doStarterBootstrapFile(s sessionapi.Session) error {
+func runStarterBootstrap(s sessionapi.Session) error {
 	bootstrapFile, err := loadStarterBootstrapFile()
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func doStarterBootstrapFile(s sessionapi.Session) error {
 	return updateStarterBootstrapVersion(s, bootstrapFile.Version)
 }
 
-func runStarterBootstrapFileUpgrade(store kv.Storage) error {
+func upgradeStarterBootstrap(store kv.Storage) error {
 	bootstrapFile, err := loadStarterBootstrapFile()
 	if err != nil {
 		return err
@@ -111,7 +111,7 @@ func runStarterBootstrapFileUpgrade(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	if !needUpgradeStarterBootstrapFile(storedVersion, bootstrapFile) {
+	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		return nil
 	}
 
@@ -124,11 +124,11 @@ func runStarterBootstrapFileUpgrade(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	if !needUpgradeStarterBootstrapFile(storedVersion, bootstrapFile) {
+	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		return nil
 	}
 
-	if err = upgradeStarterBootstrapFileFromVersion(s, bootstrapFile, storedVersion); err != nil {
+	if err = upgradeStarterBootstrapFromVersion(s, bootstrapFile, storedVersion); err != nil {
 		return err
 	}
 	logutil.BgLogger().Info("starter bootstrap file upgrade finished",
@@ -226,7 +226,7 @@ func validateStarterBootstrapSQLBlocks(field string, blocks []string) error {
 	return nil
 }
 
-func needUpgradeStarterBootstrapFile(storedVersion int64, bootstrapFile *starterBootstrapFile) bool {
+func needStarterBootstrapUpgrade(storedVersion int64, bootstrapFile *starterBootstrapFile) bool {
 	if storedVersion > bootstrapFile.Version {
 		logutil.BgLogger().Warn("starter bootstrap file is older than cluster state",
 			zap.Int64("storedVersion", storedVersion),
@@ -236,8 +236,8 @@ func needUpgradeStarterBootstrapFile(storedVersion int64, bootstrapFile *starter
 	return storedVersion < bootstrapFile.Version
 }
 
-func upgradeStarterBootstrapFileFromVersion(s sessionapi.Session, bootstrapFile *starterBootstrapFile, storedVersion int64) error {
-	if !needUpgradeStarterBootstrapFile(storedVersion, bootstrapFile) {
+func upgradeStarterBootstrapFromVersion(s sessionapi.Session, bootstrapFile *starterBootstrapFile, storedVersion int64) error {
+	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		return nil
 	}
 
@@ -299,7 +299,7 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx,
 		`INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
-		mysql.SystemDB, mysql.TiDBTable, starterBootstrapVersionVar, version, starterBootstrapFileVersionComment, version)
+		mysql.SystemDB, mysql.TiDBTable, starterBootstrapVersionVar, version, starterBootstrapVersionComment, version)
 	if err != nil {
 		return errors.Trace(err)
 	}

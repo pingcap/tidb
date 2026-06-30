@@ -218,7 +218,7 @@ func TestStarterBootstrapFileUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	storedVersion, err := getStarterBootstrapVersion(se)
 	require.NoError(t, err)
-	require.NoError(t, upgradeStarterBootstrapFileFromVersion(se, bootstrapFile, storedVersion))
+	require.NoError(t, upgradeStarterBootstrapFromVersion(se, bootstrapFile, storedVersion))
 
 	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 	require.Equal(t, "test_keyspace.v2", mustGetTiDBVarForStarterFile(t, se, "starter_file_upgrade_v2"))
@@ -244,7 +244,7 @@ func TestStarterBootstrapFileUpgradeSkipsOlderFile(t *testing.T) {
 
 	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{"version": 3}`))
 	require.NoError(t, err)
-	require.NoError(t, upgradeStarterBootstrapFileFromVersion(se, bootstrapFile, 5))
+	require.NoError(t, upgradeStarterBootstrapFromVersion(se, bootstrapFile, 5))
 	require.Equal(t, "5", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 }
 

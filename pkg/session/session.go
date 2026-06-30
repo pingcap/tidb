@@ -4352,7 +4352,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 	if deploymode.IsStarter() {
-		if err = runStarterBootstrapFileUpgrade(store); err != nil {
+		if err = upgradeStarterBootstrap(store); err != nil {
 			return nil, err
 		}
 	}
