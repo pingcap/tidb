@@ -1583,7 +1583,7 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
 	}
-	if metaData.IsDefined("starter-params", "bootstrap-manifest-file") && c.DeployMode != deploymode.Starter {
+	if metaData.IsDefined("starter-params", "bootstrap-manifest-file") && c.StarterParams.BootstrapManifestFile != "" && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.bootstrap-manifest-file can only be configured for starter deploy mode")
 	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
