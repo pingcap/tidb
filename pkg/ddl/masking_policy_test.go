@@ -15,14 +15,10 @@
 package ddl_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -204,29 +200,6 @@ func TestMaskingPolicyModifyColumnRejectUnsupportedType(t *testing.T) {
 	// Verify the policy is still intact.
 	tk.MustQuery("select column_name, expression from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("c `c`"))
-}
-
-func TestMaskingPolicyMissingSysTableFailsInNormalDDL(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_missing_policy")
-	tk.MustExec("create table t_missing_policy(c varchar(100))")
-
-	dom := domain.GetDomain(tk.Session())
-	policyTbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	require.NoError(t, m.DropTableOrView(policyTbl.Meta().DBID, policyTbl.Meta().ID))
-	require.NoError(t, txn.Commit(context.Background()))
-	require.NoError(t, dom.Reload())
-
-	err = tk.ExecToErr("alter table t_missing_policy modify column c varchar(200)")
-	require.Error(t, err)
-	require.ErrorContains(t, err, "Table 'mysql.tidb_masking_policy' doesn't exist")
 }
 
 func TestMaskingPolicyExpressionRejectsNonTargetColumn(t *testing.T) {

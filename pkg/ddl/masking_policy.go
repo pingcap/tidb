@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -248,6 +249,9 @@ const (
 )
 
 func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, query string, args ...any) ([]*model.MaskingPolicyInfo, error) {
+	failpoint.Inject("mockMissingMaskingPolicySysTable", func() {
+		failpoint.Return(nil, infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy"))
+	})
 	rows, err := w.sess.Execute(ctx, query, "query-masking-policy", args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -535,7 +539,7 @@ func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) e
 	if err != nil {
 		// If the masking policy system table itself doesn't exist (e.g., during
 		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)
@@ -604,7 +608,7 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 	if err != nil {
 		// If the masking policy system table itself doesn't exist (e.g., during
 		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)

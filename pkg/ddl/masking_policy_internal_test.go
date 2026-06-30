@@ -1,0 +1,89 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"context"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMaskingPolicyMissingSysTableRequiresBootstrapOrUpgrade(t *testing.T) {
+	helperTests := []struct {
+		name string
+		run  func(*worker, *jobContext) error
+	}{
+		{
+			name: "modify_column",
+			run: func(w *worker, jobCtx *jobContext) error {
+				return w.syncMaskingPolicyForModifiedColumn(
+					jobCtx,
+					&model.TableInfo{ID: 1},
+					&model.ColumnInfo{},
+					&model.ColumnInfo{},
+				)
+			},
+		},
+		{
+			name: "drop_table",
+			run: func(w *worker, jobCtx *jobContext) error {
+				return w.dropMaskingPoliciesOnTable(jobCtx, 1)
+			},
+		},
+		{
+			name: "drop_column",
+			run: func(w *worker, jobCtx *jobContext) error {
+				return w.dropMaskingPoliciesOnColumn(jobCtx, 1, 1)
+			},
+		},
+	}
+	startModeTests := []struct {
+		name      string
+		startMode StartMode
+		wantErr   bool
+	}{
+		{name: "normal", startMode: Normal, wantErr: true},
+		{name: "bootstrap", startMode: Bootstrap},
+		{name: "upgrade", startMode: Upgrade},
+	}
+
+	for _, helper := range helperTests {
+		t.Run(helper.name, func(t *testing.T) {
+			for _, mode := range startModeTests {
+				t.Run(mode.name, func(t *testing.T) {
+					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
+
+					w := &worker{}
+					jobCtx := &jobContext{
+						stepCtx:   context.Background(),
+						oldDDLCtx: &ddlCtx{startMode: mode.startMode},
+					}
+
+					err := helper.run(w, jobCtx)
+					if mode.wantErr {
+						require.Error(t, err)
+						require.True(t, infoschema.ErrTableNotExists.Equal(err), err)
+						return
+					}
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
