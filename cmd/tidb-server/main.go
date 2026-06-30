@@ -329,8 +329,8 @@ func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extwor
 	if !cfg.Enable {
 		return nil
 	}
-	// Regular TiDB roles can continue without coordination, but a dedicated
-	// GCV2 worker must not run without the controller.
+	// Non-GCV2 roles can continue without coordination, but a dedicated GCV2
+	// worker must not run without the controller.
 	meta := storage.GetCodec().GetKeyspaceMeta()
 	if meta == nil {
 		if cfg.Role == config.RoleGCV2Worker {
@@ -497,9 +497,7 @@ func main() {
 	terror.MustNil(err)
 	repository.SetupRepository(dom)
 	if externalWorkloadManager := extworkload.GetManagerFromStore(storage); externalWorkloadManager != nil {
-		defer func() {
-			closeExternalWorkloadManager(storage, externalWorkloadManager)
-		}()
+		defer closeExternalWorkloadManager(storage, externalWorkloadManager)
 	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
@@ -651,9 +649,8 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
 	if extworkload.IsMaster(externalWorkloadManager) && pd.IsKeyspaceUsingKeyspaceLevelGC(externalWorkloadManager.Meta()) {
 		if err := externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
-			logutil.BgLogger().Warn("failed to initialize external workload service; TiDB will continue without external workload coordination", zap.Error(err))
+			logutil.BgLogger().Warn("failed to initialize external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
 			closeExternalWorkloadManager(storage, externalWorkloadManager)
-			externalWorkloadManager = nil
 		}
 	}
 	copr.GlobalMPPFailedStoreProber.Run()

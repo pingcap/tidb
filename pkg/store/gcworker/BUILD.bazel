@@ -60,7 +60,7 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
-    shard_count = 37,
+    shard_count = 38,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
@@ -69,6 +69,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/extworkload",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/session",
