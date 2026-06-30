@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/fn"
 	pb "github.com/pingcap/kvproto/pkg/autoid"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
+	"github.com/pingcap/tidb/pkg/auditlog"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -284,6 +285,14 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 	if deploymode.IsStarter() {
 		router.Handle("/owner_manager/auto_id_service", handler.NewAutoIDOwnerHandler(s)).Name("isAutoIDServiceOwner")
+	}
+
+	// HTTP path for audit log management.
+	if auditMgr := auditlog.GlobalAuditManager(); auditMgr != nil {
+		router.Handle("/audit/rules", auditlog.NewAuditRuleHandler(auditMgr)).Name("AuditRules")
+		router.Handle("/audit/rules/{ruleID}", auditlog.NewAuditRuleDeleteHandler(auditMgr)).Name("AuditRuleDelete")
+		router.Handle("/audit/stats", auditlog.NewAuditStatsHandler(auditMgr)).Name("AuditStats")
+		router.Handle("/audit/status", auditlog.NewAuditStatusHandler(auditMgr)).Name("AuditStatus")
 	}
 
 	// HTTP path for ingest configurations
