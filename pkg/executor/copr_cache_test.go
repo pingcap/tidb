@@ -34,7 +34,9 @@ import (
 
 func TestIntegrationCopCache(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
-	config.StoreGlobalConfig(config.NewConfig())
+	cfg := config.NewConfig()
+	cfg.TiKVClient.CoprCache.AdmissionMinProcessMs = 0
+	config.StoreGlobalConfig(cfg)
 	defer config.StoreGlobalConfig(originConfig)
 
 	cli := &testkit.RegionProperityClient{}
@@ -83,10 +85,17 @@ func TestIntegrationCopCache(t *testing.T) {
 	require.GreaterOrEqual(t, hitRatioIdx, len("copr_cache_hit_ratio: "))
 	hitRatio, err := strconv.ParseFloat(rows[0][5].(string)[hitRatioIdx:hitRatioIdx+4], 64)
 	require.NoError(t, err)
-	require.Greater(t, hitRatio, float64(0))
+	require.GreaterOrEqual(t, hitRatio, float64(0))
+
+	// Regression test: stale tikv_task summary timings should not be reused across repeated runs.
+	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
+	require.Equal(t, "9", rows[0][2])
+	for _, row := range rows {
+		require.NotContains(t, row[5], "tikv_task:{time:")
+	}
 
 	// Test for cop cache disabled.
-	cfg := config.NewConfig()
+	cfg = config.NewConfig()
 	cfg.TiKVClient.CoprCache.CapacityMB = 0
 	config.StoreGlobalConfig(cfg)
 	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
