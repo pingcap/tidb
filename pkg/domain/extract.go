@@ -165,7 +165,7 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 	w.Lock()
 	defer w.Unlock()
 	exec := w.sctx.GetRestrictedSQLExecutor()
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	sourceTable := "STATEMENTS_SUMMARY_HISTORY"
 	if !task.UseHistoryView {
 		sourceTable = "STATEMENTS_SUMMARY"
@@ -306,7 +306,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 
 func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (string, error) {
 	exec := w.sctx.GetRestrictedSQLExecutor()
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT tidb_decode_binary_plan('%s')", bPlan))
 	if err != nil {
 		return "", err

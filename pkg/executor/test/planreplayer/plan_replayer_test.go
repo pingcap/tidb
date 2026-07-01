@@ -266,7 +266,7 @@ func TestPlanReplayerCapture(t *testing.T) {
 
 	statsStmt, err := tk.Session().Parse(context.Background(), statsSQL)
 	require.NoError(t, err)
-	statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	rs, err := tk.Session().ExecuteStmt(statsCtx, statsStmt[0])
 	require.NoError(t, err)
 	tk.ResultSetToResultWithCtx(statsCtx, rs, statsSQL).Check(testkit.Rows())

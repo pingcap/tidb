@@ -24,14 +24,14 @@ import (
 // CtxMatcher is a matcher for context.Context
 type CtxMatcher struct{}
 
-// Matches returns true if the context is internal stats maintenance source.
+// Matches returns true if the context is internal stats foreground priority source.
 func (*CtxMatcher) Matches(x any) bool {
 	ctx := x.(context.Context)
 	s := util.RequestSourceFromCtx(ctx)
-	return s == util.InternalRequest+"_"+kv.InternalTxnStatsMaintenance
+	return s == util.InternalRequest+"_"+kv.InternalTxnStatsForegroundPriority
 }
 
 // String returns the description of CtxMatcher.
 func (*CtxMatcher) String() string {
-	return "all txns should be internal stats maintenance source"
+	return "all txns should be internal stats foreground priority source"
 }

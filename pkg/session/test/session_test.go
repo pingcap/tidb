@@ -643,7 +643,7 @@ func TestRandomBinary(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	allBytes := [][]byte{
 		{4, 0, 0, 0, 0, 0, 0, 4, '2'},
 		{4, 0, 0, 0, 0, 0, 0, 4, '.'},

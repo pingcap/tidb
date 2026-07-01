@@ -33,7 +33,7 @@ Over the past year, we have repeatedly encountered issues where `ANALYZE` statis
 
 Additionally, in the current TiDB Resource Control implementation, all statistics-related requests share the same `stats` task type. When users try to use Resource Control to limit the resources used by `ANALYZE`, all statistics-related requests are affected, including sync-load stats requests. This may prevent statistics from being loaded in time and can even increase query latency if a foreground query is blocked by statistics loading.
 
-Therefore, this document introduces a new internal task type, `StatsNormalPriority`, for stats maintenance work other than `ANALYZE`. Under this proposal, the existing `stats` task type continues to represent `ANALYZE` requests, including both automatic and manually triggered `ANALYZE`.
+Therefore, this document introduces a new internal task type, `StatsForegroundPriority`, for stats maintenance work other than `ANALYZE`. Under this proposal, the existing `stats` task type continues to represent `ANALYZE` requests, including both automatic and manually triggered `ANALYZE`.
 
 ## Detailed Design
 
@@ -106,17 +106,17 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 
 This shared classification is a problem because we should not throttle sync-load requests. Although sync load belongs to the stats module, it is not regular background work. It is on the critical path of query optimization, so it must finish in time. Otherwise, the user query may have to wait until the sync-load request [times out](https://github.com/pingcap/docs/blob/42da4252914248472710bc8f9d3bb0546015093e/system-variables.md#tidb_stats_load_sync_wait-new-in-v540) before query optimization can continue.
 
-We can introduce a new task type, `StatsNormalPriority`, for internal stats maintenance work other than `ANALYZE` stats collection.
+We can introduce a new task type, `StatsForegroundPriority`, for internal stats maintenance work other than `ANALYZE` stats collection.
 
-This keeps the behavior backward compatible. In most cases, users who enable this feature to limit stats resource usage are trying to control `ANALYZE` requests. Therefore, instead of introducing a new task type dedicated to `ANALYZE`, we can keep using the existing `stats` task type for `ANALYZE` and move other stats maintenance work to the new `StatsNormalPriority` task type. **`StatsNormalPriority` should not be allowed to be throttled as background work, because these tasks are critical to user query optimization.** To enforce this, Resource Control should not expose `StatsNormalPriority` as a configurable `TASK_TYPES` value.
+This keeps the behavior backward compatible. In most cases, users who enable this feature to limit stats resource usage are trying to control `ANALYZE` requests. Therefore, instead of introducing a new task type dedicated to `ANALYZE`, we can keep using the existing `stats` task type for `ANALYZE` and move other stats maintenance work to the new `StatsForegroundPriority` task type. **`StatsForegroundPriority` should not be allowed to be throttled as background work, because these tasks are critical to user query optimization.** To enforce this, Resource Control should not expose `StatsForegroundPriority` as a configurable `TASK_TYPES` value.
 
 In the future, if we add other heavy stats maintenance work that is not on the critical path of user queries, it can use the same `stats` task type as `ANALYZE`. This keeps the model simple and avoids additional confusion or learning cost for users.
 
-Based on the TiDB code example above, we need to update `StatsCtx` to use the new `StatsNormalPriority` type.
+Based on the TiDB code example above, we need to update `StatsCtx` to use the new `StatsForegroundPriority` type.
 
 ```go
 // For sync and async load
-StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
+StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	...
 	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
