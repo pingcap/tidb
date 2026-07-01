@@ -127,7 +127,7 @@ const (
 	manualCancelBackoffDelay             = 2 * time.Minute
 	mvRefreshAlertScanInterval           = 30 * time.Second
 	mvLogAccumulationAlertScanInterval   = 20 * time.Minute
-	mlogAnalyzeScanInterval              = 10 * time.Minute
+	mlogAnalyzeScanInterval              = 3 * time.Minute
 	defaultMLogAnalyzeTaskConcurrency    = 2
 	maxNextScheduleTs                    = 9e18
 
