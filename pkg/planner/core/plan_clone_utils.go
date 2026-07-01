@@ -148,6 +148,16 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	for i, ap := range ds.PossibleAccessPaths {
 		clone.PossibleAccessPaths[i] = ap.Clone()
 	}
+	// Reset the per-DataSource skyline caches rather than sharing them via the shallow copy above.
+	// They are populated lazily during physical optimization and reference paths from the source
+	// DataSource: CrossSkylineCache holds candidatePaths whose .path alias ds.PossibleAccessPaths,
+	// and SkylineBaseCache is keyed by those same *AccessPath pointers. Because the clone just
+	// deep-cloned its own AccessPaths (above), sharing the source's caches would key/compare against
+	// foreign path objects -- the exact cross-alternative coupling that deep clone exists to prevent.
+	// cloneDataSource currently runs before these caches are populated, so this is defensive; it
+	// keeps the invariant intact if cloning ever moves into or after physical optimization.
+	clone.CrossSkylineCache = nil
+	clone.SkylineBaseCache = nil
 	// Preserve original stats so DeriveStats returns early for DataSources
 	// that don't receive correlated conditions. Without this, DeriveStats
 	// re-runs fillIndexPath on all DataSources, which fails when conditions

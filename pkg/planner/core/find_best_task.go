@@ -849,6 +849,16 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	return 0, 0
 }
 
+// orderRatioMayPenalize reports whether the LIMIT-ordering risk adjustment
+// (tidb_opt_ordering_index_selectivity_ratio, applied at cost time in
+// AdjustRowCountForIndexScanByLimit) could inflate this ordered path's estimated row count.
+// It does so only when residual (non-access) filters exist, because those are the rows that
+// must be scanned before the LIMIT is satisfied. The limit-aware rule in compareCandidates
+// uses this to avoid preempting that cost-time penalty (see its call site).
+func orderRatioMayPenalize(path *util.AccessPath) bool {
+	return len(path.IndexFilters) > 0 || len(path.TableFilters) > 0
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
@@ -959,6 +969,58 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// rightDidNotLose, but one of the metrics is a win
 	if rightDidNotLose && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+	}
+	// match property result + limit is a winner.
+	// Require a finite, positive limit (0 < ExpectedCnt < MaxFloat64): this rule only protects an
+	// ordered path when a bounded number of rows is needed. The explicit < MaxFloat64 bound makes
+	// the "no limit" exclusion self-evident and consistent with the cacheSortPropSkyline gate,
+	// instead of relying on the worst-case row-count comparison below staying finite.
+	//
+	// The winner is protected only when the loser's worst-case row count overshoots the limit, i.e.
+	// max(CountAfterAccess, MaxCountAfterAccess) > ExpectedCnt. MaxCountAfterAccess is an absolute
+	// upper bound on CountAfterAccess (0 when no risk was identified), so the max collapses to the
+	// point estimate for risk-free paths and rises to the risk bound otherwise -- it is NOT a sum of
+	// the two (which would double-count the bound and prune a loser whose worst case still fits).
+	//
+	// Also require the winning ordered path to carry no residual filters (see orderRatioMayPenalize):
+	// when it does, tidb_opt_ordering_index_selectivity_ratio inflates that path's row count at cost
+	// time (AdjustRowCountForIndexScanByLimit) to model the rows scanned before the LIMIT is met.
+	// This skyline rule reads the raw, pre-ratio CountAfterAccess, so without this guard it could
+	// prune the non-ordered alternative and let the ordered path win even though the ratio was meant
+	// to make it lose on cost. Deferring residual-filter ordered paths to the cost comparison keeps
+	// the two mechanisms from contradicting each other.
+	//
+	// This rule intentionally relaxes the strict skyline contract ("a path is pruned only if another
+	// is no worse on every factor"): it can return a winner that loses on accessResult. That is by
+	// design and is the whole point of the rule. The case it exists for is exactly an ordered index
+	// with weaker WHERE-coverage beating a more selective non-ordered index under a LIMIT (otherwise
+	// the non-ordered path wins on access and forces a risky TopN). Guarding on accessResult >= 0
+	// would defeat that purpose. The genuine risk of overriding access -- an optimistic "fits the
+	// limit" estimate driven by residual filtering -- is already fenced off above by
+	// !orderRatioMayPenalize (residual-filter paths defer to cost) and by the CountAfterAccess <=
+	// ExpectedCnt check (the winner provably fits the limit). We deliberately do NOT also guard
+	// scanResult/globalResult: scanResult is biased (a table scan always scores +1, so the guard
+	// would not stop the case it appears to target) and globalResult is a niche partition-index
+	// preference; neither reflects the order-vs-limit risk this rule arbitrates.
+	//
+	// This rule is part of the cross-skyline feature and is gated on the same flag
+	// (tidb_opt_enable_alternative_logical_plans): it exists to protect an ordered, LIMIT-bounded
+	// path for the alternative-logical-plan framework, and is the dominance signal crossSkylinePrune
+	// relies on. Keeping it behind the flag guarantees skyline pruning is identical to master when
+	// the framework is off.
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
+			!orderRatioMayPenalize(lhs.path) &&
+			lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
+			max(rhs.path.CountAfterAccess, rhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 && prop.ExpectedCnt < math.MaxFloat64 &&
+			!orderRatioMayPenalize(rhs.path) &&
+			rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
+			max(lhs.path.CountAfterAccess, lhs.path.MaxCountAfterAccess) > prop.ExpectedCnt {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
 }
@@ -1683,16 +1745,20 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 	return results, property.PropMatched
 }
 
-func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty, cached *skylineBaseCandidate) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	if cached != nil {
+		candidate.accessCondsColMap = cached.accessCondsColMap
+	} else {
+		candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	}
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
-func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty, cached *skylineBaseCandidate) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
 	// Because the skyline pruning already prune the indexes that cannot provide partial order
@@ -1702,8 +1768,13 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() && prop.PartialOrderInfo != nil {
 		candidate.partialOrderMatchResult = matchPartialOrderProperty(path, prop.PartialOrderInfo)
 	}
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
-	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	if cached != nil {
+		candidate.accessCondsColMap = cached.accessCondsColMap
+		candidate.indexCondsColMap = cached.indexCondsColMap
+	} else {
+		candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+		candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	}
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
@@ -1765,6 +1836,221 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	return candidate
 }
 
+// skylineBaseCandidate caches the property-independent column maps for a single AccessPath.
+// These maps depend only on the path's conditions and columns, not on the physical property.
+type skylineBaseCandidate struct {
+	accessCondsColMap util.Col2Len
+	indexCondsColMap  util.Col2Len
+}
+
+// skylineBaseCache stores cached skylineBaseCandidate entries keyed by AccessPath pointer.
+// It is stored on DataSource.SkylineBaseCache and reused across skylinePruning calls.
+type skylineBaseCache struct {
+	entries map[*util.AccessPath]*skylineBaseCandidate
+}
+
+// skylineCrossCacheEntry stores skyline pruning candidates from a single sort-property
+// call, along with the sort property used.
+type skylineCrossCacheEntry struct {
+	candidates []*candidatePath
+	sortProp   *property.PhysicalProperty
+}
+
+// skylineCrossCache accumulates skyline pruning results from all sort-property calls
+// for a DataSource. When multiple sort properties are evaluated (e.g., different ORDER BY
+// clauses from different parent operators), each gets its own entry. Empty-property calls
+// cross-prune against all entries, so pruning is not dependent on evaluation order.
+// Entries are deduplicated by (sort items, ExpectedCnt) and capped at maxCrossCacheEntries.
+type skylineCrossCache struct {
+	entries []skylineCrossCacheEntry
+}
+
+// maxCrossCacheEntries bounds the number of distinct sort-property entries stored per
+// DataSource. In practice a DataSource rarely sees more than 2-3 sort properties; the
+// cap prevents unbounded growth in pathological cases (e.g. many correlated subqueries).
+const maxCrossCacheEntries = 4
+
+// sameSortItems returns true if a and b have identical SortItems (same columns in same order).
+func sameSortItems(a, b *property.PhysicalProperty) bool {
+	if len(a.SortItems) != len(b.SortItems) {
+		return false
+	}
+	for i := range a.SortItems {
+		if a.SortItems[i].Desc != b.SortItems[i].Desc {
+			return false
+		}
+		if !a.SortItems[i].Col.EqualColumn(b.SortItems[i].Col) {
+			return false
+		}
+	}
+	return true
+}
+
+// addEntryIfAbsent appends a cache entry for prop unless an entry with the same sort items AND
+// the same ExpectedCnt already exists, or the per-DataSource entry cap is reached. Returns true
+// if an entry was added.
+//
+// ExpectedCnt is part of the key on purpose: the cross-prune limit-aware rule keys on
+// entry.sortProp.ExpectedCnt, so two requests sharing an ORDER BY but carrying different LIMITs
+// (different row budgets) are genuinely distinct dominators. Deduplicating on sort items alone
+// would keep only the first-seen limit and let it govern every later cross-prune, making pruning
+// depend on the order in which the parent explores the limits. Keying on ExpectedCnt keeps each
+// limit's skyline as its own entry so the cached set is independent of exploration order (subject
+// to the entry cap). An empty-property result shared across consumers with different limits is
+// then pruned if it is dominated under any cached limit.
+func (c *skylineCrossCache) addEntryIfAbsent(candidates []*candidatePath, prop *property.PhysicalProperty) bool {
+	for _, entry := range c.entries {
+		if sameSortItems(entry.sortProp, prop) && entry.sortProp.ExpectedCnt == prop.ExpectedCnt {
+			return false
+		}
+	}
+	if len(c.entries) >= maxCrossCacheEntries {
+		return false
+	}
+	c.entries = append(c.entries, skylineCrossCacheEntry{
+		candidates: candidates,
+		sortProp:   prop.CloneEssentialFields(),
+	})
+	return true
+}
+
+// cacheSortPropSkyline records the sort-property skyline `candidates` on ds.CrossSkylineCache
+// so subsequent empty-property findBestTask calls can cross-prune against them.
+//
+// All of the following eligibility gates must hold, otherwise nothing is cached:
+//   - producedValidTask: at least one candidate produced a valid task for this sort property.
+//     Otherwise (e.g. TABLESAMPLE, where convertToSampleTable rejects any non-empty sort) we
+//     would cache infeasible candidates that later act as phantom dominators in
+//     crossSkylinePrune, pruning the only viable empty-property candidates.
+//   - non-empty SortItems and no PartialOrderInfo: only a genuine total-order skyline is useful.
+//   - ExpectedCnt != math.MaxFloat64: only Limit-bounded sort requests. Cross-pruning exists to
+//     protect the Limit-vs-TopN cost comparison, so the candidate worth protecting is always the
+//     child of a Limit (finite ExpectedCnt). An unbounded sort request (e.g. the order a StreamAgg
+//     needs for DISTINCT/GROUP BY) has no Limit consumer that benefits from the order; caching it
+//     would let an order-only (matchResult) dominance prune a cheaper order-less candidate from a
+//     later empty-property call. This is the established "a Limit is present" signal (see
+//     compareCandidates).
+//
+// Multiple sort properties accumulate (deduped by sort items and ExpectedCnt, capped at
+// maxCrossCacheEntries) so cross-pruning does not depend on the order in which properties are
+// explored.
+func cacheSortPropSkyline(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidates []*candidatePath, producedValidTask bool) {
+	// Only the alternative-logical-plan framework consumes this cache (see the cross-prune call
+	// site in findBestTask4LogicalDataSource); skip populating it otherwise.
+	if !ds.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+		return
+	}
+	if !producedValidTask || prop.IsSortItemEmpty() || prop.PartialOrderInfo != nil ||
+		prop.ExpectedCnt == math.MaxFloat64 {
+		return
+	}
+	cache, _ := ds.CrossSkylineCache.(*skylineCrossCache)
+	if cache == nil {
+		cache = &skylineCrossCache{}
+		ds.CrossSkylineCache = cache
+	}
+	cache.addEntryIfAbsent(candidates, prop)
+}
+
+// matchPropertyReadOnly checks whether a path can satisfy the sort property without
+// mutating the original AccessPath. It shallow-copies the path so that matchProperty's
+// side effects (writing GroupedRanges and GroupByColIdxs) are isolated to the copy.
+// This keeps the real matchProperty as the single source of truth for match logic,
+// avoiding divergence (e.g. missing the maxGroupCount guard).
+func matchPropertyReadOnly(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+	pathCopy := *path
+	return matchProperty(ds, &pathCopy, prop)
+}
+
+// crossSkylinePrune compares candidates from an empty-property skyline call against
+// all cached sort-property entries. For each current candidate and each cache entry,
+// matchPropResult is recomputed (read-only) using that entry's sort property, then
+// compareCandidates is run against each cached candidate. If any cached candidate from
+// any entry dominates the current one (considering the sort match dimension), the
+// current candidate is pruned.
+//
+// This addresses a fundamental issue in the optimizer: when skylinePruning runs with an
+// empty property, matchResult is always 0, so a non-ordered index can dominate an
+// ordered index purely on access conditions. The subsequent cost comparison between
+// the TopN task (using the non-ordered index) and the Limit task (using the ordered
+// index) is purely cost-based with no risk protection. Cross-pruning ensures that
+// candidates which are dominated in a sort-aware comparison don't produce tasks that
+// win on potentially underestimated cost.
+func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidatePath, cache *skylineCrossCache) []*candidatePath {
+	if cache == nil || len(cache.entries) == 0 || len(currentCandidates) == 0 {
+		return currentCandidates
+	}
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+	result := make([]*candidatePath, 0, len(currentCandidates))
+	for _, current := range currentCandidates {
+		if current.path.StoreType == kv.TiFlash {
+			result = append(result, current)
+			continue
+		}
+		// Index merge paths are handled separately and should not be cross-pruned.
+		if current.path.PartialIndexPaths != nil || len(current.path.PartialAlternativeIndexPaths) > 0 {
+			result = append(result, current)
+			continue
+		}
+		// Forced paths (USE_INDEX/FORCE_INDEX hints) must not be pruned, matching
+		// the protection in skylinePruning's preferRange post-processing.
+		if current.path.Forced {
+			result = append(result, current)
+			continue
+		}
+		pruned := false
+		// Check against all cached sort-property entries.
+		for _, entry := range cache.entries {
+			if pruned {
+				break
+			}
+			// Create a shallow copy with matchPropResult recomputed for this entry's
+			// sort property, so compareCandidates can use matchResult as a real dimension.
+			// Uses matchPropertyReadOnly to avoid mutating the shared AccessPath.
+			recomputed := *current
+			recomputed.matchPropResult = matchPropertyReadOnly(ds, current.path, entry.sortProp)
+
+			for _, cached := range entry.candidates {
+				if cached.path.StoreType == kv.TiFlash {
+					continue
+				}
+				if cached.path.PartialIndexPaths != nil || len(cached.path.PartialAlternativeIndexPaths) > 0 {
+					continue
+				}
+				cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, entry.sortProp, cached, &recomputed, preferRange)
+				if cmpResult == 1 {
+					// Cached sort-aware candidate dominates current candidate
+					pruned = true
+					break
+				}
+			}
+		}
+		if !pruned {
+			result = append(result, current)
+		}
+	}
+	if len(result) == 0 {
+		// Safety: never prune everything — fall back to the original set.
+		return currentCandidates
+	}
+	// MVIndex paths are incomparable in compareCandidates (see #50125/#49438), so they
+	// can never be pruned here while every non-MVIndex path can. A single MVIndex path
+	// later yields base.InvalidTask in convertToIndexScan, so a result set consisting
+	// solely of MVIndex survivors would bubble up to a "can't find a proper plan" error.
+	// Treat that as the empty case and fall back to the original set.
+	allMVIndex := true
+	for _, c := range result {
+		if !isMVIndexPath(c.path) {
+			allMVIndex = false
+			break
+		}
+	}
+	if allMVIndex {
+		return currentCandidates
+	}
+	return result
+}
+
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
@@ -1772,6 +2058,16 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	idxMissingStats := false
 	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+
+	// Retrieve or create the base cache for property-independent column maps.
+	var baseCache *skylineBaseCache
+	if cached, ok := ds.SkylineBaseCache.(*skylineBaseCache); ok {
+		baseCache = cached
+	} else {
+		baseCache = &skylineBaseCache{entries: make(map[*util.AccessPath]*skylineBaseCandidate)}
+		ds.SkylineBaseCache = baseCache
+	}
+
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
@@ -1793,6 +2089,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
 		}
+		// Look up cached column maps for this path.
+		cached := baseCache.entries[path]
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
 			if prop.PartialOrderInfo != nil {
@@ -1800,7 +2098,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// TODO: support it in the future after we support prefix column as partial order.
 				continue
 			}
-			currentCandidate = getTableCandidate(ds, path, prop)
+			currentCandidate = getTableCandidate(ds, path, prop, cached)
+			// Store in cache after first computation.
+			if cached == nil {
+				baseCache.entries[path] = &skylineBaseCandidate{
+					accessCondsColMap: currentCandidate.accessCondsColMap,
+				}
+			}
 		} else {
 			// Check if this path can be used for partial order optimization
 			var matchPartialOrderIndex bool
@@ -1834,7 +2138,14 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 
 			// After passing the check, generate the candidate
-			currentCandidate = getIndexCandidate(ds, path, prop)
+			currentCandidate = getIndexCandidate(ds, path, prop, cached)
+			// Store in cache after first computation.
+			if cached == nil {
+				baseCache.entries[path] = &skylineBaseCandidate{
+					accessCondsColMap: currentCandidate.accessCondsColMap,
+					indexCondsColMap:  currentCandidate.indexCondsColMap,
+				}
+			}
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
@@ -2141,6 +2452,34 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 
 	t = base.InvalidTask
 	candidates := skylinePruning(ds, prop)
+
+	// Cross-skyline pruning: when a sort-property skyline has already been computed for
+	// this DataSource, use it to cross-prune the current empty-property candidates.
+	// This prevents a non-ordered candidate from surviving the empty-property skyline
+	// (where matchResult is dead) and producing a task that beats an ordered plan on
+	// potentially underestimated cost.
+	//
+	// Restrict to RootTaskType. Both the cache-populating sort call (getPhysLimits) and the
+	// empty-property call this protects against (getPhysTopN) are enumerated for every task type
+	// (cop single/double read, root). The Limit-vs-TopN cost arbitration the rule exists to guard
+	// is decided on the fully built root tasks, so pruning at root is sufficient. Pruning a cop
+	// task call is also unsafe: compareCandidates ignores task-type feasibility, so a cached
+	// ordered dominator can prune the only candidate that yields a valid task for prop.TaskTp
+	// (e.g. the sole double-read index under CopMultiReadTaskType, where a table scan or covering
+	// index returns InvalidTask), and the wipeout fallbacks in crossSkylinePrune do not catch that
+	// partial over-pruning.
+	//
+	// Cross-skyline pruning only benefits the alternative-logical-plan framework
+	// (tidb_opt_enable_alternative_logical_plans), where the same DataSource is costed under
+	// correlated-Apply vs decorrelated shapes and an ordered, LIMIT-bounded plan must survive to
+	// compete. Outside that mode it is a no-op on the final plan, so it is gated off to avoid the
+	// pruning pass and any enumeration churn. The property-independent SkylineBaseCache is always on.
+	if ds.SCtx().GetSessionVars().EnableAlternativeLogicalPlans &&
+		prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil && prop.TaskTp == property.RootTaskType {
+		if cache, ok := ds.CrossSkylineCache.(*skylineCrossCache); ok {
+			candidates = crossSkylinePrune(ds, candidates, cache)
+		}
+	}
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {
@@ -2326,6 +2665,10 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			t = idxTask
 		}
 	}
+
+	// Cache the sort-aware skyline so later empty-property calls can cross-prune against it.
+	// See cacheSortPropSkyline for the eligibility gates (valid task, Limit-bounded, etc.).
+	cacheSortPropSkyline(ds, prop, candidates, t != nil && !t.Invalid())
 
 	return
 }

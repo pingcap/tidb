@@ -59,6 +59,15 @@ func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.
 		// so we can support preferring a specific LIMIT or TopN within one slice.
 		// For example, among all LIMIT tasks, we prefer the one pushed down to TiKV.
 		// Then we compare the preferred task from each slice by their actual cost.
+		// Cross-skyline pruning is only active when alternative logical plans are enabled
+		// (tidb_opt_enable_alternative_logical_plans), so the enumeration order only matters then.
+		// In that mode, PhysicalLimit (sorted) is enumerated before PhysicalTopN (unsorted) so the
+		// DataSource's sort-aware skyline candidates are cached before the empty-property call,
+		// enabling cross-skyline pruning of dominated candidates (see findBestTask4LogicalDataSource).
+		// Otherwise keep the original order to avoid perturbing plan enumeration/IDs.
+		if lt.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+			return [][]base.PhysicalPlan{getPhysLimits(lt, prop), getPhysTopN(lt, prop)}, true, nil
+		}
 		return [][]base.PhysicalPlan{getPhysTopN(lt, prop), getPhysLimits(lt, prop)}, true, nil
 	}
 	return nil, true, nil
