@@ -84,6 +84,38 @@ var expectedFilesInReplayerForCapture = []string{
 	"variables.toml",
 }
 
+func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
+	require.True(t, rows.Next(), "unexpected data")
+	var item, filename string
+	require.NoError(t, rows.Scan(&item, &filename))
+	require.Equal(t, "File token", item)
+	require.NotEmpty(t, filename)
+	require.False(t, rows.Next(), "unexpected extra row")
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	return filename
+}
+
+func requirePlanReplayerFileTokenFromResult(t *testing.T, rows [][]any) string {
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 2)
+	require.Equal(t, "File token", rows[0][0])
+	filename, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, filename)
+	return filename
+}
+
+func requireSingleStringFromRows(t *testing.T, rows *sql.Rows) string {
+	require.True(t, rows.Next(), "unexpected data")
+	var value string
+	require.NoError(t, rows.Scan(&value))
+	require.False(t, rows.Next(), "unexpected extra row")
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	return value
+}
+
 func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (srv *server.Server, client *testserverclient.TestServerClient) {
 	driver := server.NewTiDBDriver(store)
 	client = testserverclient.NewTestServerClient()
@@ -244,10 +276,7 @@ func TestPlanReplayerLoadWithSemicolonInColumnComment(t *testing.T) {
 	tk.MustExec("create table t(k1 int, k2 int comment 'xx;xxx')")
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 
 	resp, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
@@ -319,15 +348,9 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table tt")
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename2 string
-	require.NoError(t, rows.Scan(&filename2))
-	require.NoError(t, rows.Close())
+	filename2 := requireSingleStringFromRows(t, rows)
 	require.Equal(t, filename, filename2)
 
 	tk.MustExec("plan replayer capture 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7' '*'")
@@ -571,15 +594,9 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	require.NoError(t, err)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
-	var token string
-	require.NoError(t, rows.Scan(&token))
-	require.NoError(t, rows.Close())
+	token := requireSingleStringFromRows(t, rows)
 	require.Equal(t, filename, token)
 
 	// Cleanup the binding created for dumping to avoid interference when the same server later loads the replayer file.
@@ -644,12 +661,9 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
+	require.Equal(t, filename, requireSingleStringFromRows(t, rows))
 	return filename
 }
 
@@ -706,12 +720,9 @@ JOIN test_table t2 ON t1.id = t2.id;
 		}()
 	}
 	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
-	require.True(t, rows.Next(), "unexpected data")
-	var filename string
-	require.NoError(t, rows.Scan(&filename))
-	require.NoError(t, rows.Close())
+	filename := requirePlanReplayerFileTokenFromRows(t, rows)
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
-	require.True(t, rows.Next(), "unexpected data")
+	require.Equal(t, filename, requireSingleStringFromRows(t, rows))
 	return filename
 }
 
@@ -960,9 +971,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	query := "select * from t where a > 1"
 
 	// 2-1. specify time1 to get the plan replayer
-	filename1 := tk.MustQuery(
+	filename1 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
 		fmt.Sprintf(template, strconv.FormatUint(ts1, 10), query),
-	).Rows()[0][0].(string)
+	).Rows())
 	zip1 := fetchZipFromPlanReplayerAPI(t, client, filename1)
 	jsonTbls1, metas1, errMsg1 := getInfoFromPlanReplayerZip(t, zip1)
 
@@ -983,9 +994,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Equal(t, []string{"Historical stats for test.t are unavailable, fallback to latest stats", ""}, errMsg1)
 
 	// 2-2. specify time2 to get the plan replayer
-	filename2 := tk.MustQuery(
+	filename2 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
 		fmt.Sprintf(template, time2.Format("2006-01-02 15:04:05.000000"), query),
-	).Rows()[0][0].(string)
+	).Rows())
 	zip2 := fetchZipFromPlanReplayerAPI(t, client, filename2)
 	jsonTbls2, metas2, errMsg2 := getInfoFromPlanReplayerZip(t, zip2)
 
@@ -1007,9 +1018,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Empty(t, errMsg2)
 
 	// 2-3. specify time3 to get the plan replayer
-	filename3 := tk.MustQuery(
+	filename3 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
 		fmt.Sprintf(template, time3.Format("2006-01-02T15:04:05.000000Z07:00"), query),
-	).Rows()[0][0].(string)
+	).Rows())
 	zip3 := fetchZipFromPlanReplayerAPI(t, client, filename3)
 	jsonTbls3, metas3, errMsg3 := getInfoFromPlanReplayerZip(t, zip3)
 
