@@ -4213,7 +4213,7 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 	tkCancel := testkit.NewTestKit(t, store)
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_cancel_u", Hostname: "%"}, nil, nil, nil))
 	err = tkCancel.ExecToErr(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
-	require.ErrorContains(t, err, "cannot cancel materialized view refresh job")
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
 	tk.MustExec("grant operate view on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
 	requestedCh := waitMVTaskCancelWatcherRequested(t, "refresh-")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
@@ -4246,12 +4246,14 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 	require.Equal(t, "cancelled manually by 'mv_refresh_cancel_u'@'%'", fmt.Sprint(reasonRows[0][0]))
 }
 
-func TestCancelMaterializedViewRefreshJobNotRunning(t *testing.T) {
+func TestCancelMaterializedViewJobNotRunning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	err := tk.ExecToErr("cancel materialized view refresh job 1")
-	require.ErrorContains(t, err, "cannot cancel materialized view refresh job 1: job not running, not found, or cancel already requested")
+	require.ErrorContains(t, err, "cannot cancel materialized view refresh job 1")
+	err = tk.ExecToErr("cancel materialized view log purge job 1")
+	require.ErrorContains(t, err, "cannot cancel materialized view log purge job 1")
 }
 
 func TestMaterializedViewRefreshCancelWatcherStopsAfterTaskFinish(t *testing.T) {
