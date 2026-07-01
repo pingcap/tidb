@@ -64,6 +64,8 @@ type BuildOptions struct {
 	AllowCastArray bool
 	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
 	TargetFieldType *types.FieldType
+	// UseNewCollate whether to use new collate when building expression.
+	UseNewCollate bool
 }
 
 // BuildOption is a function to apply optional settings
@@ -98,6 +100,14 @@ func WithAllowCastArray(allow bool) BuildOption {
 func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	return func(options *BuildOptions) {
 		options.TargetFieldType = targetFt
+	}
+}
+
+// WithUseNewCollate means the expression will be built with new collate if
+// useNewCollate is true.
+func WithUseNewCollate(useNewCollate bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.UseNewCollate = useNewCollate
 	}
 }
 
