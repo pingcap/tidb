@@ -1523,8 +1523,18 @@ func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
-// 2. the column's default value is null, and the value equals to that but has no origin default;
-// 3. the column is virtual generated.
+// 2. the column is virtual generated.
+//
+// Note: Previously, columns with nil default, nil origin default, and null value
+// were also skipped. This was removed because it violates the Row Format v2 spec
+// (docs/design/2018-07-19-row-format.md) which states:
+//
+//	"we can not omit the null column ID because if the column ID is not found
+//	 in the row, we will use the default value in the schema which may not be null"
+//
+// After NOT NULL→NULL DDL changes, both defaults become nil, causing downstream
+// components (TiFlash) to misinterpret missing null column IDs as "use default"
+// instead of "value is NULL". See https://github.com/pingcap/tidb/issues/61709
 func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
@@ -1539,9 +1549,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 			canSkip = canSkip && !types.NeedRestoredData(&col.FieldType)
 			return canSkip
 		}
-	}
-	if col.GetDefaultValue() == nil && value.IsNull() && col.GetOriginDefaultValue() == nil {
-		return true
 	}
 	if col.IsVirtualGenerated() {
 		return true
