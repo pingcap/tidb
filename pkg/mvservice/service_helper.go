@@ -348,34 +348,54 @@ func resolveMVIdentityByID(
 	return schemaName, mviewName, alertWarningSec, alertOverdueSec, true, nil
 }
 
+func resolveMVLogMetaByID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvLogID int64,
+) (infoSchema infoschema.InfoSchema, mLogMeta *meta.TableInfo, mLogInfo *meta.MaterializedViewLogInfo, found bool, err error) {
+	if mvLogID <= 0 {
+		return nil, nil, nil, false, errors.New("materialized view log id is invalid")
+	}
+	infoSchema = sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	if !ok {
+		return nil, nil, nil, false, nil
+	}
+	mLogMeta = mLogTbl.Meta()
+	if mLogMeta == nil || mLogMeta.MaterializedViewLog == nil {
+		return nil, nil, nil, false, nil
+	}
+	return infoSchema, mLogMeta, mLogMeta.MaterializedViewLog, true, nil
+}
+
+func resolveMVLogIdentityFromMeta(infoSchema infoschema.InfoSchema, mLogMeta *meta.TableInfo) (schemaName, mlogName string, found bool) {
+	dbInfo, ok := infoSchema.SchemaByID(mLogMeta.DBID)
+	if !ok || dbInfo == nil {
+		return "", "", false
+	}
+	schemaName = dbInfo.Name.L
+	mlogName = mLogMeta.Name.L
+	if schemaName == "" || mlogName == "" {
+		return "", "", false
+	}
+	return schemaName, mlogName, true
+}
+
 func resolveMVLogAccumulationAlertByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	mvLogID int64,
 ) (schemaName, mlogName string, alertRows uint64, enabled bool, found bool, err error) {
-	if mvLogID <= 0 {
-		return "", "", 0, false, false, errors.New("materialized view log id is invalid")
+	infoSchema, mLogMeta, mLogInfo, found, err := resolveMVLogMetaByID(ctx, sctx, mvLogID)
+	if err != nil || !found {
+		return "", "", 0, false, false, err
 	}
-	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
-	if !ok {
-		return "", "", 0, false, false, nil
-	}
-	mLogMeta := mLogTbl.Meta()
-	if mLogMeta == nil || mLogMeta.MaterializedViewLog == nil {
-		return "", "", 0, false, false, nil
-	}
-	alertRows, enabled = mLogMeta.MaterializedViewLog.EffectiveLogAccumulationAlertRows()
+	alertRows, enabled = mLogInfo.EffectiveLogAccumulationAlertRows()
 	if !enabled {
 		return "", "", alertRows, false, true, nil
 	}
-	dbInfo, ok := infoSchema.SchemaByID(mLogMeta.DBID)
-	if !ok || dbInfo == nil {
-		return "", "", 0, false, false, nil
-	}
-	schemaName = dbInfo.Name.L
-	mlogName = mLogMeta.Name.L
-	if schemaName == "" || mlogName == "" {
+	schemaName, mlogName, found = resolveMVLogIdentityFromMeta(infoSchema, mLogMeta)
+	if !found {
 		return "", "", 0, false, false, nil
 	}
 	return schemaName, mlogName, alertRows, true, true, nil
@@ -386,25 +406,12 @@ func resolveMVLogIdentityByID(
 	sctx sessionctx.Context,
 	mvLogID int64,
 ) (schemaName, mlogName string, found bool, err error) {
-	if mvLogID <= 0 {
-		return "", "", false, errors.New("materialized view log id is invalid")
+	infoSchema, mLogMeta, _, found, err := resolveMVLogMetaByID(ctx, sctx, mvLogID)
+	if err != nil || !found {
+		return "", "", false, err
 	}
-	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
-	if !ok {
-		return "", "", false, nil
-	}
-	mLogMeta := mLogTbl.Meta()
-	if mLogMeta == nil || mLogMeta.MaterializedViewLog == nil {
-		return "", "", false, nil
-	}
-	dbInfo, ok := infoSchema.SchemaByID(mLogMeta.DBID)
-	if !ok || dbInfo == nil {
-		return "", "", false, nil
-	}
-	schemaName = dbInfo.Name.L
-	mlogName = mLogMeta.Name.L
-	if schemaName == "" || mlogName == "" {
+	schemaName, mlogName, found = resolveMVLogIdentityFromMeta(infoSchema, mLogMeta)
+	if !found {
 		return "", "", false, nil
 	}
 	return schemaName, mlogName, true, nil
