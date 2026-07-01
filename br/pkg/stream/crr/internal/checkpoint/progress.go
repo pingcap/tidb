@@ -122,6 +122,10 @@ func (c *Calculator) planRound(ctx context.Context) (roundPlan, error) {
 			cancel()
 			break
 		}
+		if syncedTS, ok := c.state.syncedByStore[metaFile.storeID]; ok && metaFile.flushTS <= syncedTS {
+			plan.statistic.SkippedStoreSyncedMetaFileCount++
+			continue
+		}
 
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
@@ -258,6 +262,7 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 func (s FileStatistic) snapshot() *FileStatistic {
 	cloned := FileStatistic{
 		UpstreamReadMetaFileCount:       s.UpstreamReadMetaFileCount,
+		SkippedStoreSyncedMetaFileCount: s.SkippedStoreSyncedMetaFileCount,
 		EstimatedSyncLogFileCount:       s.EstimatedSyncLogFileCount,
 		DownstreamCheckFileCount:        s.DownstreamCheckFileCount,
 		PlannedFileSuffixCounts:         maps.Clone(s.PlannedFileSuffixCounts),

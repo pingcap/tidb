@@ -42,6 +42,7 @@ func GetStatusFileName() string {
 // StatusStatistic summarizes the current round's file-related work.
 type StatusStatistic struct {
 	UpstreamReadMetaFileCount       int            `json:"upstream_read_meta_file_count"`
+	SkippedStoreSyncedMetaFileCount int            `json:"skipped_store_synced_meta_file_count"`
 	EstimatedSyncLogFileCount       int            `json:"estimated_sync_log_file_count"`
 	DownstreamCheckFileCount        int            `json:"downstream_check_file_count"`
 	PlannedFileSuffixCounts         map[string]int `json:"planned_file_suffix_counts,omitempty"`
@@ -219,6 +220,7 @@ func (o *statusObserver) OnCheckpointEvent(event checkpoint.CheckpointEvent) {
 func newStatusStatistic(stat checkpoint.FileStatistic) StatusStatistic {
 	return StatusStatistic{
 		UpstreamReadMetaFileCount:       stat.UpstreamReadMetaFileCount,
+		SkippedStoreSyncedMetaFileCount: stat.SkippedStoreSyncedMetaFileCount,
 		EstimatedSyncLogFileCount:       stat.EstimatedSyncLogFileCount,
 		DownstreamCheckFileCount:        stat.DownstreamCheckFileCount,
 		PlannedFileSuffixCounts:         maps.Clone(stat.PlannedFileSuffixCounts),

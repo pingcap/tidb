@@ -30,6 +30,7 @@ go_test(
         "//br/pkg/stream/crr/internal/checkpoint",
         "//br/pkg/streamhelper/config",
         "//br/pkg/utiltest/crr",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
     ],
 )
