@@ -23,19 +23,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/tablemode"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -61,26 +58,34 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	defer redactSensitiveInfo(task, taskMeta)
 
-	if kerneltype.IsClassic() {
-		taskManager, err := storage.GetTaskManager()
-		if err != nil {
+	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
+	taskMgr, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	plan := &taskMeta.Plan
+	// we reset the mode on task Done, this reset here works as a fallback.
+	// and since cleanup is an async process, the db/table might already be
+	// dropped/truncated, we can ignore the error.
+	// TODO: we should avoid calling reset when the reset on task Done is success,
+	// else it's possible to have below race due to async cleanup:
+	// 1. task Done, reset to normal mode
+	// 2. table rows are deleted and empty, table ID remains the same, imported
+	//    again and switch to Import mode
+	// 3. cleanup starts, reset to the table of same ID to normal mode, but we
+	//    shouldn't do it actually.
+	if err = tablemode.ResetWithTaskRuntime(ctx, taskMgr, task.Keyspace, task.ID, plan); err != nil {
+		if !goerrors.Is(err, infoschema.ErrDatabaseNotExists) &&
+			!goerrors.Is(err, infoschema.ErrTableNotExists) {
 			return err
 		}
-		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-		}); err != nil {
-			// If the table is not found, it means the table has been either
-			// dropped or truncated. In such cases, the table mode has already
-			// been reset to normal, so we can ignore this error.
-			if !goerrors.Is(err, infoschema.ErrTableNotExists) {
-				return err
-			}
-
-			logutil.BgLogger().Warn(
-				"table not found during import cleanup, skip altering table mode",
-				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
-			)
-		}
+		logger.Info("db/table not found during import cleanup, skip altering table mode",
+			zap.String("db-name", plan.DBName),
+			zap.String("table-name", plan.TableInfo.Name.O),
+			zap.Int64("db-id", plan.DBID),
+			zap.Int64("tableID", plan.TableInfo.ID),
+			zap.Error(err),
+		)
 	}
 
 	failpoint.InjectCall("mockCleanupError", &err)
@@ -92,7 +97,6 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
 	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
 

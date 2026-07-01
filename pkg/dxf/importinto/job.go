@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -34,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/tablemode"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -75,7 +73,13 @@ func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
 	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
 }
 
-func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+func doSubmitTask(
+	ctx context.Context,
+	plan *importer.Plan,
+	stmt string,
+	instance *serverinfo.ServerInfo,
+	chunkMap map[int32][]importer.Chunk,
+) (jobID int64, task *proto.TaskBase, resErr error) {
 	var instances []*serverinfo.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
@@ -107,9 +111,20 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		MaxNodeCnt: plan.MaxNodeCnt,
 	}
 	var (
-		jobID, taskID int64
+		taskID          int64
+		runningOnUserKS bool
 	)
-	var runningOnUserKS bool
+	// DDL execution is a multiple step process, the table might be in import mode
+	// even when below switch call return error, so we put the defer above that
+	// call to ensure we reset the table mode to normal.
+	defer func() {
+		if resErr != nil {
+			tablemode.ResetAfterSubmitFailure(ctx, taskManager, plan, jobID)
+		}
+	}()
+	if err = tablemode.ToImportModeOnSubmit(ctx, taskManager, plan); err != nil {
+		return 0, nil, err
+	}
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		runningOnUserKS = kv.IsUserKS(se.GetStore())
 		var err2 error
@@ -118,12 +133,6 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {
 			return err2
-		}
-		if kerneltype.IsClassic() {
-			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
-			if err2 != nil {
-				return err2
-			}
 		}
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
@@ -165,7 +174,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		}
 	}
 	handle.NotifyTaskChange()
-	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
+	task, err = dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -191,6 +200,9 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 func submitTask2DXF(logicalPlan *LogicalPlan, planCtx planner.PlanCtx, taskMgr *storage.TaskManager) (int64, error) {
 	// TODO: use planner.Run to run the logical plan
 	// now creating import job and submitting distributed task should be in the same transaction.
+	failpoint.Inject("failImportIntoSubmitTask2DXF", func() {
+		failpoint.Return(0, errors.New("injected import into submit task failure"))
+	})
 	p := planner.NewPlanner()
 	return p.Run(planCtx, logicalPlan, taskMgr)
 }
