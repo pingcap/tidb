@@ -634,11 +634,6 @@ type alternativeRound struct {
 // wrapper. Safe because optimize is single-threaded per session.
 var savedEnableCorrelateSubquery bool
 
-// savedEnableSemiJoinRewrite holds the pre-round value of
-// EnableSemiJoinRewrite so setup/cleanup can restore it after the
-// semi-join-rewrite round. Safe because optimize is single-threaded per session.
-var savedEnableSemiJoinRewrite bool
-
 // savedFTSLikeFallback holds the pre-round value of
 // AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
 // setup/cleanup can restore it after running with the flag forced on. Safe
@@ -672,11 +667,11 @@ var alternativeRounds = [...]alternativeRound{
 		name:    "semi-join-rewrite",
 		enabled: shouldTrySemiJoinRewriteRound,
 		setup: func(sv *variable.SessionVars) {
-			savedEnableSemiJoinRewrite = sv.EnableSemiJoinRewrite
 			sv.EnableSemiJoinRewrite = true
 		},
 		cleanup: func(sv *variable.SessionVars) {
-			sv.EnableSemiJoinRewrite = savedEnableSemiJoinRewrite
+			// This round is enabled only when the original value is false.
+			sv.EnableSemiJoinRewrite = false
 		},
 	},
 	{
