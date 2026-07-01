@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	streamhelperconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	testutil "github.com/pingcap/tidb/br/pkg/utiltest/crr"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -477,6 +478,7 @@ func TestServiceStatusEndpoints(t *testing.T) {
 		SyncedTS:           42,
 		Statistic: &checkpoint.FileStatistic{
 			UpstreamReadMetaFileCount:       3,
+			SkippedStoreSyncedMetaFileCount: 5,
 			EstimatedSyncLogFileCount:       7,
 			DownstreamCheckFileCount:        11,
 			PlannedFileSuffixCounts:         map[string]int{".log": 7, ".meta": 3},
@@ -511,6 +513,7 @@ func TestServiceStatusEndpoints(t *testing.T) {
 	require.Equal(t, uint64(42), snapshot.SafeCheckpoint)
 	require.Equal(t, uint64(42), snapshot.SyncedTS)
 	require.Equal(t, 3, snapshot.Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 5, snapshot.Statistic.SkippedStoreSyncedMetaFileCount)
 	require.Equal(t, 7, snapshot.Statistic.EstimatedSyncLogFileCount)
 	require.Equal(t, 11, snapshot.Statistic.DownstreamCheckFileCount)
 	require.Equal(t, map[string]int{".log": 7, ".meta": 3}, snapshot.Statistic.PlannedFileSuffixCounts)
@@ -526,9 +529,10 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 		Time:             time.Now(),
 		PendingFileCount: 2,
 		Statistic: &checkpoint.FileStatistic{
-			UpstreamReadMetaFileCount: 1,
-			EstimatedSyncLogFileCount: 1,
-			PlannedFileSuffixCounts:   map[string]int{".log": 1, ".meta": 1},
+			UpstreamReadMetaFileCount:       1,
+			SkippedStoreSyncedMetaFileCount: 3,
+			EstimatedSyncLogFileCount:       1,
+			PlannedFileSuffixCounts:         map[string]int{".log": 1, ".meta": 1},
 		},
 	})
 	status.applyEvent(checkpoint.CheckpointEvent{
@@ -536,6 +540,7 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 		Time: time.Now(),
 		Statistic: &checkpoint.FileStatistic{
 			UpstreamReadMetaFileCount:       1,
+			SkippedStoreSyncedMetaFileCount: 4,
 			EstimatedSyncLogFileCount:       1,
 			DownstreamCheckFileCount:        2,
 			PlannedFileSuffixCounts:         map[string]int{".log": 1, ".meta": 1},
@@ -545,10 +550,12 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 
 	snapshot := status.snapshotCopy()
 	require.Equal(t, 1, snapshot.Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 4, snapshot.Statistic.SkippedStoreSyncedMetaFileCount)
 	require.Equal(t, 1, snapshot.Statistic.EstimatedSyncLogFileCount)
 	require.Equal(t, 2, snapshot.Statistic.DownstreamCheckFileCount)
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, snapshot.Statistic.PlannedFileSuffixCounts)
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, snapshot.Statistic.DownstreamCheckFileSuffixCounts)
+	require.Equal(t, 4.0, promtest.ToFloat64(skippedStoreSyncedMetaFileCount.WithLabelValues("task")))
 
 	snapshot.Statistic.PlannedFileSuffixCounts[".txt"] = 99
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, status.snapshotCopy().Statistic.PlannedFileSuffixCounts)

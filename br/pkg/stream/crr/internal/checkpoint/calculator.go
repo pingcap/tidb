@@ -64,6 +64,7 @@ type CheckpointEvent struct {
 // FileStatistic summarizes the files observed in the current calculation round.
 type FileStatistic struct {
 	UpstreamReadMetaFileCount       int
+	SkippedStoreSyncedMetaFileCount int
 	EstimatedSyncLogFileCount       int
 	DownstreamCheckFileCount        int
 	PlannedFileSuffixCounts         map[string]int

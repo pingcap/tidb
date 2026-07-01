@@ -99,6 +99,12 @@ var (
 		Name:      "upstream_read_meta_file_count",
 		Help:      "Read upstream meta file count in latest round statistic.",
 	}, []string{"task"})
+	skippedStoreSyncedMetaFileCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "br_crr",
+		Name:      "skipped_store_synced_meta_file_count",
+		Help:      "Skipped upstream meta file count because the store is already synced past the meta flush ts in latest round statistic.",
+	}, []string{"task"})
 	estimatedSyncLogFileCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "br_crr",
@@ -127,6 +133,7 @@ func init() {
 	prometheus.MustRegister(pendingFileCount)
 	prometheus.MustRegister(consecutiveFailures)
 	prometheus.MustRegister(upstreamReadMetaFileCount)
+	prometheus.MustRegister(skippedStoreSyncedMetaFileCount)
 	prometheus.MustRegister(estimatedSyncLogFileCount)
 	prometheus.MustRegister(downstreamCheckFileCount)
 }
@@ -168,6 +175,7 @@ func observeStatusMetrics(snapshot *StatusSnapshot) {
 	pendingFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.PendingFileCount))
 	consecutiveFailures.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.ConsecutiveFailures))
 	upstreamReadMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.UpstreamReadMetaFileCount))
+	skippedStoreSyncedMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.SkippedStoreSyncedMetaFileCount))
 	estimatedSyncLogFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.EstimatedSyncLogFileCount))
 	downstreamCheckFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.DownstreamCheckFileCount))
 }

@@ -332,6 +332,62 @@ func TestCheckpointCalculatorObservedRemovedStoreStillBoundsSyncedTS(t *testing.
 	)
 }
 
+func TestCheckpointCalculatorSkipsMetaSyncedByStoreProgress(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	staleMetaPath, staleLogPath := writeCheckpointTestMeta(ctx, t, upstream, 15, 2)
+	syncedFiles := fileExistenceMap{
+		staleMetaPath: true,
+	}
+	require.False(t, syncedFiles[staleLogPath])
+
+	pd := &fakePDMetaReader{}
+	pd.Set(30, 2)
+	observer := &recordingObserver{}
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(syncedFiles),
+		},
+		checkpoint.CheckpointCalculatorConfig{
+			TaskName:     "drr_test_task",
+			PollInterval: time.Millisecond,
+		},
+		observer,
+	)
+	require.NoError(t, err)
+	require.NoError(t, calculator.RestorePersistentState(checkpoint.PersistentState{
+		LastCheckpoint: 20,
+		SyncedTS:       10,
+		SyncedByStore: map[uint64]uint64{
+			1: 10,
+			2: 20,
+		},
+	}))
+
+	computeCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+
+	checkpointTS, err := calculator.ComputeNextCheckpoint(computeCtx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(30), checkpointTS)
+
+	events := observer.Events()
+	require.Len(t, events, 3)
+	require.Equal(t, checkpoint.EventRoundPlanned, events[1].Type)
+	require.NotNil(t, events[1].Statistic)
+	require.Zero(t, events[1].Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 1, events[1].Statistic.SkippedStoreSyncedMetaFileCount)
+	require.Zero(t, events[1].PendingFileCount)
+	require.Equal(t, checkpoint.EventCheckpointAdvanced, events[2].Type)
+	require.NotNil(t, events[2].Statistic)
+	require.Equal(t, 1, events[2].Statistic.SkippedStoreSyncedMetaFileCount)
+	require.Zero(t, events[2].Statistic.DownstreamCheckFileCount)
+}
+
 type fakePDMetaReader struct {
 	mu         sync.Mutex
 	checkpoint uint64
@@ -456,9 +512,10 @@ func writeCheckpointTestMeta(
 
 	logPath := fmt.Sprintf("v1/log/store-%d/flush-%016x.log", storeID, flushTS)
 	metaPath := fmt.Sprintf(
-		"%s/%016X-%016X-%016X-%016X.meta",
+		"%s/%016X%016X-d%016Xl%016Xu%016X.meta",
 		stream.GetStreamBackupMetaPrefix(),
 		flushTS,
+		storeID,
 		flushTS,
 		flushTS,
 		flushTS,

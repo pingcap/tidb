@@ -34,7 +34,7 @@ go_test(
     ],
     embed = [":checkpoint"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 22,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/stream",
