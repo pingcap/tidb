@@ -27,7 +27,7 @@ group_concat(value collate utf8mb4_bin)
 abc,Abc,def,abc
 explain format='plan_tree' select group_concat(distinct value order by 1) from t;
 id	task	access object	operator info
-HashAgg	root		funcs:group_concat(distinct collation_agg_func.t.value order by collation_agg_func.t.value separator ",")->Column
+StreamAgg	root		funcs:group_concat(distinct collation_agg_func.t.value order by collation_agg_func.t.value separator ",")->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value order by 1)) from t;
@@ -35,7 +35,7 @@ upper(group_concat(distinct value order by 1))
 ABC,DEF
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
 id	task	access object	operator info
-HashAgg	root		funcs:group_concat(distinct Column order by Column separator ",")->Column
+StreamAgg	root		funcs:group_concat(distinct Column order by Column separator ",")->Column
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -44,12 +44,12 @@ upper(group_concat(distinct value collate utf8mb4_bin order by 1))
 ABC,ABC,DEF
 explain format='plan_tree' select group_concat(distinct value) from t;
 id	task	access object	operator info
-HashAgg	root		funcs:group_concat(distinct collation_agg_func.t.value separator ",")->Column
+StreamAgg	root		funcs:group_concat(distinct collation_agg_func.t.value separator ",")->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin) from t;
 id	task	access object	operator info
-HashAgg	root		funcs:group_concat(distinct Column separator ",")->Column
+StreamAgg	root		funcs:group_concat(distinct Column separator ",")->Column
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

@@ -221,7 +221,21 @@ func (m *memoryOpsHistoryManager) init() {
 func (m *memoryOpsHistoryManager) recordOne(info *sessmgr.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(info.ToRow(time.UTC)...)}
+
+	bytesConsumed := int64(0)
+	if info.MemTracker != nil {
+		bytesConsumed = info.MemTracker.BytesConsumed()
+	}
+	diskConsumed := int64(0)
+	if info.DiskTracker != nil {
+		diskConsumed = info.DiskTracker.BytesConsumed()
+	}
+	processInfo := append(info.ToRowForShow(true), info.Digest,
+		bytesConsumed,
+		nil, nil, nil,
+		diskConsumed,
+	)
+	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(processInfo...)}
 	sqlInfo := op.processInfoDatum[7]
 	sqlInfo.SetString(fmt.Sprintf("%.256v", sqlInfo.GetString()), mysql.DefaultCollationName) // Truncated
 	// Only record the last 50 history ops
