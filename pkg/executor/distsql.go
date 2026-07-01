@@ -952,6 +952,124 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	return nil
 }
 
+func getIndexScanMaxInFlight(distSQLConcurrency int) int {
+	if distSQLConcurrency < 1 {
+		return 1
+	}
+	return 2 * distSQLConcurrency
+}
+
+func getSelectResultInFlightCost(result distsql.SelectResult) int {
+	inFlightCost := 1
+	if conc, extraConc, ok := distsql.GetSelectResultConcurrency(result); ok {
+		inFlightCost = conc + extraConc
+	}
+	if inFlightCost < 1 {
+		inFlightCost = 1
+	}
+	return inFlightCost
+}
+
+func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency int) *tikvutil.RateLimit {
+	if !needMerge {
+		return nil
+	}
+	// Use a shared limiter to bound aggregate in-flight cop requests across
+	// all partitions in merge-sort mode.
+	capacity := distSQLConcurrency
+	if capacity < 1 {
+		capacity = 1
+	}
+	return tikvutil.NewRateLimit(2 * capacity)
+}
+
+func getMergeSortIndexScanConcurrency(needMerge bool, kvRangesCount int, distSQLConcurrency int) int {
+	if !needMerge || kvRangesCount <= 0 {
+		return 0
+	}
+	// Keep merge-sort per-range concurrency proportional to the shared cop send-rate
+	// limit so we cap goroutine fan-out while still leaving room for skewed ranges.
+	base := distSQLConcurrency
+	if base < 1 {
+		base = 1
+	}
+	sharedBudget := 4 * base
+	perRangeConcurrency := sharedBudget / kvRangesCount
+	if perRangeConcurrency < 2 {
+		perRangeConcurrency = 2
+	}
+	if perRangeConcurrency > base {
+		perRangeConcurrency = base
+	}
+	return perRangeConcurrency
+}
+
+func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
+	ctx context.Context,
+	rangeIdx int,
+	kvRange []kv.KeyRange,
+	tblScanIdxForRewritePartitionID int,
+	tps []*types.FieldType,
+	idxID int,
+	tracker *memory.Tracker,
+	totalRanges int,
+	batchSize int,
+	indexScanConcurrency int,
+	sharedCoprRequestRateLimit *tikvutil.RateLimit,
+) (distsql.SelectResult, error) {
+	if tblScanIdxForRewritePartitionID >= 0 {
+		// We should set the TblScan's TableID to the partition physical ID to make sure
+		// the push-down index lookup can encode the table handle key correctly.
+		e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[rangeIdx].GetPhysicalID()
+	}
+
+	var builder distsql.RequestBuilder
+	// Set concurrency before SetDAGRequest intentionally.
+	// SetDAGRequest may override this value (e.g. to 1) for small-limit DAGs.
+	if indexScanConcurrency > 0 {
+		builder.SetConcurrency(indexScanConcurrency)
+	}
+	builder.SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetIsStaleness(e.isStaleness).
+		SetFromSessionVars(e.dctx).
+		SetFromInfoSchema(e.infoSchema).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
+		SetMemTracker(tracker).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+		SetCoprRequestRateLimit(sharedCoprRequestRateLimit)
+
+	if e.indexLookUpPushDown {
+		// Paging and Cop-cache is not supported in index lookup push down.
+		builder.Request.Paging.Enable = false
+		builder.Request.Paging.PagingSizeBytes = 0
+		builder.Request.Cacheable = false
+	}
+
+	if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(batchSize) {
+		// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+		// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+		builder.Request.Paging.MinPagingSize = uint64(batchSize)
+		if builder.Request.Paging.MaxPagingSize < uint64(batchSize) {
+			builder.Request.Paging.MaxPagingSize = uint64(batchSize)
+		}
+	}
+
+	// The key ranges should be ordered.
+	slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
+	kvReq, err := builder.SetKeyRanges(kvRange).Build()
+	if err != nil {
+		return nil, err
+	}
+	return distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
+}
+
 // calculateBatchSize calculates a suitable initial batch size.
 func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int) int {
 	if e.indexPaging {

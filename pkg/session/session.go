@@ -3466,7 +3466,15 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
-		return &distsqlctx.DistSQLContext{
+		pagingSizeBytes := vars.PagingSizeBytes
+		if pagingSizeBytes > 0 {
+			if !vardef.EnableResourceControl.Load() || dom == nil || sc.ResourceGroupName == "" {
+				pagingSizeBytes = 0
+			} else if rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(sc.ResourceGroupName)); !ok || rg.GetBurstLimitAdjusted() < 0 {
+				pagingSizeBytes = 0
+			}
+		}
+		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
@@ -3505,6 +3513,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnablePaging:                  vars.EnablePaging,
 			MinPagingSize:                 vars.MinPagingSize,
 			MaxPagingSize:                 vars.MaxPagingSize,
+			PagingSizeBytes:               pagingSizeBytes,
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,
@@ -3521,6 +3530,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 			ExecDetails: &sc.SyncExecDetails,
 		}
+		return ret
 	})
 
 	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
