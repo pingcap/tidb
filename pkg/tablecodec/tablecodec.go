@@ -998,6 +998,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 	return DecodeIndexKVWithCollate(collate.NewCollationEnabled(), key, value, colsLen, hdStatus, columns)
 }
 
+// DecodeIndexKVWithCollate is similar to DecodeIndexKV but with explicit useNewCollate param.
 func DecodeIndexKVWithCollate(useNewCollate bool, key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		preAlloc := make([][]byte, colsLen, colsLen+len(columns))
