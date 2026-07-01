@@ -27,12 +27,20 @@ import (
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
 // ResourceTracker has the method of GetUsage.
 type ResourceTracker interface {
 	GetDiskUsage() uint64
+}
+
+// LocalSortJobDiskRequirement describes the remaining local-sort disk estimate
+// inputs for one running job.
+type LocalSortJobDiskRequirement struct {
+	RequiredSlots int
+	UsedBytes     uint64
 }
 
 // DiskRoot is used to track the disk usage for the lightning backfill process.
@@ -46,9 +54,14 @@ type DiskRoot interface {
 	UsageInfo() string
 	PreCheckUsage() error
 	StartupCheck() error
+	GetUsage(id int64) uint64
 }
 
-const capacityThreshold = 0.9
+const (
+	capacityThreshold = 0.9
+	// LocalSortBytesPerSlot is the fixed disk reservation per slot for local sort.
+	LocalSortBytesPerSlot = 512 * size.MB
+)
 
 // diskRootImpl implements DiskRoot interface.
 type diskRootImpl struct {
@@ -93,6 +106,17 @@ func (d *diskRootImpl) Count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return len(d.items)
+}
+
+// GetUsage returns the tracked disk usage for a specific job id.
+func (d *diskRootImpl) GetUsage(id int64) uint64 {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	tracker, ok := d.items[id]
+	if !ok {
+		return 0
+	}
+	return tracker.GetDiskUsage()
 }
 
 // UpdateUsage implements DiskRoot interface.
@@ -197,4 +221,71 @@ func (d *diskRootImpl) StartupCheck() error {
 // RiskOfDiskFull checks if the disk has less than 10% space.
 func RiskOfDiskFull(available, capacity uint64) bool {
 	return float64(available) < (1-capacityThreshold)*float64(capacity)
+}
+
+// CheckLocalSortFreeDisk ensures the local ingest temp directory has enough free
+// disk space for the incoming local-sort job.
+func CheckLocalSortFreeDisk(runningJobs []LocalSortJobDiskRequirement, newJobRequiredSlots int) error {
+	sortPath, err := GenIngestTempDataDir()
+	if err != nil {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+	}
+	sz, err := lcom.GetStorageSize(sortPath)
+	if err != nil {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+	}
+
+	return checkLocalSortFreeDisk(sortPath, sz.Available, sz.Capacity, runningJobs, newJobRequiredSlots)
+}
+
+// GetTrackedJobDiskUsage returns current tracked local-sort disk usage for a job.
+func GetTrackedJobDiskUsage(jobID int64) uint64 {
+	if LitDiskRoot == nil {
+		return 0
+	}
+	return LitDiskRoot.GetUsage(jobID)
+}
+
+func checkLocalSortFreeDisk(
+	sortPath string,
+	availableBytes uint64,
+	totalCapacityBytes uint64,
+	runningJobs []LocalSortJobDiskRequirement,
+	newJobRequiredSlots int,
+) error {
+	allJobsRequiredBytes := uint64(newJobRequiredSlots) * LocalSortBytesPerSlot
+	allJobsUsedBytes := uint64(0)
+	for _, runningJob := range runningJobs {
+		allJobsRequiredBytes += uint64(runningJob.RequiredSlots) * LocalSortBytesPerSlot
+		allJobsUsedBytes += runningJob.UsedBytes
+	}
+	allJobsGapBytes := uint64(0)
+	if allJobsRequiredBytes > allJobsUsedBytes {
+		allJobsGapBytes = allJobsRequiredBytes - allJobsUsedBytes
+	}
+	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
+	if availableBytes >= totalRequiredBytes {
+		logutil.DDLIngestLogger().Info("local sort free disk check passed",
+			zap.Uint64("totalRequiredBytes", totalRequiredBytes),
+			zap.Uint64("availableBytes", availableBytes),
+			zap.String("sortPath", sortPath),
+			zap.Uint64("totalCapacityBytes", totalCapacityBytes),
+			zap.Int("runningLocalSortJobCount", len(runningJobs)),
+			zap.Int("newJobRequiredSlots", newJobRequiredSlots),
+			zap.Uint64("localSortBytesPerSlot", LocalSortBytesPerSlot))
+		return nil
+	}
+
+	return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+		fmt.Sprintf(
+			"local sort requires at least %d bytes free disk space, but only %d bytes are available in %s; total capacity %d bytes, running local-sort job count %d, new job required slots %d, bytes per slot %d",
+			totalRequiredBytes,
+			availableBytes,
+			sortPath,
+			totalCapacityBytes,
+			len(runningJobs),
+			newJobRequiredSlots,
+			LocalSortBytesPerSlot,
+		),
+	)
 }
