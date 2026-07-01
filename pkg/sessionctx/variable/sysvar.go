@@ -164,6 +164,20 @@ var defaultSysVars = []*SysVar{
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
 	}},
+	{Scope: vardef.ScopeSession, Name: vardef.ResultsetMetadata, Value: vardef.ResultsetMetadataFull, Type: vardef.TypeEnum, PossibleValues: []string{vardef.ResultsetMetadataNone, vardef.ResultsetMetadataFull}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		if normalizedValue != vardef.ResultsetMetadataFull && vars.ClientCapability&mysql.ClientOptionalResultsetMetadata == 0 {
+			return normalizedValue, ErrClientDoesNotSupport.GenWithStackByArgs("optional metadata transfer")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		switch val {
+		case vardef.ResultsetMetadataNone:
+			s.ResultsetMetadata = mysql.ResultsetMetadataNone
+		case vardef.ResultsetMetadataFull:
+			s.ResultsetMetadata = mysql.ResultsetMetadataFull
+		}
+		return nil
+	}},
 	/* TiDB specific variables */
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
