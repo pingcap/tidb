@@ -44,12 +44,14 @@ go_test(
     timeout = "short",
     srcs = ["util_test.go"],
     flaky = True,
+    shard_count = 3,
     deps = [
         ":util",
-        "//pkg/domain/infosync",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/testkit",
-        "@com_github_pingcap_errors//:errors",
+        "//pkg/util/mock",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_stretchr_testify//require",
     ],
 )

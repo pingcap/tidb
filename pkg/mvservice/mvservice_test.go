@@ -1383,6 +1383,32 @@ func (h *fullChainMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.
 	return ret, nil
 }
 
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogAnalyzeTasks(context.Context, basic.SessionPool) (map[int64]*mvLogAnalyzeTask, error) {
+	h.fetchAnalyzeTaskCalls.Add(1)
+	if h.fetchAnalyzeTasksErr != nil {
+		return nil, h.fetchAnalyzeTasksErr
+	}
+	if h.fetchAnalyzeTasks == nil {
+		return map[int64]*mvLogAnalyzeTask{}, nil
+	}
+	ret := make(map[int64]*mvLogAnalyzeTask, len(h.fetchAnalyzeTasks))
+	for id, task := range h.fetchAnalyzeTasks {
+		if task == nil {
+			ret[id] = nil
+			continue
+		}
+		taskCopy := *task
+		ret[id] = &taskCopy
+	}
+	return ret, nil
+}
+
+func (h *fullChainMVServiceHelper) AnalyzeMVLog(_ context.Context, _ basic.SessionPool, mvLogID int64) error {
+	h.analyzeMLogCalls.Add(1)
+	h.lastAnalyzeID = mvLogID
+	return h.analyzeMLogErr
+}
+
 func (h *fullChainMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	h.fetchViewCalls.Add(1)
 	if h.fetchViewsErr != nil {

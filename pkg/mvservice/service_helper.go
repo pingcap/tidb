@@ -31,7 +31,12 @@ import (
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statsautoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -56,6 +61,8 @@ const (
 type serviceHelper struct {
 	durationObserverCache durationObserverCache
 	runEventCounterCache  runEventCounterCache
+	statsHandleGetter     func() statstypes.StatsHandle
+	sysProcTracker        sysproctrack.Tracker
 
 	reportCache struct {
 		submittedCount    int64
@@ -101,10 +108,12 @@ func newRunEventCounterCache(capacity int) runEventCounterCache {
 }
 
 // newServiceHelper builds a default helper used by MVService.
-func newServiceHelper() *serviceHelper {
+func newServiceHelper(statsHandleGetter func() statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) *serviceHelper {
 	return &serviceHelper{
 		durationObserverCache: newDurationObserverCache(8),
 		runEventCounterCache:  newRunEventCounterCache(16),
+		statsHandleGetter:     statsHandleGetter,
+		sysProcTracker:        sysProcTracker,
 	}
 }
 
@@ -339,37 +348,73 @@ func resolveMVIdentityByID(
 	return schemaName, mviewName, alertWarningSec, alertOverdueSec, true, nil
 }
 
+func resolveMVLogMetaByID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvLogID int64,
+) (infoSchema infoschema.InfoSchema, mLogMeta *meta.TableInfo, mLogInfo *meta.MaterializedViewLogInfo, found bool, err error) {
+	if mvLogID <= 0 {
+		return nil, nil, nil, false, errors.New("materialized view log id is invalid")
+	}
+	infoSchema = sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	if !ok {
+		return nil, nil, nil, false, nil
+	}
+	mLogMeta = mLogTbl.Meta()
+	if mLogMeta == nil || mLogMeta.MaterializedViewLog == nil {
+		return nil, nil, nil, false, nil
+	}
+	return infoSchema, mLogMeta, mLogMeta.MaterializedViewLog, true, nil
+}
+
+func resolveMVLogIdentityFromMeta(infoSchema infoschema.InfoSchema, mLogMeta *meta.TableInfo) (schemaName, mlogName string, found bool) {
+	dbInfo, ok := infoSchema.SchemaByID(mLogMeta.DBID)
+	if !ok || dbInfo == nil {
+		return "", "", false
+	}
+	schemaName = dbInfo.Name.L
+	mlogName = mLogMeta.Name.L
+	if schemaName == "" || mlogName == "" {
+		return "", "", false
+	}
+	return schemaName, mlogName, true
+}
+
 func resolveMVLogAccumulationAlertByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	mvLogID int64,
 ) (schemaName, mlogName string, alertRows uint64, enabled bool, found bool, err error) {
-	if mvLogID <= 0 {
-		return "", "", 0, false, false, errors.New("materialized view log id is invalid")
+	infoSchema, mLogMeta, mLogInfo, found, err := resolveMVLogMetaByID(ctx, sctx, mvLogID)
+	if err != nil || !found {
+		return "", "", 0, false, false, err
 	}
-	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
-	if !ok {
-		return "", "", 0, false, false, nil
-	}
-	mLogMeta := mLogTbl.Meta()
-	if mLogMeta == nil || mLogMeta.MaterializedViewLog == nil {
-		return "", "", 0, false, false, nil
-	}
-	alertRows, enabled = mLogMeta.MaterializedViewLog.EffectiveLogAccumulationAlertRows()
+	alertRows, enabled = mLogInfo.EffectiveLogAccumulationAlertRows()
 	if !enabled {
 		return "", "", alertRows, false, true, nil
 	}
-	dbInfo, ok := infoSchema.SchemaByID(mLogMeta.DBID)
-	if !ok || dbInfo == nil {
-		return "", "", 0, false, false, nil
-	}
-	schemaName = dbInfo.Name.L
-	mlogName = mLogMeta.Name.L
-	if schemaName == "" || mlogName == "" {
+	schemaName, mlogName, found = resolveMVLogIdentityFromMeta(infoSchema, mLogMeta)
+	if !found {
 		return "", "", 0, false, false, nil
 	}
 	return schemaName, mlogName, alertRows, true, true, nil
+}
+
+func resolveMVLogIdentityByID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvLogID int64,
+) (schemaName, mlogName string, found bool, err error) {
+	infoSchema, mLogMeta, _, found, err := resolveMVLogMetaByID(ctx, sctx, mvLogID)
+	if err != nil || !found {
+		return "", "", false, err
+	}
+	schemaName, mlogName, found = resolveMVLogIdentityFromMeta(infoSchema, mLogMeta)
+	if !found {
+		return "", "", false, nil
+	}
+	return schemaName, mlogName, true, nil
 }
 
 // RefreshMV executes one incremental refresh round for a materialized view.
@@ -1467,6 +1512,166 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	return rowCounts, nil
 }
 
+func (h *serviceHelper) getStatsHandle() (statstypes.StatsHandle, error) {
+	if h == nil || h.statsHandleGetter == nil {
+		return nil, errors.New("mv service stats handle getter is nil")
+	}
+	statsHandle := h.statsHandleGetter()
+	if statsHandle == nil {
+		return nil, errors.New("mv service stats handle is nil")
+	}
+	return statsHandle, nil
+}
+
+func (*serviceHelper) readMLogAutoAnalyzeRatio(ctx context.Context, sctx sessionctx.Context) float64 {
+	ratioText, ok := getGlobalSystemVarBestEffort(ctx, sctx.GetSessionVars(), variable.TiDBMLogAutoAnalyzeRatio)
+	if !ok {
+		ratioText = strconv.FormatFloat(variable.DefMLogAutoAnalyzeRatio, 'f', -1, 64)
+	}
+	ratio, err := strconv.ParseFloat(ratioText, 64)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"mv service: failed to parse mlog auto analyze ratio, fallback to default",
+			zap.String("var", variable.TiDBMLogAutoAnalyzeRatio),
+			zap.String("value", ratioText),
+			zap.Error(err),
+		)
+		return variable.DefMLogAutoAnalyzeRatio
+	}
+	return max(ratio, 0)
+}
+
+func needAnalyzeMLog(statsTbl *statistics.Table, ratio float64) (bool, string) {
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
+		return false, ""
+	}
+	if !statsTbl.IsAnalyzed() {
+		return true, "mlog unanalyzed"
+	}
+	if ratio == 0 {
+		return false, ""
+	}
+	tblCnt := float64(statsTbl.RealtimeCount)
+	if histCnt := statsTbl.GetAnalyzeRowCount(); histCnt > 0 {
+		tblCnt = histCnt
+	}
+	if tblCnt <= 0 {
+		return false, ""
+	}
+	if float64(statsTbl.ModifyCount)/tblCnt <= ratio {
+		return false, ""
+	}
+	return true, fmt.Sprintf("too many mlog modifications(%v/%v>%v)", statsTbl.ModifyCount, tblCnt, ratio)
+}
+
+// LoadAllTiDBMVLogAnalyzeTasks loads MV logs that currently need analyze.
+func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAnalyzeTask, error) {
+	const fetchSQL = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
+	statsHandle, err := h.getStatsHandle()
+	if err != nil {
+		return nil, err
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, fetchSQL, nil)
+	if err != nil {
+		return nil, err
+	}
+	ratio := h.readMLogAutoAnalyzeRatio(ctx, sctx)
+	tasks := make(map[int64]*mvLogAnalyzeTask)
+	for _, row := range rows {
+		if row.IsNull(0) {
+			continue
+		}
+		mvLogID := row.GetInt64(0)
+		if mvLogID <= 0 {
+			continue
+		}
+		schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mvLogID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mvLogID)
+		if !found {
+			continue
+		}
+		needAnalyze, reason := needAnalyzeMLog(statsTbl, ratio)
+		if !needAnalyze {
+			continue
+		}
+		logutil.BgLogger().Info(
+			"mv service: mlog analyze needed",
+			zap.Int64("mvlog_id", mvLogID),
+			zap.String("schema", schemaName),
+			zap.String("mlog", mlogName),
+			zap.String("reason", reason),
+			zap.Float64("ratio", ratio),
+		)
+		tasks[mvLogID] = &mvLogAnalyzeTask{
+			schemaName: schemaName,
+			mlogName:   mlogName,
+		}
+	}
+	return tasks, nil
+}
+
+// AnalyzeMVLog runs analyze for the specified MV log table once.
+func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) error {
+	const analyzeMLogSQL = `ANALYZE TABLE %n.%n`
+	statsHandle, err := h.getStatsHandle()
+	if err != nil {
+		return err
+	}
+	if h.sysProcTracker == nil {
+		return errors.New("mv service sys process tracker is nil")
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+	restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sctx)
+	if err != nil {
+		return err
+	}
+	defer restoreStatsVars()
+
+	schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mvLogID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mvLogID)
+	if !found {
+		return nil
+	}
+	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
+	statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+	_, _, err = statsautoanalyzeexec.RunAnalyzeStmt(
+		sctx,
+		statsHandle,
+		h.sysProcTracker,
+		tableStatsVer,
+		analyzeMLogSQL,
+		schemaName,
+		mlogName,
+	)
+	return err
+}
+
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
@@ -1571,6 +1776,8 @@ func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
 	se basic.SessionPool,
+	statsHandleGetter func() statstypes.StatsHandle,
+	sysProcTracker sysproctrack.Tracker,
 	onDDLHandled func(),
 ) *MVService {
 	if registerHandler == nil || se == nil || onDDLHandled == nil {
@@ -1583,7 +1790,7 @@ func RegisterMVService(
 		MemThreshold: defaultBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}
-	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
+	mvService := NewMVService(ctx, se, newServiceHelper(statsHandleGetter, sysProcTracker), cfg)
 	mvService.NotifyDDLChange() // Trigger one startup refresh so in-memory state catches up with metadata.
 
 	// The notifier callback runs on the DDL owner only.

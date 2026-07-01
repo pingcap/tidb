@@ -34,7 +34,10 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
@@ -95,6 +98,28 @@ func (p recordingSessionPool) Get() (pools.Resource, error) { return p.se, nil }
 func (recordingSessionPool) Put(pools.Resource)             {}
 func (recordingSessionPool) Close()                         {}
 
+type recordingStatsHandle struct {
+	statstypes.StatsHandle
+	stats map[int64]*statistics.Table
+}
+
+func (h *recordingStatsHandle) GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool) {
+	statsTbl, ok := h.stats[physicalTableID]
+	return statsTbl, ok
+}
+
+func (*recordingStatsHandle) AutoAnalyzeProcID() uint64 { return 1 }
+
+func (*recordingStatsHandle) ReleaseAutoAnalyzeProcID(uint64) {}
+
+type recordingSysProcTracker struct {
+	sysproctrack.Tracker
+}
+
+func (*recordingSysProcTracker) Track(uint64, sysproctrack.TrackProc) error { return nil }
+
+func (*recordingSysProcTracker) UnTrack(uint64) {}
+
 type recordingSessionContext struct {
 	*mock.Context
 	executedSQL                            []string
@@ -117,6 +142,7 @@ type recordingSessionContext struct {
 	restrictedMLogPurgeBatchSize           []int
 	restrictedMLogPurgeMinRate             []int
 	restrictedMLogPurgeRateBudgetRatio     []float64
+	restrictedAnalyzePartitionConcurrency  []int
 	restrictedRows                         map[string][]chunk.Row
 	restrictedErrs                         map[string]error
 	restrictedAffectedRows                 map[string][]uint64
@@ -214,6 +240,7 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	s.restrictedMLogPurgeBatchSize = append(s.restrictedMLogPurgeBatchSize, s.GetSessionVars().MLogPurgeBatchSize)
 	s.restrictedMLogPurgeMinRate = append(s.restrictedMLogPurgeMinRate, s.GetSessionVars().MLogPurgeMinRate)
 	s.restrictedMLogPurgeRateBudgetRatio = append(s.restrictedMLogPurgeRateBudgetRatio, s.GetSessionVars().MLogPurgeRateBudgetRatio)
+	s.restrictedAnalyzePartitionConcurrency = append(s.restrictedAnalyzePartitionConcurrency, s.GetSessionVars().AnalyzePartitionConcurrency)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
 		if pos < len(seq) {
@@ -358,15 +385,19 @@ type mockMVServiceHelper struct {
 	fetchLogs                         map[int64]*mvLog
 	fetchAccumulationTasks            map[int64]*mvLogAccumulationTask
 	fetchAccumulationRowCounts        map[int64]uint64
+	fetchAnalyzeTasks                 map[int64]*mvLogAnalyzeTask
 	fetchViews                        map[int64]*mv
 	fetchLogsErr                      error
 	fetchAccumulationTasksErr         error
 	fetchAccumulationRowCountsErr     error
+	fetchAnalyzeTasksErr              error
 	fetchViewsErr                     error
 	fetchLogsCalls                    atomic.Int32
 	fetchAccumulationTaskCalls        atomic.Int32
 	fetchAccumulationRowCountCalls    atomic.Int32
+	fetchAnalyzeTaskCalls             atomic.Int32
 	fetchViewCalls                    atomic.Int32
+	analyzeMLogCalls                  atomic.Int32
 	serverRefreshCalls                atomic.Int32
 	historyGCCalls                    atomic.Int32
 	refreshManualCancelBackoffApplied bool
@@ -389,8 +420,12 @@ type mockMVServiceHelper struct {
 	lastMViewHistoryGCMaxRecords      atomic.Uint64
 	lastMLogHistoryGCMaxRecords       atomic.Uint64
 
-	lastRefreshID int64
-	lastPurgeID   int64
+	lastRefreshID      int64
+	lastPurgeID        int64
+	lastAnalyzeID      int64
+	analyzeMLogErr     error
+	analyzeMLogEntered chan struct{}
+	blockAnalyzeMLog   chan struct{}
 
 	syncRefreshAlertMu              sync.Mutex
 	lastRefreshAlertAt              time.Time
@@ -502,6 +537,32 @@ func (m *mockMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Conte
 	slices.Sort(ids)
 	m.lastAccumulationRowCountTaskIDs = ids
 	return ret, nil
+}
+
+func (m *mockMVServiceHelper) LoadAllTiDBMVLogAnalyzeTasks(context.Context, basic.SessionPool) (map[int64]*mvLogAnalyzeTask, error) {
+	m.fetchAnalyzeTaskCalls.Add(1)
+	if m.fetchAnalyzeTasksErr != nil {
+		return nil, m.fetchAnalyzeTasksErr
+	}
+	if m.fetchAnalyzeTasks == nil {
+		return map[int64]*mvLogAnalyzeTask{}, nil
+	}
+	return m.fetchAnalyzeTasks, nil
+}
+
+func (m *mockMVServiceHelper) AnalyzeMVLog(_ context.Context, _ basic.SessionPool, mvLogID int64) error {
+	m.analyzeMLogCalls.Add(1)
+	m.lastAnalyzeID = mvLogID
+	if m.analyzeMLogEntered != nil {
+		select {
+		case m.analyzeMLogEntered <- struct{}{}:
+		default:
+		}
+	}
+	if m.blockAnalyzeMLog != nil {
+		<-m.blockAnalyzeMLog
+	}
+	return m.analyzeMLogErr
 }
 
 func (m *mockMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
@@ -1040,6 +1101,246 @@ func TestMVServiceFetchAllMVMetaReportsDuration(t *testing.T) {
 	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultFailed))
 }
 
+func TestMVServiceMLogAnalyzeScanSubmitsTasks(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchAnalyzeTasks: map[int64]*mvLogAnalyzeTask{
+			101: {schemaName: "test", mlogName: "$mlog$t"},
+		},
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+	setTaskOwnersForTest(svc, map[int64]uint32{101: 5})
+	svc.mlogAnalyzeExecutor.Run()
+	t.Cleanup(func() {
+		svc.mlogAnalyzeExecutor.Close()
+	})
+
+	now := mvsNow()
+	svc.maybeScanMLogAnalyze(now)
+	require.Eventually(t, func() bool {
+		return helper.analyzeMLogCalls.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int64(101), helper.lastAnalyzeID)
+	require.Equal(t, int64(0), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, now.Add(mlogAnalyzeScanInterval).UnixMilli(), svc.nextMLogAnalyzeScanMillis.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogAnalyze, mvDurationResultSuccess))
+
+	svc.maybeScanMLogAnalyze(now.Add(mlogAnalyzeScanInterval - time.Second))
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+}
+
+func TestMVServiceMLogAnalyzeScanFailureWaitsUntilNextInterval(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchAnalyzeTasksErr: errors.New("mock mlog analyze scan failed"),
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+
+	now := mvsNow()
+	svc.maybeScanMLogAnalyze(now)
+	require.Eventually(t, func() bool {
+		return !svc.mlogAnalyzeScanRunning.Load()
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+	require.Equal(t, int32(0), helper.analyzeMLogCalls.Load())
+	require.Equal(t, now.Add(mlogAnalyzeScanInterval).UnixMilli(), svc.nextMLogAnalyzeScanMillis.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogAnalyze, mvDurationResultFailed))
+
+	svc.maybeScanMLogAnalyze(now.Add(mlogAnalyzeScanInterval - time.Second))
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+}
+
+func TestMVServiceMLogAnalyzeTaskDedupAndNoImmediateRetry(t *testing.T) {
+	installMockTimeForTest(t)
+	entered := make(chan struct{}, 1)
+	block := make(chan struct{})
+	helper := &mockMVServiceHelper{
+		analyzeMLogErr:     errors.New("analyze failed"),
+		analyzeMLogEntered: entered,
+		blockAnalyzeMLog:   block,
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	svc.mlogAnalyzeExecutor.Run()
+	t.Cleanup(func() {
+		close(block)
+		svc.mlogAnalyzeExecutor.Close()
+	})
+
+	svc.analyzeMVLog([]int64{101, 101})
+	require.Eventually(t, func() bool {
+		return helper.analyzeMLogCalls.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
+	<-entered
+	require.Equal(t, int64(1), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, int64(0), svc.mlogAnalyzeExecutor.metrics.counters.failedCount.Load())
+
+	block <- struct{}{}
+	require.Eventually(t, func() bool {
+		return svc.metrics.mvLogAnalyzeTaskCount.Load() == 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int32(1), helper.analyzeMLogCalls.Load())
+	require.Equal(t, int64(1), svc.mlogAnalyzeExecutor.metrics.counters.failedCount.Load())
+}
+
+func TestMVServiceMLogAnalyzeSubmitRejectedCleansDedupState(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	require.True(t, svc.mlogAnalyzeExecutor.Close())
+
+	svc.analyzeMVLog([]int64{101})
+
+	require.Equal(t, int64(0), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, int32(0), helper.analyzeMLogCalls.Load())
+	require.Equal(t, int64(1), svc.mlogAnalyzeExecutor.metrics.counters.rejectedCount.Load())
+}
+
+func TestNeedAnalyzeMLog(t *testing.T) {
+	oldAutoAnalyzeMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 1000
+	t.Cleanup(func() {
+		statistics.AutoAnalyzeMinCnt = oldAutoAnalyzeMinCnt
+	})
+
+	analyzedStats := func(realtimeCnt, modifyCnt int64, lastAnalyzeVersion uint64) *statistics.Table {
+		columns := map[int64]*statistics.Column{
+			1: {StatsVer: statistics.Version2},
+		}
+		return &statistics.Table{
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, realtimeCnt, modifyCnt, columns, nil),
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 0),
+			LastAnalyzeVersion:    lastAnalyzeVersion,
+		}
+	}
+	unanalyzedStats := func(realtimeCnt int64) *statistics.Table {
+		return &statistics.Table{
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, realtimeCnt, 0, nil, nil),
+		}
+	}
+	analyzeVersion := oracle.GoTimeToTS(time.Now())
+
+	tests := []struct {
+		name      string
+		stats     *statistics.Table
+		ratio     float64
+		need      bool
+		reason    string
+		reasonHas string
+	}{
+		{
+			name:  "nil stats",
+			ratio: 0.5,
+		},
+		{
+			name: "pseudo stats",
+			stats: func() *statistics.Table {
+				stats := unanalyzedStats(statistics.AutoAnalyzeMinCnt + 1)
+				stats.Pseudo = true
+				return stats
+			}(),
+			ratio: 0.5,
+		},
+		{
+			name:  "below min count",
+			stats: unanalyzedStats(statistics.AutoAnalyzeMinCnt - 1),
+			ratio: 0,
+		},
+		{
+			name:   "unanalyzed reaches min count even when ratio disabled",
+			stats:  unanalyzedStats(statistics.AutoAnalyzeMinCnt),
+			ratio:  0,
+			need:   true,
+			reason: "mlog unanalyzed",
+		},
+		{
+			name:  "analyzed modify trigger disabled by zero ratio",
+			stats: analyzedStats(1000, 2000, analyzeVersion),
+			ratio: 0,
+		},
+		{
+			name:  "analyzed below ratio",
+			stats: analyzedStats(1000, 200, analyzeVersion),
+			ratio: 0.5,
+		},
+		{
+			name:      "analyzed above ratio",
+			stats:     analyzedStats(1000, 600, analyzeVersion),
+			ratio:     0.5,
+			need:      true,
+			reasonHas: "too many mlog modifications",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			need, reason := needAnalyzeMLog(tt.stats, tt.ratio)
+			require.Equal(t, tt.need, need)
+			if tt.reason != "" {
+				require.Equal(t, tt.reason, reason)
+			}
+			if tt.reasonHas != "" {
+				require.Contains(t, reason, tt.reasonHas)
+			}
+			if !tt.need {
+				require.Empty(t, reason)
+			}
+		})
+	}
+}
+
+func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T) {
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+	_, mlogTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	withMockInfoSchema(t, mlogTable)
+
+	vars := se.GetSessionVars()
+	mockGlobalAccessor := variable.NewMockGlobalAccessor4Tests()
+	mockGlobalAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = mockGlobalAccessor
+	vars.AnalyzePartitionConcurrency = 0
+	vars.AnalyzeVersion = statistics.Version1
+	vars.EnableAnalyzeSnapshot = false
+	vars.PartitionPruneMode.Store("static")
+	vars.AnalyzeSkipColumnTypes = map[string]struct{}{"json": {}}
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzePartitionConcurrency, "3"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzeVersion, "2"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAnalyzeSnapshot, "on"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBPartitionPruneMode, "dynamic"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzeSkipColumnTypes, "blob"))
+	oldAnalyzeSkipColumnTypes := vars.AnalyzeSkipColumnTypes
+
+	statsHandle := &recordingStatsHandle{
+		stats: map[int64]*statistics.Table{
+			201: {
+				HistColl: statistics.HistColl{
+					StatsVer: statistics.Version2,
+				},
+			},
+		},
+	}
+	helper := &serviceHelper{
+		statsHandleGetter: func() statstypes.StatsHandle {
+			return statsHandle
+		},
+		sysProcTracker: &recordingSysProcTracker{},
+	}
+
+	err := helper.AnalyzeMVLog(context.Background(), pool, 201)
+	require.NoError(t, err)
+	require.Equal(t, []string{`ANALYZE TABLE %n.%n`}, se.executedRestrictedSQL)
+	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[0])
+	require.Equal(t, []int{3}, se.restrictedAnalyzePartitionConcurrency)
+	require.Equal(t, 0, vars.AnalyzePartitionConcurrency)
+	require.Equal(t, statistics.Version1, vars.AnalyzeVersion)
+	require.False(t, vars.EnableAnalyzeSnapshot)
+	require.Equal(t, "static", vars.PartitionPruneMode.Load())
+	require.Equal(t, oldAnalyzeSkipColumnTypes, vars.AnalyzeSkipColumnTypes)
+}
+
 func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{
@@ -1469,7 +1770,7 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	svc := RegisterMVService(context.Background(), func(id notifier.HandlerID, handler notifier.SchemaChangeHandler) {
 		gotHandlerID = id
 		gotHandler = handler
-	}, mockSessionPool{}, func() {
+	}, mockSessionPool{}, nil, nil, func() {
 		called.Add(1)
 	})
 	require.NotNil(t, svc)
@@ -1484,6 +1785,7 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	}, svc.GetTaskBackpressureConfig())
 	require.NotNil(t, svc.refreshExecutor.backpressure.Load())
 	require.NotNil(t, svc.purgeExecutor.backpressure.Load())
+	require.NotNil(t, svc.mlogAnalyzeExecutor.backpressure.Load())
 
 	createTable := notifier.NewCreateTableEvent(&meta.TableInfo{ID: 1})
 	require.NoError(t, gotHandler(context.Background(), nil, createTable))

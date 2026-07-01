@@ -15,15 +15,28 @@
 package util_test
 
 import (
+	"context"
+	stderrors "errors"
 	"testing"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingSessionPool struct {
+	se        pools.Resource
+	destroyed int
+}
+
+func (p recordingSessionPool) Get() (pools.Resource, error) { return p.se, nil }
+func (recordingSessionPool) Put(pools.Resource)             {}
+func (recordingSessionPool) Close()                         {}
+func (p *recordingSessionPool) Destroy(pools.Resource)      { p.destroyed++ }
 
 func TestIsSpecialGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -60,15 +73,49 @@ func TestIsSpecialGlobalIndex(t *testing.T) {
 }
 
 func TestCallSCtxFailed(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomain(t)
-
 	var sctxWithFailure sessionctx.Context
-	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+	pool := &recordingSessionPool{se: mock.NewContext()}
+	err := util.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		sctxWithFailure = sctx
-		return errors.New("simulated error")
+		return stderrors.New("simulated error")
 	})
 	require.Error(t, err)
 	require.Equal(t, "simulated error", err.Error())
-	notReleased := infosync.ContainsInternalSessionForTest(sctxWithFailure)
-	require.False(t, notReleased)
+	require.NotNil(t, sctxWithFailure)
+	require.Equal(t, 1, pool.destroyed)
+}
+
+func TestCallWithSCtxRestoresStatsSessionVars(t *testing.T) {
+	pool := &recordingSessionPool{se: mock.NewContext()}
+	sctx := pool.se.(sessionctx.Context)
+	vars := sctx.GetSessionVars()
+	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzePartitionConcurrency, "3"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzeVersion, "2"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAnalyzeSnapshot, "on"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBPartitionPruneMode, "dynamic"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBAnalyzeSkipColumnTypes, "blob"))
+	vars.AnalyzePartitionConcurrency = 0
+	vars.AnalyzeVersion = variable.DefTiDBAnalyzeVersion
+	vars.EnableAnalyzeSnapshot = false
+	vars.PartitionPruneMode.Store("static")
+	vars.AnalyzeSkipColumnTypes = map[string]struct{}{"json": {}}
+	oldAnalyzeSkipColumnTypes := vars.AnalyzeSkipColumnTypes
+
+	restoreErr := util.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		vars := sctx.GetSessionVars()
+		require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
+		require.Equal(t, 2, vars.AnalyzeVersion)
+		require.True(t, vars.EnableAnalyzeSnapshot)
+		require.Equal(t, string(variable.Dynamic), vars.PartitionPruneMode.Load())
+		require.Equal(t, map[string]struct{}{"blob": {}}, vars.AnalyzeSkipColumnTypes)
+		return nil
+	})
+	require.NoError(t, restoreErr)
+
+	require.Equal(t, 0, vars.AnalyzePartitionConcurrency)
+	require.Equal(t, variable.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
+	require.False(t, vars.EnableAnalyzeSnapshot)
+	require.Equal(t, "static", vars.PartitionPruneMode.Load())
+	require.Equal(t, oldAnalyzeSkipColumnTypes, vars.AnalyzeSkipColumnTypes)
 }
