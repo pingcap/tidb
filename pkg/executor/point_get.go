@@ -145,6 +145,9 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	MaskingExprs []expression.Expression
+
 	stats *runtimeStatsWithSnapshot
 }
 
@@ -214,6 +217,7 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
+	e.MaskingExprs = p.MaskingExprs
 	e.buildVirtualColumnInfo()
 
 	sessVars := e.Ctx().GetSessionVars()
@@ -448,6 +452,44 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	if e.MaskingExprs != nil && req.NumRows() > 0 {
+		if err := applyMaskingExprs(sctx, schema, e.MaskingExprs, req); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// applyMaskingExprs evaluates masking expressions for each row in the chunk and
+// replaces the original column values with masked values.
+func applyMaskingExprs(sctx sessionctx.Context, schema *expression.Schema, maskingExprs []expression.Expression, req *chunk.Chunk) error {
+	if len(maskingExprs) != len(schema.Columns) {
+		return errors.Errorf("masking expr count mismatch: got %d, schema has %d columns", len(maskingExprs), len(schema.Columns))
+	}
+	fieldTypes := make([]*types.FieldType, len(schema.Columns))
+	for i, col := range schema.Columns {
+		fieldTypes[i] = col.RetType
+	}
+	maskedChunk := chunk.NewChunkWithCapacity(fieldTypes, req.NumRows())
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	for rowIdx := range req.NumRows() {
+		row := req.GetRow(rowIdx)
+		for colIdx, expr := range maskingExprs {
+			if expr != nil {
+				result, err := expr.Eval(evalCtx, row)
+				if err != nil {
+					return err
+				}
+				maskedChunk.AppendDatum(colIdx, &result)
+			} else {
+				datum := row.GetDatum(colIdx, schema.Columns[colIdx].RetType)
+				maskedChunk.AppendDatum(colIdx, &datum)
+			}
+		}
+	}
+	req.SwapColumns(maskedChunk)
 	return nil
 }
 

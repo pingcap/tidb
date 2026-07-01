@@ -434,6 +434,11 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, isCTE bool) (p base.LogicalPlan, err error) {
 	//If it is building the CTE queries, we will mark them.
 	b.isCTE = isCTE
+	// Mark that we are inside a result-set node so that derived-table subqueries
+	// do not apply AT RESULT masking (the outer query needs original values).
+	oldBuildingResultSetNode := b.buildingResultSetNode
+	b.buildingResultSetNode = true
+	defer func() { b.buildingResultSetNode = oldBuildingResultSetNode }()
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
@@ -1531,6 +1536,211 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 	return newName
 }
 
+// buildMaskingReplaceExprs builds a list of replacement expressions for masking.
+// For each column in the schema, if the column has a masking policy, the replacement
+// expression is the masking function applied to the column. Otherwise it's the column itself.
+func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.LogicalPlan) ([]expression.Expression, error) {
+	if b.is == nil || p == nil {
+		return nil, nil
+	}
+	sv := b.ctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		return nil, nil
+	}
+	if len(b.is.AllMaskingPolicies()) == 0 {
+		return nil, nil
+	}
+	cols := p.Schema().Columns
+	names := p.OutputNames()
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+	schemaVersion := b.is.SchemaMetaVersion()
+	hasMask := false
+	for i, col := range cols {
+		policy, tblInfo, colInfo := b.findMaskingPolicy(ctx, names[i], col)
+		if policy == nil {
+			continue
+		}
+		if policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		if err != nil {
+			// Fail-closed: returning an error is safer than skipping masking,
+			// which would leak the raw column value to the user.
+			return nil, errors.Trace(err)
+		}
+		if placeholder == nil {
+			continue
+		}
+		masked := expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		replaceExprs[i] = masked
+		hasMask = true
+	}
+	if !hasMask {
+		return nil, nil
+	}
+	return replaceExprs, nil
+}
+
+func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo) {
+	if b.is == nil || name == nil {
+		return nil, nil, nil
+	}
+	tblName := name.OrigTblName
+	colName := name.OrigColName
+	if tblName.L == "" {
+		tblName = name.TblName
+	}
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	dbName := name.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if dbName.L == "" {
+		return nil, nil, nil
+	}
+	tbl, err := b.is.TableByName(context.Background(), dbName, tblName)
+	if err != nil {
+		return nil, nil, nil
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return nil, nil, nil
+	}
+	colInfo := tblInfo.FindPublicColumnByName(colName.L)
+	if colInfo == nil {
+		return nil, nil, nil
+	}
+	if colInfo.ID != col.ID {
+		return nil, nil, nil
+	}
+	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	if !ok || policy == nil {
+		return nil, nil, nil
+	}
+	return policy, tblInfo, colInfo
+}
+
+// buildFinalProjectionWithMasking builds a final projection that applies masking policies
+// to the result. This implements the "AT RESULT" semantics where masking is applied
+// only after all relational operations (HAVING, ORDER BY, set operators) have been
+// computed using original values.
+//
+// The originalFields parameter contains the original SELECT field expressions before
+// they were materialized. This allows us to correctly apply masking to wrapper expressions
+// like CONCAT(c, ”) or CAST(c AS CHAR) by processing the original expression tree.
+func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, originalFields []*ast.SelectField) (base.LogicalPlan, error) {
+	if b.is == nil || p == nil {
+		return p, nil
+	}
+	sv := b.ctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		return p, nil
+	}
+	if len(b.is.AllMaskingPolicies()) == 0 {
+		return p, nil
+	}
+	// If we don't have original fields, fall back to the simple column-based
+	// masking path (used by set operators).
+	if len(originalFields) == 0 || len(originalFields) < oldLen {
+		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
+	}
+	for i := range oldLen {
+		field := originalFields[i]
+		if field == nil || field.Auxiliary || field.WildCard != nil || field.Expr == nil {
+			return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
+		}
+	}
+
+	// Prefer rebuilding from the current projection expressions.
+	// This keeps wrapper semantics correct, e.g. CONCAT(c, '-') should become
+	// CONCAT(mask_expr(c), '-') instead of mask_expr(CONCAT(c, '-')).
+	proj, ok := p.(*logicalop.LogicalProjection)
+	if !ok || len(proj.Children()) == 0 || len(proj.Exprs) < oldLen {
+		return b.buildFinalProjectionWithMaskingSimple(ctx, p, oldLen)
+	}
+	child := proj.Children()[0]
+	childMaskExprs, err := b.buildMaskingReplaceExprs(ctx, child)
+	if err != nil {
+		return nil, err
+	}
+	if childMaskExprs == nil {
+		return p, nil
+	}
+
+	finalProj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
+	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
+	newNames := make([]*types.FieldName, 0, oldLen)
+	for i := range oldLen {
+		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), proj.Exprs[i], child.Schema(), childMaskExprs)
+		finalProj.Exprs = append(finalProj.Exprs, expr)
+
+		baseCol := p.Schema().Columns[i]
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		newCol.ID = baseCol.ID
+		newCol.SetCoercibility(baseCol.Coercibility())
+		newCol.SetRepertoire(baseCol.Repertoire())
+		schema.Append(newCol)
+		newNames = append(newNames, p.OutputNames()[i])
+	}
+	finalProj.SetSchema(schema)
+	finalProj.SetOutputNames(newNames)
+	finalProj.SetChildren(child)
+	return finalProj, nil
+}
+
+// buildFinalProjectionWithMaskingSimple is a fallback that applies masking based on column references
+// when originalFields are not available. This is used for cases like set operators where we don't
+// have the original field expressions.
+func (b *PlanBuilder) buildFinalProjectionWithMaskingSimple(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
+	maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if maskExprs == nil {
+		return p, nil
+	}
+
+	actualLen := p.Schema().Len()
+	if oldLen < 0 || oldLen > actualLen {
+		oldLen = actualLen
+	}
+
+	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
+	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
+	newNames := make([]*types.FieldName, 0, oldLen)
+	for i := range oldLen {
+		col := p.Schema().Columns[i]
+		expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), col, p.Schema(), maskExprs)
+		proj.Exprs = append(proj.Exprs, expr)
+
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		newCol.ID = col.ID
+		newCol.SetCoercibility(col.Coercibility())
+		newCol.SetRepertoire(col.Repertoire())
+		schema.Append(newCol)
+		newNames = append(newNames, p.OutputNames()[i])
+	}
+	proj.SetSchema(schema)
+	proj.SetOutputNames(newNames)
+	proj.SetChildren(p)
+	return proj, nil
+}
+
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPlan, field *ast.SelectField, expr expression.Expression) (*expression.Column, *types.FieldName, error) {
 	var origTblName, tblName, origColName, colName, dbName ast.CIStr
@@ -2071,10 +2281,17 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
-		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
+		firstChildNames := u.Children()[0].OutputNames()
+		names = append(names, &types.FieldName{
+			DBName:      firstChildNames[i].DBName,
+			OrigTblName: firstChildNames[i].OrigTblName,
+			OrigColName: firstChildNames[i].OrigColName,
+			ColName:     firstChildNames[i].ColName,
+		})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
 		})
 	}
 	u.SetSchema(expression.NewSchema(unionCols...))
@@ -2118,6 +2335,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 			return nil, err
 		}
 	}
+
+	// Track nesting depth so masking is applied only on the outermost set-operator result.
+	b.buildingSetOprOperands++
+	defer func() { b.buildingSetOprOperands-- }()
 
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]base.LogicalPlan, 0, len(setOpr.SelectList.Selects))
@@ -2193,8 +2414,20 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
+		setOprPlan = proj
 	}
+
+	if b.buildingSetOprOperands == 1 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
+		// Apply masking at the final result stage (AT RESULT semantics).
+		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+		// For CTEs and derived tables, we skip masking here because they should
+		// preserve original values for correct outer filtering/joining.
+		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return b.tryToBuildSequence(currentLayerCTEs, setOprPlan), nil
 }
 
@@ -4612,7 +4845,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 		proj.SetOutputNames(p.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
+		p = proj
+	}
+
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+	// For CTEs, we skip masking here because:
+	// 1. CTE definitions should preserve original values for correct filtering/joining
+	// 2. Masking is applied when CTE results are materialized to the final output
+	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
+		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return b.tryToBuildSequence(currentLayerCTEs, p), nil
@@ -4898,6 +5143,16 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building.
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior.
+	// Note: we do NOT set b.buildingCTE here — that flag has a specific meaning for
+	// recursive CTE tracking and requires b.outerCTEs to be non-empty.
+	oldIsCTE := b.isCTE
+	b.isCTE = true
+	defer func() {
+		b.isCTE = oldIsCTE
+	}()
+
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
@@ -4905,6 +5160,14 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
+		// Preserve OrigTblName and OrigColName for masking policy lookup.
+		// If they are not set, copy from TblName and ColName before overwriting.
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
+		}
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
+		}
 		name.TblName = cte.Name
 		name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
@@ -4914,6 +5177,10 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
+			// Preserve original column name before overwriting.
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
 			outPutNames[i].ColName = n
 		}
 	}
@@ -7949,7 +8216,12 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 		}
 		for i, n := range def.ColNameList {
 			clonedNames[i].ColName = n
-			clonedNames[i].OrigColName = n
+			// Preserve OrigColName for masking policy lookup — it points to the
+			// real source column name, which is needed for policy resolution.
+			// Only set OrigColName when it wasn't already set by the CTE merge path.
+			if clonedNames[i].OrigColName.L == "" {
+				clonedNames[i].OrigColName = n
+			}
 		}
 	}
 	p.SetOutputNames(clonedNames)
