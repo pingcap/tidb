@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -803,7 +805,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if w.checksumNeeded {
 		checksum = rowcodec.RawChecksum{Handle: handle}
 	}
-	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
+	enc := codec.NewEncoder(collate.NewCollationEnabled())
+	newRowVal, err := tablecodec.EncodeRow(enc, sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
 	err = ec.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)
