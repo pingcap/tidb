@@ -419,9 +419,10 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	var executor exec.Executor
 	useMaxTS := startTs == math.MaxUint64
 
-	// try to reuse point get executor
-	// We should only use the cached the executor when the startTS is MaxUint64
-	if a.PsStmt.PointGet.Executor != nil && useMaxTS {
+	// Try to reuse a cached point-get executor. The cache lives on PsStmt, so
+	// this only applies to prepared statements; non-prepared point-gets fall
+	// through and build a fresh executor every time.
+	if a.PsStmt != nil && a.PsStmt.PointGet.Executor != nil && useMaxTS {
 		exec, ok := a.PsStmt.PointGet.Executor.(*PointGetExecutor)
 		if !ok {
 			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
@@ -448,8 +449,9 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 		pointExecutor, ok := executor.(*PointGetExecutor)
 
-		// Don't cache the executor for non point-get (table dual) or partitioned tables
-		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
+		// Don't cache the executor for non point-get (table dual) or partitioned tables.
+		// Cache also requires a PsStmt to attach the executor to (prepared only).
+		if a.PsStmt != nil && ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
 			a.PsStmt.PointGet.Executor = pointExecutor
 		}
 	}

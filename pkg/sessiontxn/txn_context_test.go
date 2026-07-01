@@ -623,6 +623,54 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+// TestNonPreparedPointGetExecShortcut covers the streamline3 phase 1 change:
+// when tidb_enable_point_get_exec_shortcut is on, a non-prepared point-get
+// SELECT should follow the same simplified execution path as the prepared
+// shortcut (assertTxnManagerInShortPointGetPlan fires, runStmt does not).
+// When the variable is off the legacy runStmt path is preserved.
+//
+// t1 has a primary key (id), so `select ... where id=1` qualifies for the
+// TryFastPlan point-get. t2 has no PK, so its SELECT is non-point-get and
+// the flag must not redirect it.
+func TestNonPreparedPointGetExecShortcut(t *testing.T) {
+	store, do := setupTxnContextTest(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("insert into t2 values (1)")
+	se := tk.Session()
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
+
+	// Default off — point-get still routes through runStmt.
+	doWithCheckPath(t, se, normalPathRecords, func() {
+		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
+	})
+
+	// Opt-in — shortcut fires, runStmt is skipped.
+	tk.MustExec("set @@tidb_enable_point_get_exec_shortcut = ON")
+	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
+	})
+
+	// BatchPointGet (`WHERE id IN (...)` on a unique key) also goes through
+	// the shortcut when the flag is on — handled by the same code path.
+	tk.MustExec("insert into t1 values (2, 20)")
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
+	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+		tk.MustQuery("select * from t1 where id in (1, 2)").Sort().Check(testkit.Rows("1 10", "2 20"))
+	})
+
+	// Non-point-get queries are unaffected even with the flag on (t2 has no PK).
+	doWithCheckPath(t, se, normalPathRecords, func() {
+		tk.MustQuery("select * from t2 where id=1").Check(testkit.Rows("1"))
+	})
+
+	// Turning the flag off restores the legacy path for the point-get.
+	tk.MustExec("set @@tidb_enable_point_get_exec_shortcut = OFF")
+	doWithCheckPath(t, se, normalPathRecords, func() {
+		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
+	})
+}
+
 func TestStaleReadInPrepare(t *testing.T) {
 	store, _ := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
