@@ -18,9 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
-	"math"
 	"path"
+	"slices"
 	"sync"
 	"time"
 
@@ -188,41 +189,41 @@ func (c *Calculator) advanceSyncedState(
 	aliveStores map[uint64]struct{},
 	maxFlushTSByStore map[uint64]uint64,
 ) {
-	for storeID, flushTS := range maxFlushTSByStore {
-		if flushTS > c.state.syncedByStore[storeID] {
-			c.state.syncedByStore[storeID] = flushTS
+	maps.Insert(c.state.syncedByStore, func(yield func(uint64, uint64) bool) {
+		for storeID, flushTS := range maxFlushTSByStore {
+			if flushTS <= c.state.syncedByStore[storeID] {
+				continue
+			}
+			if !yield(storeID, flushTS) {
+				return
+			}
 		}
-	}
+	})
 
-	missingStores := make([]uint64, 0)
-	for storeID := range aliveStores {
-		if _, ok := c.state.syncedByStore[storeID]; !ok {
-			missingStores = append(missingStores, storeID)
-		}
-	}
+	maps.DeleteFunc(c.state.syncedByStore, func(storeID uint64, _ uint64) bool {
+		_, ok := aliveStores[storeID]
+		return !ok
+	})
+
+	missingStores := slices.DeleteFunc(slices.Collect(maps.Keys(aliveStores)), func(storeID uint64) bool {
+		_, ok := c.state.syncedByStore[storeID]
+		return ok
+	})
 	if len(missingStores) > 0 {
 		c.warnUnsafeSyncedTS(missingStores, "alive store has no observed flush ts yet")
 		return
 	}
 
-	if len(c.state.syncedByStore) == 0 {
+	storeSyncedTSs := slices.Collect(maps.Values(c.state.syncedByStore))
+	if len(storeSyncedTSs) == 0 {
 		return
 	}
 
-	syncedCandidate := uint64(math.MaxUint64)
-	for _, storeSyncedTS := range c.state.syncedByStore {
-		if storeSyncedTS < syncedCandidate {
-			syncedCandidate = storeSyncedTS
-		}
-	}
-
+	syncedCandidate := slices.Min(storeSyncedTSs)
 	if syncedCandidate < c.state.syncedTS {
-		behindStores := make([]uint64, 0)
-		for storeID, storeSyncedTS := range c.state.syncedByStore {
-			if storeSyncedTS < c.state.syncedTS {
-				behindStores = append(behindStores, storeID)
-			}
-		}
+		behindStores := slices.DeleteFunc(slices.Collect(maps.Keys(c.state.syncedByStore)), func(storeID uint64) bool {
+			return c.state.syncedByStore[storeID] >= c.state.syncedTS
+		})
 		c.warnUnsafeSyncedTS(behindStores, "observed store flush ts is behind current synced-ts")
 		return
 	}

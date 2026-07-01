@@ -291,7 +291,7 @@ func TestCheckpointCalculatorWaitsForRemovedStoreFiles(t *testing.T) {
 	require.NotEmpty(t, log1Path)
 }
 
-func TestCheckpointCalculatorObservedRemovedStoreStillBoundsSyncedTS(t *testing.T) {
+func TestCheckpointCalculatorPrunesRemovedStoreAfterFilesSynced(t *testing.T) {
 	ctx := context.Background()
 	upstream, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
@@ -321,15 +321,48 @@ func TestCheckpointCalculatorObservedRemovedStoreStillBoundsSyncedTS(t *testing.
 	checkpointTS, err := calculator.ComputeNextCheckpoint(ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint64(20), checkpointTS)
-	require.Equal(t, uint64(10), calculator.SyncedTS())
+	require.Equal(t, uint64(20), calculator.SyncedTS())
 	require.Equal(
 		t,
 		map[uint64]uint64{
-			1: 10,
 			2: 20,
 		},
 		calculator.StateSnapshot().SyncedByStore,
 	)
+}
+
+func TestCheckpointCalculatorPrunesRemovedStoreBeforeAliveStoreBlocksAdvance(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	pd := &fakePDMetaReader{}
+	pd.Set(60, 2, 3)
+
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(fileExistenceMap{}),
+		},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NoError(t, calculator.RestorePersistentState(checkpoint.PersistentState{
+		LastCheckpoint: 40,
+		SyncedTS:       50,
+		SyncedByStore: map[uint64]uint64{
+			1: 100,
+			2: 50,
+		},
+	}))
+
+	checkpointTS, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(60), checkpointTS)
+	require.Equal(t, uint64(50), calculator.SyncedTS())
+	require.Equal(t, map[uint64]uint64{2: 50}, calculator.StateSnapshot().SyncedByStore)
 }
 
 func TestCheckpointCalculatorSkipsMetaSyncedByStoreProgress(t *testing.T) {
