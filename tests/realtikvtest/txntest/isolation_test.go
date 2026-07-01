@@ -620,6 +620,130 @@ func TestReadAfterWrite(t *testing.T) {
 /*
 This case will do harm in Innodb, even if in snapshot isolation, but harmless in tidb.
 */
+/*
+TestG2AntiDependencyCycleForUpdate tests the anti-dependency cycle (G2 anomaly)
+reported in https://github.com/pingcap/tidb/issues/10444.
+
+Jepsen found that under pessimistic mode with SELECT ... FOR UPDATE, two
+concurrent transactions could each read a non-existent key and then write
+to each other's key, forming an anti-dependency cycle:
+
+  T1: r(key_a, nil), w(key_b, 1)
+  T2: r(key_b, nil), w(key_a, 1)
+
+T1 must precede T2 (because T1 saw nil for key_a before T2 wrote it), but
+T2 must also precede T1 (because T2 saw nil for key_b before T1 wrote it).
+
+In pessimistic RR mode, SELECT ... FOR UPDATE acquires a pessimistic lock
+even on non-existent point-get keys, so the second transaction should block
+until the first commits, preventing the cycle.
+*/
+func TestG2AntiDependencyCycleForUpdate(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	session1 := testkit.NewTestKit(t, store)
+	session2 := testkit.NewTestKit(t, store)
+	session1.MustExec("use test;")
+	session2.MustExec("use test;")
+
+	// Pessimistic RR mode: SELECT FOR UPDATE on non-existent keys should
+	// acquire locks and prevent anti-dependency cycles.
+	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	session1.MustExec("drop table if exists t;")
+	session1.MustExec("create table t (id int primary key, val int);")
+
+	// T1 locks non-existent key 1 via point-get FOR UPDATE.
+	session1.MustExec("begin;")
+	session1.MustQuery("select * from t where id = 1 for update;").Check(testkit.Rows())
+	// T2 tries to lock the same non-existent key 1. Because T1 holds a
+	// pessimistic lock on it (even though the row doesn't exist), T2 must block
+	// until T1 commits.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		session2.MustExec("begin;")
+		// This blocks until T1 releases its lock on key 1.
+		session2.MustQuery("select * from t where id = 1 for update;").Check(testkit.Rows("1 1"))
+		session2.MustExec("insert into t values(2, 1);")
+		session2.MustExec("commit;")
+	})
+
+	// T1 inserts key 1 and commits, releasing the lock.
+	session1.MustExec("insert into t values(1, 1);")
+	session1.MustExec("commit;")
+	wg.Wait()
+
+	// Verify both rows exist.
+	session1.MustQuery("select * from t order by id;").Check(testkit.Rows("1 1", "2 1"))
+
+	// T1 locks non-existent key 3, then T2 tries to lock key 3 and must block
+	// until T1 commits.
+	session1.MustExec("begin;")
+	session1.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows())
+
+	wg.Run(func() {
+		session2.MustExec("begin;")
+		// This should block until T1 releases its lock on key 3.
+		session2.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows("3 100"))
+		session2.MustExec("commit;")
+	})
+
+	session1.MustExec("insert into t values(3, 100);")
+	session1.MustExec("commit;")
+	wg.Wait()
+
+	session1.MustQuery("select * from t where id = 3;").Check(testkit.Rows("3 100"))
+}
+
+/*
+TestA5BWriteSkewForUpdateNonExistent tests write skew prevention when
+SELECT ... FOR UPDATE is used on non-existent keys. This is the specific
+scenario from https://github.com/pingcap/tidb/issues/10444:
+
+  T1 = [r(3,nil), r(4,nil), w(4,2)]  (SELECT 3 FOR UPDATE, SELECT 4 FOR UPDATE, INSERT 4)
+  T2 = [r(3,nil), r(4,nil), w(3,1)]  (SELECT 3 FOR UPDATE, SELECT 4 FOR UPDATE, INSERT 3)
+
+With proper pessimistic locking on non-existent keys, T2's FOR UPDATE on key 3
+should block on T1's lock (or vice versa), preventing the write skew.
+*/
+func TestA5BWriteSkewForUpdateNonExistent(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	session1 := testkit.NewTestKit(t, store)
+	session2 := testkit.NewTestKit(t, store)
+	session1.MustExec("use test;")
+	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	session1.MustExec("drop table if exists t;")
+	session1.MustExec("create table t (id int primary key, val int);")
+
+	// T1 begins, reads key 3 and key 4 FOR UPDATE (both nil), then writes key 4.
+	session1.MustExec("begin;")
+	session1.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows())
+	session1.MustQuery("select * from t where id = 4 for update;").Check(testkit.Rows())
+
+	// T2 begins, tries to read key 3 FOR UPDATE. In RR pessimistic mode,
+	// this should block because T1 holds a pessimistic lock on non-existent key 3.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		session2.MustExec("begin;")
+		// This should block on the pessimistic lock T1 holds on key 3.
+		session2.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows())
+		session2.MustQuery("select * from t where id = 4 for update;").Check(testkit.Rows("4 2"))
+		session2.MustExec("insert into t values(3, 1);")
+		session2.MustExec("commit;")
+	})
+
+	// T1 writes key 4 and commits, releasing the lock on key 3.
+	session1.MustExec("insert into t values(4, 2);")
+	session1.MustExec("commit;")
+	wg.Wait()
+
+	// Verify both inserts succeeded with proper serialization.
+	session1.MustQuery("select * from t order by id;").Check(testkit.Rows("3 1", "4 2"))
+}
+
 func TestPhantomReadInInnodb(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	session1 := testkit.NewTestKit(t, store)
