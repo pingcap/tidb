@@ -132,7 +132,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 }
 
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsNormalPriority)
 	exec := sctx.GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
 	if err != nil {
@@ -142,7 +142,7 @@ func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, toke
 
 // insertPlanReplayerStatus insert mysql.plan_replayer_status record
 func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, records []PlanReplayerStatusRecord) {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsNormalPriority)
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {

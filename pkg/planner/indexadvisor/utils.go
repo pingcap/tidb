@@ -532,7 +532,7 @@ func evaluateIndexSetCost(
 
 func exec(sctx sessionctx.Context, sql string, args ...any) (ret []chunk.Row, err error) {
 	executor := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 	result, err := executor.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("execute %v failed: %v", sql, err)

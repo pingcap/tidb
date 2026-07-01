@@ -3324,7 +3324,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
 	intest.Assert(b.ctx != nil, "missing statement context for analyze")
-	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStatsMaintenance), b.sctx, v); err != nil {
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStatsNormalPriority), b.sctx, v); err != nil {
 		b.err = err
 		return nil
 	}

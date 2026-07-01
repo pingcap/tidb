@@ -270,7 +270,7 @@ func TestReplicationWriter(t *testing.T) {
 }
 
 func TestInternalSQL(t *testing.T) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

@@ -1872,9 +1872,9 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 	source := kv.GetInternalSourceType(a.GoCtx)
-	// Analyze and other statistics maintenance use these request sources.
+	// Analyze and other normal-priority statistics work use these request sources.
 	// Filter both so plan replayer capture skips all internal statistics work.
-	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsMaintenance {
+	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsNormalPriority {
 		return
 	}
 	se := a.Ctx

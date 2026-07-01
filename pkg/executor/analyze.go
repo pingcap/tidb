@@ -689,7 +689,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})

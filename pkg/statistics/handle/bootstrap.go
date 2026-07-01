@@ -106,7 +106,7 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 }
 
 func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsNormalPriority)
 	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -389,7 +389,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Co
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsMaintenance)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsNormalPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -425,7 +425,7 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -610,7 +610,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 	}
 	defer terror.Call(rc.Close)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	tablesWithBuckets := make(map[int64]struct{})
@@ -655,7 +655,7 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -788,7 +788,7 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsMaintenance)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsNormalPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
