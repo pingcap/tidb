@@ -1458,25 +1458,34 @@ func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bo
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
-	return e.addRecordWithAutoIDHint(ctx, row, 0, dupKeyCheck)
+	_, err := e.addRecordWithAutoIDHintAndHandle(ctx, row, 0, dupKeyCheck)
+	return err
 }
 
 func (e *InsertValues) addRecordWithAutoIDHint(
 	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) (err error) {
+	_, err = e.addRecordWithAutoIDHintAndHandle(ctx, row, reserveAutoIDCount, dupKeyCheck)
+	return err
+}
+
+func (e *InsertValues) addRecordWithAutoIDHintAndHandle(
+	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
+) (kv.Handle, error) {
 	vars := e.Ctx().GetSessionVars()
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pessimisticLazyCheck := getPessimisticLazyCheckMode(vars)
+	var handle kv.Handle
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck, pessimisticLazyCheck)
+		handle, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck, pessimisticLazyCheck)
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), dupKeyCheck, pessimisticLazyCheck)
+		handle, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), dupKeyCheck, pessimisticLazyCheck)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
@@ -1486,7 +1495,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		for _, fkc := range e.fkChecks {
 			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -1496,7 +1505,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.TxnCtx.InsertTTLRowsCount++
 	}
 
-	return nil
+	return handle, nil
 }
 
 // CreateSession will be assigned by session package.
