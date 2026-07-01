@@ -3334,6 +3334,14 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
+		pagingSizeBytes := vars.PagingSizeBytes
+		if pagingSizeBytes > 0 {
+			if !vardef.EnableResourceControl.Load() || dom == nil || sc.ResourceGroupName == "" {
+				pagingSizeBytes = 0
+			} else if rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(sc.ResourceGroupName)); !ok || rg.GetBurstLimitAdjusted() < 0 {
+				pagingSizeBytes = 0
+			}
+		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -3373,6 +3381,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnablePaging:                  vars.EnablePaging,
 			MinPagingSize:                 vars.MinPagingSize,
 			MaxPagingSize:                 vars.MaxPagingSize,
+			PagingSizeBytes:               pagingSizeBytes,
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,
