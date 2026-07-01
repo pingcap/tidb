@@ -8,11 +8,7 @@ go_test(
         "plan_replayer_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 7,
-=======
-    shard_count = 9,
->>>>>>> 693e52cd51b (executor, planner: improve plan replayer dump URL output (#69439))
+    shard_count = 8,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",

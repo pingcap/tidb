@@ -21,11 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-<<<<<<< HEAD
-=======
 	"net/url"
-	"os"
->>>>>>> 693e52cd51b (executor, planner: improve plan replayer dump URL output (#69439))
 	"strings"
 
 	"github.com/pingcap/errors"

@@ -90,6 +90,8 @@ func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
 	require.NoError(t, rows.Scan(&item, &filename))
 	require.Equal(t, "File token", item)
 	require.NotEmpty(t, filename)
+	require.False(t, rows.Next(), "unexpected extra row")
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	return filename
 }
@@ -108,6 +110,8 @@ func requireSingleStringFromRows(t *testing.T, rows *sql.Rows) string {
 	require.True(t, rows.Next(), "unexpected data")
 	var value string
 	require.NoError(t, rows.Scan(&value))
+	require.False(t, rows.Next(), "unexpected extra row")
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	return value
 }
