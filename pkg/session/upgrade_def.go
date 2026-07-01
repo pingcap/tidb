@@ -507,6 +507,11 @@ const (
 	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
 	// mysql.global_variables was never materialized when the variable was introduced.
 	version261 = 261
+
+	// version262 refreshes mysql.bind_info SQL digests after binding
+	// normalization starts skipping redundant parentheses for
+	// https://github.com/pingcap/tidb/issues/67363.
+	version262 = 262
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -520,7 +525,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version261
+var currentBootstrapVersion int64 = version262
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -706,6 +711,7 @@ var (
 		{version: version259, fn: upgradeToVer259},
 		{version: version260, fn: upgradeToVer260},
 		{version: version261, fn: upgradeToVer261},
+		{version: version262, fn: upgradeToVer262},
 	}
 )
 
@@ -2138,4 +2144,114 @@ func upgradeToVer260(s sessionapi.Session, _ int64) {
 func upgradeToVer261(s sessionapi.Session, _ int64) {
 	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
 	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
+}
+
+type bindingDigestUpdate struct {
+	rowID       int64
+	originalSQL string
+	sqlDigest   string
+	duplicate   bool
+}
+
+func upgradeToVer262(s sessionapi.Session, _ int64) {
+	// Refresh persisted binding digests after the #67363 normalization change.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	// Duplicate detection keeps the first row scanned for each target digest
+	// pair, so scan newest bindings first.
+	rs, err := s.ExecuteInternal(ctx, `SELECT _tidb_rowid, bind_sql, default_db, charset, collation, plan_digest
+		FROM mysql.bind_info
+		WHERE source != 'builtin'
+		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
+		return
+	}
+
+	req := rs.NewChunk(nil)
+	updates := make([]bindingDigestUpdate, 0)
+	invlidBindingRowIDs := make([]int64, 0)
+	seenDigestPair := make(map[string]struct{})
+	p := parser.New()
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := range req.NumRows() {
+			row := req.GetRow(i)
+			rowID := row.GetInt64(0)
+			bindingSQL := row.GetString(1)
+			defaultDB := row.GetString(2)
+			charset := row.GetString(3)
+			collation := row.GetString(4)
+			planDigest := ""
+			planDigestNotNull := !row.IsNull(5)
+			if planDigestNotNull {
+				planDigest = row.GetString(5)
+			}
+
+			update := bindingDigestUpdate{rowID: rowID}
+			stmt, parseErr := p.ParseOneStmt(bindingSQL, charset, collation)
+			if parseErr != nil {
+				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
+					zap.String("bind_sql", bindingSQL), zap.Error(parseErr))
+				if planDigestNotNull {
+					invlidBindingRowIDs = append(invlidBindingRowIDs, rowID)
+				}
+				continue
+			}
+			originalSQL, sqlDigest := bindinfo.NormalizeStmtForBinding(stmt, defaultDB, false)
+			if originalSQL == "" || sqlDigest == "" {
+				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
+					zap.String("bind_sql", bindingSQL))
+				if planDigestNotNull {
+					invlidBindingRowIDs = append(invlidBindingRowIDs, rowID)
+				}
+				continue
+			}
+			update.originalSQL = originalSQL
+			update.sqlDigest = sqlDigest
+
+			updateIdx := len(updates)
+			updates = append(updates, update)
+			if planDigestNotNull {
+				// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
+				key := planDigest + "\x00" + update.sqlDigest
+				if _, ok := seenDigestPair[key]; ok {
+					updates[updateIdx].duplicate = true
+				} else {
+					seenDigestPair[key] = struct{}{}
+				}
+			}
+		}
+		req.Reset()
+	}
+	if closeErr := rs.Close(); closeErr != nil {
+		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(closeErr))
+	}
+
+	// Update rows independently to avoid one large bootstrap transaction.
+	for _, rowID := range invlidBindingRowIDs {
+		// Set invalid bindings' plan_digest to null to avoid duplicated key error in unique index (sql_digest, plan_digest).
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET plan_digest=NULL WHERE _tidb_rowid=%?", rowID)
+	}
+	for _, update := range updates {
+		if !update.duplicate {
+			continue
+		}
+		// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
+			bindinfo.StatusDeleted, update.rowID)
+	}
+	for _, update := range updates {
+		if update.duplicate || update.originalSQL == "" {
+			continue
+		}
+		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
+			update.originalSQL, update.sqlDigest, update.rowID)
+	}
 }
