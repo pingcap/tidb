@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/format/textrow"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,4 +38,26 @@ func TestResultEncoder(t *testing.T) {
 	d = textrow.NewResultEncoder("binary")
 	result = d.EncodeMeta([]byte("一"))
 	require.Equal(t, "一", string(result))
+}
+
+func TestIsStringColumnType(t *testing.T) {
+	stringTypes := []byte{
+		mysql.TypeString,
+		mysql.TypeVarString,
+		mysql.TypeVarchar,
+		mysql.TypeBit,
+		mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob,
+		mysql.TypeLongBlob,
+		mysql.TypeBlob,
+		mysql.TypeEnum,
+		mysql.TypeSet,
+		mysql.TypeJSON,
+		mysql.TypeTiDBVectorFloat32,
+	}
+	for _, tp := range stringTypes {
+		require.True(t, textrow.IsStringColumnType(tp), "type %d", tp)
+	}
+
+	require.False(t, textrow.IsStringColumnType(mysql.TypeLonglong))
 }

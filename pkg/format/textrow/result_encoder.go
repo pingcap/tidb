@@ -111,6 +111,21 @@ func (d *ResultEncoder) ColumnCharsetID(dumpCharset uint16, isStringCol bool) ui
 	return uint16(mysql.CharsetNameToID(d.chsName))
 }
 
+// IsStringColumnType reports whether tp is a non-binary string-like type for
+// text-protocol metadata charset rewriting.
+func IsStringColumnType(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
+		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
+		return true
+	case mysql.TypeTiDBVectorFloat32:
+		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
+		return true
+	}
+	return false
+}
+
 // EncodeMeta encodes bytes for meta info like column names.
 // Note that the result should be consumed immediately.
 func (d *ResultEncoder) EncodeMeta(src []byte) []byte {

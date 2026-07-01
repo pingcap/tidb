@@ -73,7 +73,7 @@ func (column *Info) dump(buffer []byte, d *textrow.ResultEncoder, withDefault bo
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dump.Uint16(buffer, d.ColumnCharsetID(column.dumpCharset(), isStringColumnType(column.Type)))
+	buffer = dump.Uint16(buffer, d.ColumnCharsetID(column.dumpCharset(), textrow.IsStringColumnType(column.Type)))
 	buffer = dump.Uint32(buffer, column.dumpLength())
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))

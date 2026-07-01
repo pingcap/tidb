@@ -69,7 +69,7 @@ func BenchmarkDumpColumn(b *testing.B) {
 		Type:         14,
 		DefaultValue: "test",
 	}
-	encoder := NewResultEncoder(charset.CharsetUTF8MB4)
+	encoder := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	buffer := make([]byte, 0, 1024)
 
 	b.ReportAllocs()

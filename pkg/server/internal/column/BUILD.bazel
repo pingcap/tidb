@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "column.go",
         "convert.go",
-        "result_encoder.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/internal/column",
     visibility = ["//pkg/server:__subpackages__"],

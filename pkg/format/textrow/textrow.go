@@ -38,6 +38,9 @@ var ErrInvalidType = errors.New("invalid column type for text serialization")
 
 // ColumnInfo carries the per-column attributes the value formatter needs.
 type ColumnInfo struct {
+	// Table is the originating table name. An empty string indicates an
+	// expression result, which enables explicit decimal precision for
+	// float/double columns.
 	Table   string
 	Charset uint16
 	Flag    uint16
@@ -48,7 +51,7 @@ type ColumnInfo struct {
 // FormatValueText returns the text representation of row[idx], charset-encoded via
 // enc for string-like types and without a length prefix. The result is backed by
 // enc's internal buffers and must be consumed before the next call. The caller
-// handles NULL (row.IsNull(idx)).
+// handles NULL (row.IsNull(idx)). enc must be non-nil.
 func FormatValueText(row chunk.Row, idx int, col ColumnInfo, enc *ResultEncoder) ([]byte, error) {
 	tmp := enc.scratch[:0]
 	switch col.Type {
