@@ -22,7 +22,7 @@ import (
 
 func newGeneralLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	// create the general logger
-	sqLogger, prop, err := log.InitLogger(newGeneralLogConfig(cfg))
+	sqLogger, prop, err := initPingCAPLogger(newGeneralLogConfig(cfg), cfg.RotateByDay)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

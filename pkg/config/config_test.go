@@ -170,6 +170,20 @@ disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
 }
 
+func TestLogRotateByDayConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "log_rotate_by_day.toml")
+	err := os.WriteFile(configFile, []byte(`
+[log.file]
+rotate-by-day = true
+`), 0o644)
+	require.NoError(t, err)
+
+	conf := defaultConf
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.Log.File.RotateByDay)
+	require.True(t, conf.Log.ToLogConfig().RotateByDay)
+}
+
 func TestErrorMessageExtensionConfig(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
