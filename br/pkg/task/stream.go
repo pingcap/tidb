@@ -1531,6 +1531,7 @@ func RunStreamRestore(
 			cfg.tiflashRecorder.Load(taskInfo.CheckpointInfo.Metadata.TiFlashItems)
 		}
 	}
+	adjustRestoreConcurrencyPerStoreFromTiKV(ctx, mgr, cfg)
 	logRestoreConfig := &LogRestoreConfig{
 		RestoreConfig:       cfg,
 		checkpointTaskInfo:  taskInfo.CheckpointInfo,

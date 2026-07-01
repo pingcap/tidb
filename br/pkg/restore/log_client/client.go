@@ -595,9 +595,10 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * uint(len(stores))
+	// Keep the global SST restore pool large enough to avoid starving stores when
+	// queued file sets temporarily point to other TiKVs.
+	const sstRestoreWorkerPoolSizePerStore uint = 7186
+	poolSize := sstRestoreWorkerPoolSizePerStore * uint(len(stores))
 	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
 	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
 

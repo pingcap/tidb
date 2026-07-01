@@ -194,7 +194,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 	flags.String(flagGranularity, string(restore.CoarseGrained), "(deprecated) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks")
+	flags.Uint(flagConcurrencyPerStore, conn.DefaultImportNumGoroutines, "The size of thread pool on each store that executes tasks")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -1953,6 +1953,21 @@ func checkPreallocIDReusable(ctx context.Context, cfg *SnapshotRestoreConfig, ha
 		return nil, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, please use the same setting as the previous restore"))
 	}
 	return checkpointMeta.PreallocIDs, nil
+}
+
+func adjustRestoreConcurrencyPerStoreFromTiKV(ctx context.Context, mgr *conn.Mgr, cfg *RestoreConfig) {
+	kvConfigs := &pconfig.KVConfig{
+		ImportGoroutines: cfg.ConcurrencyPerStore,
+		MergeRegionSize: pconfig.ConfigTerm[uint64]{
+			Modified: true,
+		},
+		MergeRegionKeyCount: pconfig.ConfigTerm[uint64]{
+			Modified: true,
+		},
+	}
+	httpCli := httputil.NewClient(mgr.GetTLSConfig())
+	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
+	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 }
 
 func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
