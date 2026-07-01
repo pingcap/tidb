@@ -26,7 +26,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -41,9 +40,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
@@ -358,57 +360,6 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.BucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
-}
-
-// BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(val *types.Datum, count int64) {
-	lowIdx, highIdx := 0, hg.Len()-1
-	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
-	if hg.Len() > 4 {
-		if cmpResult := chunk.Compare(hg.Bounds.GetRow(highIdx*2+1), 0, val); cmpResult < 0 {
-			return
-		}
-		if cmpResult := chunk.Compare(hg.Bounds.GetRow(lowIdx), 0, val); cmpResult > 0 {
-			return
-		}
-	}
-	var midIdx = 0
-	var found bool
-	for lowIdx <= highIdx {
-		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := chunk.Compare(hg.Bounds.GetRow(midIdx*2), 0, val)
-		if cmpResult > 0 {
-			highIdx = midIdx - 1
-			continue
-		}
-		cmpResult = chunk.Compare(hg.Bounds.GetRow(midIdx*2+1), 0, val)
-		if cmpResult < 0 {
-			lowIdx = midIdx + 1
-			continue
-		}
-		midbucket := &hg.Buckets[midIdx]
-
-		if midbucket.NDV > 0 {
-			midbucket.NDV--
-		}
-		if cmpResult == 0 {
-			midbucket.Repeat = 0
-		}
-		midbucket.Count -= count
-		if midbucket.Count < 0 {
-			midbucket.Count = 0
-		}
-		found = true
-		break
-	}
-	if found {
-		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
-			hg.Buckets[midIdx].Count -= count
-			if hg.Buckets[midIdx].Count < 0 {
-				hg.Buckets[midIdx].Count = 0
-			}
-		}
-	}
 }
 
 // RemoveVals remove the given values from the histogram.
@@ -1360,564 +1311,987 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	return nil
 }
 
-var bucket4MergingPool = sync.Pool{
-	New: func() any {
-		return newBucket4Meging()
-	},
+// bucketRef identifies a partition bucket. Pass 2 reads upper/lower
+// bounds on demand via chunk.Row.DatumWithBuffer into a reusable
+// scratch Datum (see fillUpper/fillLower below), no heap allocation
+// for int/float/string/bytes types, a small interface box for Decimal
+// or Time. Keeping the ref itself tiny means sortedRefs stays ~32 MB
+// at 8 k partitions × 500 buckets (vs ~350 MB if we inlined Datums).
+type bucketRef struct {
+	histIdx   uint16
+	bucketIdx uint16
 }
 
-func newbucket4MergingForRecycle() *bucket4Merging {
-	return bucket4MergingPool.Get().(*bucket4Merging)
+// bucketMergeEntry is one partition's current head in the k-way merge.
+// The upper and lower bound Datums are cached at insertion time so heap
+// sift compares directly against cached values, avoiding repeated Chunk
+// indirection.
+type bucketMergeEntry struct {
+	upper     types.Datum
+	lower     types.Datum
+	histIdx   uint16
+	bucketIdx uint16
 }
 
-func releasebucket4MergingForRecycle(b *bucket4Merging) {
-	b.disjointNDV = 0
-	b.Repeat = 0
-	b.NDV = 0
-	b.Count = 0
-	bucket4MergingPool.Put(b)
-}
-
-// bucket4Merging is only used for merging partition hists to global hist.
-type bucket4Merging struct {
-	lower *types.Datum
-	upper *types.Datum
-	Bucket
-	// disjointNDV is used for merging bucket NDV, see mergeBucketNDV for more details.
-	disjointNDV int64
-}
-
-// newBucket4Meging creates a new bucket4Merging.
-// but we create it from bucket4MergingPool as soon as possible to reduce the cost of GC.
-func newBucket4Meging() *bucket4Merging {
-	return &bucket4Merging{
-		lower: new(types.Datum),
-		upper: new(types.Datum),
-		Bucket: Bucket{
-			Repeat: 0,
-			NDV:    0,
-			Count:  0,
-		},
-		disjointNDV: 0,
-	}
-}
-
-// buildBucket4Merging builds bucket4Merging from Histogram
-// Notice: Count in Histogram.Buckets is prefix sum but in bucket4Merging is not.
-func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
-	buckets := make([]*bucket4Merging, 0, hg.Len())
-	for i := range hg.Len() {
-		b := newbucket4MergingForRecycle()
-		hg.LowerToDatum(i, b.lower)
-		hg.UpperToDatum(i, b.upper)
-		b.Repeat = hg.Buckets[i].Repeat
-		b.NDV = hg.Buckets[i].NDV
-		b.Count = hg.Buckets[i].Count
-		if i != 0 {
-			b.Count -= hg.Buckets[i-1].Count
-		}
-		buckets = append(buckets, b)
-	}
-	return buckets
-}
-
-func (b *bucket4Merging) Clone() bucket4Merging {
-	result := newbucket4MergingForRecycle()
-	result.Repeat = b.Repeat
-	result.NDV = b.NDV
-	b.upper.Copy(result.upper)
-	b.lower.Copy(result.lower)
-	result.Count = b.Count
-	result.disjointNDV = b.disjointNDV
-	return *result
-}
-
-// mergeBucketNDV merges bucket NDV from tow bucket `right` & `left`.
-// Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
-func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
-	res := right.Clone()
-	if left.Count == 0 {
-		return &res, nil
-	}
-	if right.Count == 0 {
-		left.lower.Copy(res.lower)
-		left.upper.Copy(res.upper)
-		res.NDV = left.NDV
-		return &res, nil
-	}
-	upperCompare, err := right.upper.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
-	if err != nil {
-		return nil, err
-	}
-	// __right__|
-	// _______left____|
-	// illegal order.
-	if upperCompare < 0 {
-		err := errors.Errorf("illegal bucket order")
-		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
-		return nil, err
-	}
-	//  ___right_|
-	//  ___left__|
-	// They have the same upper.
-	if upperCompare == 0 {
-		lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
-		if err != nil {
-			return nil, err
-		}
-		//      |____right____|
-		//         |__left____|
-		// illegal order.
-		if lowerCompare < 0 {
-			err := errors.Errorf("illegal bucket order")
-			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
-			return nil, err
-		}
-		// |___right___|
-		// |____left___|
-		// ndv = max(right.ndv, left.ndv)
-		if lowerCompare == 0 {
-			if left.NDV > right.NDV {
-				res.NDV = left.NDV
-			}
-			return &res, nil
-		}
-		//         |_right_|
-		// |_____left______|
-		// |-ratio-|
-		// ndv = ratio * left.ndv + max((1-ratio) * left.ndv, right.ndv)
-		ratio := calcFraction4Datums(left.lower, left.upper, right.lower)
-		res.NDV = int64(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV)))
-		res.lower = left.lower.Clone()
-		return &res, nil
-	}
-	// ____right___|
-	// ____left__|
-	// right.upper > left.upper
-	lowerCompareUpper, err := right.lower.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
-	if err != nil {
-		return nil, err
-	}
-	//                  |_right_|
-	//  |___left____|
-	// `left` and `right` do not intersect
-	// We add right.ndv in `disjointNDV`, and let `right.ndv = left.ndv` be used for subsequent merge.
-	// This is because, for the merging of many buckets, we merge them from back to front.
-	if lowerCompareUpper >= 0 {
-		left.upper.Copy(res.upper)
-		left.lower.Copy(res.lower)
-		res.disjointNDV += right.NDV
-		res.NDV = left.NDV
-		return &res, nil
-	}
-	upperRatio := calcFraction4Datums(right.lower, right.upper, left.upper)
-	lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
-	if err != nil {
-		return nil, err
-	}
-	//              |-upperRatio-|
-	//              |_______right_____|
-	// |_______left______________|
-	// |-lowerRatio-|
-	// ndv = lowerRatio * left.ndv
-	//		+ max((1-lowerRatio) * left.ndv, upperRatio * right.ndv)
-	//		+ (1-upperRatio) * right.ndv
-	if lowerCompare >= 0 {
-		lowerRatio := calcFraction4Datums(left.lower, left.upper, right.lower)
-		res.NDV = int64(lowerRatio*float64(left.NDV) +
-			math.Max((1-lowerRatio)*float64(left.NDV), upperRatio*float64(right.NDV)) +
-			(1-upperRatio)*float64(right.NDV))
-		res.lower = left.lower.Clone()
-		return &res, nil
-	}
-	// |------upperRatio--------|
-	// |-lowerRatio-|
-	// |____________right______________|
-	//              |___left____|
-	// ndv = lowerRatio * right.ndv
-	//		+ max(left.ndv + (upperRatio - lowerRatio) * right.ndv)
-	//		+ (1-upperRatio) * right.ndv
-	lowerRatio := calcFraction4Datums(right.lower, right.upper, left.lower)
-	res.NDV = int64(lowerRatio*float64(right.NDV) +
-		math.Max(float64(left.NDV), (upperRatio-lowerRatio)*float64(right.NDV)) +
-		(1-upperRatio)*float64(right.NDV))
-	return &res, nil
-}
-
-// mergeParitionBuckets merges buckets[l...r) to one global bucket.
-// global bucket:
+// bucketMergeHeap is a min-heap over bucketMergeEntry keyed by upper
+// (then lower) bound. Shared state (StatementContext, any compare
+// error observed during sift) lives on the heap rather than being
+// duplicated onto every entry.
 //
-//	upper = buckets[r-1].upper
-//	count = sum of buckets[l...r).count
-//	repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
-//	ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
-//
-// Notice: lower is not calculated here.
-func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging) (*bucket4Merging, error) {
-	if len(buckets) == 0 {
-		return nil, errors.Errorf("not enough buckets to merge")
-	}
-	res := newbucket4MergingForRecycle()
-	buckets[len(buckets)-1].upper.Copy(res.upper)
-	right := buckets[len(buckets)-1].Clone()
-
-	totNDV := int64(0)
-	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
-	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
-	intest.Assert(res.NDV == 0, "NDV in the new bucket4Merging bucket4Merging should be 0")
-	for i := len(buckets) - 1; i >= 0; i-- {
-		totNDV += buckets[i].NDV
-		res.Count += buckets[i].Count
-		compare, err := buckets[i].upper.Compare(sc.TypeCtx(), res.upper, collate.GetBinaryCollator())
-		if err != nil {
-			return nil, err
-		}
-		if compare == 0 {
-			res.Repeat += buckets[i].Repeat
-		}
-		if i != len(buckets)-1 {
-			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
-			if err != nil {
-				return nil, err
-			}
-			right = *tmp
-		}
-	}
-	res.NDV = right.NDV + right.disjointNDV
-
-	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
-	// and as the number of buckets increases, these assumptions become weak,
-	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
-	res.NDV = min(int64(float64(res.NDV)*math.Pow(1.15, float64(len(buckets)-1))), totNDV)
-	return res, nil
+// Heap operations (pushEntry / popMin / initHeap) are implemented
+// directly rather than going through container/heap, whose any-typed
+// Push/Pop boxes each entry into an interface. With a ~150 B entry,
+// that's ~160 B per pop in extra allocation, significant at the
+// multi-million-pop scale of an 8k-partition merge.
+type bucketMergeHeap struct {
+	cmpErr  error
+	sc      *stmtctx.StatementContext
+	entries []bucketMergeEntry
 }
 
-func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4Merging {
-	res := newbucket4MergingForRecycle()
-	d.Copy(res.lower)
-	d.Copy(res.upper)
-	res.Count = int64(t.Count)
-	res.Repeat = int64(t.Count)
-	if analyzeVer <= Version2 {
-		res.NDV = 0
+func (h *bucketMergeHeap) Len() int { return len(h.entries) }
+func (h *bucketMergeHeap) less(i, j int) bool {
+	if h.cmpErr != nil {
+		return false
 	}
-	failpoint.Inject("github.com/pingcap/pkg/statistics/enableTopNNDV", func(_ failpoint.Value) {
-		res.NDV = 1
+	res, err := h.entries[i].upper.Compare(h.sc.TypeCtx(), &h.entries[j].upper, collate.GetBinaryCollator())
+	if err != nil {
+		h.cmpErr = err
+		return false
+	}
+	if res != 0 {
+		return res < 0
+	}
+	// Secondary sort by lower bound for deterministic ordering.
+	res, err = h.entries[i].lower.Compare(h.sc.TypeCtx(), &h.entries[j].lower, collate.GetBinaryCollator())
+	if err != nil {
+		h.cmpErr = err
+		return false
+	}
+	return res < 0
+}
+func (h *bucketMergeHeap) swap(i, j int) { h.entries[i], h.entries[j] = h.entries[j], h.entries[i] }
+
+func (h *bucketMergeHeap) up(j int) {
+	for {
+		i := (j - 1) / 2
+		if i == j || !h.less(j, i) {
+			break
+		}
+		h.swap(i, j)
+		j = i
+	}
+}
+
+func (h *bucketMergeHeap) down(i0, n int) {
+	i := i0
+	for {
+		j1 := 2*i + 1
+		if j1 >= n || j1 < 0 {
+			break
+		}
+		j := j1
+		if j2 := j1 + 1; j2 < n && h.less(j2, j1) {
+			j = j2
+		}
+		if !h.less(j, i) {
+			break
+		}
+		h.swap(i, j)
+		i = j
+	}
+}
+
+// less() cannot return an error (signature fixed by heap convention),
+// so comparison failures are captured into cmpErr and short-circuit
+// subsequent comparisons. The mutating methods (pushEntry / popMin /
+// initHeap) surface cmpErr in their return value so callers cannot
+// silently lose a stashed comparison error.
+
+func (h *bucketMergeHeap) pushEntry(e bucketMergeEntry) error {
+	h.entries = append(h.entries, e)
+	h.up(len(h.entries) - 1)
+	return h.cmpErr
+}
+
+func (h *bucketMergeHeap) popMin() (bucketMergeEntry, error) {
+	n := len(h.entries) - 1
+	h.swap(0, n)
+	h.down(0, n)
+	e := h.entries[n]
+	h.entries = h.entries[:n]
+	return e, h.cmpErr
+}
+
+func (h *bucketMergeHeap) initHeap() error {
+	n := len(h.entries)
+	for i := n/2 - 1; i >= 0; i-- {
+		h.down(i, n)
+	}
+	return h.cmpErr
+}
+
+func (h *bucketMergeHeap) peek() *bucketMergeEntry {
+	if len(h.entries) == 0 {
+		return nil
+	}
+	return &h.entries[0]
+}
+
+// topNEntry is a flattened TopN value from one partition, used for sorting.
+type topNEntry struct {
+	encoded []byte
+	count   uint64
+}
+
+// MergePartTopNAndHistToGlobal merges partition-level TopN lists and
+// histograms into a single global TopN and histogram via two sorted
+// merge-walks:
+//
+// Pass 1: walk sorted partition-TopN entries and sorted partition
+// histogram bucket refs (k-way-merged across partitions by upper
+// bound) in lockstep. For each unique key, sum partition-TopN counts
+// and partition bucket Repeats at that upper into totalRepeat, and
+// feed the result through a bounded min-heap to pick the global
+// TopN. As a side effect this produces sortedRefs, the bucket refs
+// in upper-bound order, which Pass 2 reuses without rebuilding the
+// heap.
+//
+// Pass 2: walk sortedRefs + leftover (non-promoted) TopN entries and
+// merge them into the global histogram, producing one global bucket
+// each time the accumulated mass since the previous global bucket
+// reaches target = totHistCount / expBucketNumber. Groups whose
+// upper matches a global TopN value have their Repeat subtracted
+// out (the global TopN counter owns those rows).
+//
+// Accuracy caveat: groups partition buckets by upper only. The full
+// partition bucket count is attributed at its upper; partition
+// (lower, upper) interiors are not inspected. This is forced by the
+// input, partition stats expose only (lower, upper, count, repeat).
+//
+// The approximation works because each partition's bucket is itself
+// roughly equi-depth, so its rows are roughly uniform inside
+// [lower, upper). Range estimation later assumes the same uniformity
+// over the global bucket, and uniform-of-uniforms is uniform, the
+// merge preserves correctness for a global bucket's total count and
+// for point-equality at the upper (Repeat is summed across partitions
+// at the same upper).
+//
+// Real-world cases where this loses accuracy:
+//   - A partition bucket much wider than its peers gets its full
+//     count attributed at its upper, while contributing its (lower)
+//     to the global bucket's lower. Estimates near the global lower
+//     can over-count if that partition's data actually clustered
+//     near its upper.
+//   - Within-bucket skew the partition stats can't represent (e.g.,
+//     a Zipf-shaped run inside a single partition bucket). The
+//     partition stats already smoothed it; the merge can't recover.
+//   - Interpolated `WHERE x < mid` for `mid` inside a global bucket:
+//     linear interpolation assumes uniform density, so error scales
+//     with the partition-level density variation that the merge
+//     averaged over.
+func MergePartTopNAndHistToGlobal(
+	sc *stmtctx.StatementContext,
+	killer *sqlkiller.SQLKiller,
+	topNs []*TopN,
+	hists []*Histogram,
+	numTopN uint32,
+	expBucketNumber int64,
+	isIndex bool,
+) (*TopN, *Histogram, error) {
+	// ANALYZE grammar requires WITH N BUCKETS > 0 (handleAnalyzeOptions
+	// validates this), and the default is 256, so this is only reachable
+	// via a programmer error in a caller.
+	intest.Assert(expBucketNumber > 0, "expBucketNumber must be positive")
+	if len(hists) > math.MaxUint16 {
+		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: too many partition histograms (%d > %d)", len(hists), math.MaxUint16)
+	}
+
+	// Need at least one non-nil histogram to recover column type, ID, and
+	// last-update version for the global stats. Empty-but-non-nil histograms
+	// are fine (TopN-only columns still carry a Histogram wrapper).
+	var firstHist *Histogram
+	for _, h := range hists {
+		if h == nil {
+			continue
+		}
+		if h.Len() > math.MaxUint16 {
+			return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: partition histogram has too many buckets (%d > %d)", h.Len(), math.MaxUint16)
+		}
+		if firstHist == nil {
+			firstHist = h
+		}
+	}
+	if firstHist == nil {
+		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: no partition histograms provided")
+	}
+
+	tz := sc.TimeZone()
+	tp := firstHist.Tp.GetType()
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
+		zap.Int64("histID", firstHist.ID),
+		zap.Stringer("tp", firstHist.Tp),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("hists", len(hists)),
+		zap.Int("topNs", len(topNs)))
+
+	// ---------------------------------------------------------------
+	// Pass 1: Determine global TopN via sorted merge of TopN entries
+	// and histogram bucket Repeats. And get the biggest bucket groups.
+	// ---------------------------------------------------------------
+
+	// 1a. Flatten + sort all partition TopN entries by encoded key.
+	// Note that the encoded bytes are not copied, just referenced.
+	totalTopN := 0
+	for _, topN := range topNs {
+		if topN == nil || len(topN.TopN) == 0 {
+			continue
+		}
+		totalTopN += len(topN.TopN)
+	}
+	allTopN := make([]topNEntry, 0, totalTopN)
+	for _, topN := range topNs {
+		if topN == nil || len(topN.TopN) == 0 {
+			continue
+		}
+		for _, val := range topN.TopN {
+			allTopN = append(allTopN, topNEntry{encoded: val.Encoded, count: val.Count})
+		}
+	}
+	slices.SortFunc(allTopN, func(a, b topNEntry) int {
+		return bytes.Compare(a.encoded, b.encoded)
 	})
-	intest.Assert(analyzeVer <= Version2)
-	return res
-}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1a: sorted partition TopN",
+		zap.Int("topNEntries", len(allTopN)))
 
-// MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool, analyzeVer int) (*Histogram, error) {
-	var totCount, totNull, totColSize int64
-	var bucketNumber int
-	if expBucketNumber == 0 {
-		return nil, errors.Errorf("expBucketNumber can not be zero")
-	}
-	// This only occurs when there are no histogram records in the histogram system table.
-	// It happens only to tables whose DDL events haven't been processed yet and that have no indexes or keys,
-	// with the predicate column feature enabled.
-	if len(hists) == 0 {
-		return nil, nil
-	}
+	// 1b. Collect partition metadata and build a k-way merge heap.
+	// Each partition's histogram is already sorted by upper bound.
+	var totHistCount, totNull, totColSize int64
+	totalBuckets := 0
 	for _, hist := range hists {
+		if hist == nil {
+			continue
+		}
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
 		histLen := hist.Len()
+		totalBuckets += histLen
 		if histLen > 0 {
-			bucketNumber += histLen
-			totCount += hist.Buckets[hist.Len()-1].Count
+			totHistCount += hist.Buckets[histLen-1].Count
 		}
 	}
-	// If all the hist and the topn is empty, return a empty hist.
-	if bucketNumber+len(popedTopN) == 0 {
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
+
+	// firstNonEmptyBucket scans hists[histIdx] starting at startIdx for
+	// the first bucket whose mass (count - prev count) is positive, and
+	// returns the corresponding bucketMergeEntry. Used both to seed the
+	// merge heap and to advance a partition after a popMin in the merge
+	// walk: the only difference is the start index.
+	firstNonEmptyBucket := func(histIdx uint16, startIdx int) (bucketMergeEntry, bool) {
+		h := hists[histIdx]
+		for bi := startIdx; bi < h.Len(); bi++ {
+			count := h.Buckets[bi].Count
+			if bi > 0 {
+				count -= h.Buckets[bi-1].Count
+			}
+			if count > 0 {
+				return bucketMergeEntry{
+					histIdx:   histIdx,
+					bucketIdx: uint16(bi),
+					upper:     h.Bounds.GetRow(2*bi+1).GetDatum(0, h.Tp),
+					lower:     h.Bounds.GetRow(2*bi).GetDatum(0, h.Tp),
+				}, true
+			}
+		}
+		return bucketMergeEntry{}, false
 	}
 
-	bucketNumber += len(popedTopN)
-	buckets := make([]*bucket4Merging, 0, bucketNumber)
-	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
+	// Initialize the merge heap with each partition's first non-empty bucket.
+	mergeHeap := bucketMergeHeap{
+		entries: make([]bucketMergeEntry, 0, len(hists)),
+		sc:      sc,
+	}
+	for hi, hist := range hists {
+		if hist == nil {
+			continue
+		}
+		if e, ok := firstNonEmptyBucket(uint16(hi), 0); ok {
+			mergeHeap.entries = append(mergeHeap.entries, e)
+		}
+	}
+	if err := mergeHeap.initHeap(); err != nil {
+		return nil, nil, err
+	}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1b: built k-way merge heap",
+		zap.Int("heapSize", mergeHeap.Len()),
+		zap.Int("totalBuckets", totalBuckets))
 
-	// init `buckets`.
-	for _, hist := range hists {
-		buckets = append(buckets, hist.buildBucket4Merging()...)
+	if len(allTopN) == 0 && mergeHeap.Len() == 0 {
+		return nil, NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+			firstHist.Tp, 0, totColSize), nil
 	}
 
-	for _, meta := range popedTopN {
-		totCount += int64(meta.Count)
-		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone())
+	// 1c. Merge-walk both sorted sequences. For each unique encoded key
+	// the walk produces a heapEntry per unique encoded key:
+	//
+	//   totalRepeat = Σ partition-TopN counts + Σ bucket Repeats at upper
+	//
+	// totalRepeat is the value's frequency, used to pick the global TopN.
+	// A wide bucket [a, b] with count=100 repeat=5 only has 5 occurrences
+	// of the upper value b, the other 95 rows are some other values in
+	// [a, b).
+	type heapEntry struct {
+		encoded     []byte
+		totalRepeat uint64 // value frequency (TopN counts + bucket Repeats)
+		repeatCount uint64 // bucket Repeats only, for the 1d totHistCount adjustment.
+	}
+	topNHeap := generic.NewBoundedMinHeap(int(numTopN), func(a, b heapEntry) int {
+		return cmp.Compare(a.totalRepeat, b.totalRepeat)
+	})
+	// sortedRefs collects bucket references in sorted order as the heap
+	// produces them. Reused by Pass 2 without rebuilding the merge heap.
+	sortedRefs := make([]bucketRef, 0, totalBuckets)
+
+	// nextBucket pops the heap's min entry, saves it to sortedRefs,
+	// advances that partition to its next non-empty bucket, and pushes
+	// the new head back. The single call site below guards with
+	// `for mergeHeap.Len() > 0` so the heap is non-empty here.
+	nextBucket := func() (bucketMergeEntry, error) {
+		intest.Assert(mergeHeap.Len() > 0, "nextBucket called on empty heap")
+		entry, err := mergeHeap.popMin()
 		if err != nil {
-			return nil, err
+			return bucketMergeEntry{}, err
 		}
-		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
-	}
-
-	// Remove empty buckets
-	tail := 0
-	for i := range buckets {
-		if buckets[i].Count != 0 {
-			// Because we will reuse the tail of the slice in `releasebucket4MergingForRecycle`,
-			// we need to shift the non-empty buckets to the front.
-			buckets[tail], buckets[i] = buckets[i], buckets[tail]
-			tail++
+		sortedRefs = append(sortedRefs, bucketRef{
+			histIdx:   entry.histIdx,
+			bucketIdx: entry.bucketIdx,
+		})
+		if next, ok := firstNonEmptyBucket(entry.histIdx, int(entry.bucketIdx)+1); ok {
+			if err := mergeHeap.pushEntry(next); err != nil {
+				return bucketMergeEntry{}, err
+			}
 		}
-	}
-	for n := tail; n < len(buckets); n++ {
-		releasebucket4MergingForRecycle(buckets[n])
-	}
-	buckets = buckets[:tail]
-
-	err := sortBucketsByUpperBound(sc.TypeCtx(), buckets)
-	if err != nil {
-		return nil, err
+		return entry, nil
 	}
 
-	var sum, prevSum int64
-	r := len(buckets)
-	bucketCount := int64(1)
-	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
-	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
-	cutAndFixBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
-	var currentLeftMost *types.Datum
-	for i := len(buckets) - 1; i >= 0; i-- {
-		if currentLeftMost == nil {
-			currentLeftMost = buckets[i].lower
-		} else {
-			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
+	// augmentation absorbs matched TopN counts into one of the matching
+	// partition buckets so pass 2 sees them as part of that bucket's
+	// effective mass and Repeat. Indexed by the absorbed bucket's ref.
+	augmentation := make(map[bucketRef]int64)
+	// unmatchedAllTopN keeps the TopN entries that have no partition
+	// bucket at their value (mergeOrd < 0 groups). After global TopN
+	// selection these are filtered to exclude entries that landed in
+	// the global TopN, and the remainder becomes the virtual histogram
+	// that pass 2 walks as just another partition.
+	unmatchedAllTopN := make([]topNEntry, 0)
+
+	ti := 0
+	// HandleSignal does atomic loads and a time.Now() on every call; at
+	// a few million iterations on 8k-partition tables that overhead
+	// adds up. Check once per 1024 iterations, worst-case cancellation
+	// latency on the order of a millisecond.
+	var checkKillCount uint32
+	for ti < len(allTopN) || mergeHeap.Len() > 0 {
+		if checkKillCount&1023 == 0 {
+			if err := killer.HandleSignal(); err != nil {
+				return nil, nil, err
+			}
+		}
+		checkKillCount++
+
+		var entry heapEntry
+		var mergeOrd int // -1: TopN only, 0: both, 1: histogram only
+
+		switch {
+		case ti >= len(allTopN):
+			mergeOrd = 1
+		case mergeHeap.Len() == 0:
+			mergeOrd = -1
+		default:
+			d, err := topNMetaToDatum(TopNMeta{Encoded: allTopN[ti].encoded}, tp, isIndex, tz)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			if res > 0 {
-				currentLeftMost = buckets[i].lower
+			mergeOrd, err = d.Compare(sc.TypeCtx(),
+				&mergeHeap.peek().upper,
+				collate.GetBinaryCollator())
+			if err != nil {
+				return nil, nil, err
 			}
 		}
-		sum += buckets[i].Count
-		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
-			// If the buckets have the same upper, we merge them into the same new buckets.
-			// We don't need to update the currentLeftMost in the for loop because the leftmost bucket's lower
-			// will be the smallest when their upper is the same.
-			// We just need to update it after the for loop.
-			for ; i > 0; i-- {
-				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
-				if err != nil {
-					return nil, err
-				}
-				if res != 0 {
-					break
-				}
-				sum += buckets[i-1].Count
+		startTi := ti
+		if mergeOrd <= 0 {
+			entry.encoded = allTopN[ti].encoded
+			entry.totalRepeat += allTopN[ti].count
+			ti++
+			for ti < len(allTopN) && bytes.Equal(allTopN[ti].encoded, entry.encoded) {
+				entry.totalRepeat += allTopN[ti].count
+				ti++
 			}
-			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if res > 0 {
-				currentLeftMost = buckets[i].lower
-			}
-
-			// Iterate possible overlapped ones.
-			// We need to re-sort this part.
-			mergeBuffer = mergeBuffer[:0]
-			cutAndFixBuffer = cutAndFixBuffer[:0]
-			leftMostValidPosForNonOverlapping := i
-			for ; i > 0; i-- {
-				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
-				if err != nil {
-					return nil, err
-				}
-				// If buckets[i-1].upper < currentLeftMost, this bucket has no overlap with current merging one. Break it.
-				if res < 0 {
-					break
-				}
-				// Now the bucket[i-1].upper >= currentLeftMost, they are overlapped.
-				res, err = buckets[i-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
-				if err != nil {
-					return nil, err
-				}
-				// If buckets[i-1].lower >= currentLeftMost, this bucket is totally inside. So it can be totally merged.
-				if res >= 0 {
-					sum += buckets[i-1].Count
-					mergeBuffer = append(mergeBuffer, buckets[i-1])
-					continue
-				}
-				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
-				// calcFraction4Datums calc the value: (currentLeftMost - lower_bound) / (upper_bound - lower_bound)
-				overlapping := 1 - calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
-				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
-				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
-				sum += overlappedCount
-				buckets[i-1].Count -= overlappedCount
-				buckets[i-1].NDV -= overlappedNDV
-				buckets[i-1].Repeat = 0
-				if buckets[i-1].NDV < 0 {
-					buckets[i-1].NDV = 0
-				}
-				if buckets[i-1].Count < 0 {
-					buckets[i-1].Count = 0
-				}
-
-				// Cut it.
-				cutBkt := newbucket4MergingForRecycle()
-				buckets[i-1].upper.Copy(cutBkt.upper)
-				currentLeftMost.Copy(cutBkt.lower)
-				currentLeftMost.Copy(buckets[i-1].upper)
-				cutBkt.Count = overlappedCount
-				cutBkt.NDV = overlappedNDV
-				mergeBuffer = append(mergeBuffer, cutBkt)
-				cutAndFixBuffer = append(cutAndFixBuffer, cutBkt)
-			}
-			var merged *bucket4Merging
-			if len(cutAndFixBuffer) == 0 {
-				merged, err = mergePartitionBuckets(sc, buckets[i:r])
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				// mergedBuffer is in reverse order, we need to reverse it.
-				slices.Reverse(mergeBuffer)
-				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
-				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
-				checkBucket4MergingIsSorted(sc.TypeCtx(), mergeBuffer)
-				merged, err = mergePartitionBuckets(sc, mergeBuffer)
-				if err != nil {
-					return nil, err
-				}
-				for _, bkt := range cutAndFixBuffer {
-					releasebucket4MergingForRecycle(bkt)
-				}
-				// The buckets in buckets[i:origI] needs a re-sort.
-				err = sortBucketsByUpperBound(sc.TypeCtx(), buckets[i:leftMostValidPosForNonOverlapping])
-				if err != nil {
-					return nil, err
-				}
-				// After the operation, the buckets in buckets[i:origI] contains two kinds of buckets:
-				// 1. The buckets that are totally inside the merged bucket. => lower_bound >= currentLeftMost
-				//    It's not changed. [lower_bound_i, upper_bound_i] with lower_bound_i >= currentLeftMost
-				// 2. The buckets that are overlapped with the merged bucket. lower_bound < currentLeftMost < upper_bound
-				//    After cutting, the remained part is [lower_bound_i, currentLeftMost]
-				// To do the next round of merging, we need to kick out the 1st kind of buckets.
-				// And after the re-sort, the 2nd kind of buckets will be in the front.
-				leftMostInvalidPosForNextRound := leftMostValidPosForNonOverlapping
-				for ; leftMostInvalidPosForNextRound > i; leftMostInvalidPosForNextRound-- {
-					res, err := buckets[leftMostInvalidPosForNextRound-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+		}
+		var firstBucketRef bucketRef
+		var hasFirstBucket bool
+		if mergeOrd >= 0 {
+			// Pop all buckets with the same upper bound (from different
+			// partitions). The heap groups them naturally.
+			first := true
+			var groupUpper types.Datum
+			for mergeHeap.Len() > 0 {
+				if !first {
+					c, err := mergeHeap.peek().upper.Compare(sc.TypeCtx(), &groupUpper,
+						collate.GetBinaryCollator())
 					if err != nil {
-						return nil, err
+						return nil, nil, err
 					}
-					// Once the lower bound < currentLeftMost, we've skipped all the 1st kind of bucket.
-					// We can break here.
-					if res < 0 {
+					if c != 0 {
 						break
 					}
 				}
-				checkBucket4MergingIsSorted(sc.TypeCtx(), buckets[i:leftMostInvalidPosForNextRound])
-				i = leftMostInvalidPosForNextRound
+				bkt, err := nextBucket()
+				if err != nil {
+					return nil, nil, err
+				}
+				if first {
+					groupUpper = bkt.upper
+					firstBucketRef = bucketRef{histIdx: bkt.histIdx, bucketIdx: bkt.bucketIdx}
+					hasFirstBucket = true
+					first = false
+				}
+				h := hists[bkt.histIdx]
+				bi := int(bkt.bucketIdx)
+				repeat := h.Buckets[bi].Repeat
+				entry.repeatCount += uint64(repeat)
+				entry.totalRepeat += uint64(repeat)
+				if entry.encoded == nil {
+					if isIndex {
+						entry.encoded = h.Bounds.GetRow(bi*2 + 1).GetBytes(0)
+					} else {
+						var err error
+						entry.encoded, err = codec.EncodeKey(tz, nil, bkt.upper)
+						if err != nil {
+							return nil, nil, err
+						}
+					}
+				}
 			}
-			currentLeftMost.Copy(merged.lower)
-			currentLeftMost = nil
-			globalBuckets = append(globalBuckets, merged)
-			r = i
-			bucketCount++
-			prevSum = sum
 		}
-	}
-	if r > 0 {
-		leftMost := buckets[0].lower
-		for i, b := range buckets[:r] {
-			if i == 0 {
-				continue
-			}
-			res, err := leftMost.Compare(sc.TypeCtx(), b.lower, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if res > 0 {
-				leftMost = b.lower
+		// Bookkeeping for the TopN entries consumed in this iteration:
+		//   - mergeOrd == 0 (matched): absorb their summed count into
+		//     the first popped bucket. Pass 2 sees the absorbed amount
+		//     as part of that bucket's effective count and Repeat; for
+		//     a global-TopN-matched upper, the topNMatch subtraction
+		//     in addPartContribs cancels the absorbed contribution.
+		//   - mergeOrd < 0 (unmatched): no partition has a bucket at
+		//     this upper. Keep the entries for the virtual histogram
+		//     (built after global TopN selection).
+		if startTi < ti {
+			if mergeOrd == 0 && hasFirstBucket {
+				var topNCountAtValue int64
+				for j := startTi; j < ti; j++ {
+					topNCountAtValue += int64(allTopN[j].count)
+				}
+				if topNCountAtValue > 0 {
+					augmentation[firstBucketRef] = topNCountAtValue
+				}
+			} else {
+				unmatchedAllTopN = append(unmatchedAllTopN, allTopN[startTi:ti]...)
 			}
 		}
 
-		merged, err := mergePartitionBuckets(sc, buckets[:r])
+		if entry.totalRepeat > 0 {
+			topNHeap.Add(entry)
+		}
+	}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1c: merge-walked TopN + buckets",
+		zap.Int("sortedRefs", len(sortedRefs)),
+		zap.Int("topNHeapSize", topNHeap.Len()))
+
+	// 1d. Extract global TopN from the topNHeap.
+	topNSlice := topNHeap.ToSortedSlice()
+	// When the heap filled to capacity, count==1 entries are a
+	// noise sample from a candidate pool larger than numTopN — they
+	// carry no selectivity signal beyond what the histogram + NDV
+	// fallback already provides, and the specific singletons that
+	// won the heap race are arbitrary. Drop them. When the heap is
+	// below capacity, every distinct candidate fit, so even
+	// singletons represent the complete distinct-value enumeration
+	// and carry exact range information; keep them.
+	if uint32(len(topNSlice)) >= numTopN {
+		filtered := topNSlice[:0]
+		for _, e := range topNSlice {
+			if e.totalRepeat >= 2 {
+				filtered = append(filtered, e)
+			}
+		}
+		topNSlice = filtered
+	}
+	var globalTopN *TopN
+	// For Pass 2. Only presence is needed.
+	globalTopNMap := make(map[hack.MutableString]struct{})
+	if len(topNSlice) > 0 {
+		globalTopN = NewTopN(int(numTopN))
+		for _, e := range topNSlice {
+			globalTopN.AppendTopN(e.encoded, e.totalRepeat)
+			globalTopNMap[hack.String(e.encoded)] = struct{}{}
+			// Adjust totHistCount: subtract histogram-Repeat for global TopN values
+			totHistCount -= int64(e.repeatCount)
+		}
+		// The heap orders by count (descending) but TopN's downstream consumers
+		// (findTopN/LowerBound/BetweenCount) assume entries are sorted by encoded bytes.
+		globalTopN.Sort()
+	}
+
+	// Add TopN-origin counts for values that didn't make global TopN.
+	// Their rows were excluded from partition histograms (put into
+	// partition TopN instead), so they need to enter the global histogram.
+	for _, e := range allTopN {
+		if _, inGlobal := globalTopNMap[hack.String(e.encoded)]; !inGlobal {
+			totHistCount += int64(e.count)
+		}
+	}
+	globalTopNSize := 0
+	if globalTopN != nil {
+		globalTopNSize = len(globalTopN.TopN)
+	}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1d: extracted global TopN",
+		zap.Int("globalTopN", globalTopNSize),
+		zap.Int64("totHistCount", totHistCount))
+
+	// 1e. Build the virtual histogram for TopN entries that didn't
+	// match any partition bucket upper AND didn't make global TopN.
+	// Pass 2 then walks one unified sortedRefs slice (partitions plus
+	// the virtual histogram) without a separate allTopN stream.
+	finalAllTopN := unmatchedAllTopN[:0]
+	for _, e := range unmatchedAllTopN {
+		if _, inGlobal := globalTopNMap[hack.String(e.encoded)]; inGlobal {
+			continue
+		}
+		if e.count == 0 {
+			continue
+		}
+		finalAllTopN = append(finalAllTopN, e)
+	}
+
+	unifiedRefs := sortedRefs
+	if len(finalAllTopN) > 0 {
+		// Split into chunks of MaxUint16 buckets so bucketIdx
+		// (uint16) never overflows. finalAllTopN is already
+		// encoded-key sorted, so chunks have non-overlapping
+		// upper-bound ranges and can be referenced in (chunkIdx,
+		// withinChunk) form.
+		const chunkSize = math.MaxUint16
+		numChunks := (len(finalAllTopN) + chunkSize - 1) / chunkSize
+		if uint64(len(hists))+uint64(numChunks) > math.MaxUint16 {
+			return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: too many virtual histograms (%d partitions + %d virtual chunks > %d)", len(hists), numChunks, math.MaxUint16)
+		}
+		virtualHistIdxs := make([]uint16, numChunks)
+		for k := range numChunks {
+			start := k * chunkSize
+			end := min(start+chunkSize, len(finalAllTopN))
+			chunk := NewHistogram(firstHist.ID, 0, 0, 0, firstHist.Tp, end-start, 0)
+			var chunkCum int64
+			for _, e := range finalAllTopN[start:end] {
+				var d types.Datum
+				if isIndex {
+					d.SetBytes(e.encoded)
+				} else {
+					var err error
+					d, err = topNMetaToDatum(TopNMeta{Encoded: e.encoded}, tp, isIndex, tz)
+					if err != nil {
+						return nil, nil, err
+					}
+				}
+				chunkCum += int64(e.count)
+				chunk.AppendBucketWithNDV(&d, &d, chunkCum, int64(e.count), 0)
+			}
+			virtualHistIdxs[k] = uint16(len(hists))
+			hists = append(hists, chunk)
+		}
+
+		// Two-pointer merge of sortedRefs (from the k-way merge) and
+		// the chunked virtual buckets, keyed by upper bound.
+		unifiedRefs = make([]bucketRef, 0, len(sortedRefs)+len(finalAllTopN))
+		var refUpper, virtUpper types.Datum
+		si, vi := 0, 0
+		emitVirtual := func(vi int) bucketRef {
+			return bucketRef{histIdx: virtualHistIdxs[vi/chunkSize], bucketIdx: uint16(vi % chunkSize)}
+		}
+		for si < len(sortedRefs) && vi < len(finalAllTopN) {
+			sr := sortedRefs[si]
+			hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2+1).DatumWithBuffer(0, hists[sr.histIdx].Tp, &refUpper)
+			vRef := emitVirtual(vi)
+			hists[vRef.histIdx].Bounds.GetRow(int(vRef.bucketIdx)*2+1).DatumWithBuffer(0, hists[vRef.histIdx].Tp, &virtUpper)
+			c, err := refUpper.Compare(sc.TypeCtx(), &virtUpper, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, nil, err
+			}
+			if c <= 0 {
+				unifiedRefs = append(unifiedRefs, sortedRefs[si])
+				si++
+			} else {
+				unifiedRefs = append(unifiedRefs, vRef)
+				vi++
+			}
+		}
+		for ; si < len(sortedRefs); si++ {
+			unifiedRefs = append(unifiedRefs, sortedRefs[si])
+		}
+		for ; vi < len(finalAllTopN); vi++ {
+			unifiedRefs = append(unifiedRefs, emitVirtual(vi))
+		}
+	}
+
+	globalHist, err := buildGlobalHistogram(
+		sc, killer,
+		unifiedRefs, hists, globalTopNMap, augmentation,
+		totHistCount, totNull, totColSize, expBucketNumber,
+		firstHist, isIndex,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return globalTopN, globalHist, nil
+}
+
+// buildGlobalHistogram is Pass 2 of MergePartTopNAndHistToGlobal. It
+// walks sortedRefs (per-partition histogram bucket refs PLUS virtual
+// histogram refs from non-popped TopN entries, all in upper-bound
+// order) and builds an equi-depth global histogram by emitting a
+// bucket each time the in-progress bucket's mass reaches target.
+//
+// Pass 1 folded matched TopN counts into the augmentation map and
+// turned unmatched non-popped TopN entries into the virtual histogram,
+// so pass 2 sees one uniform stream of partition-bucket refs and has
+// no special TopN handling.
+//
+// buildGlobalHistogram walks sortedRefs right-to-left, accumulates
+// mass, and produces one merged global bucket whenever the cumulative-
+// target and per-bucket floor gates both fire. Each merge step
+// coalesces same-upper refs into the merged bucket and then runs an
+// overlap scan that proportionally splits "overlapping refs" (input
+// refs whose [lower, upper] crosses the chosen cut) at currentLeftMost
+// via calcFraction4Datums.
+//
+// A ref's Repeat is at its actual upper, so:
+//   - It contributes to the merged bucket's Repeat only when the ref
+//     is fresh (no split residue) and its actual upper equals the
+//     merged bucket's upper.
+//   - On an overlap split, the full Repeat goes to the right portion.
+//   - When the actual upper is in the global TopN, the Repeat is
+//     already counted there, so it is subtracted from the bucket's
+//     contribution before the bucket enters either the accumulator
+//     or the split.
+func buildGlobalHistogram(
+	sc *stmtctx.StatementContext,
+	killer *sqlkiller.SQLKiller,
+	sortedRefs []bucketRef,
+	hists []*Histogram,
+	globalTopNMap map[hack.MutableString]struct{},
+	augmentation map[bucketRef]int64,
+	totHistCount, totNull, totColSize, expBucketNumber int64,
+	firstHist *Histogram,
+	isIndex bool,
+) (*Histogram, error) {
+	tz := sc.TimeZone()
+
+	globalHist := NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+		firstHist.Tp, int(expBucketNumber), totColSize)
+
+	if totHistCount <= 0 || len(sortedRefs) == 0 {
+		statslogutil.StatsLogger().Info("buildGlobalHistogram: empty histogram (early return)")
+		return globalHist, nil
+	}
+
+	target := max(totHistCount/expBucketNumber, 1)
+
+	// remainingMass[ref] is the per-ref residue after a previous
+	// merge step's overlap scan. 0 means "fully consumed"
+	// (totally-inside in a prior scan); a positive value is
+	// unattributed mass for the bucket's [lower, splitEffectiveUpper]
+	// range.
+	remainingMass := make(map[bucketRef]int64)
+	splitEffectiveUpper := make(map[bucketRef]types.Datum)
+
+	// Scratch Datums.
+	var refUpper, refLower, scanUpper, scanLower, actualUpper types.Datum
+
+	fillUpper := func(ri int, dst *types.Datum) {
+		sr := sortedRefs[ri]
+		hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2+1).DatumWithBuffer(0, hists[sr.histIdx].Tp, dst)
+	}
+	fillLower := func(ri int, dst *types.Datum) {
+		sr := sortedRefs[ri]
+		hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2).DatumWithBuffer(0, hists[sr.histIdx].Tp, dst)
+	}
+	fillEffectiveUpper := func(ri int, dst *types.Datum) {
+		ref := sortedRefs[ri]
+		if eu, ok := splitEffectiveUpper[ref]; ok {
+			*dst = eu
+			return
+		}
+		fillUpper(ri, dst)
+	}
+
+	// Global TopN is keyed on the bucket's actual upper, not any
+	// post-split effective upper.
+	var encodeBuf []byte
+	isGlobalTopNVal := func(ri int, actualUp *types.Datum) (bool, error) {
+		if isIndex {
+			sr := sortedRefs[ri]
+			encoded := hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2 + 1).GetBytes(0)
+			_, ok := globalTopNMap[hack.String(encoded)]
+			return ok, nil
+		}
+		var err error
+		encodeBuf, err = codec.EncodeKey(tz, encodeBuf[:0], *actualUp)
+		if err != nil {
+			return false, err
+		}
+		_, ok := globalTopNMap[hack.String(encodeBuf)]
+		return ok, nil
+	}
+
+	// A non-fresh ref carries split residue; its Repeat lives in the
+	// earlier merged bucket that did the split, so we return 0 here.
+	// topNMatch subtracts the bucket's Repeat from its count when the
+	// upper is in global TopN (Repeat is already counted there).
+	refMassAndRepeat := func(ri int) (count, repeat int64, fresh bool, err error) {
+		ref := sortedRefs[ri]
+		if rem, ok := remainingMass[ref]; ok {
+			return rem, 0, false, nil
+		}
+		fresh = true
+		h := hists[ref.histIdx]
+		count = h.Buckets[ref.bucketIdx].Count
+		if ref.bucketIdx > 0 {
+			count -= h.Buckets[ref.bucketIdx-1].Count
+		}
+		count += augmentation[ref]
+		repeat = h.Buckets[ref.bucketIdx].Repeat + augmentation[ref]
+		fillUpper(ri, &actualUpper)
+		var matched bool
+		matched, err = isGlobalTopNVal(ri, &actualUpper)
+		if err != nil {
+			return
+		}
+		if matched {
+			count -= repeat
+			repeat = 0
+		}
+		return
+	}
+
+	// Emits are collected RTL and reversed at the end.
+	type mergedBucket struct {
+		lower, upper types.Datum
+		mass, repeat int64
+	}
+	globalBucketsRtl := make([]mergedBucket, 0, expBucketNumber)
+
+	var sum, prevSum int64
+	bucketCount := int64(1)
+	var currentLeftMost *types.Datum
+	var mergedUpper *types.Datum
+	var mergedRepeat int64
+
+	updateLeftMost := func(d *types.Datum) (err error) {
+		if currentLeftMost == nil {
+			v := *d
+			currentLeftMost = &v
+			return nil
+		}
+		c, err := d.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+		if err != nil {
+			return err
+		}
+		if c < 0 {
+			v := *d
+			currentLeftMost = &v
+		}
+		return nil
+	}
+
+	var checkKillCount uint32
+	for i := len(sortedRefs) - 1; i >= 0; i-- {
+		if checkKillCount&1023 == 0 {
+			if err := killer.HandleSignal(); err != nil {
+				return nil, err
+			}
+		}
+		checkKillCount++
+
+		count, repeat, fresh, err := refMassAndRepeat(i)
 		if err != nil {
 			return nil, err
 		}
-		leftMost.Copy(merged.lower)
-		globalBuckets = append(globalBuckets, merged)
-	}
-	for i := range buckets {
-		releasebucket4MergingForRecycle(buckets[i])
-	}
-	// Because we merge backwards, we need to flip the slices.
-	slices.Reverse(globalBuckets)
+		if count <= 0 {
+			continue // sentinel or bucket fully owned by global TopN
+		}
 
-	for i := 1; i < len(globalBuckets); i++ {
-		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
-	}
+		fillEffectiveUpper(i, &refUpper)
+		if mergedUpper == nil {
+			v := refUpper
+			mergedUpper = &v
+		}
 
-	// Recalculate repeats
-	// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
-	for _, bucket := range globalBuckets {
-		var repeat float64
-		for _, hist := range hists {
-			histRowCount, _ := hist.EqualRowCount(nil, *bucket.upper, isIndex)
-			repeat += histRowCount // only hists of indexes have bucket.NDV
+		fillLower(i, &refLower)
+		if err := updateLeftMost(&refLower); err != nil {
+			return nil, err
 		}
-		if int64(repeat) > bucket.Repeat {
-			bucket.Repeat = int64(repeat)
-		}
-	}
 
-	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
-	for _, bucket := range globalBuckets {
-		if !isIndex {
-			bucket.NDV = 0 // bucket.NDV is not maintained for column histograms
-		}
-		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
-	}
-	return globalHist, nil
-}
+		sum += count
 
-// sortBucketsByUpperBound the bucket by upper bound first, then by lower bound.
-// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bkt[i+1].lower.
-func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error {
-	var sortError error
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
-		res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		if res != 0 {
-			return res
-		}
-		res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		return res
-	})
-	return sortError
-}
-
-// checkBucket4MergingIsSorted checks whether the buckets are sorted by upper bound first, then by lower bound.
-// using intest.AssertFunc to avoid the check in production.
-func checkBucket4MergingIsSorted(ctx types.Context, buckets []*bucket4Merging) {
-	intest.AssertFunc(func() bool {
-		var sortErr error
-		isOrdered := slices.IsSortedFunc(buckets, func(i, j *bucket4Merging) int {
-			res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+		if fresh && repeat > 0 {
+			c, err := refUpper.Compare(sc.TypeCtx(), mergedUpper, collate.GetBinaryCollator())
 			if err != nil {
-				sortErr = err
+				return nil, err
 			}
-			if res != 0 {
-				return res
+			if c == 0 {
+				mergedRepeat += repeat
 			}
-			res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+		}
+
+		// Floor division, not cross-multiplication: the latter rounds
+		// the threshold up and shifts the cut by one row on small totals.
+		if sum < totHistCount*bucketCount/expBucketNumber {
+			continue
+		}
+		// This is sum-prevSum >= 80% of target without a division.
+		if (sum-prevSum)*5 < target*4 {
+			continue
+		}
+		// Reserve the leftmost slot for the trailing merged bucket.
+		if int64(len(globalBucketsRtl)) >= expBucketNumber-1 {
+			continue
+		}
+
+		// Coalesce same-upper refs into the merged bucket.
+		for i > 0 {
+			ahead := i - 1
+			count2, repeat2, fresh2, err := refMassAndRepeat(ahead)
 			if err != nil {
-				sortErr = err
+				return nil, err
 			}
-			return res
+			if count2 <= 0 {
+				i = ahead
+				continue
+			}
+			fillEffectiveUpper(ahead, &scanUpper)
+			c, err := scanUpper.Compare(sc.TypeCtx(), mergedUpper, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if c != 0 {
+				break
+			}
+			i = ahead
+			sum += count2
+			if fresh2 && repeat2 > 0 {
+				mergedRepeat += repeat2
+			}
+			fillLower(i, &refLower)
+			if err := updateLeftMost(&refLower); err != nil {
+				return nil, err
+			}
+		}
+
+		// Overlap scan. Track the rightmost overlapping ref so we can rewind
+		// i past totally-inside refs and have the outer i-- land on
+		// the overlapping ref that still has residue to consume.
+		rightmostOverlapIdx := -1
+		for i > 0 {
+			ahead := i - 1
+			count2, repeat2, _, err := refMassAndRepeat(ahead)
+			if err != nil {
+				return nil, err
+			}
+			if count2 <= 0 {
+				i = ahead
+				continue
+			}
+			fillEffectiveUpper(ahead, &scanUpper)
+			c, err := scanUpper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			// scanUpper == currentLeftMost: Repeat sits on the boundary
+			// and belongs to the merged bucket whose lower is that value.
+			if c < 0 {
+				break
+			}
+
+			i = ahead
+			fillLower(i, &scanLower)
+			c, err = scanLower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if c >= 0 {
+				// Totally inside.
+				sum += count2
+				remainingMass[sortedRefs[i]] = 0
+				continue
+			}
+
+			// Overlapping ref. splittable is the uniform-distributed
+			// non-Repeat mass; Repeat is a point mass at the upper
+			// and stays with the right portion of any cut below it.
+			if rightmostOverlapIdx == -1 {
+				rightmostOverlapIdx = i
+			}
+			splittable := count2 - repeat2
+			if splittable <= 0 {
+				sum += count2
+				remainingMass[sortedRefs[i]] = 0
+				continue
+			}
+			rightFrac := 1 - calcFraction4Datums(&scanLower, &scanUpper, currentLeftMost)
+			rightSplit := int64(float64(splittable) * rightFrac)
+			rightMass := rightSplit + repeat2
+			sum += rightMass
+			leftMass := count2 - rightMass
+			remainingMass[sortedRefs[i]] = leftMass
+			v := *currentLeftMost
+			splitEffectiveUpper[sortedRefs[i]] = v
+		}
+
+		if rightmostOverlapIdx != -1 {
+			i = rightmostOverlapIdx + 1
+		}
+
+		globalBucketsRtl = append(globalBucketsRtl, mergedBucket{
+			lower:  *currentLeftMost,
+			upper:  *mergedUpper,
+			mass:   sum - prevSum,
+			repeat: mergedRepeat,
 		})
-		return isOrdered && sortErr == nil
-	}, "the buckets are not sorted actually")
+
+		bucketCount++
+		prevSum = sum
+		currentLeftMost = nil
+		mergedUpper = nil
+		mergedRepeat = 0
+	}
+
+	// Trailing merged bucket: in-progress data that didn't fire the gate.
+	if currentLeftMost != nil && mergedUpper != nil && sum > prevSum {
+		globalBucketsRtl = append(globalBucketsRtl, mergedBucket{
+			lower:  *currentLeftMost,
+			upper:  *mergedUpper,
+			mass:   sum - prevSum,
+			repeat: mergedRepeat,
+		})
+	}
+
+	var cum int64
+	for k := len(globalBucketsRtl) - 1; k >= 0; k-- {
+		cum += globalBucketsRtl[k].mass
+		globalHist.AppendBucketWithNDV(&globalBucketsRtl[k].lower, &globalBucketsRtl[k].upper, cum, globalBucketsRtl[k].repeat, 0)
+	}
+
+	statslogutil.StatsLogger().Info("buildGlobalHistogram: built global histogram",
+		zap.Int("buckets", len(globalHist.Buckets)))
+
+	return globalHist, nil
 }
 
 const (

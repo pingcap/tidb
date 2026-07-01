@@ -1503,6 +1503,16 @@ func TestSetConcurrency(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
 
+	// tidb_merge_partition_stats_concurrency is deprecated: setting to 1 is silent, other values warn, value always stays 1.
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	// Global getter is overridden too, a stale persisted non-1 value must not leak through.
+	tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=-1;")
