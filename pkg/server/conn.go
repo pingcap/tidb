@@ -1630,7 +1630,7 @@ func (cc *clientConn) flush(ctx context.Context) error {
 		startTime  = beginWriteSQLRespDuration(stmtDetail)
 	)
 	defer func() {
-		addWriteSQLRespDuration(stmtDetail, startTime)
+		finishWriteSQLRespDuration(stmtDetail, &startTime)
 		trace.StartRegion(ctx, "FlushClientConn").End()
 		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
 			for _, err := range ctx.GetWarnings() {
@@ -1666,9 +1666,10 @@ func beginWriteSQLRespDuration(stmtDetail *execdetails.StmtExecDetails) time.Tim
 	return time.Now()
 }
 
-func addWriteSQLRespDuration(stmtDetail *execdetails.StmtExecDetails, startTime time.Time) {
+func finishWriteSQLRespDuration(stmtDetail *execdetails.StmtExecDetails, startTime *time.Time) {
 	if stmtDetail != nil && !startTime.IsZero() {
-		stmtDetail.WriteSQLRespDuration += time.Since(startTime)
+		stmtDetail.WriteSQLRespDuration += time.Since(*startTime)
+		*startTime = time.Time{}
 	}
 }
 
@@ -2579,6 +2580,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			ruv2Metrics.AddResultChunkCells(cells)
 		}
 	}()
+	defer func() {
+		finishWriteSQLRespDuration(stmtDetail, &start)
+	}()
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			//nolint:forcetypeassert
@@ -2607,17 +2611,15 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			columnCount = len(columns)
 			start = beginWriteSQLRespDuration(stmtDetail)
 			if err = cc.writeColumnInfo(columns); err != nil {
-				addWriteSQLRespDuration(stmtDetail, start)
 				return false, err
 			}
 			if cc.capability&mysql.ClientDeprecateEOF == 0 {
 				// metadata only needs EOF marker for old clients without ClientDeprecateEOF
 				if err = cc.writeEOF(ctx, serverStatus); err != nil {
-					addWriteSQLRespDuration(stmtDetail, start)
 					return false, err
 				}
 			}
-			addWriteSQLRespDuration(stmtDetail, start)
+			finishWriteSQLRespDuration(stmtDetail, &start)
 			gotColumnInfo = true
 		}
 		rowCount := req.NumRows()
@@ -2638,17 +2640,15 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			}
 			if err != nil {
 				reg.End()
-				addWriteSQLRespDuration(stmtDetail, start)
 				return false, err
 			}
 			if err = cc.writePacket(data); err != nil {
 				reg.End()
-				addWriteSQLRespDuration(stmtDetail, start)
 				return false, err
 			}
 		}
 		reg.End()
-		addWriteSQLRespDuration(stmtDetail, start)
+		finishWriteSQLRespDuration(stmtDetail, &start)
 	}
 	if err := rs.Finish(); err != nil {
 		return false, err
@@ -2657,7 +2657,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	start = beginWriteSQLRespDuration(stmtDetail)
 
 	err := cc.writeEOF(ctx, serverStatus)
-	addWriteSQLRespDuration(stmtDetail, start)
+	finishWriteSQLRespDuration(stmtDetail, &start)
 	return false, err
 }
 
@@ -2678,6 +2678,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		cells := int64(writtenRows) * int64(len(rs.Columns()))
 		resultset.ReportCursorRUV2Delta(rs, cells)
 	}()
+	defer func() {
+		finishWriteSQLRespDuration(stmtDetail, &start)
+	}()
 	start = beginWriteSQLRespDuration(stmtDetail)
 
 	iter := rs.GetRowIterator()
@@ -2688,11 +2691,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		data = data[0:4]
 		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
-			addWriteSQLRespDuration(stmtDetail, start)
 			return err
 		}
 		if err = cc.writePacket(data); err != nil {
-			addWriteSQLRespDuration(stmtDetail, start)
 			return err
 		}
 		writtenRows++
@@ -2700,7 +2701,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		iter.Next(ctx)
 	}
 	if iter.Error() != nil {
-		addWriteSQLRespDuration(stmtDetail, start)
 		return iter.Error()
 	}
 
@@ -2712,7 +2712,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 	}
 
 	// don't include the time consumed by `cl.OnFetchReturned()` in the `WriteSQLRespDuration`
-	addWriteSQLRespDuration(stmtDetail, start)
+	finishWriteSQLRespDuration(stmtDetail, &start)
 
 	if cl, ok := rs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
@@ -2720,7 +2720,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 
 	start = beginWriteSQLRespDuration(stmtDetail)
 	err = cc.writeEOF(ctx, serverStatus)
-	addWriteSQLRespDuration(stmtDetail, start)
+	finishWriteSQLRespDuration(stmtDetail, &start)
 	return err
 }
 
