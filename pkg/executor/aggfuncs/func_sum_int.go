@@ -152,7 +152,7 @@ func (e *sumInt) deserializeForSpill(helper *deserializeHelper) (PartialResult, 
 
 func (e *sumInt) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumInt64)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		input, isNull, err := e.args[0].EvalInt(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -167,7 +167,7 @@ func (e *sumInt) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row,
 		p.val = sum
 		p.notNullRowCount--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -353,7 +353,7 @@ func (e *sumUint) deserializeForSpill(helper *deserializeHelper) (PartialResult,
 
 func (e *sumUint) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumUint64)(pr)
-	for i := uint64(0); i < shiftStart; i++ {
+	for i := range shiftStart {
 		input, isNull, err := e.args[0].EvalInt(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -368,7 +368,7 @@ func (e *sumUint) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row
 		p.val = sum
 		p.notNullRowCount--
 	}
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
