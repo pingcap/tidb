@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/httputil"
@@ -1525,7 +1524,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if isPiTR && cfg.tableMappingManager != nil {
 			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
 		}
-		keyRange := rewriteKeyRanges(preAllocRange)
+		keyRange := rewriteKeyRanges(mgr.GetStorage().GetCodec(), preAllocRange)
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
 			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
 	}
@@ -2512,12 +2511,14 @@ func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []
 	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
-func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
+func rewriteKeyRanges(codec tikv.Codec, preAlloced [2]int64) [][2]kv.Key {
 	if preAlloced == [2]int64{} {
 		return nil
 	}
-	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
-	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
+	startKey, endKey := codec.EncodeRegionRange(
+		tablecodec.EncodeTablePrefix(preAlloced[0]),
+		tablecodec.EncodeTablePrefix(preAlloced[1]),
+	)
 
 	return [][2]kv.Key{{startKey, endKey}}
 }
