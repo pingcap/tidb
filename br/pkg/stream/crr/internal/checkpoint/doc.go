@@ -31,7 +31,7 @@ replicated. `lastCheckpoint` is the last upstream global checkpoint returned by
 the calculator.
 
 The calculator tracks synced progress per store and publishes the global
-`syncedTS` as the minimum synced `flushTS` across all observed stores. This is
+`syncedTS` as the minimum synced `flushTS` across all alive stores. This is
 necessary because meta file names are globally ordered by
 `(flushTS, storeID, extraTags)`, while `flushTS` is only monotonic within each
 individual store.
@@ -39,7 +39,9 @@ individual store.
 The alive-store set is used only as an extra blocker: if PD still reports a
 store as alive but the calculator has not observed any flush progress for that
 store yet, `syncedTS` must not advance. Alive stores must never make
-`syncedTS` move faster than the minimum across observed stores.
+`syncedTS` move faster than the minimum across alive stores. Stores that are no
+longer alive are pruned after a successful round has scanned and waited all
+newly discovered files, so they no longer block future `syncedTS` advancement.
 
 For example:
 
@@ -53,11 +55,13 @@ As an example:
 0672E0E5956C00020000000000000004-<...>.meta
 |flushTS ------||storeID ------|  ->  flushTS = 0x0672E0E5956C0002, storeID = 4
 
-If one observed store is only known synced through `0x0672E0E5956C0002`, while
+If one alive store is only known synced through `0x0672E0E5956C0002`, while
 another is synced through `0x0672E0E5A0000000`, then the global `syncedTS`
 must stay at `min(0x0672E0E5956C0002, 0x0672E0E5A0000000)`. If PD reports an
 additional alive store that has not been observed yet, that missing store must
-block advancement, but it must not raise the minimum.
+block advancement, but it must not raise the minimum. If an observed store is no
+longer alive, its synced progress is removed after the round verifies its
+discovered files.
 
 This algorithm relies on these invariants:
 
