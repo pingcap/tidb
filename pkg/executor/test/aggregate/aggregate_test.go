@@ -93,6 +93,23 @@ func TestSumIntDistinct(t *testing.T) {
 	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("<nil> <nil>"))
 }
 
+func TestSumIntMockCopPushDown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (null, null)")
+
+	sql := "select /*+ agg_to_cop(), hash_agg() */ sum_int(a), sum_int(b) from t"
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+	require.Contains(t, plan, "HashAgg")
+	require.Contains(t, plan, "cop[tikv]")
+	require.Contains(t, plan, "sum_int(test.t.a)")
+	require.Contains(t, plan, "sum_int(test.t.b)")
+	tk.MustQuery(sql).Check(testkit.Rows("3 3"))
+}
+
 func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
