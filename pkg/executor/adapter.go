@@ -1656,6 +1656,19 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
+	// Final runaway deadline check. Execution has fully finished here, so this
+	// catches queries that exceeded EXEC_ELAPSED without re-entering the
+	// coprocessor path after the deadline and finished before the expensive-query
+	// handler's poll sampled them. It is a no-op if an earlier path already marked
+	// the query.
+	//
+	// This covers all statement-completion paths except the detached server-side
+	// cursor path (`execStmtResult.TryDetach`), which finishes without calling
+	// `FinishExecuteStmt`; that path runs the same check in
+	// `staticrecordset.cursorRecordSet.Close` instead.
+	if sessVars.StmtCtx.RunawayChecker != nil {
+		sessVars.StmtCtx.RunawayChecker.AfterExecutor()
+	}
 	sessVars.StmtCtx.ExecRetryCount += uint64(a.retryCount)
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
