@@ -591,26 +591,24 @@ func checkCancelMaterializedViewJobPrivilege(
 			return err
 		}
 		if !found {
-			return cancelMaterializedViewJobNotRunningUserError(stmt)
+			return cancelMaterializedViewJobUserError(stmt)
 		}
 		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
 			return nil
 		}
-		return cancelMaterializedViewJobPrecheckUserError(stmt,
-			plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName))
+		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName)
 	case ast.CancelMaterializedViewJobTypeLogPurge:
 		dbName, tableName, found, err = resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
 		if err != nil {
 			return err
 		}
 		if !found {
-			return cancelMaterializedViewJobNotRunningUserError(stmt)
+			return cancelMaterializedViewJobUserError(stmt)
 		}
 		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
 			return nil
 		}
-		return cancelMaterializedViewJobPrecheckUserError(stmt,
-			plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName))
+		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName)
 	default:
 		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
 	}
@@ -2232,7 +2230,7 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 			return err
 		}
 		if !applied {
-			return cancelMaterializedViewJobNotRunningUserError(e.stmt)
+			return cancelMaterializedViewJobUserError(e.stmt)
 		}
 	case ast.CancelMaterializedViewJobTypeLogPurge:
 		applied, err = requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
@@ -2240,7 +2238,7 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 			return err
 		}
 		if !applied {
-			return cancelMaterializedViewJobNotRunningUserError(e.stmt)
+			return cancelMaterializedViewJobUserError(e.stmt)
 		}
 	default:
 		return errors.Errorf("cancel materialized view job: unsupported type %d", e.stmt.Tp)
@@ -2257,25 +2255,6 @@ func validateCancelMaterializedViewJobStmt(stmt *ast.CancelMaterializedViewJobSt
 		return nil
 	default:
 		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
-	}
-}
-
-func cancelMaterializedViewJobPrecheckUserError(stmt *ast.CancelMaterializedViewJobStmt, cause error) error {
-	logutil.BgLogger().Warn("cannot cancel materialized view job because privilege target check failed",
-		zap.Int64("jobID", stmt.JobID),
-		zap.Uint8("type", uint8(stmt.Tp)),
-		zap.Error(cause))
-	return cancelMaterializedViewJobUserError(stmt)
-}
-
-func cancelMaterializedViewJobNotRunningUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
-	switch stmt.Tp {
-	case ast.CancelMaterializedViewJobTypeRefresh:
-		return errors.NewNoStackErrorf("cannot cancel materialized view refresh job %d: job not running, not found, or cancel already requested", stmt.JobID)
-	case ast.CancelMaterializedViewJobTypeLogPurge:
-		return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d: job not running, not found, or cancel already requested", stmt.JobID)
-	default:
-		return errors.Errorf("cancel materialized view job: unsupported type %d", stmt.Tp)
 	}
 }
 

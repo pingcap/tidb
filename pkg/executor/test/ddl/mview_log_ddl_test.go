@@ -1601,7 +1601,7 @@ func TestCancelMaterializedViewLogPurgeJob(t *testing.T) {
 	tkCancel := testkit.NewTestKit(t, store)
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_purge_cancel_u", Hostname: "%"}, nil, nil, nil))
 	err = tkCancel.ExecToErr(fmt.Sprintf("cancel materialized view log purge job %s", jobID))
-	require.ErrorContains(t, err, "cannot cancel materialized view log purge job")
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
 	tk.MustExec("grant operate view on test.`$mlog$t_purge_cancel_job` to 'mv_purge_cancel_u'@'%'")
 	requestedCh := waitMVTaskCancelWatcherRequested(t, "mlog-purge-")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view log purge job %s", jobID))
