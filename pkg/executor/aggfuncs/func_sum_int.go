@@ -39,8 +39,6 @@ type partialResult4SumInt64 struct {
 }
 
 type partialResult4SumDistinctInt64 struct {
-	val    int64
-	isNull bool
 	valSet set.Int64SetWithMemoryUsage
 }
 
@@ -50,8 +48,6 @@ type partialResult4SumUint64 struct {
 }
 
 type partialResult4SumDistinctUint64 struct {
-	val    uint64
-	isNull bool
 	valSet set.Int64SetWithMemoryUsage
 }
 
@@ -192,14 +188,12 @@ type sumDistinctInt64 struct {
 func (*sumDistinctInt64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	setSize := int64(0)
 	p := new(partialResult4SumDistinctInt64)
-	p.isNull = true
 	p.valSet, setSize = set.NewInt64SetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctInt64Size + setSize
 }
 
 func (*sumDistinctInt64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctInt64)(pr)
-	p.isNull = true
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
@@ -214,27 +208,25 @@ func (e *sumDistinctInt64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsIn
 			continue
 		}
 		memDelta += p.valSet.Insert(input)
-		if p.isNull {
-			p.val = input
-			p.isNull = false
-			continue
-		}
-		sum, err := types.AddInt64(p.val, input)
-		if err != nil {
-			return memDelta, err
-		}
-		p.val = sum
 	}
 	return memDelta, nil
 }
 
 func (e *sumDistinctInt64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctInt64)(pr)
-	if p.isNull {
+	if p.valSet.Count() == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendInt64(e.ordinal, p.val)
+	sum := int64(0)
+	for val := range p.valSet.M {
+		var err error
+		sum, err = types.AddInt64(sum, val)
+		if err != nil {
+			return err
+		}
+	}
+	chk.AppendInt64(e.ordinal, sum)
 	return nil
 }
 
@@ -245,16 +237,6 @@ func (*sumDistinctInt64) MergePartialResult(_ AggFuncUpdateContext, src, dst Par
 			continue
 		}
 		memDelta += d.valSet.Insert(val)
-		if d.isNull {
-			d.val = val
-			d.isNull = false
-			continue
-		}
-		sum, err := types.AddInt64(d.val, val)
-		if err != nil {
-			return memDelta, err
-		}
-		d.val = sum
 	}
 	return memDelta, nil
 }
@@ -393,14 +375,12 @@ type sumDistinctUint64 struct {
 func (*sumDistinctUint64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	setSize := int64(0)
 	p := new(partialResult4SumDistinctUint64)
-	p.isNull = true
 	p.valSet, setSize = set.NewInt64SetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctUint64Size + setSize
 }
 
 func (*sumDistinctUint64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctUint64)(pr)
-	p.isNull = true
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
@@ -420,27 +400,25 @@ func (e *sumDistinctUint64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsI
 			continue
 		}
 		memDelta += p.valSet.Insert(key)
-		if p.isNull {
-			p.val = uintVal
-			p.isNull = false
-			continue
-		}
-		sum, err := types.AddUint64(p.val, uintVal)
-		if err != nil {
-			return memDelta, err
-		}
-		p.val = sum
 	}
 	return memDelta, nil
 }
 
 func (e *sumDistinctUint64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctUint64)(pr)
-	if p.isNull {
+	if p.valSet.Count() == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendUint64(e.ordinal, p.val)
+	sum := uint64(0)
+	for key := range p.valSet.M {
+		var err error
+		sum, err = types.AddUint64(sum, uint64(key))
+		if err != nil {
+			return err
+		}
+	}
+	chk.AppendUint64(e.ordinal, sum)
 	return nil
 }
 
@@ -451,17 +429,6 @@ func (*sumDistinctUint64) MergePartialResult(_ AggFuncUpdateContext, src, dst Pa
 			continue
 		}
 		memDelta += d.valSet.Insert(key)
-		val := uint64(key)
-		if d.isNull {
-			d.val = val
-			d.isNull = false
-			continue
-		}
-		sum, err := types.AddUint64(d.val, val)
-		if err != nil {
-			return memDelta, err
-		}
-		d.val = sum
 	}
 	return memDelta, nil
 }
