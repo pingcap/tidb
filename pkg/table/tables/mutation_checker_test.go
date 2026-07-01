@@ -92,7 +92,8 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 
 	// mocked data
 	mockRowKey233 := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(233))
-	mockValue233, err := tablecodec.EncodeRow(sessVars.StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, nil, &rd)
+	enc := codec.NewEncoder(collate.NewCollationEnabled())
+	mockValue233, err := tablecodec.EncodeRow(enc, sessVars.StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, nil, &rd)
 	require.Nil(t, err)
 	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
 
@@ -304,7 +305,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					// test checkHandleConsistency
 					rowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, handle)
 					corruptedRowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, corruptedHandle)
-					rowValue, err := tablecodec.EncodeRow(tc.Location(), rowToInsert, []int64{1, 2}, nil, nil, nil, &rd)
+					rowValue, err := tablecodec.EncodeRow(table.encoder, tc.Location(), rowToInsert, []int64{1, 2}, nil, nil, nil, &rd)
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
 					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
@@ -325,14 +326,15 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, loc *time.
 		return nil, nil, err
 	}
 	key, distinct, err := tablecodec.GenIndexKey(
-		loc, &tableInfo, indexInfo, 1, indexedValues, handle, nil,
+		table.encoder, loc, &tableInfo, indexInfo, 1, indexedValues, handle, nil,
 	)
 	if err != nil {
 		return nil, nil, err
 	}
-	rsData := TryGetHandleRestoredDataWrapper(table.meta, rowToInsert, nil, indexInfo)
+	useNewCollate := table.encoder.UseNewCollate()
+	rsData := TryGetHandleRestoredDataWrapper(useNewCollate, table.meta, rowToInsert, nil, indexInfo)
 	value, err := tablecodec.GenIndexValuePortal(
-		loc, &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
+		useNewCollate, loc, &tableInfo, indexInfo, NeedRestoredData(useNewCollate, indexInfo.Columns, tableInfo.Columns),
 		distinct, false, indexedValues, handle, 0, rsData, nil,
 	)
 	if err != nil {
