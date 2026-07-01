@@ -173,6 +173,17 @@ func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Ra
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
 	}
+	destroyCollector := func(i int) {
+		if collectors[i] != nil {
+			collectors[i].Destroy()
+			collectors[i] = nil
+		}
+	}
+	defer func() {
+		for i := range collectors {
+			destroyCollector(i)
+		}
+	}()
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
@@ -280,11 +291,17 @@ func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Ra
 		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 		fms = append(fms, collectors[i].FMSketch)
+		if !needExtStats {
+			destroyCollector(i)
+		}
 	}
 	if needExtStats {
 		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, collectors)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
+		}
+		for i := range collectors {
+			destroyCollector(i)
 		}
 	}
 	if handleHist != nil {
