@@ -276,6 +276,29 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		if fp != nil {
 			return fp, fp.OutputNames(), nil
 		}
+
+		// Try the trivial plan fast path for simple full-table scans where the
+		// plan is predetermined (no secondary indexes, no TiFlash, no predicates).
+		// This skips logical optimization, stats loading, and cost estimation.
+		// Skip the fast path if a binding matches: the normal path must run so
+		// that FoundInBinding is set and any binding hints are applied.
+		if tp, tpNames := core.TryTrivialPlan(pctx, node); tp != nil {
+			trivialBindingMatch := false
+			if sessVars.UsePlanBaselines {
+				if sn, ok := node.Node.(ast.StmtNode); ok {
+					if _, m, _ := bindinfo.MatchSQLBinding(sctx, sn); m {
+						trivialBindingMatch = true
+					}
+				}
+			}
+			if !trivialBindingMatch {
+				if err := core.CheckTableMode(node); err != nil {
+					return nil, nil, err
+				}
+				sessVars.FoundInTrivialPlan = true
+				return tp, tpNames, nil
+			}
+		}
 	}
 
 	enableUseBinding := sessVars.UsePlanBaselines
@@ -1002,6 +1025,14 @@ func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (
 		return nil, nil, err
 	}
 
+	// The trivial plan fast path skips optimization entirely and would record
+	// almost no relevant vars/fixes; opt out of it the same way the plan
+	// variant generation does, restoring the flag since sctx is pooled.
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	origInExplainStmt := stmtCtx.InExplainStmt
+	stmtCtx.InExplainStmt = true
+	defer func() { stmtCtx.InExplainStmt = origInExplainStmt }()
+
 	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
@@ -1029,6 +1060,23 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 	); err != nil {
 		return "", "", nil, err
 	}
+
+	// This path generates plan variants for EXPLAIN EXPLORE and binding
+	// suggestions; the consumer extracts hints from the result. The trivial
+	// plan fast path bypasses hint-bearing operators, so mark the statement
+	// as InExplainStmt to opt out of it and force the regular planner that
+	// produces richer plan metadata. (Point-get fast-path plans are not
+	// gated by this flag.) Restore the flags before returning: sctx is a
+	// pooled session, and leaked explain semantics would change how later
+	// callers plan on it.
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	origInExplainStmt := stmtCtx.InExplainStmt
+	origIgnoreExplainIDSuffix := stmtCtx.IgnoreExplainIDSuffix
+	stmtCtx.InExplainStmt = true
+	defer func() {
+		stmtCtx.InExplainStmt = origInExplainStmt
+		stmtCtx.IgnoreExplainIDSuffix = origIgnoreExplainIDSuffix
+	}()
 
 	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
