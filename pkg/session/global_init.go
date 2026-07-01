@@ -54,6 +54,8 @@ func initGlobalVarFromSystemDB(ctx context.Context, store kv.Storage) error {
 	if err != nil {
 		return err
 	}
+	defer dom.Close()
+
 	sess, err := createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
 	if err != nil {
 		return err
@@ -73,6 +75,5 @@ func initGlobalVarFromSystemDB(ctx context.Context, store kv.Storage) error {
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
-	dom.Close()
 	return nil
 }
