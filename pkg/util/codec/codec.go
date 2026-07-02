@@ -322,9 +322,9 @@ func EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 	return NewEncoder(collate.NewCollationEnabled()).EncodeKey(loc, b, v...)
 }
 
-// EncodeKey appends the encoded values to byte slice b, returns the appended
-// slice. It guarantees the encoded value is in ascending order for comparison.
-// For decimal type, datum must set datum's length and frac.
+// EncodeKey appends the encoded values to byte slice b using the encoder's
+// fixed collation setting. It guarantees the encoded value is in ascending order
+// for comparison. For decimal type, datum must set datum's length and frac.
 func (encoder Encoder) EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 	return encoder.encode(loc, b, v, true)
 }
@@ -335,8 +335,9 @@ func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error)
 	return NewEncoder(collate.NewCollationEnabled()).EncodeValue(loc, b, v...)
 }
 
-// EncodeValue appends the encoded values to byte slice b, returning the appended
-// slice. It does not guarantee the order for comparison.
+// EncodeValue appends the encoded values to byte slice b using the encoder's
+// fixed collation setting, returning the appended slice. It does not guarantee
+// the order for comparison.
 func (encoder Encoder) EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 	return encoder.encode(loc, b, v, false)
 }
@@ -1909,8 +1910,10 @@ func HashCode(b []byte, d types.Datum) []byte {
 	return NewEncoder(collate.NewCollationEnabled()).HashCode(b, d)
 }
 
-// HashCode encodes a Datum into a unique byte slice.
-// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order to make the encoding lossless.
+// HashCode encodes a Datum into a unique byte slice using the encoder's fixed
+// collation setting. It is mostly the same as EncodeValue, but it doesn't
+// contain truncation or verification logic in order to make the encoding
+// lossless.
 func (encoder Encoder) HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:

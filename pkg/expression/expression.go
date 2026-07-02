@@ -103,8 +103,8 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	}
 }
 
-// WithUseNewCollate means the expression will be built with new collate if
-// useNewCollate is true.
+// WithUseNewCollate fixes the collation mode used while building expressions
+// that must stay consistent with table or index encoding created earlier.
 func WithUseNewCollate(useNewCollate bool) BuildOption {
 	return func(options *BuildOptions) {
 		options.UseNewCollate = useNewCollate

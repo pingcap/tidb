@@ -81,7 +81,9 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
-	encoder      codec.Encoder
+	// encoder keeps the collation setting captured when the table is initialized.
+	// All row and index writes through this table must use this fixed setting.
+	encoder codec.Encoder
 	// skipAssert is used for partitions that are in WriteOnly/DeleteOnly state.
 	skipAssert bool
 }
