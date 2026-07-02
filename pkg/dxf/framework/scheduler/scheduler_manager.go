@@ -244,7 +244,8 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.GetMaxConcurrentTask() {
+	maxConcurrentTask := proto.GetMaxConcurrentTask()
+	if taskCnt >= maxConcurrentTask {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
