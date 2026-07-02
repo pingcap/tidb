@@ -484,17 +484,17 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 }
 
 func TestLoadDataFromServerFile(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
+	tk.MustExec("use test; drop table if exists load_data_test")
 	tk.MustExec("create table load_data_test (a int)")
 	err := tk.ExecToErr("load data infile 'remote.csv' into table load_data_test")
 	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
 }
 
-var fix56408Store kv.Storage
+var loadDataStore kv.Storage
 
-func prepareFix56408Store() func() {
+func prepareLoadDataStore() func() {
 	gctuner.GlobalMemoryLimitTuner.Stop()
 	store, err := mockstore.NewMockStore()
 	if err != nil {
@@ -513,10 +513,10 @@ func prepareFix56408Store() func() {
 	dom.SetStatsUpdating(true)
 	sm := testkit.MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
-	fix56408Store = store
+	loadDataStore = store
 
 	return func() {
-		fix56408Store = nil
+		loadDataStore = nil
 		dom.Close()
 		if err := store.Close(); err != nil {
 			panic(err)
@@ -526,8 +526,8 @@ func prepareFix56408Store() func() {
 }
 
 func TestFix56408(t *testing.T) {
-	require.NotNil(t, fix56408Store)
-	tk := testkit.NewTestKit(t, fix56408Store)
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS a;")
 	tk.MustExec("create table a(id int,name varchar(20),addr varchar(100),primary key (id) nonclustered);")
 	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';"
