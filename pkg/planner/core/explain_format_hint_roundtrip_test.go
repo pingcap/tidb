@@ -31,6 +31,14 @@ join (
 ) dt on t2.a = dt.a
 where dt.rn = 1`
 
+const explainFormatHintNestedDerivedTableSQL = `select *
+from t1
+join (
+    select a, b
+    from (select a, b from t2 limit 100) d2
+) dt on t1.a = dt.a
+join t3 on dt.a = t3.a`
+
 const explainFormatHintMixedQueryBlockLeadingSQL = `select /*+ leading(t2, t1) */ *
 from t1
 join t2 on t1.a = t2.a
@@ -82,12 +90,23 @@ func prepareExplainFormatHintMixedLeadingTestKit(t *testing.T) *testkit.TestKit 
 func TestExplainFormatHintRecoverableForDerivedTableAlias(t *testing.T) {
 	tk := prepareExplainFormatHintDerivedTableAliasTestKit(t)
 
-	hints := tk.MustQuery("explain format='hint' " + explainFormatHintDerivedTableSQL).Rows()[0][0]
-	require.Contains(t, hints, "leading(`test`.`t1`, `test`.`t2`, `test`.`dt`)")
+	t.Run("simple derived table", func(t *testing.T) {
+		hints := tk.MustQuery("explain format='hint' " + explainFormatHintDerivedTableSQL).Rows()[0][0]
+		require.Contains(t, hints, "leading(`test`.`t1`, `test`.`t2`, `test`.`dt`)")
 
-	replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1", hints)).Rows()[0][0]
-	require.Contains(t, replayedHints, "leading(`test`.`t1`, `test`.`t2`, `test`.`dt`)")
-	require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1", hints)).Rows()[0][0]
+		require.Contains(t, replayedHints, "leading(`test`.`t1`, `test`.`t2`, `test`.`dt`)")
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	})
+
+	t.Run("nested derived table keeps outer alias on replay", func(t *testing.T) {
+		hints := tk.MustQuery("explain format='hint' " + explainFormatHintNestedDerivedTableSQL).Rows()[0][0]
+		require.Contains(t, hints, "leading(`test`.`t1`, `test`.`dt`, `test`.`t3`)")
+
+		replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from t1 join (select a, b from (select a, b from t2 limit 100) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a", hints)).Rows()[0][0]
+		require.Contains(t, replayedHints, "leading(`test`.`t1`, `test`.`dt`, `test`.`t3`)")
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	})
 }
 
 func TestExplainFormatHintGeneratesMixedQueryBlockLeading(t *testing.T) {

@@ -291,6 +291,47 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 }
 
+// ResolveVisibleHintTable resolves the hint table name that should be visible
+// for startOffset in targetOffset. It first walks the derived-table visibility
+// chain and falls back to the direct query-block alias if no outer-visible alias
+// exists in the recorded chain.
+func ResolveVisibleHintTable(sctx base.PlanContext, startOffset, targetOffset int) (*ast.HintTable, bool) {
+	if sctx == nil || startOffset <= 0 {
+		return nil, false
+	}
+	if targetOffset >= 0 {
+		if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+			if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, startOffset, targetOffset); ok {
+				return &ast.HintTable{DBName: resolved.DBName, TableName: resolved.TableName}, true
+			}
+		}
+	}
+	var queryBlockNames []ast.HintTable
+	if names := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
+		queryBlockNames = *names
+	}
+	if startOffset >= len(queryBlockNames) {
+		return nil, false
+	}
+	hintTable := queryBlockNames[startOffset]
+	if hintTable.TableName.L == "" {
+		return nil, false
+	}
+	copied := hintTable
+	return &copied, true
+}
+
+func hintTableToHintedTable(sctx base.PlanContext, hintTable *ast.HintTable, selectOffset int) *h.HintedTable {
+	if hintTable == nil {
+		return nil
+	}
+	dbName := hintTable.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	}
+	return &h.HintedTable{DBName: dbName, TblName: hintTable.TableName, SelectOffset: selectOffset}
+}
+
 // ExtractJoinHintTableAlias returns the alias that a logical join hint should
 // use for this plan node.
 //
@@ -311,12 +352,9 @@ func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTa
 		if currentOffset := p.QueryBlockOffset(); currentOffset != parentOffset &&
 			currentOffset > 0 && currentOffset < len(queryBlockNames) &&
 			queryBlockNames[currentOffset].TableName.L != "" {
-			hintTable := queryBlockNames[currentOffset]
-			dbName := hintTable.DBName
-			if dbName.L == "" {
-				dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			if hintTable, ok := ResolveVisibleHintTable(p.SCtx(), currentOffset, parentOffset); ok {
+				return hintTableToHintedTable(p.SCtx(), hintTable, parentOffset)
 			}
-			return &h.HintedTable{DBName: dbName, TblName: hintTable.TableName, SelectOffset: parentOffset}
 		}
 
 		var (
@@ -352,20 +390,10 @@ func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTa
 			walk(child)
 		}
 		if !ambiguous && found != nil {
-			// Try to resolve the alias visible at parentOffset by walking the
-			// visibility chain (handles nested derived tables like dt/d2).
-			tblName := found.TableName
-			dbName := found.DBName
-			if aliasInfo := p.SCtx().GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
-				if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, foundQbOff, parentOffset); ok {
-					tblName = resolved.TableName
-					dbName = resolved.DBName
-				}
+			if hintTable, ok := ResolveVisibleHintTable(p.SCtx(), foundQbOff, parentOffset); ok {
+				return hintTableToHintedTable(p.SCtx(), hintTable, parentOffset)
 			}
-			if dbName.L == "" {
-				dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
-			}
-			return &h.HintedTable{DBName: dbName, TblName: tblName, SelectOffset: parentOffset}
+			return hintTableToHintedTable(p.SCtx(), found, parentOffset)
 		}
 	}
 	return ExtractTableAlias(p, parentOffset)

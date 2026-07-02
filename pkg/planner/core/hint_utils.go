@@ -479,33 +479,18 @@ func genHintTblForSingleJoinNode(
 	var dbName, tableName *ast.CIStr
 	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 	if qbOffset >= 0 && qbOffset != parentOffset {
-		var blockAsNames []ast.HintTable
-		if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-			blockAsNames = *p
-		}
-		if qbOffset >= len(blockAsNames) {
-			return -1, false, nil
-		}
-		hintTable := blockAsNames[qbOffset]
-		if parentOffset >= 0 {
-			if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
-				if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, selfOffset, parentOffset); ok {
-					dbName, tableName = &resolved.DBName, &resolved.TableName
-				}
-			}
-		}
-		if tableName == nil || tableName.L == "" {
+		if hintTable, ok := plannerutil.ResolveVisibleHintTable(sctx, selfOffset, parentOffset); ok {
 			dbName, tableName = &hintTable.DBName, &hintTable.TableName
-		}
-		qbOffset = parentOffset
-		// Current join reorder will break QB offset of the join operator by setting them to -1. In this case, we will
-		// get qbOffset == parentOffset == -1 when it comes here.
-		// For this case, we add a temporary fix to guess the QB offset based on the parent offset. The idea is simple,
-		// for the example above, we can easily notice that the QBOffset(t1) = QBOffset(t) - 1. This is not always true,
-		// but it works in simple cases.
-		if selfOffset > 1 && qbOffset == -1 {
-			guessQBOffset = true
-			qbOffset = selfOffset - 1
+			qbOffset = parentOffset
+			// Current join reorder will break QB offset of the join operator by setting them to -1. In this case, we will
+			// get qbOffset == parentOffset == -1 when it comes here.
+			// For this case, we add a temporary fix to guess the QB offset based on the parent offset. The idea is simple,
+			// for the example above, we can easily notice that the QBOffset(t1) = QBOffset(t) - 1. This is not always true,
+			// but it works in simple cases.
+			if selfOffset > 1 && qbOffset == -1 {
+				guessQBOffset = true
+				qbOffset = selfOffset - 1
+			}
 		}
 	}
 	if tableName == nil || tableName.L == "" {
@@ -594,10 +579,8 @@ func extractHintTableByBlockOffset(
 	// This handles nested derived tables: e.g. if foundQbOff=3 (inner "d2"), but the
 	// hint is for parentOffset=1 (outer), we want "dt" (visible in sel_1) not "d2".
 	if parentOffset >= 0 {
-		if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
-			if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, foundQbOff, parentOffset); ok {
-				return parentOffset, &resolved.DBName, &resolved.TableName
-			}
+		if hintTable, ok := plannerutil.ResolveVisibleHintTable(sctx, foundQbOff, parentOffset); ok {
+			return parentOffset, &hintTable.DBName, &hintTable.TableName
 		}
 		// Fallback: use the discovered alias directly (pre-existing behavior).
 		return parentOffset, &found.DBName, &found.TableName

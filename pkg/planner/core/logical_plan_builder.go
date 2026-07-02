@@ -5585,8 +5585,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 
 	originHintProcessor := b.hintProcessor
 	originHintState := b.hintState
-	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
-	originPlannerSelectBlockAliasInfo := b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load()
+	savedSelectBlockState := savePlannerSelectBlockState(b.ctx)
 	b.hintProcessor = hintProcessor
 	b.hintState = hintState
 	newPlannerSelectBlockAsName := make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
@@ -5597,8 +5596,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 		b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 		b.hintProcessor = originHintProcessor
 		b.hintState = originHintState
-		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
-		b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(originPlannerSelectBlockAliasInfo)
+		restorePlannerSelectBlockState(b.ctx, savedSelectBlockState)
 	}()
 	// Only relax truncate handling while folding constant predicates in this
 	// view expansion. Keep the outer statement semantics unchanged.

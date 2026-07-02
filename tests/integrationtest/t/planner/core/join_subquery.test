@@ -128,3 +128,4 @@ show warnings;
 # window RANGE frame bound. Alias metadata must still survive so the outer
 # visible alias remains "dt" instead of falling back to the inner "d2".
 explain format='hint' select sum(t1.b) over(order by t1.a range between 1 preceding and current row) as win_sum from t1 join (select a, b from (select a, b from t2 limit 100) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a;
+show warnings;
