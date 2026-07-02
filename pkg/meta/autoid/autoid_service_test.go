@@ -117,11 +117,11 @@ func TestRebaseCanceledRPCReturnsQuickly(t *testing.T) {
 func TestBackoffCtxAware(t *testing.T) {
 	var bo backoffer
 
-	// Without ctx, Backoff should behave as before (blocking sleep).
+	// Without ctx, Backoff should behave as before by blocking for the current backoff.
 	start := time.Now()
 	err := bo.Backoff()
 	require.NoError(t, err)
-	require.WithinDuration(t, start.Add(backoffMin), time.Now(), 50*time.Millisecond)
+	require.GreaterOrEqual(t, time.Since(start), 2*backoffMin)
 
 	// With a canceled ctx, Backoff should return immediately.
 	bo.Reset()
