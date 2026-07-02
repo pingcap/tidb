@@ -851,6 +851,15 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) {
 	}
 
 	role := mgr.Role()
+	if role == config.RoleMaster || role == config.RoleTTLTaskWorker || role == config.RoleGCV2Worker {
+		if err := mgr.RecycleGCV2(ctx, safePoint); err != nil {
+			logutil.Logger(ctx).Warn("failed to recycle GCV2 task",
+				zap.String("category", "gc worker"),
+				zap.Uint64("safePoint", safePoint),
+				zap.Error(err))
+		}
+	}
+
 	if role == config.RoleMaster || role == config.RoleTTLTaskWorker {
 		gcLifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 		if err != nil {
@@ -859,15 +868,6 @@ func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) {
 				zap.Error(err))
 		} else if err := mgr.RegisterGCV2(ctx, safePoint, int64(*gcLifeTime/time.Second)); err != nil {
 			logutil.Logger(ctx).Warn("failed to register GCV2 task",
-				zap.String("category", "gc worker"),
-				zap.Uint64("safePoint", safePoint),
-				zap.Error(err))
-		}
-	}
-
-	if role == config.RoleMaster || role == config.RoleTTLTaskWorker || role == config.RoleGCV2Worker {
-		if err := mgr.RecycleGCV2(ctx, safePoint); err != nil {
-			logutil.Logger(ctx).Warn("failed to recycle GCV2 task",
 				zap.String("category", "gc worker"),
 				zap.Uint64("safePoint", safePoint),
 				zap.Error(err))

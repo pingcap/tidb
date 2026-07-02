@@ -195,14 +195,21 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if v.IsGlobal && name == vardef.TiDBGCLifetime {
 			mgr := extworkload.GetManagerFromStore(e.Ctx().GetStore())
 			if extworkload.IsMaster(mgr) && pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
-				gcLifeTime, err := time.ParseDuration(valStr)
+				gcLifeTimeVal, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
 				if err != nil {
-					return err
-				}
-				if err = mgr.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second)); err != nil {
-					logutil.BgLogger().Warn("failed to update external workload GC life time",
+					logutil.BgLogger().Warn("failed to load effective external workload GC life time",
 						zap.String("name", name),
 						zap.String("val", showValStr),
+						zap.Error(err))
+				} else if gcLifeTime, err := time.ParseDuration(gcLifeTimeVal); err != nil {
+					logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
+						zap.String("name", name),
+						zap.String("val", gcLifeTimeVal),
+						zap.Error(err))
+				} else if err = mgr.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second)); err != nil {
+					logutil.BgLogger().Warn("failed to update external workload GC life time",
+						zap.String("name", name),
+						zap.String("val", gcLifeTimeVal),
 						zap.Error(err))
 				}
 			}

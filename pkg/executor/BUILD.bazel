@@ -451,6 +451,7 @@ go_test(
         "//pkg/expression/aggregation",
         "//pkg/expression/exprstatic",
         "//pkg/extension",
+        "//pkg/extworkload",
         "//pkg/infoschema",
         "//pkg/keyspace",
         "//pkg/kv",
