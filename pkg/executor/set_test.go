@@ -25,10 +25,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -40,7 +42,45 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
+
+type setGCLifeTimeManager struct {
+	extworkload.Manager
+	gcLifeTime int64
+	updateCnt  int
+}
+
+func (m *setGCLifeTimeManager) Role() config.ExternalWorkloadRole {
+	return config.RoleMaster
+}
+
+func (*setGCLifeTimeManager) Meta() *keyspacepb.KeyspaceMeta {
+	return &keyspacepb.KeyspaceMeta{
+		Config: map[string]string{
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+		},
+	}
+}
+
+func (m *setGCLifeTimeManager) UpdateGCLifeTime(_ context.Context, gcLifeTime int64) error {
+	m.updateCnt++
+	m.gcLifeTime = gcLifeTime
+	return nil
+}
+
+func TestSetGCLifeTimeNotifiesExternalWorkloadWithEffectiveValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	mgr := &setGCLifeTimeManager{}
+	extworkload.SetManagerForStore(store, mgr)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_gc_life_time = '1m'")
+
+	tk.MustQuery("select @@global.tidb_gc_life_time").Check(testkit.Rows("10m0s"))
+	require.Equal(t, 1, mgr.updateCnt)
+	require.Equal(t, int64(600), mgr.gcLifeTime)
+}
 
 func TestSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)

@@ -47,6 +47,7 @@ go_library(
         "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/extension/extensionimpl",
+        "//pkg/extworkload",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/infoschema/issyncer",

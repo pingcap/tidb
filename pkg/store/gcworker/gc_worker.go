@@ -31,12 +31,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -837,8 +839,40 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 		return errors.Trace(err)
 	}
 
+	w.notifyGCV2AfterGC(ctx, gcSafePoint)
 	metrics.GCHistogram.WithLabelValues(metrics.StageTotal).Observe(time.Since(startTime).Seconds())
 	return nil
+}
+
+func (w *GCWorker) notifyGCV2AfterGC(ctx context.Context, safePoint uint64) {
+	mgr := extworkload.GetManagerFromStore(w.store)
+	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+		return
+	}
+
+	role := mgr.Role()
+	if role == config.RoleMaster || role == config.RoleTTLTaskWorker || role == config.RoleGCV2Worker {
+		if err := mgr.RecycleGCV2(ctx, safePoint); err != nil {
+			logutil.Logger(ctx).Warn("failed to recycle GCV2 task",
+				zap.String("category", "gc worker"),
+				zap.Uint64("safePoint", safePoint),
+				zap.Error(err))
+		}
+	}
+
+	if role == config.RoleMaster || role == config.RoleTTLTaskWorker {
+		gcLifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
+		if err != nil {
+			logutil.Logger(ctx).Warn("failed to load GC life time for external workload",
+				zap.String("category", "gc worker"),
+				zap.Error(err))
+		} else if err := mgr.RegisterGCV2(ctx, safePoint, int64(*gcLifeTime/time.Second)); err != nil {
+			logutil.Logger(ctx).Warn("failed to register GCV2 task",
+				zap.String("category", "gc worker"),
+				zap.Uint64("safePoint", safePoint),
+				zap.Error(err))
+		}
+	}
 }
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`

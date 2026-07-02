@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -4606,6 +4607,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			zap.Duration("cost", time.Since(startTime)))
 	}()
 	if startMode == ddl.Upgrade {
+		extworkload.AbortGCV2ForUpgrade(store)
 		// TODO at this time domain must not be created, else it will register server
 		// info, and cause deadlock, we need to make sure this in a clear way
 		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")

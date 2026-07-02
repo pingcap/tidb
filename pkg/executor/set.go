@@ -17,12 +17,14 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -42,6 +44,7 @@ import (
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/tikv/client-go/v2/oracle/oracles"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -189,6 +192,28 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			logstr = "set instance var"
 		}
 		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		if v.IsGlobal && name == vardef.TiDBGCLifetime {
+			mgr := extworkload.GetManagerFromStore(e.Ctx().GetStore())
+			if extworkload.IsMaster(mgr) && pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+				gcLifeTimeVal, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
+				if err != nil {
+					logutil.BgLogger().Warn("failed to load effective external workload GC life time",
+						zap.String("name", name),
+						zap.String("val", showValStr),
+						zap.Error(err))
+				} else if gcLifeTime, err := time.ParseDuration(gcLifeTimeVal); err != nil {
+					logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
+						zap.String("name", name),
+						zap.String("val", gcLifeTimeVal),
+						zap.Error(err))
+				} else if err = mgr.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second)); err != nil {
+					logutil.BgLogger().Warn("failed to update external workload GC life time",
+						zap.String("name", name),
+						zap.String("val", gcLifeTimeVal),
+						zap.Error(err))
+				}
+			}
+		}
 		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			// SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.

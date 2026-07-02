@@ -17,7 +17,6 @@ package extworkload
 import (
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -28,8 +27,6 @@ type stubManager struct {
 }
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
-func (s *stubManager) Meta() *keyspacepb.KeyspaceMeta    { return nil }
-func (s *stubManager) Close() error                      { return nil }
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
 	require.False(t, IsEnabled(nil))
