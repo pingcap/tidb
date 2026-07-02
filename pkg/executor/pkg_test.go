@@ -34,9 +34,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMVMaintenanceSessionVarsEnableInternalSQLScanUserTable(t *testing.T) {
+func TestMVMaintenanceSessionVarsEnableMaintenanceFlags(t *testing.T) {
 	sctx := mock.NewContext()
 	sessVars := sctx.GetSessionVars()
+	sessVars.InMaterializedViewMaintenance = false
 	sessVars.InternalSQLScanUserTable = false
 
 	restore, err := applyMVMaintenanceSessionVars(
@@ -46,8 +47,10 @@ func TestMVMaintenanceSessionVarsEnableInternalSQLScanUserTable(t *testing.T) {
 		false,
 	)
 	require.NoError(t, err)
+	require.True(t, sessVars.InMaterializedViewMaintenance)
 	require.True(t, sessVars.InternalSQLScanUserTable)
 	restore()
+	require.False(t, sessVars.InMaterializedViewMaintenance)
 	require.False(t, sessVars.InternalSQLScanUserTable)
 
 	restore, err = applyRefreshExecutionSessionVars(
@@ -56,10 +59,13 @@ func TestMVMaintenanceSessionVarsEnableInternalSQLScanUserTable(t *testing.T) {
 		false,
 	)
 	require.NoError(t, err)
+	require.True(t, sessVars.InMaterializedViewMaintenance)
 	require.True(t, sessVars.InternalSQLScanUserTable)
 	restore()
+	require.False(t, sessVars.InMaterializedViewMaintenance)
 	require.False(t, sessVars.InternalSQLScanUserTable)
 
+	sessVars.InMaterializedViewMaintenance = true
 	sessVars.InternalSQLScanUserTable = true
 	restore, err = applyMVMaintenanceSessionVars(
 		sessVars,
@@ -68,8 +74,10 @@ func TestMVMaintenanceSessionVarsEnableInternalSQLScanUserTable(t *testing.T) {
 		false,
 	)
 	require.NoError(t, err)
+	require.True(t, sessVars.InMaterializedViewMaintenance)
 	require.True(t, sessVars.InternalSQLScanUserTable)
 	restore()
+	require.True(t, sessVars.InMaterializedViewMaintenance)
 	require.True(t, sessVars.InternalSQLScanUserTable)
 }
 
