@@ -3,18 +3,10 @@
 package export
 
 import (
-	"bytes"
 	"database/sql"
-	"fmt"
 )
 
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
-
-var (
-	nullValue         = "NULL"
-	quotationMark     = []byte{'\''}
-	twoQuotationMarks = []byte{'\'', '\''}
-)
 
 // There are two kinds of scenes to use this dataType
 // The first is to be the receiver of table sample, which will use tidb's INFORMATION_SCHEMA.COLUMNS's DATA_TYPE column, which is from
@@ -67,50 +59,6 @@ func initColTypeRowReceiverMap() {
 
 var dataTypeString, dataTypeInt, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
-func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
-	var (
-		escape byte
-		last   = 0
-	)
-	// reference: https://gist.github.com/siddontang/8875771
-	for i := range s {
-		escape = 0
-
-		switch s[i] {
-		case 0: /* Must be escaped for 'mysql' */
-			escape = '0'
-		case '\n': /* Must be escaped for logs */
-			escape = 'n'
-		case '\r':
-			escape = 'r'
-		case '\\':
-			escape = '\\'
-		case '\'':
-			escape = '\''
-		case '"': /* Better safe than sorry */
-			escape = '"'
-		case '\032': /* This gives problems on Win32 */
-			escape = 'Z'
-		}
-
-		if escape != 0 {
-			bf.Write(s[last:i])
-			bf.WriteByte('\\')
-			bf.WriteByte(escape)
-			last = i + 1
-		}
-	}
-	bf.Write(s[last:])
-}
-
-func escapeSQL(s []byte, bf *bytes.Buffer, escapeBackslash bool) { // revive:disable-line:flag-parameter
-	if escapeBackslash {
-		escapeBackslashSQL(s, bf)
-	} else {
-		bf.Write(bytes.ReplaceAll(s, quotationMark, twoQuotationMarks))
-	}
-}
-
 // SQLTypeStringMaker returns a SQLTypeString
 func SQLTypeStringMaker() RowReceiverStringer {
 	return &SQLTypeString{}
@@ -159,18 +107,6 @@ func (r *RowReceiverArr) BindAddress(args []any) {
 	}
 }
 
-// WriteToBuffer implements Stringer.WriteToBuffer
-func (r *RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
-	bf.WriteByte('(')
-	for i, receiver := range r.receivers {
-		receiver.WriteToBuffer(bf, escapeBackslash)
-		if i != len(r.receivers)-1 {
-			bf.WriteByte(',')
-		}
-	}
-	bf.WriteByte(')')
-}
-
 // GetRawBytes implements Stringer.GetRawBytes.
 func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
 	return r.AppendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
@@ -190,15 +126,6 @@ type SQLTypeNumber struct {
 	SQLTypeString
 }
 
-// WriteToBuffer implements Stringer.WriteToBuffer
-func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
-	if s.RawBytes != nil {
-		bf.Write(s.RawBytes)
-	} else {
-		bf.WriteString(nullValue)
-	}
-}
-
 // GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
 	return []sql.RawBytes{s.RawBytes}
@@ -214,17 +141,6 @@ func (s *SQLTypeString) BindAddress(arg []any) {
 	arg[0] = &s.RawBytes
 }
 
-// WriteToBuffer implements Stringer.WriteToBuffer
-func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
-	if s.RawBytes != nil {
-		bf.Write(quotationMark)
-		escapeSQL(s.RawBytes, bf, escapeBackslash)
-		bf.Write(quotationMark)
-	} else {
-		bf.WriteString(nullValue)
-	}
-}
-
 // GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
 	return []sql.RawBytes{s.RawBytes}
@@ -238,15 +154,6 @@ type SQLTypeBytes struct {
 // BindAddress implements RowReceiver.BindAddress
 func (s *SQLTypeBytes) BindAddress(arg []any) {
 	arg[0] = &s.RawBytes
-}
-
-// WriteToBuffer implements Stringer.WriteToBuffer
-func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
-	if s.RawBytes != nil {
-		fmt.Fprintf(bf, "x'%x'", s.RawBytes)
-	} else {
-		bf.WriteString(nullValue)
-	}
 }
 
 // GetRawBytes implements Stringer.GetRawBytes.
