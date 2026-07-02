@@ -172,8 +172,7 @@ func WriteInsert(
 
 // WriteInsertInCsv writes TableDataIR to objectio.Writer in csv type
 // columnKinds maps Dumpling column type names to csvfile FieldKinds, mirroring
-// the Number/String/Bytes split that colTypeRowReceiverMap uses to pick a
-// RowReceiver.
+// the Number/String/Bytes split used for column-type classification.
 func columnKinds(colTypes []string) []csvfile.FieldKind {
 	kinds := make([]csvfile.FieldKind, len(colTypes))
 	for i, ct := range colTypes {
