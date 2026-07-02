@@ -77,7 +77,7 @@ func (sw *SQLWriter) Write(row []sql.RawBytes) error {
 		if i > 0 {
 			sw.buf = append(sw.buf, ',')
 		}
-		sw.buf = appendValue(sw.buf, val, val == nil, sw.kinds[i], sw.cfg.EscapeBackslash)
+		sw.buf = AppendValue(sw.buf, val, val == nil, sw.kinds[i], sw.cfg.EscapeBackslash)
 	}
 	sw.buf = append(sw.buf, ')')
 	// Account the tuple plus the 2-byte separator that will follow it (",\n" for

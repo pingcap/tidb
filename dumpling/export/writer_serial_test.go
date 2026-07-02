@@ -220,7 +220,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 
 	// test delimiter
 	bf.Reset()
-	opt.delimiter = quotationMark
+	opt.delimiter = []byte{'\''}
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)

@@ -22,9 +22,12 @@ import (
 // nullToken is the SQL NULL literal, matching dumpling's nullValue.
 var nullToken = []byte("NULL")
 
-// appendValue appends one field's SQL encoding to dst and returns the extended
-// slice. val is the caller-produced raw value bytes; isNull selects NULL.
-func appendValue(dst, val []byte, isNull bool, kind FieldKind, escapeBackslash bool) []byte {
+// AppendValue appends one field's SQL encoding (a numeric literal, a quoted and
+// escaped string, an x'..' hex literal, or NULL) to dst and returns the extended
+// slice. val is the caller-produced raw value bytes; isNull selects NULL. It is
+// the per-value framing used by SQLWriter, exported for callers that format a
+// single value rather than a whole INSERT row (e.g. primary-key chunk bounds).
+func AppendValue(dst, val []byte, isNull bool, kind FieldKind, escapeBackslash bool) []byte {
 	if isNull {
 		return append(dst, nullToken...)
 	}
