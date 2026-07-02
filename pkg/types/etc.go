@@ -141,8 +141,9 @@ func NeedRestoredData(ft *FieldType) bool {
 	return NeedRestoredDataWithCollate(ft, collate.NewCollationEnabled())
 }
 
-// NeedRestoredDataWithCollate same as NeedRestoredData, but it allows to specify
-// whether to use new collate or not.
+// NeedRestoredDataWithCollate reports restored-data needs under a caller-owned
+// collation mode, so encode/decode paths can use the same setting captured by
+// their table or index.
 func NeedRestoredDataWithCollate(ft *FieldType, useNewCollate bool) bool {
 	if useNewCollate && IsNonBinaryStr(ft) &&
 		(!collate.IsBinCollation(ft.GetCollate()) || IsTypeVarchar(ft.GetType())) &&
