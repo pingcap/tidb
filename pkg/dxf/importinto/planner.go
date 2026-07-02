@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -351,7 +352,7 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error) {
 	plan, stmt := &p.Plan, p.Stmt
 	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
+	tbl, err := tables.TableFromMetaWithCollate(plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()), idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
 	}
