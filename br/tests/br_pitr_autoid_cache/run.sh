@@ -31,8 +31,14 @@ res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 TASK_NAME="br_pitr_autoid_cache"
 DB="autoid_pitr"
 
+# This test only exercises auto-increment allocation, so TiFlash is not needed.
+restart_services_no_tiflash() {
+	stop_services
+	start_services --no-tiflash
+}
+
 # Start a clean cluster.
-restart_services
+restart_services_no_tiflash
 
 # Prepare data: an AUTO_ID_CACHE=1 table with a single row, matching the issue repro.
 run_sql "create database if not exists $DB;"
@@ -59,9 +65,12 @@ row_count_before=$(run_sql "select count(*) as c from $DB.t;" | tail -n 1 | awk 
 echo "before restore: rows=$row_count_before max_id=$max_id_before"
 
 # Restore into a fresh cluster (full snapshot + all log up to the checkpoint).
-restart_services
+restart_services_no_tiflash
 echo "run PiTR restore"
-run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > "$res_file" 2>&1 || ( cat "$res_file" && exit 1 )
+# --skip-goleak: syncing AUTO_ID_CACHE=1 tables opens a grpc client to the autoid
+# service that BR keeps until process exit (harmless for the CLI). The coverage
+# test binary's goleak check would otherwise flag those background grpc goroutines.
+run_br --skip-goleak --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > "$res_file" 2>&1 || ( cat "$res_file" && exit 1 )
 
 # The core assertion: inserting after restore must succeed and must not reuse an
 # existing ID. With the bug this insert fails with "Duplicate entry" (set -e then
