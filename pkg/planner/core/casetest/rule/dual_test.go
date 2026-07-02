@@ -45,3 +45,19 @@ func TestDual(t *testing.T) {
 			"TableDual root  rows:0"))
 	})
 }
+
+func TestCountOverDerivedTablePreservesSideEffects(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+
+		tk.MustExec("set @str1 = 100")
+		tk.MustQuery("select /* issue:31364 */ count(*) from (select @str1:=200) a").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select @str1").Check(testkit.Rows("200"))
+
+		tk.MustExec("set @str1 = 100")
+		tk.MustQuery("select * from (select @str1:=200) a").Check(testkit.Rows("200"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select @str1").Check(testkit.Rows("200"))
+	})
+}
