@@ -80,18 +80,36 @@ func statsMetaCountAndModifyCount(
 	return count, modifyCount, false, nil
 }
 
-// HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
-func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
+func selectPrefixWithPriority(priority int) string {
+	selectPrefix := "select "
+	switch priority {
+	case kv.PriorityHigh:
+		selectPrefix += "high_priority "
+	case kv.PriorityLow:
+		selectPrefix += "low_priority "
+	}
+	return selectPrefix
+}
+
+func histMetaFromStorageWithPriority(
+	sctx sessionctx.Context,
+	item *model.TableItemID,
+	possibleColInfo *model.ColumnInfo,
+	priority int,
+) (*statistics.Histogram, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
 		isIndex = 1
 		tp = types.NewFieldType(mysql.TypeBlob)
 	} else {
+		if possibleColInfo == nil {
+			return nil, 0, errors.New("column info is nil")
+		}
 		tp = &possibleColInfo.FieldType
 	}
 	rows, _, err := util.ExecRows(sctx,
-		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		selectPrefixWithPriority(priority)+"distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
 		item.TableID,
 		item.ID,
 		isIndex,
@@ -105,6 +123,11 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
 	hist.Correlation = rows[0].GetFloat64(5)
 	return hist, rows[0].GetInt64(4), nil
+}
+
+// HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
+	return histMetaFromStorageWithPriority(sctx, item, possibleColInfo, kv.PriorityHigh)
 }
 
 // HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
@@ -122,14 +145,7 @@ func HistogramFromStorageWithPriority(
 	corr float64,
 	priority int,
 ) (*statistics.Histogram, error) {
-	selectPrefix := "select "
-	switch priority {
-	case kv.PriorityHigh:
-		selectPrefix += "high_priority "
-	case kv.PriorityLow:
-		selectPrefix += "low_priority "
-	}
-	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
+	rows, fields, err := util.ExecRows(sctx, selectPrefixWithPriority(priority)+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,9 +189,13 @@ func HistogramFromStorageWithPriority(
 	return hg, nil
 }
 
-// CMSketchAndTopNFromStorageWithHighPriority reads CMSketch and TopN from storage.
-func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID int64, isIndex, histID, statsVer int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
-	topNRows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+func cmsketchAndTopNFromStorageWithPriority(
+	sctx sessionctx.Context,
+	tblID int64,
+	isIndex, histID, statsVer int64,
+	priority int,
+) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+	topNRows, _, err := util.ExecRows(sctx, selectPrefixWithPriority(priority)+"value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -183,7 +203,7 @@ func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID i
 	if statsVer > statistics.Version1 {
 		return statistics.DecodeCMSketchAndTopN(nil, topNRows)
 	}
-	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	rows, _, err := util.ExecRows(sctx, selectPrefixWithPriority(priority)+"cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -191,6 +211,119 @@ func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID i
 		return statistics.DecodeCMSketchAndTopN(nil, topNRows)
 	}
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
+}
+
+// CMSketchAndTopNFromStorageWithHighPriority reads CMSketch and TopN from storage.
+func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID int64, isIndex, histID, statsVer int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+	return cmsketchAndTopNFromStorageWithPriority(sctx, tblID, isIndex, histID, statsVer, kv.PriorityHigh)
+}
+
+// LoadColumnStatsFromStorage loads a single column stats item directly from mysql.stats_* tables.
+// It does not update the stats cache or trigger any sync/async loading side effects.
+func LoadColumnStatsFromStorage(
+	sctx sessionctx.Context,
+	tableID int64,
+	colInfo *model.ColumnInfo,
+	isPkIsHandle bool,
+	fullLoad bool,
+	priority int,
+) (*statistics.Column, error) {
+	if colInfo == nil {
+		return nil, nil
+	}
+	item := &model.TableItemID{
+		TableID: tableID,
+		ID:      colInfo.ID,
+		IsIndex: false,
+	}
+	hg, statsVer, err := histMetaFromStorageWithPriority(sctx, item, colInfo, priority)
+	if err != nil || hg == nil {
+		return nil, err
+	}
+
+	var cms *statistics.CMSketch
+	var topN *statistics.TopN
+	if fullLoad {
+		hg, err = HistogramFromStorageWithPriority(sctx, tableID, colInfo.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		cms, topN, err = cmsketchAndTopNFromStorageWithPriority(sctx, tableID, 0, colInfo.ID, statsVer, priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	colStats := &statistics.Column{
+		PhysicalID: tableID,
+		Histogram:  *hg,
+		Info:       colInfo,
+		CMSketch:   cms,
+		TopN:       topN,
+		IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+		StatsVer:   statsVer,
+	}
+	if colStats.StatsAvailable() {
+		if fullLoad {
+			colStats.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		} else {
+			colStats.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+		}
+	}
+	return colStats, nil
+}
+
+// LoadIndexStatsFromStorage loads a single index stats item directly from mysql.stats_* tables.
+// It does not update the stats cache or trigger any sync/async loading side effects.
+func LoadIndexStatsFromStorage(
+	sctx sessionctx.Context,
+	tableID int64,
+	idxInfo *model.IndexInfo,
+	fullLoad bool,
+	priority int,
+) (*statistics.Index, error) {
+	if idxInfo == nil {
+		return nil, nil
+	}
+	item := &model.TableItemID{
+		TableID: tableID,
+		ID:      idxInfo.ID,
+		IsIndex: true,
+	}
+	hg, statsVer, err := histMetaFromStorageWithPriority(sctx, item, nil, priority)
+	if err != nil || hg == nil {
+		return nil, err
+	}
+
+	var cms *statistics.CMSketch
+	var topN *statistics.TopN
+	if fullLoad {
+		hg, err = HistogramFromStorageWithPriority(sctx, tableID, idxInfo.ID, types.NewFieldType(mysql.TypeBlob), hg.NDV, 1, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		cms, topN, err = cmsketchAndTopNFromStorageWithPriority(sctx, tableID, 1, idxInfo.ID, statsVer, priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	idxStats := &statistics.Index{
+		Histogram:  *hg,
+		CMSketch:   cms,
+		TopN:       topN,
+		Info:       idxInfo,
+		StatsVer:   statsVer,
+		PhysicalID: tableID,
+	}
+	if statsVer != statistics.Version0 {
+		if fullLoad {
+			idxStats.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		} else {
+			idxStats.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+		}
+	}
+	return idxStats, nil
 }
 
 // CMSketchFromStorage reads CMSketch from storage

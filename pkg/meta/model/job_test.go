@@ -163,6 +163,24 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
+
+	sub := &SubJob{
+		Type:    ActionAddIndex,
+		ReorgTp: ReorgTypeTxn,
+		AutoSplitHotRegionResults: []AutoSplitHotRegionResult{{
+			IndexName:     "idx",
+			IndexID:       1,
+			Status:        AutoSplitHotRegionStatusSplit,
+			SplitKeyCount: 3,
+		}},
+	}
+	parent := &Job{ReorgMeta: &DDLReorgMeta{}}
+	proxyJob := sub.ToProxyJob(parent, 0)
+	require.Equal(t, sub.AutoSplitHotRegionResults, proxyJob.ReorgMeta.AutoSplitHotRegionResults)
+
+	proxyJob.ReorgMeta.AutoSplitHotRegionResults[0].Status = AutoSplitHotRegionStatusFailed
+	sub.FromProxyJob(&proxyJob, 1)
+	require.Equal(t, AutoSplitHotRegionStatusFailed, sub.AutoSplitHotRegionResults[0].Status)
 }
 
 func TestJobSize(t *testing.T) {
@@ -171,7 +189,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	require.Equal(t, 400, int(unsafe.Sizeof(Job{})), msg)
-	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
+	require.Equal(t, 168, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {

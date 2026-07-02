@@ -1211,7 +1211,13 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		enableAutoSplitHotRegion := false
+		if val, ok := job.GetSystemVars(vardef.TiDBDDLEnableAutoSplitHotRegion); ok {
+			enableAutoSplitHotRegion = variable.TiDBOptOn(val)
+		}
+		err = preSplitIndexRegions(
+			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
+			job.ReorgMeta, args, w.ddlCtx.statsHandle, enableAutoSplitHotRegion)
 		if err != nil {
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
