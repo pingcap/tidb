@@ -307,6 +307,63 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 		tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
 		res := tk.MustQuery("show warnings").Rows()
 		require.Equal(t, len(res) > 0, true)
+		tk.MustExec("drop table if exists table_insurant, table_house, table_role_connection")
+		tk.MustExec("create table table_insurant(actualid varchar(32), serialNo varchar(32), key idx_actualid(actualid))")
+		tk.MustExec("create table table_house(actualid varchar(32), planNo varchar(32), topId varchar(32), insurantNo varchar(32), key idx_actualid(actualid), key idx_insurantNo(insurantNo))")
+		tk.MustExec("create table table_role_connection(actualid varchar(32), parentId varchar(32), specid varchar(32), key idx_parent_spec_actual(parentId, specid, actualid), key idx_actualid(actualid))")
+
+		tk.MustExec(`insert into table_insurant values
+			('a1', '2'),
+			('a2', '3')`)
+		tk.MustExec(`insert into table_house values
+			('h1', 'p1', 't1', '2'),
+			('h2', 'p2', 't2', '9')`)
+		tk.MustExec(`insert into table_role_connection values
+			('a1', '3561703379345', '14535'),
+			('h1', '3561703379345', '14550')`)
+
+		sql := `explain select
+  count(*)
+from
+  (
+    select /*+ inl_join(t1) */
+      t2.actualId,
+      t2.planNo,
+      t2.topId,
+      t2.insurantNo
+    from
+      (
+        select *
+        from table_insurant
+        where actualid in (
+            select actualid
+            from table_role_connection
+            where parentId = '3561703379345'
+              and specid = '14535'
+          )
+      ) t1,
+      (
+        select *
+        from table_house
+        where actualid in (
+            select actualid
+            from table_role_connection
+            where parentId = '3561703379345'
+              and specid = '14550'
+          )
+      ) t2
+    where t1.serialNo = t2.insurantNo
+      and t2.insurantNo = '2'
+  ) s`
+		expectedWarn := "Warning 1815 Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
+
+		tk.MustExec("set @@session.tidb_opt_advanced_join_hint=0")
+		tk.MustQuery(sql).Rows()
+		tk.MustQuery("show warnings").Check(testkit.Rows(expectedWarn))
+
+		tk.MustExec("set @@session.tidb_opt_advanced_join_hint=1")
+		tk.MustQuery(sql).Rows()
+		tk.MustQuery("show warnings").Check(testkit.Rows(expectedWarn))
 	})
 }
 
