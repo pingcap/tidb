@@ -159,7 +159,7 @@ func TestDXFAPI(t *testing.T) {
 			{"/dxf/task/max_concurrent", "invalid value "},
 			{"/dxf/task/max_concurrent?value=aa", "invalid value "},
 			{"/dxf/task/max_concurrent?value=15", "out of range"},
-			{"/dxf/task/max_concurrent?value=201", "out of range"},
+			{fmt.Sprintf("/dxf/task/max_concurrent?value=%d", proto.MaxMaxConcurrentTask+1), "out of range"},
 		} {
 			path, errMsg := c[0], c[1]
 			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
