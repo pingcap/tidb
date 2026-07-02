@@ -142,7 +142,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 		return nil
 	}
 	var t TableCommon
-	t.initTableCommon(tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
+	t.initTableCommon(collate.NewCollationEnabled(), tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -222,7 +222,7 @@ func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblI
 		return nil, err
 	}
 	var t TableCommon
-	t.initTableCommonWithCollate(useNewCollate, tblInfo, tblInfo.ID, columns, allocs, constraints)
+	t.initTableCommon(useNewCollate, tblInfo, tblInfo.ID, columns, allocs, constraints)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -247,12 +247,7 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 	return expr, nil
 }
 
-// initTableCommon initializes a TableCommon struct.
-func (t *TableCommon) initTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
-	t.initTableCommonWithCollate(collate.NewCollationEnabled(), tblInfo, physicalTableID, cols, allocs, constraints)
-}
-
-func (t *TableCommon) initTableCommonWithCollate(useNewCollate bool, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
+func (t *TableCommon) initTableCommon(useNewCollate bool, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
 	t.tableID = tblInfo.ID
 	t.physicalTableID = physicalTableID
 	t.allocs = allocs
@@ -320,13 +315,8 @@ func asIndex(idx table.Index) *index {
 	return idx.(*index)
 }
 
-func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
-	t.initTableCommon(tblInfo, physicalTableID, cols, allocs, constraints)
-	return initTableIndices(t)
-}
-
-func initTableCommonWithIndicesAndCollate(t *TableCommon, useNewCollate bool, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
-	t.initTableCommonWithCollate(useNewCollate, tblInfo, physicalTableID, cols, allocs, constraints)
+func initTableCommonWithIndices(t *TableCommon, useNewCollate bool, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
+	t.initTableCommon(useNewCollate, tblInfo, physicalTableID, cols, allocs, constraints)
 	return initTableIndices(t)
 }
 
