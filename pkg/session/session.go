@@ -535,10 +535,6 @@ func (s *session) doCommit(ctx context.Context) error {
 			}
 		}
 	})
-	failpoint.Inject("mockCommitResultUndetermined", func() {
-		s.RollbackTxn(ctx)
-		failpoint.Return(terror.ErrResultUndetermined)
-	})
 
 	sessVars := s.GetSessionVars()
 
@@ -2199,27 +2195,6 @@ func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
 
 func (s *session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 	return s
-}
-
-func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.StmtNode, error) {
-	if stmt == nil {
-		return nil, nil
-	}
-	execStmt, ok := stmt.(*ast.ExecuteStmt)
-	if !ok {
-		return stmt, nil
-	}
-	if vars == nil {
-		return nil, nil
-	}
-	prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
-	if err != nil {
-		return nil, err
-	}
-	if prepareStmt == nil || prepareStmt.PreparedAst == nil {
-		return nil, nil
-	}
-	return prepareStmt.PreparedAst.Stmt, nil
 }
 
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {

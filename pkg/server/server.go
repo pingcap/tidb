@@ -969,7 +969,13 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
-	conn.cancelDispatch()
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+
+	if cancelFunc != nil {
+		cancelFunc()
+	}
 	sessVars.SQLKiller.FinishResultSet()
 }
 

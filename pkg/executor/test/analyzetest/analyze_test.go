@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
@@ -169,28 +168,16 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		tkWatcher := testkit.NewTestKit(t, store)
-		tkWatcher.MustExec("use test")
-		var earlyDone bool
-		var earlyErr error
-		require.Eventually(t, func() bool {
-			select {
-			case earlyErr = <-done:
-				earlyDone = true
-				return true
-			default:
-			}
-			rows := tkWatcher.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
-			return len(rows) == 1
-		}, 5*time.Second, 20*time.Millisecond)
-		if earlyDone {
-			t.Fatalf("analyze finished before cancel, err=%v", earlyErr)
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before cancel, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
 		}
 		cancel()
 
 		select {
 		case <-done:
-			rows := tkWatcher.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
 			require.Len(t, rows, 1)
 			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
 			require.Contains(t, rows[0][1].(string), "context canceled")
@@ -204,18 +191,15 @@ func TestAnalyzeRestrict(t *testing.T) {
 		origSM := dom.InfoSyncer().GetSessionManager()
 		sm := &killQuerySessionManager{
 			MockSessionManager: &testkit.MockSessionManager{
-				SerID: 1,
-				Conn:  make(map[uint64]sessiontypes.Session),
+				Conn: make(map[uint64]sessiontypes.Session),
 			},
 		}
 		dom.InfoSyncer().SetSessionManager(sm)
 		defer dom.InfoSyncer().SetSessionManager(origSM)
 
 		tkAnalyze := testkit.NewTestKit(t, store)
-		connID := globalconn.NewGlobalAllocator(sm.ServerID, false).NextID()
-		tkAnalyze.Session().SetConnectionID(connID)
 		tkAnalyze.Session().SetSessionManager(sm)
-		sm.Conn[connID] = tkAnalyze.Session()
+		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
 		tkAnalyze.MustExec("use test")
 		tkAnalyze.MustExec("drop table if exists t")
 		tkAnalyze.MustExec("create table t(a int)")
@@ -238,22 +222,19 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		var earlyDone bool
-		var earlyErr error
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before kill query, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
 		require.Eventually(t, func() bool {
-			select {
-			case earlyErr = <-done:
-				earlyDone = true
-				return true
-			default:
-			}
 			rows := tkKiller.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
 			return len(rows) == 1
 		}, 5*time.Second, 20*time.Millisecond)
-		if earlyDone {
-			t.Fatalf("analyze finished before kill query, err=%v", earlyErr)
-		}
-		tkKiller.MustExec(fmt.Sprintf("kill query %d", connID))
+
+		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
+		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
 
 		select {
 		case err := <-done:

@@ -33,7 +33,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/globalconn",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
