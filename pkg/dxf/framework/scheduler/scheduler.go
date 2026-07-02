@@ -48,6 +48,10 @@ const (
 	// so we use a special error message to indicate that the task is cancelled
 	// by user.
 	taskCancelMsg = "cancelled by user"
+
+	metricStateAll       = "all"
+	metricStateCancelled = "cancelled"
+	metricStateDataError = "data-error"
 )
 
 var (
@@ -760,19 +764,52 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 }
 
 func onTaskFinished(state proto.TaskState, taskErr error) {
-	// when task finishes, we classify the finished tasks into succeed/failed/cancelled
-	var metricState string
-
-	if state == proto.TaskStateSucceed || state == proto.TaskStateFailed {
-		metricState = state.String()
-	} else if state == proto.TaskStateReverted {
-		metricState = proto.TaskStateFailed.String()
-		if IsCancelledErr(taskErr) {
-			metricState = "cancelled"
-		}
-	}
+	// when task finishes, we classify the finished tasks into succeed/failed/cancelled/data-error.
+	metricState := getMetricState(state, taskErr)
 	if len(metricState) > 0 {
-		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Inc()
+		dxfmetric.FinishedTaskCounter.WithLabelValues(metricStateAll).Inc()
 		dxfmetric.FinishedTaskCounter.WithLabelValues(metricState).Inc()
 	}
+}
+
+func getMetricState(state proto.TaskState, taskErr error) string {
+	switch state {
+	case proto.TaskStateSucceed:
+		return state.String()
+	case proto.TaskStateFailed:
+		return state.String()
+	case proto.TaskStateReverted:
+		if IsCancelledErr(taskErr) {
+			return metricStateCancelled
+		}
+		if isDataErrorForMetric(taskErr) {
+			return metricStateDataError
+		}
+		return proto.TaskStateFailed.String()
+	default:
+		return ""
+	}
+}
+
+func isDataErrorForMetric(taskErr error) bool {
+	if taskErr == nil {
+		return false
+	}
+	errMsg := taskErr.Error()
+	// Keep these checks string-based to avoid depending on Lightning error definitions
+	// from the DXF scheduler. We can replace this when those error definitions are
+	// split out of the Lightning package.
+	//
+	// import-into examples:
+	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
+	// encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0
+	// at offset 0: Value conversion failed for column 'event_id'. Expected type:
+	// bigint, received value: ?. Reason: [types:1292]Truncated incorrect DOUBLE value: '?'.
+	//
+	// add-index examples:
+	// [kv:1062]Duplicate entry '1' for key 't.idx'
+	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") && (strings.Contains(errMsg, "Truncated incorrect") ||
+		strings.Contains(errMsg, "Incorrect datetime value"))
+	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
+	return isImportDataErr || isUKDupEntryErr
 }
