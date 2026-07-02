@@ -3999,7 +3999,7 @@ type colNameResolver struct {
 
 func (*colNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
-	case *ast.ColumnNameExpr, *ast.SubqueryExpr, *ast.AggregateFuncExpr:
+	case *ast.ColumnNameExpr, *ast.AggregateFuncExpr:
 		return inNode, true
 	}
 	return inNode, false

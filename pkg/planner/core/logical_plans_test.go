@@ -399,6 +399,25 @@ func TestGroupByWhenNotExistCols(t *testing.T) {
 	}
 }
 
+func TestIssue67540CorrelatedScalarSubqueryOnlyFullGroupBy(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+
+	sqlMode := s.GetCtx().GetSessionVars().SQLMode
+	s.GetCtx().GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
+	defer func() { s.GetCtx().GetSessionVars().SQLMode = sqlMode }()
+
+	sql := "select a, (select count(*) from t2 where b = t3.b) from t3 where a = 1 group by a"
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+	require.Nil(t, p)
+	require.Error(t, err)
+	require.Regexp(t, ".*contains nonaggregated column 'test\\.t3\\.b'.*", err.Error())
+}
+
 func TestDupRandJoinCondsPushDown(t *testing.T) {
 	sql := "select * from t as t1 join t t2 on t1.a > rand() and t1.a > rand()"
 	comment := fmt.Sprintf("for %s", sql)
