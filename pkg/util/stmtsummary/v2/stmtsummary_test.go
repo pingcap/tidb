@@ -195,6 +195,52 @@ func TestStmtSummaryPersistEvictedDoesNotPersistLoggedRecordsAsAggregate(t *test
 	require.Equal(t, int64(4), totalExecCount)
 }
 
+func TestStmtSummaryPersistStatusOnlyEvictedAggregate(t *testing.T) {
+	var logBuf bytes.Buffer
+	storage := &stmtLogStorage{
+		logger: zap.New(zapcore.NewCore(&stmtLogEncoder{}, zapcore.AddSync(&logBuf), zapcore.InfoLevel)),
+	}
+	statusOnlyInfo := func(digest string) *stmtsummary.StmtExecInfo {
+		info := GenerateStmtExecInfo4Test(digest)
+		info.ReadBillingDemoStats = stmtsummary.ReadBillingDemoStatementStats{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Statuses: []stmtsummary.ReadBillingDemoStatusSample{{
+				ModelVersion:  "v1",
+				WeightVersion: "v1",
+				Site:          "statement",
+				OpClass:       "statement",
+				OperatorKind:  "statement",
+				Status:        "error",
+				Reason:        "statement_error",
+			}},
+		}
+		return info
+	}
+
+	ss := NewStmtSummary4Test(1)
+	ss.storage = storage
+	ss.AddReadBillingDemoStatusOnly(statusOnlyInfo("digest_status_1"))
+	ss.AddReadBillingDemoStatusOnly(statusOnlyInfo("digest_status_2")) // evicts digest_status_1
+	ss.Close()
+
+	type loggedRecord struct {
+		Digest     string                                      `json:"digest"`
+		StatusAggs []stmtsummary.ReadBillingDemoStatusAggEntry `json:"read_billing_demo_status_aggs"`
+	}
+	var recordsWithStatus []loggedRecord
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var record loggedRecord
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if len(record.StatusAggs) > 0 {
+			recordsWithStatus = append(recordsWithStatus, record)
+		}
+	}
+	require.Len(t, recordsWithStatus, 2)
+	require.Contains(t, []string{recordsWithStatus[0].Digest, recordsWithStatus[1].Digest}, "")
+	require.Contains(t, []string{recordsWithStatus[0].Digest, recordsWithStatus[1].Digest}, "digest_status_2")
+}
+
 func TestStmtSummaryGroupByUser(t *testing.T) {
 	ss := NewStmtSummary4Test(100)
 	defer ss.Close()

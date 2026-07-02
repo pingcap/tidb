@@ -351,7 +351,9 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 // AddReadBillingDemoStatusOnly adds read billing demo status-only data to the
 // current statistics window without changing ordinary statement counters.
 func (s *StmtSummary) AddReadBillingDemoStatusOnly(info *stmtsummary.StmtExecInfo) {
-	if s.closed.Load() || info == nil || info.ReadBillingDemoStats.IsEmpty() {
+	var ok bool
+	info, ok = stmtsummary.ReadBillingDemoStatusOnlyExecInfo(info)
+	if s.closed.Load() || !ok {
 		return
 	}
 
@@ -783,7 +785,9 @@ func Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
 
 // AddReadBillingDemoStatusOnly records read billing demo early-error statuses.
 func AddReadBillingDemoStatusOnly(stmtExecInfo *stmtsummary.StmtExecInfo) {
-	if stmtExecInfo == nil || stmtExecInfo.ReadBillingDemoStats.IsEmpty() {
+	var ok bool
+	stmtExecInfo, ok = stmtsummary.ReadBillingDemoStatusOnlyExecInfo(stmtExecInfo)
+	if !ok {
 		return
 	}
 	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {

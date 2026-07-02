@@ -61,7 +61,7 @@ func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 		r.Unlock()
 	}
 	w.evicted.Lock()
-	if w.evicted.otherForPersist.ExecCount > 0 {
+	if w.evicted.otherForPersist.ExecCount > 0 || w.evicted.otherForPersist.hasReadBillingDemoData() {
 		w.evicted.otherForPersist.Begin = begin
 		w.evicted.otherForPersist.End = end.Unix()
 		s.log(w.evicted.otherForPersist)

@@ -440,7 +440,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 // AddReadBillingDemoStatusOnly records read billing demo statuses that happen
 // before the normal statement finish path can build a full StmtExecInfo.
 func (ssMap *stmtSummaryByDigestMap) AddReadBillingDemoStatusOnly(sei *StmtExecInfo) {
-	if sei == nil || sei.ReadBillingDemoStats.IsEmpty() {
+	var ok bool
+	sei, ok = ReadBillingDemoStatusOnlyExecInfo(sei)
+	if !ok {
 		return
 	}
 	now := time.Now().Unix()
@@ -880,6 +882,10 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 }
 
 func newReadBillingDemoStatusOnlyStats(sei *StmtExecInfo) *stmtSummaryStats {
+	sei, ok := ReadBillingDemoStatusOnlyExecInfo(sei)
+	if !ok {
+		return &stmtSummaryStats{}
+	}
 	startTime := sei.StartTime
 	if startTime.IsZero() {
 		startTime = time.Now()
@@ -941,12 +947,13 @@ func (ssStats *stmtSummaryStats) addReadBillingDemoStatementStats(user string, s
 		}
 		ssStats.authUsers[user] = struct{}{}
 	}
-	ssStats.ReadBillingDemoBaseUnitSummary.Add(&stats.Totals)
-	ssStats.ReadBillingDemoBaseUnitAggs, ssStats.ReadBillingDemoStatusAggs = AddReadBillingDemoStatementStatsToMaps(
+	var acceptedSummary ReadBillingDemoBaseUnitSummary
+	ssStats.ReadBillingDemoBaseUnitAggs, ssStats.ReadBillingDemoStatusAggs, acceptedSummary = AddReadBillingDemoStatementStatsToMaps(
 		ssStats.ReadBillingDemoBaseUnitAggs,
 		ssStats.ReadBillingDemoStatusAggs,
 		stats,
 	)
+	ssStats.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
 }
 
 func (ssStats *stmtSummaryStats) isReadBillingDemoStatusOnly() bool {
@@ -1176,12 +1183,13 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
 	if !sei.ReadBillingDemoStats.IsEmpty() {
-		ssStats.ReadBillingDemoBaseUnitSummary.Add(&sei.ReadBillingDemoStats.Totals)
-		ssStats.ReadBillingDemoBaseUnitAggs, ssStats.ReadBillingDemoStatusAggs = AddReadBillingDemoStatementStatsToMaps(
+		var acceptedSummary ReadBillingDemoBaseUnitSummary
+		ssStats.ReadBillingDemoBaseUnitAggs, ssStats.ReadBillingDemoStatusAggs, acceptedSummary = AddReadBillingDemoStatementStatsToMaps(
 			ssStats.ReadBillingDemoBaseUnitAggs,
 			ssStats.ReadBillingDemoStatusAggs,
 			&sei.ReadBillingDemoStats,
 		)
+		ssStats.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
 	} else {
 		ssStats.ReadBillingDemoBaseUnitSummary.Add(&sei.ReadBillingDemoBaseUnits)
 	}

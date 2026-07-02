@@ -42,13 +42,15 @@ func TestReadBillingDemoAggregationCaps(t *testing.T) {
 		})
 	}
 
-	baseAggs, statusAggs := AddReadBillingDemoStatementStatsToMaps(nil, nil, &stats)
+	baseAggs, statusAggs, acceptedSummary := AddReadBillingDemoStatementStatsToMaps(nil, nil, &stats)
 	require.Len(t, baseAggs, MaxReadBillingDemoBaseUnitKeysPerRecord)
 	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(statusAggs), readBillingDemoReasonAggregation).Count)
+	require.Equal(t, float64(MaxReadBillingDemoBaseUnitKeysPerRecord*(MaxReadBillingDemoBaseUnitKeysPerRecord+1)/2), acceptedSummary.SumReadBillingDemoInputRows)
 
-	baseEntries, statusEntries := AddReadBillingDemoStatementStatsToEntries(nil, nil, &stats)
+	baseEntries, statusEntries, acceptedSummary := AddReadBillingDemoStatementStatsToEntries(nil, nil, &stats)
 	require.Len(t, baseEntries, MaxReadBillingDemoBaseUnitKeysPerRecord)
 	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, statusEntries, readBillingDemoReasonAggregation).Count)
+	require.Equal(t, float64(MaxReadBillingDemoBaseUnitKeysPerRecord*(MaxReadBillingDemoBaseUnitKeysPerRecord+1)/2), acceptedSummary.SumReadBillingDemoInputRows)
 
 	statusOnly := ReadBillingDemoStatementStats{
 		ModelVersion:  "v1",
@@ -66,13 +68,19 @@ func TestReadBillingDemoAggregationCaps(t *testing.T) {
 		})
 	}
 
-	_, statusAggs = AddReadBillingDemoStatementStatsToMaps(nil, nil, &statusOnly)
+	_, statusAggs, acceptedSummary = AddReadBillingDemoStatementStatsToMaps(nil, nil, &statusOnly)
 	require.Equal(t, MaxReadBillingDemoStatusKeysPerRecord, readBillingDemoNonReservedStatusKeyCount(statusAggs))
 	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(statusAggs), readBillingDemoReasonStatusAggregation).Count)
+	require.Zero(t, acceptedSummary.SumReadBillingDemoFixedEvents)
+	require.Zero(t, acceptedSummary.SumReadBillingDemoInputRows)
+	require.Zero(t, acceptedSummary.SumReadBillingDemoInputBytes)
 
-	_, statusEntries = AddReadBillingDemoStatementStatsToEntries(nil, nil, &statusOnly)
+	_, statusEntries, acceptedSummary = AddReadBillingDemoStatementStatsToEntries(nil, nil, &statusOnly)
 	require.Equal(t, MaxReadBillingDemoStatusKeysPerRecord, readBillingDemoNonReservedStatusEntryCount(statusEntries))
 	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, statusEntries, readBillingDemoReasonStatusAggregation).Count)
+	require.Zero(t, acceptedSummary.SumReadBillingDemoFixedEvents)
+	require.Zero(t, acceptedSummary.SumReadBillingDemoInputRows)
+	require.Zero(t, acceptedSummary.SumReadBillingDemoInputBytes)
 }
 
 func requireReadBillingDemoStatusReason(t *testing.T, entries []ReadBillingDemoStatusAggEntry, reason string) ReadBillingDemoStatusAggEntry {

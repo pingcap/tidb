@@ -198,10 +198,28 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 			Status:        "error",
 			Reason:        "statement_error",
 		}},
+		BaseUnits: []stmtsummarybase.ReadBillingDemoBaseUnitSample{{
+			ModelVersion:   "v1",
+			WeightVersion:  "v1",
+			Site:           "tidb",
+			OpClass:        "projection_eval",
+			OperatorKind:   "projection",
+			Unit:           "fixed_events",
+			InputSource:    "runtime_act_rows",
+			InputSide:      "all",
+			RowWidthSource: "operator_helper",
+			Value:          999,
+			RowWidth:       999,
+		}},
+		Totals: stmtsummarybase.ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 999,
+		},
 	}
 	statusOnlyRecord := NewReadBillingDemoStatusOnlyRecord(statusOnly)
 	require.Zero(t, statusOnlyRecord.ExecCount)
 	require.True(t, statusOnlyRecord.isReadBillingDemoStatusOnly())
 	require.Len(t, statusOnlyRecord.ReadBillingDemoStatusAggs, 1)
+	require.Empty(t, statusOnlyRecord.ReadBillingDemoBaseUnitAggs)
+	require.Zero(t, statusOnlyRecord.SumReadBillingDemoFixedEvents)
 	require.Contains(t, statusOnlyRecord.AuthUsers, "user")
 }

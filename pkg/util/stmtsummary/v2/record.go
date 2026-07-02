@@ -243,6 +243,16 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 // NewReadBillingDemoStatusOnlyRecord creates a minimal record for status-only
 // read billing demo rows produced before the normal statement finish path.
 func NewReadBillingDemoStatusOnlyRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
+	var ok bool
+	info, ok = stmtsummary.ReadBillingDemoStatusOnlyExecInfo(info)
+	if !ok {
+		return &StmtRecord{
+			AuthUsers:     make(map[string]struct{}),
+			BackoffTypes:  make(map[string]int),
+			MinLatency:    time.Duration(math.MaxInt64),
+			MinResultRows: math.MaxInt64,
+		}
+	}
 	startTime := info.StartTime
 	if startTime.IsZero() {
 		startTime = time.Now()
@@ -476,12 +486,13 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
 	if !info.ReadBillingDemoStats.IsEmpty() {
-		r.ReadBillingDemoBaseUnitSummary.Add(&info.ReadBillingDemoStats.Totals)
-		r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs = stmtsummary.AddReadBillingDemoStatementStatsToEntries(
+		var acceptedSummary stmtsummary.ReadBillingDemoBaseUnitSummary
+		r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs, acceptedSummary = stmtsummary.AddReadBillingDemoStatementStatsToEntries(
 			r.ReadBillingDemoBaseUnitAggs,
 			r.ReadBillingDemoStatusAggs,
 			&info.ReadBillingDemoStats,
 		)
+		r.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
 	} else {
 		r.ReadBillingDemoBaseUnitSummary.Add(&info.ReadBillingDemoBaseUnits)
 	}
@@ -493,7 +504,9 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 // AddReadBillingDemoStatusOnly adds only read billing demo status/base-unit
 // aggregates without changing ordinary statement summary counters.
 func (r *StmtRecord) AddReadBillingDemoStatusOnly(info *stmtsummary.StmtExecInfo) {
-	if info == nil || info.ReadBillingDemoStats.IsEmpty() {
+	var ok bool
+	info, ok = stmtsummary.ReadBillingDemoStatusOnlyExecInfo(info)
+	if !ok {
 		return
 	}
 	if len(info.User) > 0 {
@@ -502,16 +515,21 @@ func (r *StmtRecord) AddReadBillingDemoStatusOnly(info *stmtsummary.StmtExecInfo
 		}
 		r.AuthUsers[info.User] = struct{}{}
 	}
-	r.ReadBillingDemoBaseUnitSummary.Add(&info.ReadBillingDemoStats.Totals)
-	r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs = stmtsummary.AddReadBillingDemoStatementStatsToEntries(
+	var acceptedSummary stmtsummary.ReadBillingDemoBaseUnitSummary
+	r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs, acceptedSummary = stmtsummary.AddReadBillingDemoStatementStatsToEntries(
 		r.ReadBillingDemoBaseUnitAggs,
 		r.ReadBillingDemoStatusAggs,
 		&info.ReadBillingDemoStats,
 	)
+	r.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
 }
 
 func (r *StmtRecord) isReadBillingDemoStatusOnly() bool {
-	if r == nil || r.ExecCount != 0 {
+	return r != nil && r.ExecCount == 0 && r.hasReadBillingDemoData()
+}
+
+func (r *StmtRecord) hasReadBillingDemoData() bool {
+	if r == nil {
 		return false
 	}
 	return len(r.ReadBillingDemoBaseUnitAggs) > 0 || len(r.ReadBillingDemoStatusAggs) > 0 ||
@@ -679,13 +697,18 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
-	r.ReadBillingDemoBaseUnitSummary.Merge(&other.ReadBillingDemoBaseUnitSummary)
-	r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs = stmtsummary.MergeReadBillingDemoEntrySlices(
+	var acceptedSummary stmtsummary.ReadBillingDemoBaseUnitSummary
+	r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs, acceptedSummary = stmtsummary.MergeReadBillingDemoEntrySlices(
 		r.ReadBillingDemoBaseUnitAggs,
 		r.ReadBillingDemoStatusAggs,
 		other.ReadBillingDemoBaseUnitAggs,
 		other.ReadBillingDemoStatusAggs,
 	)
+	if len(other.ReadBillingDemoBaseUnitAggs) == 0 && len(other.ReadBillingDemoStatusAggs) == 0 {
+		r.ReadBillingDemoBaseUnitSummary.Merge(&other.ReadBillingDemoBaseUnitSummary)
+	} else {
+		r.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
+	}
 }
 
 // Truncate SQL to maxSQLLength.

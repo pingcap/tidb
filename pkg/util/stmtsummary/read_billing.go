@@ -89,6 +89,31 @@ func (s *ReadBillingDemoStatementStats) IsEmpty() bool {
 		s.Totals.SumReadBillingDemoInputBytes == 0
 }
 
+// StatusOnly returns the status portion of a read billing snapshot.
+func (s ReadBillingDemoStatementStats) StatusOnly() ReadBillingDemoStatementStats {
+	return ReadBillingDemoStatementStats{
+		ModelVersion:  s.ModelVersion,
+		WeightVersion: s.WeightVersion,
+		Statuses:      append([]ReadBillingDemoStatusSample(nil), s.Statuses...),
+	}
+}
+
+// ReadBillingDemoStatusOnlyExecInfo returns a shallow copy that is safe for the
+// status-only statement summary path.
+func ReadBillingDemoStatusOnlyExecInfo(sei *StmtExecInfo) (*StmtExecInfo, bool) {
+	if sei == nil {
+		return nil, false
+	}
+	statusOnly := sei.ReadBillingDemoStats.StatusOnly()
+	if statusOnly.IsEmpty() {
+		return nil, false
+	}
+	copied := *sei
+	copied.ReadBillingDemoStats = statusOnly
+	copied.ReadBillingDemoBaseUnits = ReadBillingDemoBaseUnitSummary{}
+	return &copied, true
+}
+
 // ReadBillingDemoBaseUnitSample is a coefficient-free read billing unit sample.
 type ReadBillingDemoBaseUnitSample struct {
 	ModelVersion   string
@@ -251,6 +276,28 @@ func (a *ReadBillingDemoStatusAgg) addEntry(entry ReadBillingDemoStatusAggEntry)
 	a.Count += entry.Count
 }
 
+func (s *ReadBillingDemoBaseUnitSummary) addSample(sample ReadBillingDemoBaseUnitSample) {
+	switch sample.Unit {
+	case "fixed_events":
+		s.SumReadBillingDemoFixedEvents += sample.Value
+	case "input_rows":
+		s.SumReadBillingDemoInputRows += sample.Value
+	case "input_bytes":
+		s.SumReadBillingDemoInputBytes += sample.Value
+	}
+}
+
+func (s *ReadBillingDemoBaseUnitSummary) addEntry(entry ReadBillingDemoBaseUnitAggEntry) {
+	switch entry.Unit {
+	case "fixed_events":
+		s.SumReadBillingDemoFixedEvents += entry.Value
+	case "input_rows":
+		s.SumReadBillingDemoInputRows += entry.Value
+	case "input_bytes":
+		s.SumReadBillingDemoInputBytes += entry.Value
+	}
+}
+
 func readBillingDemoBaseUnitEntry(key ReadBillingDemoBaseUnitKey, agg ReadBillingDemoBaseUnitAgg) ReadBillingDemoBaseUnitAggEntry {
 	return ReadBillingDemoBaseUnitAggEntry{
 		ModelVersion:   key.ModelVersion,
@@ -306,9 +353,10 @@ func AddReadBillingDemoStatementStatsToMaps(
 	baseUnitAggs map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg,
 	statusAggs map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg,
 	stats *ReadBillingDemoStatementStats,
-) (map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg, map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg) {
+) (map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg, map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg, ReadBillingDemoBaseUnitSummary) {
+	var acceptedSummary ReadBillingDemoBaseUnitSummary
 	if stats == nil {
-		return baseUnitAggs, statusAggs
+		return baseUnitAggs, statusAggs, acceptedSummary
 	}
 	for _, status := range stats.Statuses {
 		statusAggs, _ = addReadBillingDemoStatusSampleToMap(statusAggs, status, false)
@@ -318,9 +366,11 @@ func AddReadBillingDemoStatementStatsToMaps(
 		baseUnitAggs, overflow = addReadBillingDemoBaseUnitSampleToMap(baseUnitAggs, sample)
 		if overflow {
 			statusAggs = addReadBillingDemoReservedStatusToMap(statusAggs, stats.ModelVersion, stats.WeightVersion, readBillingDemoReasonAggregation)
+			continue
 		}
+		acceptedSummary.addSample(sample)
 	}
-	return baseUnitAggs, statusAggs
+	return baseUnitAggs, statusAggs, acceptedSummary
 }
 
 // MergeReadBillingDemoAggMaps merges source maps into destination maps with the same caps used on write.
@@ -329,7 +379,8 @@ func MergeReadBillingDemoAggMaps(
 	dstStatus map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg,
 	srcBase map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg,
 	srcStatus map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg,
-) (map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg, map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg) {
+) (map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg, map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg, ReadBillingDemoBaseUnitSummary) {
+	var acceptedSummary ReadBillingDemoBaseUnitSummary
 	for key, agg := range srcStatus {
 		dstStatus, _ = addReadBillingDemoStatusEntryToMap(dstStatus, readBillingDemoStatusEntry(key, agg), false)
 	}
@@ -338,9 +389,11 @@ func MergeReadBillingDemoAggMaps(
 		dstBase, overflow = addReadBillingDemoBaseUnitEntryToMap(dstBase, readBillingDemoBaseUnitEntry(key, agg))
 		if overflow {
 			dstStatus = addReadBillingDemoReservedStatusToMap(dstStatus, key.ModelVersion, key.WeightVersion, readBillingDemoReasonAggregation)
+			continue
 		}
+		acceptedSummary.addEntry(readBillingDemoBaseUnitEntry(key, agg))
 	}
-	return dstBase, dstStatus
+	return dstBase, dstStatus, acceptedSummary
 }
 
 // AddReadBillingDemoStatementStatsToEntries merges one statement snapshot into v2 entries.
@@ -348,9 +401,10 @@ func AddReadBillingDemoStatementStatsToEntries(
 	baseUnitEntries []ReadBillingDemoBaseUnitAggEntry,
 	statusEntries []ReadBillingDemoStatusAggEntry,
 	stats *ReadBillingDemoStatementStats,
-) ([]ReadBillingDemoBaseUnitAggEntry, []ReadBillingDemoStatusAggEntry) {
+) ([]ReadBillingDemoBaseUnitAggEntry, []ReadBillingDemoStatusAggEntry, ReadBillingDemoBaseUnitSummary) {
+	var acceptedSummary ReadBillingDemoBaseUnitSummary
 	if stats == nil {
-		return baseUnitEntries, statusEntries
+		return baseUnitEntries, statusEntries, acceptedSummary
 	}
 	for _, status := range stats.Statuses {
 		statusEntries, _ = addReadBillingDemoStatusSampleToEntries(statusEntries, status, false)
@@ -360,9 +414,11 @@ func AddReadBillingDemoStatementStatsToEntries(
 		baseUnitEntries, overflow = addReadBillingDemoBaseUnitSampleToEntries(baseUnitEntries, sample)
 		if overflow {
 			statusEntries = addReadBillingDemoReservedStatusToEntries(statusEntries, stats.ModelVersion, stats.WeightVersion, readBillingDemoReasonAggregation)
+			continue
 		}
+		acceptedSummary.addSample(sample)
 	}
-	return baseUnitEntries, statusEntries
+	return baseUnitEntries, statusEntries, acceptedSummary
 }
 
 // MergeReadBillingDemoEntrySlices merges source entries into destination entries with caps.
@@ -371,7 +427,8 @@ func MergeReadBillingDemoEntrySlices(
 	dstStatus []ReadBillingDemoStatusAggEntry,
 	srcBase []ReadBillingDemoBaseUnitAggEntry,
 	srcStatus []ReadBillingDemoStatusAggEntry,
-) ([]ReadBillingDemoBaseUnitAggEntry, []ReadBillingDemoStatusAggEntry) {
+) ([]ReadBillingDemoBaseUnitAggEntry, []ReadBillingDemoStatusAggEntry, ReadBillingDemoBaseUnitSummary) {
+	var acceptedSummary ReadBillingDemoBaseUnitSummary
 	for _, entry := range srcStatus {
 		dstStatus, _ = addReadBillingDemoStatusEntryToEntries(dstStatus, entry, false)
 	}
@@ -380,9 +437,11 @@ func MergeReadBillingDemoEntrySlices(
 		dstBase, overflow = addReadBillingDemoBaseUnitEntryToEntries(dstBase, entry)
 		if overflow {
 			dstStatus = addReadBillingDemoReservedStatusToEntries(dstStatus, entry.ModelVersion, entry.WeightVersion, readBillingDemoReasonAggregation)
+			continue
 		}
+		acceptedSummary.addEntry(entry)
 	}
-	return dstBase, dstStatus
+	return dstBase, dstStatus, acceptedSummary
 }
 
 func addReadBillingDemoBaseUnitSampleToMap(
