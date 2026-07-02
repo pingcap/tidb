@@ -49,7 +49,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

@@ -16,6 +16,7 @@ package stmtsummary
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -222,4 +223,59 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 	require.Empty(t, statusOnlyRecord.ReadBillingDemoBaseUnitAggs)
 	require.Zero(t, statusOnlyRecord.SumReadBillingDemoFixedEvents)
 	require.Contains(t, statusOnlyRecord.AuthUsers, "user")
+}
+
+func TestStmtRecordMergeReadBillingDemoReservedStatusBypassesStatusCap(t *testing.T) {
+	record := NewStmtRecord(GenerateStmtExecInfo4Test("digest_read_billing_dst"))
+	for i := 0; i < stmtsummarybase.MaxReadBillingDemoStatusKeysPerRecord; i++ {
+		record.ReadBillingDemoStatusAggs = append(record.ReadBillingDemoStatusAggs, stmtsummarybase.ReadBillingDemoStatusAggEntry{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "tidb",
+			OpClass:       fmt.Sprintf("op_%03d", i),
+			OperatorKind:  "projection",
+			Status:        "unsupported",
+			Reason:        "unsupported_operator",
+			Count:         1,
+		})
+	}
+
+	other := NewStmtRecord(GenerateStmtExecInfo4Test("digest_read_billing_src"))
+	other.ReadBillingDemoStatusAggs = []stmtsummarybase.ReadBillingDemoStatusAggEntry{
+		{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "unknown_input",
+			Reason:        "aggregation_overflow",
+			Count:         7,
+		},
+		{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "unknown_input",
+			Reason:        "status_aggregation_overflow",
+			Count:         11,
+		},
+	}
+
+	record.Merge(other)
+	require.Equal(t, uint64(7), requireReadBillingDemoStatusReason(t, record.ReadBillingDemoStatusAggs, "aggregation_overflow").Count)
+	require.Equal(t, uint64(11), requireReadBillingDemoStatusReason(t, record.ReadBillingDemoStatusAggs, "status_aggregation_overflow").Count)
+}
+
+func requireReadBillingDemoStatusReason(t *testing.T, entries []stmtsummarybase.ReadBillingDemoStatusAggEntry, reason string) stmtsummarybase.ReadBillingDemoStatusAggEntry {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Reason == reason {
+			return entry
+		}
+	}
+	require.Failf(t, "missing read billing status reason", "reason=%s entries=%v", reason, entries)
+	return stmtsummarybase.ReadBillingDemoStatusAggEntry{}
 }

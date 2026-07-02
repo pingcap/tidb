@@ -83,6 +83,52 @@ func TestReadBillingDemoAggregationCaps(t *testing.T) {
 	require.Zero(t, acceptedSummary.SumReadBillingDemoInputBytes)
 }
 
+func TestReadBillingDemoReservedStatusMergeBypassesStatusCap(t *testing.T) {
+	fullStatusAggs := make(map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg)
+	fullStatusEntries := make([]ReadBillingDemoStatusAggEntry, 0, MaxReadBillingDemoStatusKeysPerRecord)
+	for i := 0; i < MaxReadBillingDemoStatusKeysPerRecord; i++ {
+		key := ReadBillingDemoStatusKey{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "tidb",
+			OpClass:       fmt.Sprintf("op_%03d", i),
+			OperatorKind:  "projection",
+			Status:        "unsupported",
+			Reason:        "unsupported_operator",
+		}
+		fullStatusAggs[key] = ReadBillingDemoStatusAgg{Count: 1}
+		fullStatusEntries = append(fullStatusEntries, readBillingDemoStatusEntry(key, ReadBillingDemoStatusAgg{Count: 1}))
+	}
+
+	srcStatusAggs := map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg{
+		makeReadBillingDemoStatusKey(readBillingDemoReservedStatusSample("v1", "v1", readBillingDemoReasonAggregation)): {
+			Count: 7,
+		},
+		makeReadBillingDemoStatusKey(readBillingDemoReservedStatusSample("v1", "v1", readBillingDemoReasonStatusAggregation)): {
+			Count: 11,
+		},
+	}
+	_, mergedStatusAggs, _ := MergeReadBillingDemoAggMaps(nil, fullStatusAggs, nil, srcStatusAggs)
+	require.Equal(t, MaxReadBillingDemoStatusKeysPerRecord, readBillingDemoNonReservedStatusKeyCount(mergedStatusAggs))
+	require.Equal(t, uint64(7), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(mergedStatusAggs), readBillingDemoReasonAggregation).Count)
+	require.Equal(t, uint64(11), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(mergedStatusAggs), readBillingDemoReasonStatusAggregation).Count)
+
+	srcStatusEntries := []ReadBillingDemoStatusAggEntry{
+		readBillingDemoStatusEntry(
+			makeReadBillingDemoStatusKey(readBillingDemoReservedStatusSample("v1", "v1", readBillingDemoReasonAggregation)),
+			ReadBillingDemoStatusAgg{Count: 7},
+		),
+		readBillingDemoStatusEntry(
+			makeReadBillingDemoStatusKey(readBillingDemoReservedStatusSample("v1", "v1", readBillingDemoReasonStatusAggregation)),
+			ReadBillingDemoStatusAgg{Count: 11},
+		),
+	}
+	_, mergedStatusEntries, _ := MergeReadBillingDemoEntrySlices(nil, fullStatusEntries, nil, srcStatusEntries)
+	require.Equal(t, MaxReadBillingDemoStatusKeysPerRecord, readBillingDemoNonReservedStatusEntryCount(mergedStatusEntries))
+	require.Equal(t, uint64(7), requireReadBillingDemoStatusReason(t, mergedStatusEntries, readBillingDemoReasonAggregation).Count)
+	require.Equal(t, uint64(11), requireReadBillingDemoStatusReason(t, mergedStatusEntries, readBillingDemoReasonStatusAggregation).Count)
+}
+
 func requireReadBillingDemoStatusReason(t *testing.T, entries []ReadBillingDemoStatusAggEntry, reason string) ReadBillingDemoStatusAggEntry {
 	t.Helper()
 	for _, entry := range entries {

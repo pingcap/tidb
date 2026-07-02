@@ -382,7 +382,8 @@ func MergeReadBillingDemoAggMaps(
 ) (map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg, map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg, ReadBillingDemoBaseUnitSummary) {
 	var acceptedSummary ReadBillingDemoBaseUnitSummary
 	for key, agg := range srcStatus {
-		dstStatus, _ = addReadBillingDemoStatusEntryToMap(dstStatus, readBillingDemoStatusEntry(key, agg), false)
+		entry := readBillingDemoStatusEntry(key, agg)
+		dstStatus, _ = addReadBillingDemoStatusEntryToMap(dstStatus, entry, readBillingDemoStatusReasonReserved(entry.Reason))
 	}
 	for key, agg := range srcBase {
 		var overflow bool
@@ -430,7 +431,7 @@ func MergeReadBillingDemoEntrySlices(
 ) ([]ReadBillingDemoBaseUnitAggEntry, []ReadBillingDemoStatusAggEntry, ReadBillingDemoBaseUnitSummary) {
 	var acceptedSummary ReadBillingDemoBaseUnitSummary
 	for _, entry := range srcStatus {
-		dstStatus, _ = addReadBillingDemoStatusEntryToEntries(dstStatus, entry, false)
+		dstStatus, _ = addReadBillingDemoStatusEntryToEntries(dstStatus, entry, readBillingDemoStatusReasonReserved(entry.Reason))
 	}
 	for _, entry := range srcBase {
 		var overflow bool
@@ -530,7 +531,7 @@ func addReadBillingDemoReservedStatusToMap(
 func readBillingDemoNonReservedStatusKeyCount(aggs map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg) int {
 	count := 0
 	for key := range aggs {
-		if key.Reason == readBillingDemoReasonAggregation || key.Reason == readBillingDemoReasonStatusAggregation {
+		if readBillingDemoStatusReasonReserved(key.Reason) {
 			continue
 		}
 		count++
@@ -652,12 +653,16 @@ func readBillingDemoReservedStatusSample(modelVersion string, weightVersion stri
 func readBillingDemoNonReservedStatusEntryCount(entries []ReadBillingDemoStatusAggEntry) int {
 	count := 0
 	for _, entry := range entries {
-		if entry.Reason == readBillingDemoReasonAggregation || entry.Reason == readBillingDemoReasonStatusAggregation {
+		if readBillingDemoStatusReasonReserved(entry.Reason) {
 			continue
 		}
 		count++
 	}
 	return count
+}
+
+func readBillingDemoStatusReasonReserved(reason string) bool {
+	return reason == readBillingDemoReasonAggregation || reason == readBillingDemoReasonStatusAggregation
 }
 
 func sortReadBillingDemoBaseUnitEntries(entries []ReadBillingDemoBaseUnitAggEntry) {
