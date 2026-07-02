@@ -459,12 +459,12 @@ var planBuilderPool = sync.Pool{
 }
 
 type logicalPlanBuildCtx struct {
-	stmtCtxState                   stmtctx.LogicalPlanBuildState
-	plannerSelectBlockAsName       *[]ast.HintTable
-	plannerSelectBlockAliasInfo    *[]hint.SelectBlockAlias
-	mapScalarSubQ                  []any
-	mapHashCode2UniqueID           map[string]int
-	rewritePhaseInfo               variable.RewritePhaseInfo
+	stmtCtxState                stmtctx.LogicalPlanBuildState
+	plannerSelectBlockAsName    *[]ast.HintTable
+	plannerSelectBlockAliasInfo *[]hint.SelectBlockAlias
+	mapScalarSubQ               []any
+	mapHashCode2UniqueID        map[string]int
+	rewritePhaseInfo            variable.RewritePhaseInfo
 }
 
 func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
