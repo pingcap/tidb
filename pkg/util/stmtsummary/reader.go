@@ -368,6 +368,9 @@ const (
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
 	AvgRequestUnitV2Str                        = "AVG_REQUEST_UNIT_V2"
 	MaxRequestUnitV2Str                        = "MAX_REQUEST_UNIT_V2"
+	SumReadBillingDemoFixedEventsStr           = "SUM_READ_BILLING_DEMO_FIXED_EVENTS"
+	SumReadBillingDemoInputRowsStr             = "SUM_READ_BILLING_DEMO_INPUT_ROWS"
+	SumReadBillingDemoInputBytesStr            = "SUM_READ_BILLING_DEMO_INPUT_BYTES"
 	ResourceGroupName                          = "RESOURCE_GROUP"
 	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
 	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
@@ -924,6 +927,15 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	MaxRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.MaxRUV2
+	},
+	SumReadBillingDemoFixedEventsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.SumReadBillingDemoFixedEvents
+	},
+	SumReadBillingDemoInputRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.SumReadBillingDemoInputRows
+	},
+	SumReadBillingDemoInputBytesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.SumReadBillingDemoInputBytes
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.resourceGroupName

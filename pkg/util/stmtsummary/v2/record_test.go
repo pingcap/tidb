@@ -67,6 +67,9 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.RUWaitDuration(), record1.SumRUWaitDuration)
 	require.Equal(t, info.TotalRUV2, record1.MaxRUV2)
 	require.Equal(t, info.TotalRUV2, record1.SumRUV2)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoFixedEvents, record1.SumReadBillingDemoFixedEvents)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputRows, record1.SumReadBillingDemoInputRows)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputBytes, record1.SumReadBillingDemoInputBytes)
 	require.Equal(t, info.CPUUsages.TidbCPUTime, record1.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime, record1.SumTikvCPU)
 
@@ -83,6 +86,9 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.WRU()*2, record2.SumWRU)
 	require.Equal(t, info.RUDetail.RUWaitDuration()*2, record2.SumRUWaitDuration)
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoFixedEvents*2, record2.SumReadBillingDemoFixedEvents)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputRows*2, record2.SumReadBillingDemoInputRows)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputBytes*2, record2.SumReadBillingDemoInputBytes)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
 
@@ -103,6 +109,7 @@ func TestStmtRecord(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &items))
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, record2.Digest, items["digest"])
+	require.Equal(t, record2.SumReadBillingDemoInputBytes, items["sum_read_billing_demo_input_bytes"])
 
 	b, err = marshalEvictedStmtRecord(record2)
 	require.NoError(t, err)

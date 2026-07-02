@@ -254,6 +254,7 @@ type stmtSummaryStats struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	ReadBillingDemoBaseUnitSummary
 	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
@@ -296,15 +297,16 @@ type StmtExecInfo struct {
 
 	WriteSQLRespDuration time.Duration
 
-	ResultRows        int64
-	TiKVExecDetails   *util.ExecDetails
-	Prepared          bool
-	KeyspaceName      string
-	KeyspaceID        uint32
-	ResourceGroupName string
-	RUDetail          *util.RUDetails
-	TotalRUV2         float64
-	CPUUsages         ppcpuusage.CPUUsages
+	ResultRows               int64
+	TiKVExecDetails          *util.ExecDetails
+	Prepared                 bool
+	KeyspaceName             string
+	KeyspaceID               uint32
+	ResourceGroupName        string
+	RUDetail                 *util.RUDetails
+	TotalRUV2                float64
+	ReadBillingDemoBaseUnits ReadBillingDemoBaseUnitSummary
+	CPUUsages                ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
 
@@ -997,6 +999,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
+	ssStats.ReadBillingDemoBaseUnitSummary.Add(&sei.ReadBillingDemoBaseUnits)
 
 	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
 	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
@@ -1139,6 +1142,28 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	if s.MaxRUV2 < other.MaxRUV2 {
 		s.MaxRUV2 = other.MaxRUV2
 	}
+}
+
+// ReadBillingDemoBaseUnitSummary is the read billing demo base-unit summary for each type of statements.
+type ReadBillingDemoBaseUnitSummary struct {
+	SumReadBillingDemoFixedEvents float64 `json:"sum_read_billing_demo_fixed_events"`
+	SumReadBillingDemoInputRows   float64 `json:"sum_read_billing_demo_input_rows"`
+	SumReadBillingDemoInputBytes  float64 `json:"sum_read_billing_demo_input_bytes"`
+}
+
+// Add adds one read billing demo base-unit sample to the summary.
+func (s *ReadBillingDemoBaseUnitSummary) Add(other *ReadBillingDemoBaseUnitSummary) {
+	if other == nil {
+		return
+	}
+	s.SumReadBillingDemoFixedEvents += other.SumReadBillingDemoFixedEvents
+	s.SumReadBillingDemoInputRows += other.SumReadBillingDemoInputRows
+	s.SumReadBillingDemoInputBytes += other.SumReadBillingDemoInputBytes
+}
+
+// Merge merges another read billing demo base-unit summary.
+func (s *ReadBillingDemoBaseUnitSummary) Merge(other *ReadBillingDemoBaseUnitSummary) {
+	s.Add(other)
 }
 
 // StmtNetworkTrafficSummary is the network traffic summary for each type of statements.

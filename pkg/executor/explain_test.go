@@ -769,7 +769,14 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
+
+	originEnableStmtSummary := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_stmt_summary").Rows()[0][0])
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary = %s", originEnableStmtSummary))
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
 	tk.MustQuery("select @@tidb_enable_read_billing_demo").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists read_billing_demo")
 	tk.MustExec("create table read_billing_demo(a int primary key)")
@@ -788,6 +795,9 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
 	require.Equal(t, 1.0, readExecutorCounterValue(t, success))
 	require.Equal(t, 1.0, readExecutorCounterValue(t, projectionFixedEvents))
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events > 0, sum_read_billing_demo_input_rows > 0, sum_read_billing_demo_input_bytes > 0 from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 1 1 1"))
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
 
 	beforeRestrictedSuccess := readExecutorCounterValue(t, success)
 	beforeRestrictedBaseUnits := readExecutorCounterValue(t, projectionFixedEvents)

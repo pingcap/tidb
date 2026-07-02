@@ -1701,11 +1701,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// Lazy SELECT metrics are emitted when the record set is closed. If a
 	// client abandons a result without closing/draining it, this first demo can
 	// miss that statement instead of guessing an incomplete status.
-	plannercore.RecordReadBillingDemoForStatement(a.Ctx, a.Plan, a.readBillingDemoStmtNode(), err)
+	readBillingDemoBaseUnits := plannercore.RecordReadBillingDemoForStatement(a.Ctx, a.Plan, a.readBillingDemoStmtNode(), err)
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
-	a.SummaryStmt(succ)
+	a.SummaryStmt(succ, readBillingDemoBaseUnits)
 	a.observeStmtFinishedForTopProfiling()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
@@ -2192,7 +2192,7 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 }
 
 // SummaryStmt collects statements for information_schema.statements_summary
-func (a *ExecStmt) SummaryStmt(succ bool) {
+func (a *ExecStmt) SummaryStmt(succ bool, readBillingDemoBaseUnits stmtsummary.ReadBillingDemoBaseUnitSummary) {
 	sessVars := a.Ctx.GetSessionVars()
 	var userString string
 	if sessVars.User != nil {
@@ -2296,6 +2296,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
 	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
+	stmtExecInfo.ReadBillingDemoBaseUnits = readBillingDemoBaseUnits
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()

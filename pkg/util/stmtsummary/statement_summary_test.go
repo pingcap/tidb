@@ -1053,6 +1053,49 @@ func TestToDatum(t *testing.T) {
 	match(t, datums[1], expectedEvictedDatum...)
 }
 
+func TestReadBillingDemoBaseUnitsToDatum(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	// to disable expiration
+	ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.ReadBillingDemoBaseUnits = ReadBillingDemoBaseUnitSummary{
+		SumReadBillingDemoFixedEvents: 2,
+		SumReadBillingDemoInputRows:   100,
+		SumReadBillingDemoInputBytes:  2048,
+	}
+	ssMap.AddStatement(stmtExecInfo1)
+
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.ReadBillingDemoBaseUnits = ReadBillingDemoBaseUnitSummary{
+		SumReadBillingDemoFixedEvents: 3,
+		SumReadBillingDemoInputRows:   200,
+		SumReadBillingDemoInputBytes:  4096,
+	}
+	ssMap.AddStatement(stmtExecInfo2)
+
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName, "")
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	ssElement := value.(*stmtSummaryByDigest).history.Back().Value.(*stmtSummaryByDigestElement)
+	require.Equal(t, 5.0, ssElement.SumReadBillingDemoFixedEvents)
+	require.Equal(t, 300.0, ssElement.SumReadBillingDemoInputRows)
+	require.Equal(t, 6144.0, ssElement.SumReadBillingDemoInputBytes)
+
+	cols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(SumReadBillingDemoFixedEventsStr)},
+		{Name: ast.NewCIStr(SumReadBillingDemoInputRowsStr)},
+		{Name: ast.NewCIStr(SumReadBillingDemoInputBytesStr)},
+	}
+	reader := NewStmtSummaryReader(nil, true, cols, "", time.UTC)
+	reader.ssMap = ssMap
+	datums := reader.GetStmtSummaryCurrentRows()
+	require.Len(t, datums, 1)
+	match(t, datums[0], 5.0, 300.0, 6144.0)
+}
+
 // Test AddStatement and ToDatum parallel.
 func TestAddStatementParallel(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

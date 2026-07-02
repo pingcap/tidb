@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -213,15 +214,16 @@ type explainRURow struct {
 }
 
 // RecordReadBillingDemoForStatement emits coefficient-free read billing demo
-// metrics for a completed statement. It is intentionally independent from RU
-// v2 billing/reporting and never calls resource-control reporters.
-func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, stmt ast.StmtNode, execErr error) {
+// metrics for a completed statement and returns the statement-level base-unit
+// totals. It is intentionally independent from RU v2 billing/reporting and
+// never calls resource-control reporters.
+func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, stmt ast.StmtNode, execErr error) stmtsummary.ReadBillingDemoBaseUnitSummary {
 	if sctx == nil || sctx.GetSessionVars() == nil || !sctx.GetSessionVars().EnableReadBillingDemo {
-		return
+		return stmtsummary.ReadBillingDemoBaseUnitSummary{}
 	}
 	// Restricted/internal SQL is not external workload calibration input.
 	if sctx.GetSessionVars().InRestrictedSQL || sctx.GetSessionVars().StmtCtx.InRestrictedSQL {
-		return
+		return stmtsummary.ReadBillingDemoBaseUnitSummary{}
 	}
 	planCtx := readBillingDemoPlanContext(plan)
 	if planCtx == nil {
@@ -229,6 +231,7 @@ func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, 
 	}
 	result := buildReadBillingDemoResult(planCtx, plan, stmt, execErr)
 	recordReadBillingDemoResult(result)
+	return summarizeReadBillingDemoBaseUnits(result)
 }
 
 func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.StmtNode, execErr error) readBillingDemoResult {
@@ -328,6 +331,29 @@ func readBillingDemoFailedOperator(status string, op readBillingDemoOperatorResu
 		reason:    op.reason,
 		operators: []readBillingDemoOperatorResult{op},
 	}
+}
+
+func summarizeReadBillingDemoBaseUnits(result readBillingDemoResult) stmtsummary.ReadBillingDemoBaseUnitSummary {
+	if result.status != readBillingDemoStatusSuccess {
+		return stmtsummary.ReadBillingDemoBaseUnitSummary{}
+	}
+	var summary stmtsummary.ReadBillingDemoBaseUnitSummary
+	for _, op := range result.operators {
+		if op.status != readBillingDemoStatusOperatorOK || !readBillingDemoOperatorBillable(op) {
+			continue
+		}
+		for _, unit := range op.units {
+			switch unit.unit {
+			case readBillingDemoUnitFixedEvents:
+				summary.SumReadBillingDemoFixedEvents += unit.value
+			case readBillingDemoUnitInputRows:
+				summary.SumReadBillingDemoInputRows += unit.value
+			case readBillingDemoUnitInputBytes:
+				summary.SumReadBillingDemoInputBytes += unit.value
+			}
+		}
+	}
+	return summary
 }
 
 func appendReadBillingDemoTree(result *readBillingDemoResult, sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree) (string, readBillingDemoOperatorResult) {

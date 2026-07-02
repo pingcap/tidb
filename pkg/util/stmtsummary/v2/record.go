@@ -155,6 +155,7 @@ type StmtRecord struct {
 	// request units(RU)
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
+	stmtsummary.ReadBillingDemoBaseUnitSummary
 
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
@@ -444,6 +445,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
+	r.ReadBillingDemoBaseUnitSummary.Add(&info.ReadBillingDemoBaseUnits)
 
 	r.StorageKV = info.StmtCtx.IsTiKV.Load()
 	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
@@ -608,6 +610,7 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
+	r.ReadBillingDemoBaseUnitSummary.Merge(&other.ReadBillingDemoBaseUnitSummary)
 }
 
 // Truncate SQL to maxSQLLength.
@@ -712,10 +715,15 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
 		TotalRUV2:         12345,
-		TiKVExecDetails:   &util.ExecDetails{},
-		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
-		LazyInfo:          &mockLazyInfo{},
-		MemArbitration:    22222,
+		ReadBillingDemoBaseUnits: stmtsummary.ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 2,
+			SumReadBillingDemoInputRows:   100,
+			SumReadBillingDemoInputBytes:  2048,
+		},
+		TiKVExecDetails: &util.ExecDetails{},
+		CPUUsages:       ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
+		LazyInfo:        &mockLazyInfo{},
+		MemArbitration:  22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

@@ -37,6 +37,9 @@ func TestColumn(t *testing.T) {
 		{Name: ast.NewCIStr(ExecCountStr)},
 		{Name: ast.NewCIStr(SumLatencyStr)},
 		{Name: ast.NewCIStr(MaxLatencyStr)},
+		{Name: ast.NewCIStr(SumReadBillingDemoFixedEventsStr)},
+		{Name: ast.NewCIStr(SumReadBillingDemoInputRowsStr)},
+		{Name: ast.NewCIStr(SumReadBillingDemoInputBytesStr)},
 		{Name: ast.NewCIStr(AvgTidbCPUTimeStr)},
 		{Name: ast.NewCIStr(AvgTikvCPUTimeStr)},
 	}
@@ -69,6 +72,12 @@ func TestColumn(t *testing.T) {
 			require.Equal(t, int64(record.SumLatency), column)
 		case MaxLatencyStr:
 			require.Equal(t, int64(record.MaxLatency), column)
+		case SumReadBillingDemoFixedEventsStr:
+			require.Equal(t, record.SumReadBillingDemoFixedEvents, column)
+		case SumReadBillingDemoInputRowsStr:
+			require.Equal(t, record.SumReadBillingDemoInputRows, column)
+		case SumReadBillingDemoInputBytesStr:
+			require.Equal(t, record.SumReadBillingDemoInputBytes, column)
 		case AvgTidbCPUTimeStr:
 			require.Equal(t, int64(record.SumTidbCPU), column)
 		case AvgTikvCPUTimeStr:
