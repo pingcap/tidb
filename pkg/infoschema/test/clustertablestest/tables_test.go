@@ -1454,10 +1454,10 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
 	var beginTime = time.Now().Format(types.TimeFormat)
 	err = tk.QueryToErr(expectedSQLText)
-	var endTime = time.Now().Format(types.TimeFormat)
 	require.NotNil(t, err)
 	// Check Memory Table
 	rows := tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE").Rows()
+	memoryUsageReadTime := time.Now().Format(types.TimeFormat)
 	require.Len(t, rows, 1)
 	row := rows[0]
 	require.Len(t, row, 11)
@@ -1476,15 +1476,16 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 		require.Fail(t, "CURRENT_OPS get wrong value")
 	}
 	require.GreaterOrEqual(t, row[5], beginTime) // SESSION_KILL_LAST
-	require.LessOrEqual(t, row[5], endTime)
+	require.LessOrEqual(t, row[5], memoryUsageReadTime)
 	require.Greater(t, row[6], "0")              // SESSION_KILL_TOTAL
 	require.GreaterOrEqual(t, row[7], beginTime) // GC_LAST
-	require.LessOrEqual(t, row[7], endTime)
+	require.LessOrEqual(t, row[7], memoryUsageReadTime)
 	require.Greater(t, row[8], "0") // GC_TOTAL
 	require.Equal(t, row[9], "0")   // DISK_USAGE
 	require.Equal(t, row[10], "0")  // QUERY_FORCE_DISK
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
+	opsHistoryReadTime := time.Now().Format(types.TimeFormat)
 	require.Greater(t, len(rows), 0)
 	row = nil
 	for _, historyRow := range rows {
@@ -1495,7 +1496,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.NotNil(t, row)
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
-	require.LessOrEqual(t, row[0], endTime)
+	require.LessOrEqual(t, row[0], opsHistoryReadTime)
 	require.Equal(t, row[1], "SessionKill") // OPS
 	require.Equal(t, row[2], "536870912")   // MEMORY_LIMIT
 	tmp, ok = row[3].(string)               // MEMORY_CURRENT
