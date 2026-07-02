@@ -317,7 +317,8 @@ func TestIssue18572_2(t *testing.T) {
 }
 
 func TestIssue18572_3(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, err := issue18572StoreForTest()
+	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
