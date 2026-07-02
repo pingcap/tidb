@@ -38,14 +38,13 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl           table.Table
-	mutRow        chunk.MutRow
-	colMap        map[int64]Column
-	colTypes      map[int64]*types.FieldType
-	defaultVals   []types.Datum
-	cols          []*table.Column
-	pkCols        []int64
-	useNewCollate bool
+	tbl         table.Table
+	mutRow      chunk.MutRow
+	colMap      map[int64]Column
+	colTypes    map[int64]*types.FieldType
+	defaultVals []types.Datum
+	cols        []*table.Column
+	pkCols      []int64
 }
 
 // NewRowDecoder returns a new RowDecoder.
@@ -71,14 +70,13 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		pkCols = []int64{model.ExtraHandleID}
 	}
 	return &RowDecoder{
-		tbl:           tbl,
-		mutRow:        chunk.MutRowFromTypes(tps),
-		colMap:        decodeColMap,
-		colTypes:      colFieldMap,
-		defaultVals:   make([]types.Datum, len(cols)),
-		cols:          cols,
-		pkCols:        pkCols,
-		useNewCollate: tbl.UseNewCollate(),
+		tbl:         tbl,
+		mutRow:      chunk.MutRowFromTypes(tps),
+		colMap:      decodeColMap,
+		colTypes:    colFieldMap,
+		defaultVals: make([]types.Datum, len(cols)),
+		cols:        cols,
+		pkCols:      pkCols,
 	}
 }
 
@@ -93,7 +91,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx exprctx.BuildContext, handle k
 	if err != nil {
 		return nil, err
 	}
-	row, err = tablecodec.DecodeHandleToDatumMapWithCollate(rd.useNewCollate, handle, rd.pkCols, rd.colTypes, decodeLoc, row)
+	row, err = tablecodec.DecodeHandleToDatumMap(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +148,7 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx exprctx.BuildContext, handle
 	if err != nil {
 		return nil, err
 	}
-	row, err = tablecodec.DecodeHandleToDatumMapWithCollate(rd.useNewCollate, handle, rd.pkCols, rd.colTypes, decodeLoc, row)
+	row, err = tablecodec.DecodeHandleToDatumMap(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, err
 	}
