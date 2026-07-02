@@ -322,7 +322,7 @@ func TestCheckpointCalculatorPrunesRemovedStoreAfterFilesSynced(t *testing.T) {
 	checkpointTS, err := calculator.ComputeNextCheckpoint(ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint64(20), checkpointTS)
-	require.Equal(t, uint64(20), calculator.SyncedTS())
+	require.Equal(t, uint64(10), calculator.SyncedTS())
 	require.Equal(
 		t,
 		map[uint64]uint64{
@@ -330,6 +330,13 @@ func TestCheckpointCalculatorPrunesRemovedStoreAfterFilesSynced(t *testing.T) {
 		},
 		calculator.StateSnapshot().SyncedByStore,
 	)
+
+	pd.Set(30, 2)
+	checkpointTS, err = calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(30), checkpointTS)
+	require.Equal(t, uint64(20), calculator.SyncedTS())
+	require.Equal(t, map[uint64]uint64{2: 20}, calculator.StateSnapshot().SyncedByStore)
 }
 
 func TestCheckpointCalculatorPrunesRemovedStoreBeforeAliveStoreBlocksAdvance(t *testing.T) {
