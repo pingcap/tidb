@@ -85,6 +85,34 @@ func TestWindowSubqueryRewrite(t *testing.T) {
 
 		tk.MustQuery("select count(1 in (select t2.c1 from t2)) over () from t1").Check(testkit.Rows("2", "2"))
 		tk.MustQuery("select count(1 = any (select t2.c1 from t2)) over () from t1").Check(testkit.Rows("2", "2"))
+
+		tk.MustExec("drop table if exists t_issue_67152, t_issue_67152_inner, t_issue_67152_rhs")
+		defer tk.MustExec("drop table if exists t_issue_67152, t_issue_67152_inner, t_issue_67152_rhs")
+		tk.MustExec("create table t_issue_67152 (a int, b int)")
+		tk.MustExec("create table t_issue_67152_inner (a int, b int)")
+		tk.MustExec("create table t_issue_67152_rhs (a int)")
+		tk.MustExec("insert into t_issue_67152 values (1, 1), (2, 2), (3, 3), (4, 4)")
+		tk.MustExec("insert into t_issue_67152_inner values (1, 100), (2, 200), (3, 300), (4, 400)")
+		tk.MustExec("insert into t_issue_67152_rhs values (1), (2), (101), (202), (303), (404)")
+
+		tk.MustQuery("select /* issue:67152 constant-list */ last_value(a) over (order by a) in (1, 2) from t_issue_67152").
+			Check(testkit.Rows("1", "1", "0", "0"))
+		tk.MustQuery("select /* issue:67152 */ last_value(a) over (order by a) in (select b from t_issue_67152) from t_issue_67152").
+			Check(testkit.Rows("1", "1", "1", "1"))
+		tk.MustQuery("select /* issue:67152 compare-subquery */ last_value(a) over (order by a) = any (select b from t_issue_67152) from t_issue_67152").
+			Check(testkit.Rows("1", "1", "1", "1"))
+		tk.MustQuery("explain format='brief' select /* issue:67152 explain */ last_value(a) over (order by a) in (select b from t_issue_67152) from t_issue_67152").
+			MultiCheckContain([]string{"Window"})
+		tk.MustQuery(`select /* issue:67152 nested-left-subquery */
+			((select max(i.b) from t_issue_67152_inner i where i.a = o.b) + last_value(o.a) over (order by o.a)) in
+			(select r.a from t_issue_67152_rhs r)
+			from t_issue_67152 o`).
+			Check(testkit.Rows("1", "1", "1", "1"))
+		tk.MustQuery(`select /* issue:67152 nested-left-compare-subquery */
+			((select max(i.b) from t_issue_67152_inner i where i.a = o.b) + last_value(o.a) over (order by o.a)) = any
+			(select r.a from t_issue_67152_rhs r)
+			from t_issue_67152 o`).
+			Check(testkit.Rows("1", "1", "1", "1"))
 	})
 }
 

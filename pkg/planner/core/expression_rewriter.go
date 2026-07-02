@@ -495,12 +495,14 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		}()
 	}
 	// Store the old value before we enter the subquery and reset they to default value.
+	oldCurClause := b.curClause
 	oldSubQCtx := b.subQueryCtx
 	b.subQueryCtx = subqueryCtx
 	oldHintFlags := b.subQueryHintFlags
 	b.subQueryHintFlags = 0
 	outerWindowSpecs := b.windowSpecs
 	defer func() {
+		b.curClause = oldCurClause
 		b.windowSpecs = outerWindowSpecs
 		b.subQueryCtx = oldSubQCtx
 		b.subQueryHintFlags = oldHintFlags
