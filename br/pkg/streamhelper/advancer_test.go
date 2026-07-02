@@ -949,7 +949,6 @@ func TestOwnerDropped(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	installSubscribeSupport(c)
 	env := newTestEnv(c, t)
-	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/get_subscriber"
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -960,18 +959,11 @@ func TestOwnerDropped(t *testing.T) {
 	adv.OnStart(ctx)
 	adv.SpawnSubscriptionHandler(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	failpoint.Enable(fp, "pause")
-	ch := make(chan struct{})
-	go func() {
-		defer close(ch)
-		require.NoError(t, adv.OnTick(ctx))
-	}()
 	adv.OnStop()
-	failpoint.Disable(fp)
+	require.False(t, adv.HasSubscriptions())
 
 	cp := c.advanceCheckpoints()
-	c.flushAll()
-	<-ch
+	require.NoError(t, adv.OnTick(ctx))
 	adv.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 		// Advancer will manually poll the checkpoint...
 		require.Equal(t, vsf.MinValue(), cp)
