@@ -444,10 +444,13 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
+	args := make([]any, 0, len(states)+1)
+	args = append(args, states...)
+	args = append(args, proto.GetTaskCleanupBatchSize())
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			" order by priority asc, create_time asc, id asc", states...)
+			" order by priority asc, create_time asc, id asc limit %?", args...)
 	if err != nil {
 		return task, err
 	}

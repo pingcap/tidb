@@ -50,7 +50,7 @@
 ### Tests
 - `pkg/dxf/framework/proto/step_test.go` - dxf/framework/proto: Tests step.
 - `pkg/dxf/framework/proto/subtask_test.go` - dxf/framework/proto: Tests subtask is done.
-- `pkg/dxf/framework/proto/task_test.go` - dxf/framework/proto: Tests task step.
+- `pkg/dxf/framework/proto/task_test.go` - dxf/framework/proto: Tests task step and runtime scheduling/cleanup limit validation.
 - `pkg/dxf/framework/proto/type_test.go` - dxf/framework/proto: Tests task type.
 
 ## pkg/dxf/framework/scheduler
@@ -74,7 +74,7 @@
 ## pkg/dxf/framework/storage
 
 ### Tests
-- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task table.
+- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task/subtask tables, history transfer, and cleanup batch bounds.
 - `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state.
 - `pkg/dxf/framework/storage/task_table_test.go` - dxf/framework/storage: Tests task table.
 
