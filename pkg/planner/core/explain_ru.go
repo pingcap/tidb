@@ -214,16 +214,16 @@ type explainRURow struct {
 }
 
 // RecordReadBillingDemoForStatement emits coefficient-free read billing demo
-// metrics for a completed statement and returns the statement-level base-unit
-// totals. It is intentionally independent from RU v2 billing/reporting and
-// never calls resource-control reporters.
-func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, stmt ast.StmtNode, execErr error) stmtsummary.ReadBillingDemoBaseUnitSummary {
+// metrics for a completed statement and returns the structured statement
+// summary stats. It is intentionally independent from RU v2 billing/reporting
+// and never calls resource-control reporters.
+func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, stmt ast.StmtNode, execErr error) stmtsummary.ReadBillingDemoStatementStats {
 	if sctx == nil || sctx.GetSessionVars() == nil || !sctx.GetSessionVars().EnableReadBillingDemo {
-		return stmtsummary.ReadBillingDemoBaseUnitSummary{}
+		return stmtsummary.ReadBillingDemoStatementStats{}
 	}
 	// Restricted/internal SQL is not external workload calibration input.
 	if sctx.GetSessionVars().InRestrictedSQL || sctx.GetSessionVars().StmtCtx.InRestrictedSQL {
-		return stmtsummary.ReadBillingDemoBaseUnitSummary{}
+		return stmtsummary.ReadBillingDemoStatementStats{}
 	}
 	planCtx := readBillingDemoPlanContext(plan)
 	if planCtx == nil {
@@ -231,7 +231,7 @@ func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, 
 	}
 	result := buildReadBillingDemoResult(planCtx, plan, stmt, execErr)
 	recordReadBillingDemoResult(result)
-	return summarizeReadBillingDemoBaseUnits(result)
+	return buildReadBillingDemoStatementStats(result)
 }
 
 func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.StmtNode, execErr error) readBillingDemoResult {
@@ -354,6 +354,86 @@ func summarizeReadBillingDemoBaseUnits(result readBillingDemoResult) stmtsummary
 		}
 	}
 	return summary
+}
+
+func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummary.ReadBillingDemoStatementStats {
+	stats := stmtsummary.ReadBillingDemoStatementStats{
+		ModelVersion:  readBillingDemoModelVersion,
+		WeightVersion: readBillingDemoWeightVersion,
+	}
+	status := result.status
+	if status == "" {
+		status = readBillingDemoStatusUnknownInput
+	}
+	reason := result.reason
+	if reason == "" {
+		reason = readBillingDemoReasonNone
+	}
+	stats.Statuses = append(stats.Statuses, stmtsummary.ReadBillingDemoStatusSample{
+		ModelVersion:  readBillingDemoModelVersion,
+		WeightVersion: readBillingDemoWeightVersion,
+		Site:          readBillingDemoSiteStatement,
+		OpClass:       readBillingDemoOpClassStatement,
+		OperatorKind:  readBillingDemoOperatorStatement,
+		Status:        status,
+		Reason:        reason,
+	})
+	for _, op := range result.operators {
+		opStatus := op.status
+		if opStatus == "" {
+			opStatus = status
+		}
+		opReason := op.reason
+		if opReason == "" {
+			opReason = reason
+		}
+		if opReason == "" {
+			opReason = readBillingDemoReasonNone
+		}
+		if !(op.site == readBillingDemoSiteStatement &&
+			op.opClass == readBillingDemoOpClassStatement &&
+			op.operatorKind == readBillingDemoOperatorStatement &&
+			opStatus == status &&
+			opReason == reason) {
+			stats.Statuses = append(stats.Statuses, stmtsummary.ReadBillingDemoStatusSample{
+				ModelVersion:  readBillingDemoModelVersion,
+				WeightVersion: readBillingDemoWeightVersion,
+				Site:          op.site,
+				OpClass:       op.opClass,
+				OperatorKind:  op.operatorKind,
+				Status:        opStatus,
+				Reason:        opReason,
+			})
+		}
+		if status != readBillingDemoStatusSuccess || opStatus != readBillingDemoStatusOperatorOK || !readBillingDemoOperatorBillable(op) {
+			continue
+		}
+		for _, unit := range op.units {
+			sample := stmtsummary.ReadBillingDemoBaseUnitSample{
+				ModelVersion:   readBillingDemoModelVersion,
+				WeightVersion:  readBillingDemoWeightVersion,
+				Site:           op.site,
+				OpClass:        op.opClass,
+				OperatorKind:   op.operatorKind,
+				Unit:           unit.unit,
+				InputSource:    unit.source,
+				InputSide:      unit.side,
+				RowWidthSource: unit.widthSource,
+				Value:          unit.value,
+				RowWidth:       unit.rowWidth,
+			}
+			stats.BaseUnits = append(stats.BaseUnits, sample)
+			switch unit.unit {
+			case readBillingDemoUnitFixedEvents:
+				stats.Totals.SumReadBillingDemoFixedEvents += unit.value
+			case readBillingDemoUnitInputRows:
+				stats.Totals.SumReadBillingDemoInputRows += unit.value
+			case readBillingDemoUnitInputBytes:
+				stats.Totals.SumReadBillingDemoInputBytes += unit.value
+			}
+		}
+	}
+	return stats
 }
 
 func appendReadBillingDemoTree(result *readBillingDemoResult, sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree) (string, readBillingDemoOperatorResult) {

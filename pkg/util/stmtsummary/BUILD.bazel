@@ -4,6 +4,7 @@ go_library(
     name = "stmtsummary",
     srcs = [
         "evicted.go",
+        "read_billing.go",
         "reader.go",
         "statement_summary.go",
     ],
@@ -36,11 +37,12 @@ go_test(
     srcs = [
         "evicted_test.go",
         "main_test.go",
+        "read_billing_test.go",
         "statement_summary_test.go",
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 31,
     deps = [
         "//pkg/meta/model",
         "//pkg/metrics",

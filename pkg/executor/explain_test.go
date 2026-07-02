@@ -797,6 +797,9 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Equal(t, 1.0, readExecutorCounterValue(t, projectionFixedEvents))
 	tk.MustExec("set tidb_enable_read_billing_demo=off")
 	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events > 0, sum_read_billing_demo_input_rows > 0, sum_read_billing_demo_input_bytes > 0 from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 1 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0, avg_row_width > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and site = 'tidb' and op_class = 'projection_eval' and operator_kind = 'projection' and unit = 'fixed_events'`).Check(testkit.Rows("tidb projection_eval projection fixed_events runtime_act_rows all v1 v1 1 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select ? + ?' and site = 'statement'`).Check(testkit.Rows("statement statement statement success none 1"))
+	tk.MustQuery(`select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' and table_name = 'CLUSTER_STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS' and ordinal_position = 1`).Check(testkit.Rows("INSTANCE"))
 	tk.MustExec("set tidb_enable_read_billing_demo=on")
 
 	beforeRestrictedSuccess := readExecutorCounterValue(t, success)
@@ -821,6 +824,7 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Equal(t, beforeUnsupported+1, readExecutorCounterValue(t, unsupported))
 	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
 	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+	tk.MustQuery("select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text like 'insert into `read_billing_demo`%' and status = 'unsupported' group by status, reason").Check(testkit.Rows("unsupported unsupported_non_select 1"))
 
 	beforeUnknownInput := readExecutorCounterValue(t, unknownInput)
 	beforeBaseUnits = readExecutorCounterValue(t, projectionFixedEvents)
@@ -861,6 +865,8 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.NoError(t, rs.Close())
 	require.Equal(t, beforeEarlyError+2, readExecutorCounterValue(t, errorStatus))
 	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+	tk.MustQuery(`select sum(count) from information_schema.statements_summary_read_billing_demo_status where site = 'statement' and status = 'error' and reason = 'statement_error'`).Check(testkit.Rows("3"))
+	tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units b join information_schema.statements_summary_read_billing_demo_status s on b.digest = s.digest where s.status in ('unsupported', 'error')`).Check(testkit.Rows("0"))
 }
 
 func readExecutorCounterValue(t *testing.T, counter prometheus.Counter) float64 {

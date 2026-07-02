@@ -126,6 +126,8 @@ go_library(
         "//pkg/util/sli",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
+        "//pkg/util/stmtsummary",
+        "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/syncutil",
         "//pkg/util/timeutil",
         "//pkg/util/topsql",

@@ -1,0 +1,87 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package stmtsummary
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestReadBillingDemoAggregationCaps(t *testing.T) {
+	stats := ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+	}
+	for i := 0; i < MaxReadBillingDemoBaseUnitKeysPerRecord+2; i++ {
+		stats.BaseUnits = append(stats.BaseUnits, ReadBillingDemoBaseUnitSample{
+			ModelVersion:   "v1",
+			WeightVersion:  "v1",
+			Site:           "tidb",
+			OpClass:        fmt.Sprintf("op_%03d", i),
+			OperatorKind:   "projection",
+			Unit:           "input_rows",
+			InputSource:    "runtime_act_rows",
+			InputSide:      "all",
+			RowWidthSource: "operator_helper",
+			Value:          float64(i + 1),
+			RowWidth:       8,
+		})
+	}
+
+	baseAggs, statusAggs := AddReadBillingDemoStatementStatsToMaps(nil, nil, &stats)
+	require.Len(t, baseAggs, MaxReadBillingDemoBaseUnitKeysPerRecord)
+	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(statusAggs), readBillingDemoReasonAggregation).Count)
+
+	baseEntries, statusEntries := AddReadBillingDemoStatementStatsToEntries(nil, nil, &stats)
+	require.Len(t, baseEntries, MaxReadBillingDemoBaseUnitKeysPerRecord)
+	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, statusEntries, readBillingDemoReasonAggregation).Count)
+
+	statusOnly := ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+	}
+	for i := 0; i < MaxReadBillingDemoStatusKeysPerRecord+2; i++ {
+		statusOnly.Statuses = append(statusOnly.Statuses, ReadBillingDemoStatusSample{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "tidb",
+			OpClass:       fmt.Sprintf("op_%03d", i),
+			OperatorKind:  "projection",
+			Status:        "unsupported",
+			Reason:        "unsupported_operator",
+		})
+	}
+
+	_, statusAggs = AddReadBillingDemoStatementStatsToMaps(nil, nil, &statusOnly)
+	require.Equal(t, MaxReadBillingDemoStatusKeysPerRecord, readBillingDemoNonReservedStatusKeyCount(statusAggs))
+	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(statusAggs), readBillingDemoReasonStatusAggregation).Count)
+
+	_, statusEntries = AddReadBillingDemoStatementStatsToEntries(nil, nil, &statusOnly)
+	require.Equal(t, MaxReadBillingDemoStatusKeysPerRecord, readBillingDemoNonReservedStatusEntryCount(statusEntries))
+	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, statusEntries, readBillingDemoReasonStatusAggregation).Count)
+}
+
+func requireReadBillingDemoStatusReason(t *testing.T, entries []ReadBillingDemoStatusAggEntry, reason string) ReadBillingDemoStatusAggEntry {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Reason == reason {
+			return entry
+		}
+	}
+	require.Failf(t, "missing read billing status reason", "reason=%s entries=%v", reason, entries)
+	return ReadBillingDemoStatusAggEntry{}
+}

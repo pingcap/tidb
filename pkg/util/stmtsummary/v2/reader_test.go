@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
+	stmtsummarybase "github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -253,6 +255,98 @@ func TestMemReader(t *testing.T) {
 	require.Len(t, evicted, 3) // begin, end, count
 }
 
+func TestReadBillingDemoMemReader(t *testing.T) {
+	timeLocation, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+
+	ss := NewStmtSummary4Test(3)
+	defer ss.Close()
+
+	info := GenerateStmtExecInfo4Test("digest_read_billing")
+	info.ReadBillingDemoStats = stmtsummarybase.ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []stmtsummarybase.ReadBillingDemoStatusSample{{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "success",
+			Reason:        "none",
+		}},
+		BaseUnits: []stmtsummarybase.ReadBillingDemoBaseUnitSample{{
+			ModelVersion:   "v1",
+			WeightVersion:  "v1",
+			Site:           "tidb",
+			OpClass:        "projection_eval",
+			OperatorKind:   "projection",
+			Unit:           "fixed_events",
+			InputSource:    "runtime_act_rows",
+			InputSide:      "all",
+			RowWidthSource: "operator_helper",
+			Value:          2,
+			RowWidth:       16,
+		}},
+		Totals: stmtsummarybase.ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 2,
+		},
+	}
+	ss.Add(info)
+
+	statusOnly := GenerateStmtExecInfo4Test("digest_read_billing_error")
+	statusOnly.ReadBillingDemoStats = stmtsummarybase.ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []stmtsummarybase.ReadBillingDemoStatusSample{{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "error",
+			Reason:        "statement_error",
+		}},
+	}
+	ss.AddReadBillingDemoStatusOnly(statusOnly)
+
+	baseUnitCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoSiteStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoOpClassStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoUnitStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoValueStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoSampleCountStr)},
+	}
+	baseRows := NewReadBillingDemoMemReader(ss, baseUnitCols, "", timeLocation, nil, false, nil, nil, stmtsummarybase.ReadBillingDemoTableBaseUnits).Rows()
+	require.Len(t, baseRows, 1)
+	require.Equal(t, map[string]string{
+		"digest_read_billing/tidb/projection_eval/fixed_events": "2 1",
+	}, readBillingDemoRowsByKey(baseRows, 4))
+
+	statusCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoStatusStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoReasonStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoCountStr)},
+	}
+	statusRows := NewReadBillingDemoMemReader(ss, statusCols, "", timeLocation, nil, false, nil, nil, stmtsummarybase.ReadBillingDemoTableStatus).Rows()
+	require.Len(t, statusRows, 2)
+	require.Equal(t, map[string]string{
+		"digest_read_billing/success/none":                "1",
+		"digest_read_billing_error/error/statement_error": "1",
+	}, readBillingDemoRowsByKey(statusRows, 3))
+
+	normalReader := NewMemReader(ss, []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
+	}, "", timeLocation, nil, false, nil, nil)
+	normalRows := normalReader.Rows()
+	require.Len(t, normalRows, 1)
+	require.Equal(t, "digest_read_billing", normalRows[0][0].GetString())
+	require.Equal(t, int64(1), normalRows[0][1].GetInt64())
+}
+
 func TestHistoryReader(t *testing.T) {
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
 	filename2 := "tidb-statements.log"
@@ -409,6 +503,61 @@ func TestHistoryReader(t *testing.T) {
 	}()
 }
 
+func TestReadBillingDemoHistoryReader(t *testing.T) {
+	filename := "tidb-statements.log"
+	file, err := os.Create(filename)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, os.Remove(filename))
+	}()
+	_, err = file.WriteString(`{"begin":1672129270,"end":1672129280,"digest":"digest_read_billing","normalized_sql":"select ?","stmt_type":"Select","auth_users":{"user":{}},"read_billing_demo_base_unit_aggs":[{"model_version":"v1","weight_version":"v1","site":"tidb","op_class":"projection_eval","operator_kind":"projection","unit":"fixed_events","input_source":"runtime_act_rows","input_side":"all","row_width_source":"operator_helper","value":2,"sample_count":1,"row_width_sum":16}],"read_billing_demo_status_aggs":[{"model_version":"v1","weight_version":"v1","site":"statement","op_class":"statement","operator_kind":"statement","status":"success","reason":"none","count":1}]}` + "\n")
+	require.NoError(t, err)
+	_, err = file.WriteString(`{"begin":1672129270,"end":1672129280,"digest":"digest_read_billing_error","normalized_sql":"select ?","stmt_type":"Select","auth_users":{"user":{}},"read_billing_demo_status_aggs":[{"model_version":"v1","weight_version":"v1","site":"statement","op_class":"statement","operator_kind":"statement","status":"error","reason":"statement_error","count":1}]}` + "\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	timeLocation, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	baseUnitCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoSiteStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoOpClassStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoUnitStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoValueStr)},
+	}
+	baseReader, err := NewReadBillingDemoHistoryReader(context.Background(), baseUnitCols, "", timeLocation, nil, false, nil, nil, 2, stmtsummarybase.ReadBillingDemoTableBaseUnits)
+	require.NoError(t, err)
+	baseRows := readAllRows(t, baseReader)
+	require.NoError(t, baseReader.Close())
+	require.Equal(t, map[string]string{
+		"digest_read_billing/tidb/projection_eval/fixed_events": "2",
+	}, readBillingDemoRowsByKey(baseRows, 4))
+
+	statusCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoStatusStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoReasonStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoCountStr)},
+	}
+	statusReader, err := NewReadBillingDemoHistoryReader(context.Background(), statusCols, "", timeLocation, nil, false, nil, nil, 2, stmtsummarybase.ReadBillingDemoTableStatus)
+	require.NoError(t, err)
+	statusRows := readAllRows(t, statusReader)
+	require.NoError(t, statusReader.Close())
+	require.Equal(t, map[string]string{
+		"digest_read_billing/success/none":                "1",
+		"digest_read_billing_error/error/statement_error": "1",
+	}, readBillingDemoRowsByKey(statusRows, 3))
+
+	normalReader, err := NewHistoryReader(context.Background(), []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
+	}, "", timeLocation, nil, false, nil, nil, 2)
+	require.NoError(t, err)
+	normalRows := readAllRows(t, normalReader)
+	require.NoError(t, normalReader.Close())
+	require.Empty(t, normalRows)
+}
+
 func TestHistoryReaderInvalidLine(t *testing.T) {
 	filename := "tidb-statements.log"
 
@@ -457,4 +606,20 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 		results = append(results, rows...)
 	}
 	return results
+}
+
+func readBillingDemoRowsByKey(rows [][]types.Datum, keyColumns int) map[string]string {
+	result := make(map[string]string, len(rows))
+	for _, row := range rows {
+		keyParts := make([]string, 0, keyColumns)
+		for i := 0; i < keyColumns; i++ {
+			keyParts = append(keyParts, fmt.Sprintf("%v", row[i].GetValue()))
+		}
+		valueParts := make([]string, 0, len(row)-keyColumns)
+		for i := keyColumns; i < len(row); i++ {
+			valueParts = append(valueParts, fmt.Sprintf("%v", row[i].GetValue()))
+		}
+		result[strings.Join(keyParts, "/")] = strings.Join(valueParts, " ")
+	}
+	return result
 }

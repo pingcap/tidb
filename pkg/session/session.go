@@ -136,6 +136,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -2779,7 +2781,36 @@ func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err err
 	if resolvedStmt, resolveErr := resolvePreparedStmt(stmtNode, s.sessionVars); resolveErr == nil && resolvedStmt != nil {
 		metricsStmt = resolvedStmt
 	}
-	plannercore.RecordReadBillingDemoForStatement(s, nil, metricsStmt, err)
+	readBillingDemoStats := plannercore.RecordReadBillingDemoForStatement(s, nil, metricsStmt, err)
+	if readBillingDemoStats.IsEmpty() || s.sessionVars == nil || s.sessionVars.StmtCtx == nil {
+		return
+	}
+	userString := ""
+	if s.sessionVars.User != nil {
+		userString = s.sessionVars.User.Username
+	}
+	stmtCtx := s.sessionVars.StmtCtx
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), metricsStmt)
+	}
+	normalizedSQL, digest := stmtCtx.SQLDigest()
+	digestString := ""
+	if digest != nil {
+		digestString = digest.String()
+	}
+	isInternalSQL := (s.sessionVars.InRestrictedSQL || len(userString) == 0) && !s.sessionVars.InExplainExplore
+	stmtsummaryv2.AddReadBillingDemoStatusOnly(&stmtsummary.StmtExecInfo{
+		SchemaName:           strings.ToLower(s.sessionVars.CurrentDB),
+		NormalizedSQL:        normalizedSQL,
+		Digest:               digestString,
+		User:                 userString,
+		StmtCtx:              stmtCtx,
+		StartTime:            s.sessionVars.StartTime,
+		IsInternal:           isInternalSQL,
+		Succeed:              false,
+		ResourceGroupName:    stmtCtx.ResourceGroupName,
+		ReadBillingDemoStats: readBillingDemoStats,
+	})
 }
 
 func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {

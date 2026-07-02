@@ -1096,6 +1096,193 @@ func TestReadBillingDemoBaseUnitsToDatum(t *testing.T) {
 	match(t, datums[0], 5.0, 300.0, 6144.0)
 }
 
+func TestReadBillingDemoStructuredRowsToDatum(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	// to disable expiration
+	ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.ReadBillingDemoStats = ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []ReadBillingDemoStatusSample{
+			{
+				ModelVersion:  "v1",
+				WeightVersion: "v1",
+				Site:          "statement",
+				OpClass:       "statement",
+				OperatorKind:  "statement",
+				Status:        "success",
+				Reason:        "none",
+			},
+			{
+				ModelVersion:  "v1",
+				WeightVersion: "v1",
+				Site:          "tidb",
+				OpClass:       "projection_eval",
+				OperatorKind:  "projection",
+				Status:        "ok",
+				Reason:        "none",
+			},
+		},
+		BaseUnits: []ReadBillingDemoBaseUnitSample{
+			{
+				ModelVersion:   "v1",
+				WeightVersion:  "v1",
+				Site:           "tidb",
+				OpClass:        "projection_eval",
+				OperatorKind:   "projection",
+				Unit:           "fixed_events",
+				InputSource:    "runtime_act_rows",
+				InputSide:      "all",
+				RowWidthSource: "operator_helper",
+				Value:          2,
+				RowWidth:       16,
+			},
+			{
+				ModelVersion:   "v1",
+				WeightVersion:  "v1",
+				Site:           "tidb",
+				OpClass:        "projection_eval",
+				OperatorKind:   "projection",
+				Unit:           "fixed_events",
+				InputSource:    "runtime_act_rows",
+				InputSide:      "all",
+				RowWidthSource: "operator_helper",
+				Value:          3,
+				RowWidth:       24,
+			},
+			{
+				ModelVersion:   "v1",
+				WeightVersion:  "v1",
+				Site:           "tidb",
+				OpClass:        "join_hash",
+				OperatorKind:   "hashjoin",
+				Unit:           "input_rows",
+				InputSource:    "runtime_act_rows",
+				InputSide:      "build",
+				RowWidthSource: "schema_type_width",
+				Value:          100,
+				RowWidth:       32,
+			},
+		},
+		Totals: ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 5,
+			SumReadBillingDemoInputRows:   100,
+		},
+	}
+	ssMap.AddStatement(stmtExecInfo)
+
+	statusOnlyInfo := generateAnyExecInfo()
+	statusOnlyInfo.Digest = "status_digest"
+	statusOnlyInfo.NormalizedSQL = "status_only_sql"
+	statusOnlyInfo.ReadBillingDemoStats = ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []ReadBillingDemoStatusSample{{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "error",
+			Reason:        "statement_error",
+		}},
+	}
+	ssMap.AddReadBillingDemoStatusOnly(statusOnlyInfo)
+
+	unknownInputInfo := generateAnyExecInfo()
+	unknownInputInfo.Digest = "unknown_input_digest"
+	unknownInputInfo.NormalizedSQL = "unknown_input_sql"
+	unknownInputInfo.ReadBillingDemoStats = ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []ReadBillingDemoStatusSample{{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "unknown_input",
+			Reason:        "missing_runtime_stats",
+		}},
+	}
+	ssMap.AddReadBillingDemoStatusOnly(unknownInputInfo)
+
+	baseUnitCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(ReadBillingDemoSiteStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoOpClassStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoOperatorKindStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoUnitStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoInputSourceStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoInputSideStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoRowWidthSource)},
+		{Name: ast.NewCIStr(ReadBillingDemoValueStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoSampleCountStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoRowWidthSumStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoAvgRowWidthStr)},
+	}
+	reader := NewStmtSummaryReader(nil, true, baseUnitCols, "", time.UTC)
+	reader.ssMap = ssMap
+	baseRows := reader.GetReadBillingDemoCurrentRows(ReadBillingDemoTableBaseUnits)
+	require.Len(t, baseRows, 2)
+	expectedBaseRows := map[string]string{
+		"tidb/join_hash/hashjoin/input_rows/runtime_act_rows/build/schema_type_width":       "100 1 32 32",
+		"tidb/projection_eval/projection/fixed_events/runtime_act_rows/all/operator_helper": "5 2 40 20",
+	}
+	require.Equal(t, expectedBaseRows, readBillingDemoRowsByKey(baseRows, 7))
+	require.Equal(t, expectedBaseRows, readBillingDemoRowsByKey(reader.GetReadBillingDemoHistoryRows(ReadBillingDemoTableBaseUnits), 7))
+
+	statusCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestTextStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoSiteStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoOpClassStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoOperatorKindStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoStatusStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoReasonStr)},
+		{Name: ast.NewCIStr(ReadBillingDemoCountStr)},
+	}
+	statusReader := NewStmtSummaryReader(nil, true, statusCols, "", time.UTC)
+	statusReader.ssMap = ssMap
+	statusRows := statusReader.GetReadBillingDemoCurrentRows(ReadBillingDemoTableStatus)
+	require.Len(t, statusRows, 4)
+	expectedStatusRows := map[string]string{
+		"normalized_sql/statement/statement/statement/success/none":                           "1",
+		"normalized_sql/tidb/projection_eval/projection/ok/none":                              "1",
+		"status_only_sql/statement/statement/statement/error/statement_error":                 "1",
+		"unknown_input_sql/statement/statement/statement/unknown_input/missing_runtime_stats": "1",
+	}
+	require.Equal(t, expectedStatusRows, readBillingDemoRowsByKey(statusRows, 6))
+	require.Equal(t, expectedStatusRows, readBillingDemoRowsByKey(statusReader.GetReadBillingDemoHistoryRows(ReadBillingDemoTableStatus), 6))
+
+	normalCols := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
+	}
+	normalReader := NewStmtSummaryReader(nil, true, normalCols, "", time.UTC)
+	normalReader.ssMap = ssMap
+	normalRows := normalReader.GetStmtSummaryCurrentRows()
+	require.Len(t, normalRows, 1)
+	match(t, normalRows[0], "digest", 1)
+}
+
+func readBillingDemoRowsByKey(rows [][]types.Datum, keyColumns int) map[string]string {
+	result := make(map[string]string, len(rows))
+	for _, row := range rows {
+		keyParts := make([]string, 0, keyColumns)
+		for i := 0; i < keyColumns; i++ {
+			keyParts = append(keyParts, fmt.Sprintf("%v", row[i].GetValue()))
+		}
+		valueParts := make([]string, 0, len(row)-keyColumns)
+		for i := keyColumns; i < len(row); i++ {
+			valueParts = append(valueParts, fmt.Sprintf("%v", row[i].GetValue()))
+		}
+		result[strings.Join(keyParts, "/")] = strings.Join(valueParts, " ")
+	}
+	return result
+}
+
 // Test AddStatement and ToDatum parallel.
 func TestAddStatementParallel(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

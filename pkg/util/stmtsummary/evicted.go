@@ -391,6 +391,12 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 
 	addTo.StmtRUSummary.Merge(&addWith.StmtRUSummary)
 	addTo.ReadBillingDemoBaseUnitSummary.Merge(&addWith.ReadBillingDemoBaseUnitSummary)
+	addTo.ReadBillingDemoBaseUnitAggs, addTo.ReadBillingDemoStatusAggs = MergeReadBillingDemoAggMaps(
+		addTo.ReadBillingDemoBaseUnitAggs,
+		addTo.ReadBillingDemoStatusAggs,
+		addWith.ReadBillingDemoBaseUnitAggs,
+		addWith.ReadBillingDemoStatusAggs,
+	)
 	// resourceGroupName might not be inited because when it is a evicted item.
 	addTo.resourceGroupName = addWith.resourceGroupName
 }

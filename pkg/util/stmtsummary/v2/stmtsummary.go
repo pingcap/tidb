@@ -348,6 +348,44 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	}
 }
 
+// AddReadBillingDemoStatusOnly adds read billing demo status-only data to the
+// current statistics window without changing ordinary statement counters.
+func (s *StmtSummary) AddReadBillingDemoStatusOnly(info *stmtsummary.StmtExecInfo) {
+	if s.closed.Load() || info == nil || info.ReadBillingDemoStats.IsEmpty() {
+		return
+	}
+
+	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
+
+	s.windowLock.Lock()
+	if s.closed.Load() {
+		s.windowLock.Unlock()
+		stmtsummary.StmtDigestKeyPool.Put(k)
+		return
+	}
+	userForKey := ""
+	if s.optGroupByUser.Load() {
+		userForKey = info.User
+	}
+	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName, userForKey)
+	var record *lockedStmtRecord
+	v, exist := s.window.lru.Get(k)
+	if exist {
+		record = v.(*lockedStmtRecord)
+	} else {
+		record = &lockedStmtRecord{StmtRecord: NewReadBillingDemoStatusOnlyRecord(info)}
+		s.window.lru.Put(k, record)
+	}
+	s.windowLock.Unlock()
+
+	if exist {
+		record.Lock()
+		record.AddReadBillingDemoStatusOnly(info)
+		record.Unlock()
+		stmtsummary.StmtDigestKeyPool.Put(k)
+	}
+}
+
 // Evicted returns the number of statements evicted for the current
 // time window. The returned type is one row consisting of three
 // columns: [BEGIN_TIME, END_TIME, EVICTED_COUNT].
@@ -741,6 +779,22 @@ func Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
 	} else {
 		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 	}
+}
+
+// AddReadBillingDemoStatusOnly records read billing demo early-error statuses.
+func AddReadBillingDemoStatusOnly(stmtExecInfo *stmtsummary.StmtExecInfo) {
+	if stmtExecInfo == nil || stmtExecInfo.ReadBillingDemoStats.IsEmpty() {
+		return
+	}
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		if GlobalStmtSummary == nil || !GlobalStmtSummary.Enabled() ||
+			(stmtExecInfo.IsInternal && !GlobalStmtSummary.EnableInternalQuery()) {
+			return
+		}
+		GlobalStmtSummary.AddReadBillingDemoStatusOnly(stmtExecInfo)
+		return
+	}
+	stmtsummary.StmtSummaryByDigestMap.AddReadBillingDemoStatusOnly(stmtExecInfo)
 }
 
 // Enabled wraps GlobalStmtSummary.Enabled and stmtsummary.StmtSummaryByDigestMap.Enabled.
