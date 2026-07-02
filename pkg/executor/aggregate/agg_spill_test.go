@@ -391,21 +391,23 @@ func checkDistinctResult(expectResult []chunk.Row, actualResult []chunk.Row) (bo
 	}
 
 	for _, actual := range actualResult {
-		expected, ok := expectedByKey[actual.GetString(0)]
+		key := actual.GetString(0)
+		expected, ok := expectedByKey[key]
 		if !ok {
-			return false, fmt.Sprintf("unexpected group key %q", actual.GetString(0))
+			return false, fmt.Sprintf("unexpected or duplicate group key %q", key)
 		}
+		delete(expectedByKey, key)
 		if expected.GetInt64(1) != actual.GetInt64(1) || expected.GetInt64(2) != actual.GetInt64(2) {
 			return false, fmt.Sprintf("count mismatch for key %q: expected (%d, %d), actual (%d, %d)",
-				actual.GetString(0), expected.GetInt64(1), expected.GetInt64(2), actual.GetInt64(1), actual.GetInt64(2))
+				key, expected.GetInt64(1), expected.GetInt64(2), actual.GetInt64(1), actual.GetInt64(2))
 		}
 		if expected.GetInt64(7) != actual.GetInt64(7) {
 			return false, fmt.Sprintf("approx count distinct mismatch for key %q: expected %d, actual %d",
-				actual.GetString(0), expected.GetInt64(7), actual.GetInt64(7))
+				key, expected.GetInt64(7), actual.GetInt64(7))
 		}
 		for i := 3; i < 7; i++ {
 			if expected.IsNull(i) != actual.IsNull(i) {
-				return false, fmt.Sprintf("null mismatch for key %q col %d", actual.GetString(0), i)
+				return false, fmt.Sprintf("null mismatch for key %q col %d", key, i)
 			}
 			if expected.IsNull(i) {
 				continue
@@ -418,9 +420,12 @@ func checkDistinctResult(expectResult []chunk.Row, actualResult []chunk.Row) (bo
 			}
 			if math.Abs(expectedValue-actualValue) > tolerance {
 				return false, fmt.Sprintf("float mismatch for key %q col %d: expected %v, actual %v",
-					actual.GetString(0), i, expectedValue, actualValue)
+					key, i, expectedValue, actualValue)
 			}
 		}
+	}
+	if len(expectedByKey) != 0 {
+		return false, fmt.Sprintf("missing %d expected group keys", len(expectedByKey))
 	}
 	return true, ""
 }
