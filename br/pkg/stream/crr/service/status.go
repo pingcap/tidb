@@ -61,9 +61,10 @@ type StatusSnapshot struct {
 	CurrentRound      uint64 `json:"current_round"`
 	LastLoopIteration uint64 `json:"last_loop_iteration"`
 
-	LastUpstreamCheckpoint uint64 `json:"last_upstream_checkpoint"`
-	SafeCheckpoint         uint64 `json:"safe_checkpoint"`
-	SyncedTS               uint64 `json:"synced_ts"`
+	LastUpstreamCheckpoint uint64            `json:"last_upstream_checkpoint"`
+	SafeCheckpoint         uint64            `json:"safe_checkpoint"`
+	SyncedTS               uint64            `json:"synced_ts"`
+	SyncedByStore          map[uint64]uint64 `json:"synced_by_store,omitempty"`
 
 	AliveStoreCount  int             `json:"alive_store_count"`
 	PendingFileCount int             `json:"pending_file_count"`
@@ -117,6 +118,7 @@ func (s *statusStore) setPersistentState(state PersistentState) {
 	defer s.mu.Unlock()
 	s.snapshot.SafeCheckpoint = state.LastCheckpoint
 	s.snapshot.SyncedTS = state.SyncedTS
+	s.snapshot.SyncedByStore = maps.Clone(state.SyncedByStore)
 	observeStatusMetrics(&s.snapshot)
 }
 
@@ -158,6 +160,9 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 	if event.SyncedTS > 0 {
 		s.snapshot.SyncedTS = event.SyncedTS
 	}
+	if event.SyncedByStore != nil {
+		s.snapshot.SyncedByStore = maps.Clone(event.SyncedByStore)
+	}
 	if event.Type == checkpoint.EventRoundPlanned || event.Type == checkpoint.EventCheckpointAdvanced {
 		s.snapshot.AliveStoreCount = event.AliveStoreCount
 	}
@@ -196,6 +201,7 @@ func (s *statusStore) snapshotCopy() StatusSnapshot {
 	defer s.mu.RUnlock()
 
 	snapshot := s.snapshot
+	snapshot.SyncedByStore = maps.Clone(snapshot.SyncedByStore)
 	snapshot.Statistic.PlannedFileSuffixCounts = maps.Clone(snapshot.Statistic.PlannedFileSuffixCounts)
 	snapshot.Statistic.DownstreamCheckFileSuffixCounts = maps.Clone(snapshot.Statistic.DownstreamCheckFileSuffixCounts)
 	return snapshot

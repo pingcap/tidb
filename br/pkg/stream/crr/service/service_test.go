@@ -347,6 +347,7 @@ func TestServiceLoadsPersistedResumeState(t *testing.T) {
 		snapshot := svc.Status()
 		return snapshot.SafeCheckpoint == firstRecord.CheckpointTS &&
 			snapshot.SyncedTS == firstRecord.FlushTS &&
+			snapshot.SyncedByStore[1] == firstRecord.FlushTS &&
 			snapshot.PendingFileCount > 0 &&
 			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
 			snapshot.Statistic.EstimatedSyncLogFileCount == 1
@@ -357,6 +358,7 @@ func TestServiceLoadsPersistedResumeState(t *testing.T) {
 		snapshot := svc.Status()
 		return snapshot.SafeCheckpoint == secondRecord.CheckpointTS &&
 			snapshot.SyncedTS == secondRecord.FlushTS &&
+			snapshot.SyncedByStore[1] == secondRecord.FlushTS &&
 			stateStore.savedState().LastCheckpoint == secondRecord.CheckpointTS &&
 			stateStore.savedState().SyncedTS == secondRecord.FlushTS &&
 			stateStore.savedState().SyncedByStore[1] == secondRecord.FlushTS
@@ -488,6 +490,7 @@ func TestServiceStatusEndpoints(t *testing.T) {
 	status.setPersistentState(PersistentState{
 		LastCheckpoint: 42,
 		SyncedTS:       42,
+		SyncedByStore:  map[uint64]uint64{1: 42},
 	})
 
 	rec = httptest.NewRecorder()
@@ -512,6 +515,7 @@ func TestServiceStatusEndpoints(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snapshot))
 	require.Equal(t, uint64(42), snapshot.SafeCheckpoint)
 	require.Equal(t, uint64(42), snapshot.SyncedTS)
+	require.Equal(t, map[uint64]uint64{1: 42}, snapshot.SyncedByStore)
 	require.Equal(t, 3, snapshot.Statistic.UpstreamReadMetaFileCount)
 	require.Equal(t, 5, snapshot.Statistic.SkippedStoreSyncedMetaFileCount)
 	require.Equal(t, 7, snapshot.Statistic.EstimatedSyncLogFileCount)
@@ -523,6 +527,11 @@ func TestServiceStatusEndpoints(t *testing.T) {
 func TestStatusStoreTracksFileStatistic(t *testing.T) {
 	status := newStatusStore("task")
 	status.start()
+	status.setPersistentState(PersistentState{
+		LastCheckpoint: 10,
+		SyncedTS:       10,
+		SyncedByStore:  map[uint64]uint64{1: 10},
+	})
 	status.beginRound()
 	status.applyEvent(checkpoint.CheckpointEvent{
 		Type:             checkpoint.EventRoundPlanned,
@@ -558,7 +567,9 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 	require.Equal(t, 4.0, promtest.ToFloat64(skippedStoreSyncedMetaFileCount.WithLabelValues("task")))
 
 	snapshot.Statistic.PlannedFileSuffixCounts[".txt"] = 99
+	snapshot.SyncedByStore[1] = 99
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, status.snapshotCopy().Statistic.PlannedFileSuffixCounts)
+	require.Equal(t, map[uint64]uint64{1: 10}, status.snapshotCopy().SyncedByStore)
 }
 
 func TestStatusStorePreservesFailureStoreCountAndTracksZeroAliveStores(t *testing.T) {

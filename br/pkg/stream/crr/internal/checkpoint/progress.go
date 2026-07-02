@@ -188,28 +188,18 @@ func (c *Calculator) advanceSyncedState(
 	aliveStores map[uint64]struct{},
 	maxFlushTSByStore map[uint64]uint64,
 ) {
-	maps.Insert(c.state.syncedByStore, func(yield func(uint64, uint64) bool) {
-		for storeID, flushTS := range maxFlushTSByStore {
-			if flushTS <= c.state.syncedByStore[storeID] {
-				continue
-			}
-			if !yield(storeID, flushTS) {
-				return
-			}
+	for storeID, flushTS := range maxFlushTSByStore {
+		if flushTS > c.state.syncedByStore[storeID] {
+			c.state.syncedByStore[storeID] = flushTS
 		}
-	})
+	}
 
 	maps.DeleteFunc(c.state.syncedByStore, func(storeID uint64, _ uint64) bool {
 		_, ok := aliveStores[storeID]
 		return !ok
 	})
 
-	missingStores := slices.DeleteFunc(slices.Collect(maps.Keys(aliveStores)), func(storeID uint64) bool {
-		_, ok := c.state.syncedByStore[storeID]
-		return ok
-	})
-	if len(missingStores) > 0 {
-		c.warnUnsafeSyncedTS(missingStores, "alive store has no observed flush ts yet")
+	if ok := c.checkMissingStore(aliveStores); !ok {
 		return
 	}
 
@@ -217,35 +207,25 @@ func (c *Calculator) advanceSyncedState(
 	if len(storeSyncedTSs) == 0 {
 		return
 	}
-
 	syncedCandidate := slices.Min(storeSyncedTSs)
-	if syncedCandidate < c.state.syncedTS {
-		behindStores := slices.DeleteFunc(slices.Collect(maps.Keys(c.state.syncedByStore)), func(storeID uint64) bool {
-			return c.state.syncedByStore[storeID] >= c.state.syncedTS
-		})
-		c.warnUnsafeSyncedTS(behindStores, "observed store flush ts is behind current synced-ts")
-		return
-	}
 	if syncedCandidate > c.state.syncedTS {
 		c.state.syncedTS = syncedCandidate
 	}
 }
 
-func (c *Calculator) warnUnsafeSyncedTS(storeIDs []uint64, reason string) {
-	if c.state.syncedTS == 0 {
-		return
+func (c *Calculator) checkMissingStore(aliveStores map[uint64]struct{}) bool {
+	missingStores := slices.DeleteFunc(slices.Collect(maps.Keys(aliveStores)), func(storeID uint64) bool {
+		_, ok := c.state.syncedByStore[storeID]
+		return ok
+	})
+	if len(missingStores) == 0 {
+		return true
 	}
-	if len(storeIDs) == 0 {
-		return
-	}
-	log.Warn(
-		"crr checkpoint calculator cannot safely advance synced-ts",
-		zap.String("category", "crr checkpoint"),
-		zap.String("task", c.cfg.TaskName),
-		zap.Uint64s("store-ids", storeIDs),
-		zap.Uint64("synced-ts", c.state.syncedTS),
-		zap.String("reason", reason),
-	)
+	log.Warn("crr checkpoint calculator cannot safely advance synced-ts",
+		zap.String("category", "crr checkpoint"), zap.String("task", c.cfg.TaskName),
+		zap.Uint64s("store-ids", missingStores), zap.Uint64("synced-ts", c.state.syncedTS),
+		zap.String("reason", "alive store has no observed flush ts yet"))
+	return false
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {
