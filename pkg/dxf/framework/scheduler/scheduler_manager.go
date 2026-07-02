@@ -51,6 +51,10 @@ var (
 	defaultCollectMetricsInterval = 15 * time.Second
 )
 
+type batchCleanUpRoutine interface {
+	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
+}
+
 func (sm *Manager) getSchedulerCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -447,21 +451,34 @@ func (sm *Manager) doCleanupTask() {
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
+	importIntoTasks := make([]*proto.Task, 0)
+	cleanUpImportIntoTasks := func() error {
+		if len(importIntoTasks) == 0 {
+			return nil
+		}
+		cleanedImportIntoTasks, err := sm.cleanupImportIntoTasks(importIntoTasks)
+		cleanedTasks = append(cleanedTasks, cleanedImportIntoTasks...)
+		importIntoTasks = importIntoTasks[:0]
+		return err
+	}
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanupFactory != nil {
-			cleanup := cleanupFactory()
-			err := cleanup.CleanUp(sm.ctx, task)
-			if err != nil {
-				firstErr = err
-				break
-			}
-			cleanedTasks = append(cleanedTasks, task)
-		} else {
-			// if task doesn't register cleanup function, mark it as cleaned.
-			cleanedTasks = append(cleanedTasks, task)
+		if task.Type == proto.ImportInto {
+			importIntoTasks = append(importIntoTasks, task)
+			continue
 		}
+		if err := cleanUpImportIntoTasks(); err != nil {
+			firstErr = err
+			break
+		}
+		if err := sm.cleanupSingleTask(task); err != nil {
+			firstErr = err
+			break
+		}
+		cleanedTasks = append(cleanedTasks, task)
+	}
+	if firstErr == nil {
+		firstErr = cleanUpImportIntoTasks()
 	}
 	if firstErr != nil {
 		// normally ScheduleEventCounter requires a task ID, but since scheduler
@@ -476,6 +493,41 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	})
 
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
+}
+
+func (sm *Manager) cleanupImportIntoTasks(tasks []*proto.Task) ([]*proto.Task, error) {
+	cleanupFactory := getSchedulerCleanUpFactory(proto.ImportInto)
+	if cleanupFactory == nil {
+		// if task doesn't register cleanup function, mark it as cleaned.
+		return tasks, nil
+	}
+	cleanup := cleanupFactory()
+	if batchCleanup, ok := cleanup.(batchCleanUpRoutine); ok {
+		if err := batchCleanup.CleanUpBatch(sm.ctx, tasks); err != nil {
+			return nil, err
+		}
+		return tasks, nil
+	}
+
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
+	for i, task := range tasks {
+		if i > 0 {
+			cleanup = cleanupFactory()
+		}
+		if err := cleanup.CleanUp(sm.ctx, task); err != nil {
+			return cleanedTasks, err
+		}
+		cleanedTasks = append(cleanedTasks, task)
+	}
+	return cleanedTasks, nil
+}
+
+func (sm *Manager) cleanupSingleTask(task *proto.Task) error {
+	cleanupFactory := getSchedulerCleanUpFactory(task.Type)
+	if cleanupFactory == nil {
+		return nil
+	}
+	return cleanupFactory().CleanUp(sm.ctx, task)
 }
 
 func (sm *Manager) collectLoop() {

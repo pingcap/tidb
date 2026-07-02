@@ -42,6 +42,34 @@ type storeWithKS struct {
 	ks string
 }
 
+type cleanUpCallRecorder struct {
+	cleanUpCalls []int64
+	batchCalls   [][]int64
+}
+
+func (r *cleanUpCallRecorder) CleanUp(_ context.Context, task *proto.Task) error {
+	r.cleanUpCalls = append(r.cleanUpCalls, task.ID)
+	return nil
+}
+
+func (r *cleanUpCallRecorder) CleanUpBatch(_ context.Context, tasks []*proto.Task) error {
+	taskIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		taskIDs = append(taskIDs, task.ID)
+	}
+	r.batchCalls = append(r.batchCalls, taskIDs)
+	return nil
+}
+
+type singleCleanUpCallRecorder struct {
+	cleanUpCalls []int64
+}
+
+func (r *singleCleanUpCallRecorder) CleanUp(_ context.Context, task *proto.Task) error {
+	r.cleanUpCalls = append(r.cleanUpCalls, task.ID)
+	return nil
+}
+
 func (s *storeWithKS) GetKeyspace() string {
 	return s.ks
 }
@@ -176,6 +204,38 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestSchedulerCleanupImportIntoTasksInBatch(t *testing.T) {
+	ClearSchedulerCleanUpFactory()
+	t.Cleanup(ClearSchedulerCleanUpFactory)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
+	importCleanUp := &cleanUpCallRecorder{}
+	exampleCleanUp := &singleCleanUpCallRecorder{}
+	RegisterSchedulerCleanUpFactory(proto.ImportInto, func() CleanUpRoutine {
+		return importCleanUp
+	})
+	RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() CleanUpRoutine {
+		return exampleCleanUp
+	})
+
+	tasks := []*proto.Task{
+		{TaskBase: proto.TaskBase{ID: 1, Type: proto.ImportInto}},
+		{TaskBase: proto.TaskBase{ID: 2, Type: proto.ImportInto}},
+		{TaskBase: proto.TaskBase{ID: 3, Type: proto.TaskTypeExample}},
+		{TaskBase: proto.TaskBase{ID: 4, Type: proto.ImportInto}},
+		{TaskBase: proto.TaskBase{ID: 5, Type: proto.TaskType("NoCleanUp")}},
+	}
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+
+	require.NoError(t, mgr.cleanupFinishedTasks(tasks))
+	require.Equal(t, [][]int64{{1, 2}, {4}}, importCleanUp.batchCalls)
+	require.Empty(t, importCleanUp.cleanUpCalls)
+	require.Equal(t, []int64{3}, exampleCleanUp.cleanUpCalls)
 }
 
 func TestManagerSchedulerNotAllocateSlots(t *testing.T) {

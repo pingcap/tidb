@@ -34,13 +34,16 @@ const (
 	metaName = "meta.json"
 )
 
-// CleanUpFiles delete all data and stat files under the same non-partitioned dir.
+// CleanUpFiles delete all data and stat files under the same non-partitioned dirs.
 // see randPartitionedPrefix for how we partition the files.
-func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir string) error {
+func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDirs ...string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
-	names, err := simplesst.GetAllFileNames(ctx, store, nonPartitionedDir)
+	if len(nonPartitionedDirs) == 0 {
+		return nil
+	}
+	names, err := simplesst.GetAllFileNames(ctx, store, nonPartitionedDirs...)
 	if err != nil {
 		return err
 	}
