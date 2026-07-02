@@ -19,13 +19,18 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper)
+
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
+	testDataMap.LoadTestSuiteData("testdata", "join_suite", true)
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -41,5 +46,14 @@ func TestMain(m *testing.M) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
 
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func getJoinSuiteData() testdata.TestData {
+	return testDataMap["join_suite"]
 }

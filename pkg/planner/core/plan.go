@@ -74,6 +74,10 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	}
 	tail, dataSource := sort, sort.Children()[0]
 
+	return buildShuffleForWindow(pp, tail, dataSource, concurrency, ctx)
+}
+
+func buildShuffleForWindow(pp *physicalop.PhysicalWindow, tail, dataSource base.PhysicalPlan, concurrency int, ctx base.PlanContext) *physicalop.PhysicalShuffle {
 	partitionBy := make([]*expression.Column, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
