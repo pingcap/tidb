@@ -54,8 +54,9 @@ type SQLKiller struct {
 	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
 
-	lastCheckTime     atomic.Pointer[time.Time]
-	IsConnectionAlive atomic.Pointer[func() bool]
+	lastCheckTime           atomic.Int64
+	connectionAliveFuncLock sync.RWMutex
+	isConnectionAlive       func() bool
 }
 
 // SendKillSignal sends a kill signal to the query.
@@ -130,19 +131,20 @@ func (killer *SQLKiller) HandleSignal() error {
 
 	// Checks if the connection is alive.
 	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
-	fn := killer.IsConnectionAlive.Load()
-	lastCheckTime := killer.lastCheckTime.Load()
+	fn := killer.getConnectionAliveFunc()
 	if fn != nil {
 		var checkConnectionAliveDur time.Duration = time.Second
 		now := time.Now()
+		nowUnixNano := now.UnixNano()
+		lastCheckTime := killer.lastCheckTime.Load()
 		if intest.InTest {
 			checkConnectionAliveDur = time.Millisecond
 		}
-		if lastCheckTime == nil {
-			killer.lastCheckTime.Store(&now)
-		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
-			killer.lastCheckTime.Store(&now)
-			if !(*fn)() {
+		if lastCheckTime == 0 {
+			killer.lastCheckTime.Store(nowUnixNano)
+		} else if nowUnixNano-lastCheckTime > int64(checkConnectionAliveDur) {
+			killer.lastCheckTime.Store(nowUnixNano)
+			if !fn() {
 				killer.SendKillSignal(QueryInterrupted)
 			}
 		}
@@ -159,10 +161,23 @@ func (killer *SQLKiller) HandleSignal() error {
 
 // CheckConnectionAlive checks whether the connection is alive immediately.
 func (killer *SQLKiller) CheckConnectionAlive() {
-	fn := killer.IsConnectionAlive.Load()
-	if fn != nil && !(*fn)() {
+	fn := killer.getConnectionAliveFunc()
+	if fn != nil && !fn() {
 		killer.SendKillSignal(QueryInterrupted)
 	}
+}
+
+// SetConnectionAliveFunc sets the connection liveness callback.
+func (killer *SQLKiller) SetConnectionAliveFunc(fn func() bool) {
+	killer.connectionAliveFuncLock.Lock()
+	defer killer.connectionAliveFuncLock.Unlock()
+	killer.isConnectionAlive = fn
+}
+
+func (killer *SQLKiller) getConnectionAliveFunc() func() bool {
+	killer.connectionAliveFuncLock.RLock()
+	defer killer.connectionAliveFuncLock.RUnlock()
+	return killer.isConnectionAlive
 }
 
 // Reset resets the SqlKiller.
@@ -171,5 +186,5 @@ func (killer *SQLKiller) Reset() {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
-	killer.lastCheckTime.Store(nil)
+	killer.lastCheckTime.Store(0)
 }

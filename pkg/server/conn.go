@@ -2055,12 +2055,12 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
 	sessVars := cc.ctx.GetSessionVars()
 	isAlive := cc.isConnectionAlive
-	sessVars.SQLKiller.IsConnectionAlive.Store(&isAlive)
+	sessVars.SQLKiller.SetConnectionAliveFunc(isAlive)
 
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
-			sessVars.SQLKiller.IsConnectionAlive.CompareAndSwap(&isAlive, nil)
+			sessVars.SQLKiller.SetConnectionAliveFunc(nil)
 		})
 	}
 }
