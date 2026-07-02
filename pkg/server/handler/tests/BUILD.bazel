@@ -10,7 +10,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 46,
+    shard_count = 47,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
@@ -26,6 +26,7 @@ go_test(
         "//pkg/dxf/importinto/jobhistory",
         "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/mppcoordmanager",
+        "//pkg/extension",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
