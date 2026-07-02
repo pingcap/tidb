@@ -91,7 +91,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		store,
 	)
 	require.NoError(t, err)
-	ch := make(chan importer.QueryChunk)
+	ch := make(chan importer.QueryChunk, 2)
 	ti.SetSelectedChunkCh(ch)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
