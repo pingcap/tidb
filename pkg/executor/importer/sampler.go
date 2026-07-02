@@ -39,7 +39,6 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"go.uber.org/zap"
@@ -156,6 +155,7 @@ func (e *LoadDataController) sampleKVSize(
 }
 
 func (e *LoadDataController) buildKVSizeSampleConfig() *KVSizeSampleConfig {
+	useNewCollate := e.Table.UseNewCollate()
 	return &KVSizeSampleConfig{
 		Format:             e.Format,
 		SQLMode:            e.SQLMode,
@@ -164,7 +164,7 @@ func (e *LoadDataController) buildKVSizeSampleConfig() *KVSizeSampleConfig {
 		FieldNullDef:       append([]string(nil), e.FieldNullDef...),
 		LineFieldsInfo:     e.LineFieldsInfo,
 		IgnoreLines:        e.IgnoreLines,
-		UseNewCollate:      e.UseNewCollate,
+		UseNewCollate:      &useNewCollate,
 		ColumnsAndUserVars: e.ColumnsAndUserVars,
 		ColumnAssignments:  e.ColumnAssignments,
 	}
@@ -223,7 +223,7 @@ func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 		s.cfg.ColumnAssignments,
 		ctx,
 		&s.colAssignMu,
-		s.cfg.getUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		s.table.UseNewCollate(),
 	)
 }
 
@@ -289,6 +289,7 @@ func (s *kvSizeSampler) getKVEncoder(
 	chunk *Chunk,
 	encTable table.Table,
 ) (*TableKVEncoder, error) {
+	useNewCollate := encTable.UseNewCollate()
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        s.cfg.SQLMode,
@@ -299,7 +300,7 @@ func (s *kvSizeSampler) getKVEncoder(
 		Path:          chunk.Path,
 		Table:         encTable,
 		Logger:        log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
-		UseNewCollate: s.cfg.UseNewCollate,
+		UseNewCollate: &useNewCollate,
 	}
 	return newTableKVEncoderInner(cfg, s, s.fieldMappings, s.insertColumns)
 }
@@ -347,7 +348,7 @@ func (s *kvSizeSampler) sampleOneFile(
 		ParquetMeta: file.ParquetMeta,
 	}
 	idAlloc := kv.NewPanickingAllocators(s.table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMetaWithCollate(s.cfg.getUseNewCollateOrDefault(collate.NewCollationEnabled()), idAlloc, s.table.Meta())
+	tbl, err := tables.TableFromMetaWithCollate(s.table.UseNewCollate(), idAlloc, s.table.Meta())
 	if err != nil {
 		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", s.table.Meta().Name)
 	}

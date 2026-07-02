@@ -392,8 +392,7 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, tc types.C
 	if err != nil {
 		return nil, nil, err
 	}
-	useNewCollate := table.encoder.UseNewCollate()
-	rsData := TryGetHandleRestoredDataWrapper(useNewCollate, table.meta, rowToInsert, nil, indexInfo)
+	rsData := TryGetHandleRestoredDataWrapper(table, rowToInsert, nil, indexInfo)
 	value, err := index.GenIndexValue(errctx.StrictNoWarningContext, tc.Location(), distinct, false, indexedValues, handle, rsData, nil)
 	if err != nil {
 		return nil, nil, err

@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -215,7 +214,6 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	}
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
-	useNewCollate := rInfo.ReorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())
 	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
 		id:            id,
@@ -227,7 +225,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		schemaName:    schemaName,
 		table:         tbl,
 		batchCnt:      batchCnt,
-		useNewCollate: useNewCollate,
+		useNewCollate: tbl.UseNewCollate(),
 		jobContext:    jobCtx,
 		metricCounter: getBackfillTotalByTableID(
 			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),

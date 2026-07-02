@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -116,7 +115,7 @@ func getTableImporterOptions(options []TableImporterOption) tableImporterOptions
 
 func newEncodingTable(e *LoadDataController) (table.Table, error) {
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMetaWithCollate(e.GetUseNewCollateOrDefault(collate.NewCollationEnabled()), idAlloc, e.Table.Meta())
+	tbl, err := tables.TableFromMetaWithCollate(e.Table.UseNewCollate(), idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
 	}
@@ -432,6 +431,7 @@ func (ti *TableImporter) getKVEncoder(chunk *Chunk) (*TableKVEncoder, error) {
 }
 
 func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encTable table.Table) (*TableKVEncoder, error) {
+	useNewCollate := encTable.UseNewCollate()
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        e.SQLMode,
@@ -442,13 +442,14 @@ func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encT
 		Path:          chunk.Path,
 		Table:         encTable,
 		Logger:        log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
-		UseNewCollate: e.UseNewCollate,
+		UseNewCollate: &useNewCollate,
 	}
 	return NewTableKVEncoder(cfg, e)
 }
 
 // GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
 func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	useNewCollate := ti.encTable.UseNewCollate()
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode: ti.SQLMode,
@@ -457,7 +458,7 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 		Table:                ti.encTable,
 		Logger:               log.Logger{Logger: ti.logger},
 		UseIdentityAutoRowID: true,
-		UseNewCollate:        ti.UseNewCollate,
+		UseNewCollate:        &useNewCollate,
 	}
 	return NewTableKVEncoderForDupResolve(cfg, ti.LoadDataController)
 }

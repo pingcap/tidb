@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -572,7 +571,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	p.SetUseNewCollate(collate.NewCollationEnabled())
+	p.SetUseNewCollate(tbl.UseNewCollate())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -1973,7 +1972,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 		e.ColumnAssignments,
 		ctx,
 		&e.colAssignMu,
-		e.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		e.Table.UseNewCollate(),
 	)
 }
 

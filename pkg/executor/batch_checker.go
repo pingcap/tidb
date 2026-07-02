@@ -300,7 +300,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t, handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}

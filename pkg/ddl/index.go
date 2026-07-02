@@ -2404,7 +2404,7 @@ func newAddIndexTxnWorker(
 			continue
 		}
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index, err := tables.NewIndexWithCollate(bfCtx.useNewCollate, t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndexWithCollate(t.UseNewCollate(), t.GetPhysicalID(), t.Meta(), indexInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -2477,7 +2477,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		idxVal[j] = idxColumnVal
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(w.useNewCollate, w.table.Meta(), nil, w.rowMap, idxInfo)
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap, idxInfo)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
