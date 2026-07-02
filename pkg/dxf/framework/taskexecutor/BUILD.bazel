@@ -83,5 +83,7 @@ go_test(
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
