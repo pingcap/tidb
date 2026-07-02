@@ -193,8 +193,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
 	s.NotNil(rawStats.Summary)
 	s.Equal(jobInfo.Summary.ImportedRows, rawStats.Summary.ImportedRows)
-	s.Equal(importer.RawImportJobCreatedByRedacted, rawStats.CreatedBy)
-	s.True(rawStats.CreatedByRedacted)
+	s.Equal(jobInfo.CreatedBy, rawStats.CreatedBy)
 	s.Nil(rawStats.CurrentStep)
 
 	// test show job by id using test_show_job2

@@ -281,7 +281,6 @@ func jobStatusFromRawStats(stats *importer.RawImportJobStats) *JobStatus {
 		Error:               stats.Error,
 		Summary:             stats.Summary,
 		CreatedBy:           stats.CreatedBy,
-		CreatedByRedacted:   stats.CreatedByRedacted,
 		CreateTimeUnix:      stats.CreateTimeUnix,
 		StartTimeUnix:       stats.StartTimeUnix,
 		EndTimeUnix:         stats.EndTimeUnix,
