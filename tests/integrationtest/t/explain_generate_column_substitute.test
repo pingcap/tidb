@@ -344,4 +344,3 @@ select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
 explain format = 'plan_tree' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
 drop table t;
 set @@tidb_enable_unsafe_substitute=0;
-
