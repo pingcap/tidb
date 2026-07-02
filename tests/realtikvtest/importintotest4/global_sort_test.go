@@ -548,7 +548,11 @@ func TestNextGenMetering(t *testing.T) {
 	s.EqualValues(0, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {
-		items := *rowAndSizeMeterItems.Load()
+		itemsPtr := rowAndSizeMeterItems.Load()
+		if itemsPtr == nil {
+			return false
+		}
+		items := *itemsPtr
 		return items != nil && items[metering.RowCountField].(int64) == 3 &&
 			items[metering.DataKVBytesField].(int64) == 114 && items[metering.IndexKVBytesField].(int64) == 174 &&
 			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
