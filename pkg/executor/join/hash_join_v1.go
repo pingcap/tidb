@@ -949,16 +949,16 @@ func (w *ProbeWorkerV1) sendingResult(joinResult *hashjoinWorkerResult) (ok bool
 	return ok, cost, newJoinResult
 }
 
-func (w *ProbeWorkerV1) sendingResultAndCheckSignal(joinResult *hashjoinWorkerResult) (ok bool, cost int64, newJoinResult *hashjoinWorkerResult) {
-	ok, cost, newJoinResult = w.sendingResult(joinResult)
+func (w *ProbeWorkerV1) sendingResultAndCheckSignal(joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, newJoinResult *hashjoinWorkerResult) {
+	ok, waitTime, newJoinResult = w.sendingResult(joinResult)
 	if !ok {
-		return false, cost, newJoinResult
+		return false, waitTime, newJoinResult
 	}
 	if err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 		newJoinResult.err = err
-		return false, cost, newJoinResult
+		return false, waitTime, newJoinResult
 	}
-	return true, cost, newJoinResult
+	return true, waitTime, newJoinResult
 }
 
 // join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
