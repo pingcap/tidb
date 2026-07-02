@@ -45,7 +45,7 @@ func enableFastAddIndexFailpoints(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/forceSplitRegion", "return(true)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/adjustRegionJobRetryBackoff",
 		func(backoff *time.Duration) {
-			*backoff = time.Second
+			*backoff = 100 * time.Millisecond
 		})
 }
 
