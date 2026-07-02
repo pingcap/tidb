@@ -134,8 +134,7 @@ func NewTableKVDecoder(
 		return nil, err
 	}
 
-	cols := tbl.Cols()
-	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
+	genCols, err := CollectGeneratedColumns(se, tbl)
 	if err != nil {
 		return nil, err
 	}

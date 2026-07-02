@@ -133,7 +133,6 @@ func getTableImporter(
 			controller,
 			strconv.FormatInt(taskID, 10),
 			store,
-			importer.WithEncodingTable(tbl),
 		))
 	})
 	return importer.NewTableImporter(
@@ -141,7 +140,6 @@ func getTableImporter(
 		controller,
 		strconv.FormatInt(taskID, 10),
 		store,
-		importer.WithEncodingTable(tbl),
 	)
 }
 

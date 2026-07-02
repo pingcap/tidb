@@ -91,28 +91,6 @@ var (
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
-type tableImporterOptions struct {
-	encTable table.Table
-}
-
-// TableImporterOption configures NewTableImporter.
-type TableImporterOption func(*tableImporterOptions)
-
-// WithEncodingTable sets the table used to encode rows and track allocated IDs.
-func WithEncodingTable(tbl table.Table) TableImporterOption {
-	return func(opts *tableImporterOptions) {
-		opts.encTable = tbl
-	}
-}
-
-func getTableImporterOptions(options []TableImporterOption) tableImporterOptions {
-	opts := tableImporterOptions{}
-	for _, opt := range options {
-		opt(&opts)
-	}
-	return opts
-}
-
 func newEncodingTable(e *LoadDataController) (table.Table, error) {
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMetaWithCollate(e.Table.UseNewCollate(), idAlloc, e.Table.Meta())
@@ -120,13 +98,6 @@ func newEncodingTable(e *LoadDataController) (table.Table, error) {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
 	}
 	return tbl, nil
-}
-
-func getEncodingTable(e *LoadDataController, opts tableImporterOptions) (table.Table, error) {
-	if opts.encTable != nil {
-		return opts.encTable, nil
-	}
-	return newEncodingTable(e)
 }
 
 // Chunk records the chunk information.
@@ -226,10 +197,8 @@ func NewTableImporter(
 	e *LoadDataController,
 	id string,
 	kvStore tidbkv.Storage,
-	options ...TableImporterOption,
 ) (ti *TableImporter, err error) {
-	opts := getTableImporterOptions(options)
-	tbl, err := getEncodingTable(e, opts)
+	tbl, err := newEncodingTable(e)
 	if err != nil {
 		return nil, err
 	}
@@ -328,11 +297,9 @@ func NewTableImporterForTest(
 	e *LoadDataController,
 	id string,
 	kvStore tidbkv.Storage,
-	options ...TableImporterOption,
 ) (*TableImporter, error) {
 	helper := &storeHelper{kvStore: kvStore}
-	opts := getTableImporterOptions(options)
-	tbl, err := getEncodingTable(e, opts)
+	tbl, err := newEncodingTable(e)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +398,6 @@ func (ti *TableImporter) getKVEncoder(chunk *Chunk) (*TableKVEncoder, error) {
 }
 
 func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encTable table.Table) (*TableKVEncoder, error) {
-	useNewCollate := encTable.UseNewCollate()
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        e.SQLMode,
@@ -439,17 +405,15 @@ func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encT
 			SysVars:        e.ImportantSysVars,
 			AutoRandomSeed: chunk.PrevRowIDMax,
 		},
-		Path:          chunk.Path,
-		Table:         encTable,
-		Logger:        log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
-		UseNewCollate: &useNewCollate,
+		Path:   chunk.Path,
+		Table:  encTable,
+		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
 	}
 	return NewTableKVEncoder(cfg, e)
 }
 
 // GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
 func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
-	useNewCollate := ti.encTable.UseNewCollate()
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode: ti.SQLMode,
@@ -458,7 +422,6 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 		Table:                ti.encTable,
 		Logger:               log.Logger{Logger: ti.logger},
 		UseIdentityAutoRowID: true,
-		UseNewCollate:        &useNewCollate,
 	}
 	return NewTableKVEncoderForDupResolve(cfg, ti.LoadDataController)
 }

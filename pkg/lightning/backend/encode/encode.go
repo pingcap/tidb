@@ -34,9 +34,6 @@ type EncodingConfig struct {
 	// when encoding.
 	// default false, in this case we will do sharding automatically if needed.
 	UseIdentityAutoRowID bool
-	// UseNewCollate captures the collation mode used while encoding. Nil means
-	// old metadata and should fall back to the current process default.
-	UseNewCollate *bool
 }
 
 // EncodingBuilder consists of operations to handle encoding backend row data formats from source.
