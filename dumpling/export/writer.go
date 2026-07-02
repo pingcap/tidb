@@ -232,6 +232,14 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
+const (
+	// csvUploadConcurrency and csvUploadPartSize configure the concurrent
+	// multipart upload of CSV data files, letting upload overlap with encoding
+	// in place of the writerPipe. Values mirror the distributed exporter.
+	csvUploadConcurrency = 4
+	csvUploadPartSize    = 8 * 1024 * 1024
+)
+
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
@@ -245,9 +253,16 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		return err
 	}
 
+	// The CSV path writes directly into the object store writer without a
+	// writerPipe, so enable concurrent multipart upload to overlap upload with
+	// encoding. Other formats keep the default writer.
+	var wo *storeapi.WriterOption
+	if format == FileFormatCSV {
+		wo = &storeapi.WriterOption{Concurrency: csvUploadConcurrency, PartSize: csvUploadPartSize}
+	}
 	somethingIsWritten := false
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
+		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType, wo)
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDownErr := tearDown(tctx)
 		if err != nil {
@@ -309,14 +324,6 @@ type outputFileNamer struct {
 	DB         string
 	Table      string
 	format     string
-}
-
-type csvOption struct {
-	nullValue      string
-	separator      []byte
-	delimiter      []byte
-	lineTerminator []byte
-	binaryFormat   BinaryFormat
 }
 
 func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outputFileNamer {

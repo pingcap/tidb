@@ -16,6 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type csvOption struct {
+	nullValue      string
+	separator      []byte
+	delimiter      []byte
+	lineTerminator []byte
+	binaryFormat   BinaryFormat
+}
+
 // BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.
 type BytesWriter struct {
 	buf *bytes.Buffer
