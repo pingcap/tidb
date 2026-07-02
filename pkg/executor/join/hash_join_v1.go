@@ -969,24 +969,11 @@ func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hC
 			return false, waitTime, joinResult
 		}
 	}
-<<<<<<< HEAD
-	for i := 0; i < probeSideChk.NumRows(); i++ {
-		err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
-		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
-			if val.(bool) {
-				err = exeerrors.ErrQueryInterrupted
-			}
-		})
-		if err != nil {
-			joinResult.err = err
-			return false, waitTime, joinResult
-=======
 
 	err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
 	failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
 			err = exeerrors.ErrQueryInterrupted
->>>>>>> 5663a072a31 (executor: reduce SQLKiller checks in HashJoin V1 probe loop (#69583))
 		}
 	})
 	if err != nil {
