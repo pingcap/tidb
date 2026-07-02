@@ -33,7 +33,7 @@
 - `pkg/types/mydecimal_test.go` - Tests from int.
 - `pkg/types/overflow_test.go` - Tests add.
 - `pkg/types/set_test.go` - Tests set.
-- `pkg/types/time_test.go` - Tests time encoding.
+- `pkg/types/time_test.go` - Tests time encoding and TIMESTAMP subtraction log handling.
 - `pkg/types/vector_test.go` - Tests vector endianness.
 
 ## pkg/types/parser_driver
