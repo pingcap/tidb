@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -433,7 +435,19 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 }
 
 func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
-	t.Skip("unstable test")
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	slowLog, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, slowLog.Close())
+	newCfg.Log.SlowQueryFile = slowLog.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -461,6 +475,7 @@ func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
 			dbt.MustExec("set tidb_slow_log_threshold=300;")
 			dbt.MustExec("set @@global.tidb_enable_stmt_summary=0")
 		}()
+		dbt.MustExec(fmt.Sprintf("set @@tidb_slow_query_file=%q", slowLog.Name()))
 		dbt.MustExec("set tidb_slow_log_threshold=0;")
 		dbt.MustExec("set @@global.tidb_enable_stmt_summary=1")
 		query := fmt.Sprintf("load data local infile %q into table t_slow with thread=1", path)
@@ -479,7 +494,7 @@ func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
 
 		// Test for record slow log for load data statement.
 		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow with thread=1;' order by time desc limit 1")
-		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
+		expectedPlan := ".*LoadData.* total_time:.* loops:.* commit_txn:.*"
 		checkPlan(rows, expectedPlan)
 		require.NoError(t, rows.Close())
 		// Test for record statements_summary for load data statement.
