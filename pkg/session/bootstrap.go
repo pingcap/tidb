@@ -78,11 +78,6 @@ func bootstrap(s sessionapi.Session) {
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
 			upgrade(s)
-			if deploymode.IsStarter() {
-				if err := runStarterBootstrap(s); err != nil {
-					logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
-				}
-			}
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
