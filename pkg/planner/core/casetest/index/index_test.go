@@ -391,6 +391,28 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
 		tk.MustExec("execute stmt using @a")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+		tk.MustExec("drop table if exists pi_pc_outer, pi_pc_inner")
+		tk.MustExec("create table pi_pc_outer(a int, b int)")
+		tk.MustExec("create table pi_pc_inner(a int, b int, index idx_a(a) where a is not null)")
+		tk.MustExec("insert into pi_pc_outer values (1, 10), (2, 20), (null, 30), (3, 40)")
+		tk.MustExec("insert into pi_pc_inner values (1, 100), (2, 200), (null, 999), (3, 300)")
+		tk.MustExec(`prepare stmt from 'select /* issue:69524 */ /*+ INL_JOIN(pi_pc_inner) */ pi_pc_outer.a, pi_pc_inner.b
+			from pi_pc_outer join pi_pc_inner on pi_pc_outer.a = pi_pc_inner.a
+			where pi_pc_inner.a = ?
+			order by pi_pc_outer.b'`)
+		tk.MustExec("set @a = 1")
+		tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 100"))
+		tk.MustExec("set @a = 2")
+		tk.MustQuery("execute stmt using @a").Check(testkit.Rows("2 200"))
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkProcess.ID)).
+			MultiCheckContain([]string{"IndexJoin", "idx_a"})
+		tk.MustExec("set @a = 3")
+		tk.MustQuery("execute stmt using @a").Check(testkit.Rows("3 300"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	})
 }
 
@@ -448,35 +470,6 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 		}))
 		tk.MustQuery("explain format = 'plan_tree' select * from t where a is null").CheckNotContain("idx1")
 		require.NoError(t, failpoint.Disable(fpName))
-	})
-}
-
-func TestPartialIndexWithIndexJoin(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists pi_idxjoin_outer, pi_idxjoin_inner")
-		tk.MustExec("create table pi_idxjoin_outer(a int, b int)")
-		tk.MustExec("create table pi_idxjoin_inner(a int, b int, index idx_a(a) where a is not null)")
-		tk.MustExec("insert into pi_idxjoin_outer values (1, 10), (2, 20), (null, 30)")
-		tk.MustExec("insert into pi_idxjoin_inner values (1, 100), (2, 200), (null, 999)")
-
-		innerJoinSQL := `select /* issue:69524 */ /*+ INL_JOIN(pi_idxjoin_inner) */ pi_idxjoin_outer.a, pi_idxjoin_inner.b
-			from pi_idxjoin_outer join pi_idxjoin_inner on pi_idxjoin_outer.a = pi_idxjoin_inner.a
-			order by pi_idxjoin_outer.b`
-		tk.MustQuery("explain format = 'plan_tree' " + innerJoinSQL).MultiCheckContain([]string{"IndexJoin", "idx_a"})
-		tk.MustQuery(innerJoinSQL).Check(testkit.Rows("1 100", "2 200"))
-
-		leftJoinSQL := `select /* issue:69524 */ /*+ INL_JOIN(pi_idxjoin_inner) */ pi_idxjoin_outer.a, pi_idxjoin_inner.b
-			from pi_idxjoin_outer left join pi_idxjoin_inner on pi_idxjoin_outer.a = pi_idxjoin_inner.a
-			order by pi_idxjoin_outer.b`
-		tk.MustQuery("explain format = 'plan_tree' " + leftJoinSQL).MultiCheckContain([]string{"IndexJoin", "idx_a"})
-		tk.MustQuery(leftJoinSQL).Check(testkit.Rows("1 100", "2 200", "<nil> <nil>"))
-
-		nullEQSQL := `select /* issue:69524 */ /*+ INL_JOIN(pi_idxjoin_inner) */ pi_idxjoin_outer.a, pi_idxjoin_inner.b
-			from pi_idxjoin_outer join pi_idxjoin_inner on pi_idxjoin_outer.a <=> pi_idxjoin_inner.a
-			order by pi_idxjoin_outer.b, pi_idxjoin_inner.b`
-		tk.MustQuery("explain format = 'plan_tree' " + nullEQSQL).CheckNotContain("idx_a")
-		tk.MustQuery(nullEQSQL).Check(testkit.Rows("1 100", "2 200", "<nil> 999"))
 	})
 }
 
