@@ -218,7 +218,12 @@ func TestKill(t *testing.T) {
 func TestIssue42426(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	dbName := fmt.Sprintf("issue42426_%d", time.Now().UnixNano())
+	tk.MustExec("create database " + dbName)
+	t.Cleanup(func() {
+		tk.MustExec("drop database if exists " + dbName)
+	})
+	tk.MustExec("use " + dbName)
 	tk.MustExec("CREATE TABLE `sbtest1` (" +
 		"`id` bigint(20) NOT NULL AUTO_INCREMENT," +
 		"`k` int(11) NOT NULL DEFAULT '0'," +
