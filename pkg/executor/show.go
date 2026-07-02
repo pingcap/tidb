@@ -2741,10 +2741,7 @@ func BuildRawImportJobStats(
 		ErrorMessage:        info.ErrorMessage,
 		Error:               buildRawImportJobError(info.Status, info.ErrorMessage),
 		Summary:             buildRawImportJobSummary(info.Summary),
-	}
-	if info.CreatedBy != "" {
-		stats.CreatedBy = importer.RawImportJobCreatedByRedacted
-		stats.CreatedByRedacted = true
+		CreatedBy:           info.CreatedBy,
 	}
 
 	if runInfo != nil {

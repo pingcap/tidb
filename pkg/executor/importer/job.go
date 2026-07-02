@@ -157,12 +157,6 @@ const (
 	RawImportJobErrorCategoryUnknown            = "unknown"
 )
 
-// RawImportJobCreatedByRedacted is used for the Raw_Stats created_by field.
-// SHOW IMPORT JOB(S) still exposes the human Created_By column. The machine
-// contract avoids putting a concrete account identifier into JSON payloads that
-// are likely to be copied into logs, UIs, or agent summaries.
-const RawImportJobCreatedByRedacted = "<redacted>"
-
 // RawImportJobStats is a machine-oriented contract for import job stats.
 // It is serialized into the `Raw_Stats` JSON column returned by:
 //   - SHOW RAW IMPORT JOB <job_id>
@@ -215,8 +209,7 @@ type RawImportJobStats struct {
 	EndTimeUnix    int64 `json:"end_time_unix,omitempty"`
 	UpdateTimeUnix int64 `json:"update_time_unix,omitempty"`
 
-	CreatedBy         string `json:"created_by,omitempty"`
-	CreatedByRedacted bool   `json:"created_by_redacted,omitempty"`
+	CreatedBy string `json:"created_by,omitempty"`
 }
 
 // RawImportJobError describes machine-friendly error metadata. It is present

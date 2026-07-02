@@ -79,7 +79,7 @@ func TestGetJobStatus(t *testing.T) {
 	cols := []string{"Job_ID", "Group_Key", "Raw_Stats"}
 
 	// Case 1: Success
-	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true,"source_file_size_bytes":100,"imported_rows":1000,"error_message":"success","summary":{"imported_rows":1000},"create_time_unix":1672567200,"created_by":"<redacted>","created_by_redacted":true}`)
+	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true,"source_file_size_bytes":100,"imported_rows":1000,"error_message":"success","summary":{"imported_rows":1000},"create_time_unix":1672567200,"created_by":"root@%"}`)
 	rows := sqlmock.NewRows(cols).AddRow(jobID, nil, raw)
 	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnRows(rows)
 
@@ -95,8 +95,7 @@ func TestGetJobStatus(t *testing.T) {
 	require.True(t, status.Terminal)
 	require.NotNil(t, status.Summary)
 	require.Equal(t, int64(1000), status.Summary.ImportedRows)
-	require.Equal(t, importer.RawImportJobCreatedByRedacted, status.CreatedBy)
-	require.True(t, status.CreatedByRedacted)
+	require.Equal(t, "root@%", status.CreatedBy)
 	require.False(t, status.CreateTime.IsZero())
 
 	// Case 2: Job not found
