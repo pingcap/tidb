@@ -45,6 +45,8 @@ func TestColumn(t *testing.T) {
 		{Name: ast.NewCIStr(AvgRocksdbBlockCacheHitCountStr)},
 		{Name: ast.NewCIStr(AvgRocksdbBlockReadCountStr)},
 		{Name: ast.NewCIStr(AvgRocksdbBlockReadByteStr)},
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},
 		{Name: ast.NewCIStr(AvgAffectedRowsStr)},
 		{Name: ast.NewCIStr(AvgTidbCPUTimeStr)},
 		{Name: ast.NewCIStr(AvgTikvCPUTimeStr)},
@@ -59,6 +61,8 @@ func TestColumn(t *testing.T) {
 	record.SumRocksdbBlockCacheHitCount = rocksdbSum
 	record.SumRocksdbBlockReadCount = rocksdbSum
 	record.SumRocksdbBlockReadByte = rocksdbSum
+	record.SumIARemoteReadSegmentCount = rocksdbSum
+	record.SumIARemoteReadSegmentSize = rocksdbSum
 	record.SumAffectedRows = rocksdbSum
 	avgRocksdbSum := float64(rocksdbSum) / float64(record.ExecCount)
 	doubleColumnExpected := map[string]float64{
@@ -67,6 +71,8 @@ func TestColumn(t *testing.T) {
 		AvgRocksdbBlockCacheHitCountStr: avgRocksdbSum,
 		AvgRocksdbBlockReadCountStr:     avgRocksdbSum,
 		AvgRocksdbBlockReadByteStr:      avgRocksdbSum,
+		AvgIARemoteReadSegmentCountStr:  avgRocksdbSum,
+		AvgIARemoteReadSegmentSizeStr:   avgRocksdbSum,
 		AvgAffectedRowsStr:              avgRocksdbSum,
 	}
 	for n, f := range factories {
@@ -149,6 +155,91 @@ func TestColumn(t *testing.T) {
 		row.SetDatums(datum)
 		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
 	}
+}
+
+func TestIAAvgColumns(t *testing.T) {
+	columns := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
+		{Name: ast.NewCIStr(MaxIARemoteReadSegmentCountStr)},
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},
+		{Name: ast.NewCIStr(MaxIARemoteReadSegmentSizeStr)},
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentWaitTimeStr)},
+		{Name: ast.NewCIStr(MaxIARemoteReadSegmentWaitTimeStr)},
+	}
+	factories := makeColumnFactories(columns)
+
+	info1 := GenerateStmtExecInfo4Test("digest")
+	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
+	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
+	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
+
+	info2 := GenerateStmtExecInfo4Test("digest")
+	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
+	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
+	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
+
+	record := NewStmtRecord(info1)
+	record.Add(info1)
+	record.Add(info2)
+
+	require.Equal(t, 4.0, factories[0](mockColumnInfo{}, record))
+	require.Equal(t, uint64(5), factories[1](mockColumnInfo{}, record))
+	require.Equal(t, 6144.0, factories[2](mockColumnInfo{}, record))
+	require.Equal(t, uint64(8192), factories[3](mockColumnInfo{}, record))
+	require.Equal(t, int64(7*time.Millisecond), factories[4](mockColumnInfo{}, record))
+	require.Equal(t, int64(9*time.Millisecond), factories[5](mockColumnInfo{}, record))
+}
+
+func TestIAAvgColumnsChunkRoundTrip(t *testing.T) {
+	columns := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
+		{Name: ast.NewCIStr(MaxIARemoteReadSegmentCountStr)},
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},
+		{Name: ast.NewCIStr(MaxIARemoteReadSegmentSizeStr)},
+		{Name: ast.NewCIStr(AvgIARemoteReadSegmentWaitTimeStr)},
+		{Name: ast.NewCIStr(MaxIARemoteReadSegmentWaitTimeStr)},
+	}
+	factories := makeColumnFactories(columns)
+
+	info1 := GenerateStmtExecInfo4Test("digest")
+	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
+	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
+	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
+
+	info2 := GenerateStmtExecInfo4Test("digest")
+	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
+	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
+	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
+
+	record := NewStmtRecord(info1)
+	record.Add(info1)
+	record.Add(info2)
+
+	rowDatums := make([]types.Datum, len(factories))
+	for i, factory := range factories {
+		rowDatums[i] = types.NewDatum(factory(mockColumnInfo{}, record))
+	}
+
+	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
+	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
+	retTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble),
+		maxUnsignedType,
+		types.NewFieldType(mysql.TypeDouble),
+		maxUnsignedType.Clone(),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	mutRow := chunk.MutRowFromTypes(retTypes)
+	mutRow.SetDatums(rowDatums...)
+	row := mutRow.ToRow()
+
+	require.Equal(t, 4.0, row.GetFloat64(0))
+	require.Equal(t, uint64(5), row.GetUint64(1))
+	require.Equal(t, 6144.0, row.GetFloat64(2))
+	require.Equal(t, uint64(8192), row.GetUint64(3))
+	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
+	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
 }
 
 type mockColumnInfo struct{}

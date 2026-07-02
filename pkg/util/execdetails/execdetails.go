@@ -180,6 +180,12 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+	// IARemoteReadSegmentCountStr means the number of IA remote segment reads.
+	IARemoteReadSegmentCountStr = "IA_remote_read_segment_count"
+	// IARemoteReadSegmentSizeStr means the number of bytes returned from IA remote segment reads.
+	IARemoteReadSegmentSizeStr = "IA_remote_read_segment_size"
+	// IARemoteReadSegmentWaitTimeStr means the total time spent waiting for IA remote segment reads.
+	IARemoteReadSegmentWaitTimeStr = "IA_remote_read_segment_wait_time"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -203,6 +209,25 @@ const (
 	// PrewriteRegionStr means the count of region when pre-write.
 	PrewriteRegionStr = "Prewrite_region"
 )
+
+// IARemoteReadSegmentStats contains IA remote-read scan statistics.
+type IARemoteReadSegmentStats struct {
+	Count    uint64
+	Bytes    uint64
+	WaitTime time.Duration
+}
+
+// GetIARemoteReadSegmentStats reads IA remote-read scan statistics from client-go ScanDetail.
+func GetIARemoteReadSegmentStats(scanDetail *util.ScanDetail) IARemoteReadSegmentStats {
+	if scanDetail == nil {
+		return IARemoteReadSegmentStats{}
+	}
+	return IARemoteReadSegmentStats{
+		Count:    scanDetail.IaRemoteReadSegmentCount,
+		Bytes:    scanDetail.IaRemoteReadSegmentBytes,
+		WaitTime: scanDetail.IaRemoteReadSegmentDuration,
+	}
+}
 
 // String implements the fmt.Stringer interface.
 func (d ExecDetails) String() string {

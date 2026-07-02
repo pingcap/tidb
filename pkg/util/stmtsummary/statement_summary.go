@@ -179,26 +179,32 @@ type stmtSummaryStats struct {
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
-	sumProcessTime               time.Duration
-	maxProcessTime               time.Duration
-	sumWaitTime                  time.Duration
-	maxWaitTime                  time.Duration
-	sumBackoffTime               time.Duration
-	maxBackoffTime               time.Duration
-	sumTotalKeys                 int64
-	maxTotalKeys                 int64
-	sumProcessedKeys             int64
-	maxProcessedKeys             int64
-	sumRocksdbDeleteSkippedCount uint64
-	maxRocksdbDeleteSkippedCount uint64
-	sumRocksdbKeySkippedCount    uint64
-	maxRocksdbKeySkippedCount    uint64
-	sumRocksdbBlockCacheHitCount uint64
-	maxRocksdbBlockCacheHitCount uint64
-	sumRocksdbBlockReadCount     uint64
-	maxRocksdbBlockReadCount     uint64
-	sumRocksdbBlockReadByte      uint64
-	maxRocksdbBlockReadByte      uint64
+	sumProcessTime                 time.Duration
+	maxProcessTime                 time.Duration
+	sumWaitTime                    time.Duration
+	maxWaitTime                    time.Duration
+	sumBackoffTime                 time.Duration
+	maxBackoffTime                 time.Duration
+	sumTotalKeys                   int64
+	maxTotalKeys                   int64
+	sumProcessedKeys               int64
+	maxProcessedKeys               int64
+	sumRocksdbDeleteSkippedCount   uint64
+	maxRocksdbDeleteSkippedCount   uint64
+	sumRocksdbKeySkippedCount      uint64
+	maxRocksdbKeySkippedCount      uint64
+	sumRocksdbBlockCacheHitCount   uint64
+	maxRocksdbBlockCacheHitCount   uint64
+	sumRocksdbBlockReadCount       uint64
+	maxRocksdbBlockReadCount       uint64
+	sumRocksdbBlockReadByte        uint64
+	maxRocksdbBlockReadByte        uint64
+	sumIARemoteReadSegmentCount    uint64
+	maxIARemoteReadSegmentCount    uint64
+	sumIARemoteReadSegmentSize     uint64
+	maxIARemoteReadSegmentSize     uint64
+	sumIARemoteReadSegmentWaitTime time.Duration
+	maxIARemoteReadSegmentWaitTime time.Duration
 	// txn
 	commitCount          int64
 	sumGetCommitTsTime   time.Duration
@@ -867,6 +873,19 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 		ssStats.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssStats.maxRocksdbBlockReadByte {
 			ssStats.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
+		}
+		iaStats := execdetails.GetIARemoteReadSegmentStats(sei.ExecDetail.ScanDetail)
+		ssStats.sumIARemoteReadSegmentCount += iaStats.Count
+		if iaStats.Count > ssStats.maxIARemoteReadSegmentCount {
+			ssStats.maxIARemoteReadSegmentCount = iaStats.Count
+		}
+		ssStats.sumIARemoteReadSegmentSize += iaStats.Bytes
+		if iaStats.Bytes > ssStats.maxIARemoteReadSegmentSize {
+			ssStats.maxIARemoteReadSegmentSize = iaStats.Bytes
+		}
+		ssStats.sumIARemoteReadSegmentWaitTime += iaStats.WaitTime
+		if iaStats.WaitTime > ssStats.maxIARemoteReadSegmentWaitTime {
+			ssStats.maxIARemoteReadSegmentWaitTime = iaStats.WaitTime
 		}
 	}
 
