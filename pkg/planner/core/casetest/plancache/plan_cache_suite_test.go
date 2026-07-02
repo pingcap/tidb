@@ -577,6 +577,7 @@ func runPreparedPlanCacheTypeConversionWarning(t *testing.T, tk *testkit.TestKit
 	tableName := "t_type_convert"
 	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
 	tk.MustExec(fmt.Sprintf("create table %s (a int, key(a))", tableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1), (2)", tableName))
 	tk.MustExec(fmt.Sprintf("prepare st from 'select a from %s where a in (?, ?)'", tableName))
 	tk.MustExec("set @a=1.0, @b=2.0")
 	tk.MustExec("execute st using @a, @b")
@@ -602,6 +603,25 @@ func runPreparedPlanCacheTypeConversionWarning(t *testing.T, tk *testkit.TestKit
 			{"IndexReader"},
 			{"└─IndexRangeScan"}, // range scan not full scan
 		})
+	tk.MustExec("deallocate prepare st")
+
+	nullableTableName := "t_type_convert_nullable"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", nullableTableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, key(a))", nullableTableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1), (2), (NULL)", nullableTableName))
+	tk.MustExec(fmt.Sprintf("prepare st from 'select a in (?, ?) from %s order by a is null, a'", nullableTableName))
+	tk.MustExec("set @a=0.12, @b=3.47")
+	tk.MustQuery("execute st using @a, @b").Check(testkit.Rows("0", "0", "<nil>"))
+	tk.MustExec("deallocate prepare st")
+
+	tk.MustExec(fmt.Sprintf("prepare st from 'select a from %s where a not in (?, ?) order by a'", tableName))
+	tk.MustExec("set @a=0.12, @b=3.47")
+	tk.MustQuery("execute st using @a, @b").Check(testkit.Rows("1", "2"))
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := fmt.Sprint(tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Rows())
+	require.NotContains(t, rows, "Selection")
 	tk.MustExec("deallocate prepare st")
 }
 
