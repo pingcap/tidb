@@ -131,13 +131,13 @@ func (killer *SQLKiller) HandleSignal() error {
 	// Checks if the connection is alive.
 	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
 	fn := killer.IsConnectionAlive.Load()
-	lastCheckTime := killer.lastCheckTime.Load()
 	if fn != nil {
 		var checkConnectionAliveDur time.Duration = time.Second
 		now := time.Now()
 		if intest.InTest {
 			checkConnectionAliveDur = time.Millisecond
 		}
+		lastCheckTime := killer.lastCheckTime.Load()
 		if lastCheckTime == nil {
 			killer.lastCheckTime.Store(&now)
 		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
