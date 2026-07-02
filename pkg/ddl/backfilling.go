@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -159,14 +160,15 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	warnings   contextutil.WarnHandlerExt
-	loc        *time.Location
-	exprCtx    exprctx.BuildContext
-	tblCtx     table.MutateContext
-	schemaName string
-	table      table.Table
-	batchCnt   int
-	jobContext *ReorgContext
+	warnings      contextutil.WarnHandlerExt
+	loc           *time.Location
+	exprCtx       exprctx.BuildContext
+	tblCtx        table.MutateContext
+	schemaName    string
+	table         table.Table
+	batchCnt      int
+	useNewCollate bool
+	jobContext    *ReorgContext
 
 	metricCounter   prometheus.Counter
 	conflictCounter prometheus.Counter
@@ -215,16 +217,17 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		warnings:   warnHandler,
-		exprCtx:    exprCtx,
-		tblCtx:     tblCtx,
-		loc:        exprCtx.GetEvalCtx().Location(),
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   batchCnt,
-		jobContext: jobCtx,
+		id:            id,
+		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
+		warnings:      warnHandler,
+		exprCtx:       exprCtx,
+		tblCtx:        tblCtx,
+		loc:           exprCtx.GetEvalCtx().Location(),
+		schemaName:    schemaName,
+		table:         tbl,
+		batchCnt:      batchCnt,
+		useNewCollate: rInfo.ReorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		jobContext:    jobCtx,
 		metricCounter: getBackfillTotalByTableID(
 			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 		conflictCounter: getBackfillTotalByTableID(
@@ -719,12 +722,12 @@ func sendTasks(
 	return nil
 }
 
-func makeupDecodeColMap(dbName ast.CIStr, t table.Table) (map[int64]decoder.Column, error) {
+func makeupDecodeColMap(dbName ast.CIStr, t table.Table, useNewCollate bool) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
 		writableColInfos = append(writableColInfos, col.ColumnInfo)
 	}
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(newReorgExprCtx(), dbName, t.Meta().Name, writableColInfos, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(newReorgExprCtx(), dbName, t.Meta().Name, writableColInfos, t.Meta(), useNewCollate)
 	if err != nil {
 		return nil, err
 	}

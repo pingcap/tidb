@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -110,8 +111,9 @@ func NewAddIndexIngestPipeline(
 	collector execute.Collector,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
+	useNewCollate := reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithCollate(useNewCollate, tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -168,8 +170,9 @@ func NewWriteIndexToExternalStoragePipeline(
 	tikvCodec tikv.Codec,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
+	useNewCollate := reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithCollate(useNewCollate, tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -914,7 +917,19 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, kvBytes, err := writeChunk(
+		w.ctx,
+		w.writers,
+		w.indexes,
+		indexConditionCheckers,
+		w.reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		w.copCtx,
+		sc.TimeZone(),
+		sc.ErrCtx(),
+		vars.GetWriteStmtBufs(),
+		rs.Chunk,
+		w.tbl.Meta(),
+	)
 	if err != nil || cnt == 0 {
 		return 0, 0, err
 	}

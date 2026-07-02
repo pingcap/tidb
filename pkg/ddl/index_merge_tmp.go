@@ -148,7 +148,7 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements
 	allIndexes := make([]table.Index, 0, len(elements))
 	for _, elem := range elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndexWithCollate(bfCtx.useNewCollate, t.GetPhysicalID(), t.Meta(), indexInfo)
 		if err != nil {
 			return nil, err
 		}

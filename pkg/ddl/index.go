@@ -2405,7 +2405,7 @@ func newAddIndexTxnWorker(
 			continue
 		}
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndexWithCollate(bfCtx.useNewCollate, t.GetPhysicalID(), t.Meta(), indexInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -2478,7 +2478,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		idxVal[j] = idxColumnVal
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(w.table.Meta(), nil, w.rowMap, idxInfo)
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap, idxInfo)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
@@ -2702,6 +2702,7 @@ func writeChunk(
 	writers []ingest.Writer,
 	indexes []table.Index,
 	indexConditionCheckers []func(row chunk.Row) (bool, error),
+	useNewCollate bool,
 	copCtx copr.CopContext,
 	loc *time.Location,
 	errCtx errctx.Context,
@@ -2733,10 +2734,10 @@ func writeChunk(
 	needRestoreForIndexes := make([]bool, len(indexes))
 	restore, pkNeedRestore := false, false
 	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
-		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
+		pkNeedRestore = tables.NeedRestoredDataWithCollate(useNewCollate, c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
 	}
 	for i, index := range indexes {
-		needRestore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+		needRestore := pkNeedRestore || tables.NeedRestoredDataWithCollate(useNewCollate, index.Meta().Columns, c.TableInfo.Columns)
 		needRestoreForIndexes[i] = needRestore
 		restore = restore || needRestore
 	}
@@ -2752,7 +2753,7 @@ func writeChunk(
 				restoreDataBuf[i] = *datum.Clone()
 			}
 		}
-		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
+		h, err := BuildHandle(useNewCollate, handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
 			return 0, totalBytes, errors.Trace(err)
 		}

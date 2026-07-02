@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -181,7 +182,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		} else {
 			tblInfo.Indices = origIndices
 		}
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
+		err := initTableCommonWithIndicesAndCollate(tbl.useNewCollate, &t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -273,7 +274,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
 	var newPart partition
-	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs, t.Constraints)
+	err := initTableCommonWithIndicesAndCollate(t.useNewCollate, &newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs, t.Constraints)
 	if err != nil {
 		return nil, err
 	}
@@ -1676,7 +1677,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 		return nil, err
 	}
 	var tc TableCommon
-	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
+	initTableCommonWithCollate(collate.NewCollationEnabled(), &tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)

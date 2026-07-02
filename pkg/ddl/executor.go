@@ -7535,7 +7535,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 // NewDDLReorgMeta create a DDL ReorgMeta.
 func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-	return &model.DDLReorgMeta{
+	reorgMeta := &model.DDLReorgMeta{
 		SQLMode:           ctx.GetSessionVars().SQLMode,
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
 		WarningsCount:     make(map[errors.ErrorID]int64),
@@ -7543,6 +7543,8 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+	reorgMeta.SetUseNewCollate(collate.NewCollationEnabled())
+	return reorgMeta
 }
 
 // RefreshMeta is a internal DDL job. In some cases, BR log restore will EXCHANGE

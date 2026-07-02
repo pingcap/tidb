@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -62,14 +63,22 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+	useNewCollate       bool
 
 	indexPartialCondition
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
 func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	return NeedRestoredDataWithCollate(collate.NewCollationEnabled(), idxCols, colInfos)
+}
+
+// NeedRestoredDataWithCollate checks whether the index columns need restored
+// data under the specified new-collation mode.
+func NeedRestoredDataWithCollate(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
-		if model.ColumnNeedRestoredData(idxCol, colInfos) {
+		col := colInfos[idxCol.Offset]
+		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
 			return true
 		}
 	}
@@ -78,16 +87,24 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
+	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
+}
+
+// NewIndexWithCollate builds a new Index object with the specified new-collation mode.
+func NewIndexWithCollate(useNewCollate bool, physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
 	index := &index{
-		idxInfo:  indexInfo,
-		tblInfo:  tblInfo,
-		phyTblID: physicalID,
+		idxInfo:       indexInfo,
+		tblInfo:       tblInfo,
+		phyTblID:      physicalID,
+		useNewCollate: useNewCollate,
 	}
 
 	conditionString := indexInfo.ConditionExprString
 	if len(conditionString) > 0 {
 		var err error
-		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString, expression.WithTableInfo("", tblInfo))
+		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
+			expression.WithTableInfo("", tblInfo),
+			expression.WithUseNewCollate(useNewCollate))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -166,7 +183,7 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 		return
 	}
 
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, fullHandle, buf)
+	key, distinct, err = tablecodec.GenIndexKeyWithCollate(c.useNewCollate, loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, fullHandle, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -175,14 +192,14 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
-		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+		c.needRestoredData = NeedRestoredDataWithCollate(c.useNewCollate, c.idxInfo.Columns, c.tblInfo.Columns)
 	})
 
 	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortalWithCollate(c.useNewCollate, loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
