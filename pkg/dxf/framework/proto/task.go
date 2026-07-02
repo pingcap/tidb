@@ -70,7 +70,7 @@ const (
 	// MinMaxConcurrentTask is the minimum allowed max concurrency of task.
 	MinMaxConcurrentTask = 16
 	// MaxMaxConcurrentTask is the maximum allowed max concurrency of task.
-	MaxMaxConcurrentTask = 400
+	MaxMaxConcurrentTask = 1000
 )
 
 var maxConcurrentTask atomic.Int64
