@@ -745,6 +745,163 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 	}
 }
 
+func TestPartialResult4DistinctAgg(t *testing.T) {
+	t.Run("count int", func(t *testing.T) {
+		aggFunc := &baseCountDistinct4Int{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4CountDistinctInt)(pr).valSet.Insert(1)
+		(*partialResult4CountDistinctInt)(pr).valSet.Insert(-2)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4CountDistinctInt)(pr).valSet.M, (*partialResult4CountDistinctInt)(restored).valSet.M)
+	})
+
+	t.Run("count real", func(t *testing.T) {
+		aggFunc := &baseCountDistinct4Real{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4CountDistinctReal)(pr).valSet.Insert(1.25)
+		(*partialResult4CountDistinctReal)(pr).valSet.Insert(-2.5)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4CountDistinctReal)(pr).valSet.M, (*partialResult4CountDistinctReal)(restored).valSet.M)
+	})
+
+	t.Run("count decimal", func(t *testing.T) {
+		aggFunc := &baseCountDistinct4Decimal{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4CountDistinctDecimal)(pr).valSet.Insert("decimal-key")
+		(*partialResult4CountDistinctDecimal)(pr).valSet.Insert(string([]byte{0, 1, 2, 'x'}))
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4CountDistinctDecimal)(pr).valSet.M, (*partialResult4CountDistinctDecimal)(restored).valSet.M)
+	})
+
+	t.Run("count duration", func(t *testing.T) {
+		aggFunc := &baseCountDistinct4Duration{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4CountDistinctDuration)(pr).valSet.Insert(123)
+		(*partialResult4CountDistinctDuration)(pr).valSet.Insert(-456)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4CountDistinctDuration)(pr).valSet.M, (*partialResult4CountDistinctDuration)(restored).valSet.M)
+	})
+
+	t.Run("count string", func(t *testing.T) {
+		aggFunc := &baseCountDistinct4String{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4CountDistinctString)(pr).valSet.Insert("")
+		(*partialResult4CountDistinctString)(pr).valSet.Insert(testLongStr1)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4CountDistinctString)(pr).valSet.M, (*partialResult4CountDistinctString)(restored).valSet.M)
+	})
+
+	t.Run("count multi args", func(t *testing.T) {
+		aggFunc := &baseCountDistinct4MultiArgs{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4CountWithDistinct)(pr).valSet.Insert("arg1\x00arg2")
+		(*partialResult4CountWithDistinct)(pr).valSet.Insert(testLongStr2)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4CountWithDistinct)(pr).valSet.M, (*partialResult4CountWithDistinct)(restored).valSet.M)
+	})
+
+	t.Run("approx count distinct", func(t *testing.T) {
+		aggFunc := &approxCountDistinctOriginal{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		approxPr := (*partialResult4ApproxCountDistinct)(pr)
+		for _, val := range []uint64{0, 1, 2, 1, 1024, 1<<32 - 1} {
+			approxPr.InsertHash64(val)
+		}
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		restoredApproxPr := (*partialResult4ApproxCountDistinct)(restored)
+		require.Equal(t, approxPr.Serialize(), restoredApproxPr.Serialize())
+		require.Equal(t, approxPr.fixedSize(), restoredApproxPr.fixedSize())
+	})
+
+	t.Run("avg decimal", func(t *testing.T) {
+		aggFunc := &baseAvgDistinct4Decimal{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4AvgDistinctDecimal)(pr).valSet.Insert("d1", types.NewDecFromInt(10))
+		(*partialResult4AvgDistinctDecimal)(pr).valSet.Insert("d2", types.NewDecFromInt(-20))
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4AvgDistinctDecimal)(pr).valSet.M, (*partialResult4AvgDistinctDecimal)(restored).valSet.M)
+	})
+
+	t.Run("avg float64", func(t *testing.T) {
+		aggFunc := &baseAvgDistinct4Float64{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4AvgDistinctFloat64)(pr).valSet.Insert(10.5)
+		(*partialResult4AvgDistinctFloat64)(pr).valSet.Insert(-20.75)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4AvgDistinctFloat64)(pr).valSet.M, (*partialResult4AvgDistinctFloat64)(restored).valSet.M)
+	})
+
+	t.Run("sum decimal", func(t *testing.T) {
+		aggFunc := &baseSumDistinct4Decimal{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4SumDistinctDecimal)(pr).valSet.Insert("s1", types.NewDecFromInt(100))
+		(*partialResult4SumDistinctDecimal)(pr).valSet.Insert("s2", types.NewDecFromInt(-200))
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4SumDistinctDecimal)(pr).valSet.M, (*partialResult4SumDistinctDecimal)(restored).valSet.M)
+	})
+
+	t.Run("sum float64", func(t *testing.T) {
+		aggFunc := &baseSumDistinct4Float64{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4SumDistinctFloat64)(pr).valSet.Insert(100.5)
+		(*partialResult4SumDistinctFloat64)(pr).valSet.Insert(-200.75)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4SumDistinctFloat64)(pr).valSet.M, (*partialResult4SumDistinctFloat64)(restored).valSet.M)
+	})
+
+	t.Run("variance float64", func(t *testing.T) {
+		aggFunc := &varPopOriginal4DistinctFloat64{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4VarPopDistinctFloat64)(pr).valSet.Insert(1.5)
+		(*partialResult4VarPopDistinctFloat64)(pr).valSet.Insert(3.5)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4VarPopDistinctFloat64)(pr).valSet.M, (*partialResult4VarPopDistinctFloat64)(restored).valSet.M)
+	})
+
+	t.Run("group concat", func(t *testing.T) {
+		aggFunc := &baseGroupConcatDistinct4String{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4GroupConcatDistinct)(pr).valSet.Insert("k1", "v1")
+		(*partialResult4GroupConcatDistinct)(pr).valSet.Insert(testLongStr1, testLongStr2)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4GroupConcatDistinct)(pr).valSet.M, (*partialResult4GroupConcatDistinct)(restored).valSet.M)
+		require.NotNil(t, (*partialResult4GroupConcatDistinct)(restored).valsBuf)
+	})
+}
+
+func newDistinctAggPartialResult(t *testing.T, aggFunc AggFunc) PartialResult {
+	pr, memDelta := aggFunc.AllocPartialResult()
+	require.NotNil(t, pr)
+	require.Positive(t, memDelta)
+	return pr
+}
+
+func roundTripDistinctAggPartialResult(t *testing.T, aggFunc AggFunc, pr PartialResult) PartialResult {
+	serializeHelper := NewSerializeHelper()
+	chunk := getChunk()
+	aggFunc.SerializePartialResult(pr, chunk, serializeHelper)
+
+	restored, memDelta := aggFunc.DeserializePartialResult(chunk)
+	chunk.Column(0).DestroyDataForTest()
+
+	require.Len(t, restored, 1)
+	require.Positive(t, memDelta)
+	return restored[0]
+}
+
 func TestBasePartialResult4GroupConcat(t *testing.T) {
 	var serializeHelper = NewSerializeHelper()
 	serializeHelper.buf = make([]byte, 0)

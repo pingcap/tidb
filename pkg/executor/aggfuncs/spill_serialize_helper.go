@@ -129,6 +129,77 @@ func (s *SerializeHelper) serializePartialResult4SumFloat64(value partialResult4
 	return util.SerializeInt64(value.notNullRowCount, s.buf)
 }
 
+func (s *SerializeHelper) serializePartialResult4CountDistinctInt(value partialResult4CountDistinctInt) []byte {
+	return s.serializeInt64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctReal(value partialResult4CountDistinctReal) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctDecimal(value partialResult4CountDistinctDecimal) []byte {
+	return s.serializeStringSet(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctDuration(value partialResult4CountDistinctDuration) []byte {
+	return s.serializeInt64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctString(value partialResult4CountDistinctString) []byte {
+	return s.serializeStringSet(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountWithDistinct(value partialResult4CountWithDistinct) []byte {
+	return s.serializeStringSet(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4AvgDistinctDecimal(value partialResult4AvgDistinctDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value.valSet.M), s.buf)
+	for key, val := range value.valSet.M {
+		s.buf = util.SerializeString(key, s.buf)
+		s.buf = util.SerializeMyDecimal(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4AvgDistinctFloat64(value partialResult4AvgDistinctFloat64) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4SumDistinctDecimal(value partialResult4SumDistinctDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value.valSet.M), s.buf)
+	for key, val := range value.valSet.M {
+		s.buf = util.SerializeString(key, s.buf)
+		s.buf = util.SerializeMyDecimal(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4SumDistinctFloat64(value partialResult4SumDistinctFloat64) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4VarPopDistinctFloat64(value partialResult4VarPopDistinctFloat64) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4ApproxCountDistinct(value partialResult4ApproxCountDistinct) []byte {
+	s.buf = value.Serialize()
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4GroupConcatDistinct(value partialResult4GroupConcatDistinct) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value.valSet.M), s.buf)
+	for key, val := range value.valSet.M {
+		s.buf = util.SerializeString(key, s.buf)
+		s.buf = util.SerializeString(val, s.buf)
+	}
+	return s.buf
+}
+
 func (s *SerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
 	s.buf = s.buf[:0]
 	if value.buffer != nil {
@@ -226,5 +297,32 @@ func (s *SerializeHelper) serializePartialResult4FirstRowEnum(value partialResul
 func (s *SerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	s.buf = util.SerializeSet(&value.val, s.buf)
+	return s.buf
+}
+
+func (s *SerializeHelper) serializeInt64Set(values map[int64]struct{}) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(values), s.buf)
+	for val := range values {
+		s.buf = util.SerializeInt64(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializeFloat64Set(values map[float64]struct{}) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(values), s.buf)
+	for val := range values {
+		s.buf = util.SerializeFloat64(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializeStringSet(values map[string]struct{}) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(values), s.buf)
+	for val := range values {
+		s.buf = util.SerializeString(val, s.buf)
+	}
 	return s.buf
 }

@@ -153,6 +153,26 @@ func (e *varPopOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdate
 	return nil
 }
 
+func (e *varPopOriginal4DistinctFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4VarPopDistinctFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4VarPopDistinctFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *varPopOriginal4DistinctFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *varPopOriginal4DistinctFloat64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4VarPopDistinctFloat64)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4VarPopDistinctFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 func (e *varPopOriginal4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {

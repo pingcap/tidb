@@ -117,6 +117,21 @@ var (
 	_ AggFunc = (*groupPartialConcatDistinct)(nil)
 	_ AggFunc = (*groupOriginalConcatDistinct)(nil)
 
+	// All the AggFunc implementations for "STDDEV_POP/STDDEV_SAMP/VAR_POP/VAR_SAMP" are listed here.
+	_ AggFunc = (*stdDevPop4Float64)(nil)
+	_ AggFunc = (*stddevSamp4Float64)(nil)
+	_ AggFunc = (*varPop4Float64)(nil)
+	_ AggFunc = (*varSamp4Float64)(nil)
+
+	_ AggFunc = (*stdDevPopOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*stdDevPopPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*stddevSampOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*stddevSampPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*varPopOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*varPopPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*varSampOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*varSampPartial4DistinctFloat64)(nil)
+
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
 
