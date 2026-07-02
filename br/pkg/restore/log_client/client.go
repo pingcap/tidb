@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1555,6 +1556,58 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 	}
 	return nil
 }
+
+// RebaseAutoIDAllocatorsForSepAutoIncTables rebases the autoid service's in-memory allocators for tables that use AUTO_ID_CACHE=1
+func (rc *LogClient) RebaseAutoIDAllocatorsForSepAutoIncTables(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+    infoSchema := rc.dom.InfoSchema()
+    store := rc.dom.Store()
+    for _, dbReplace := range schemaReplace.DbReplaceMap {
+        if dbReplace.FilteredOut {
+            continue
+        }
+        for _, tableReplace := range dbReplace.TableMap {
+            if tableReplace.FilteredOut {
+                continue
+            }
+            tbl, exist := infoSchema.TableByID(ctx, tableReplace.TableID)
+            if !exist {
+                continue
+            }
+            tblInfo := tbl.Meta()
+            if !tblInfo.SepAutoInc() {
+                continue
+            }
+            // Read persisted IID directly from TiKV, bypassing service cache.
+            var currentEnd int64
+            err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+                idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbReplace.DbID, tblInfo.ID).IncrementID(model.TableInfoVersion5)
+                var err1 error
+                currentEnd, err1 = idAcc.Get()
+                return err1
+            })
+            if err != nil {
+                log.Warn("failed to read persisted auto-increment ID for rebase", ...)
+                continue
+            }
+            if currentEnd <= 0 {
+                continue
+            }
+            allocs := tbl.Allocators(nil)
+            for _, alloc := range allocs.Allocs {
+                if alloc.GetType() != autoid.AutoIncrementType {
+                    continue
+                }
+                if err := alloc.ForceRebase(currentEnd); err != nil {
+                    log.Warn("failed to force rebase auto-increment allocator after PiTR", ...)
+                    continue
+                }
+                log.Info("rebased auto-increment allocator after PiTR", ...)
+            }
+        }
+    }
+    return nil
+}
+
 
 // WrapCompactedFilesIterWithSplitHelper applies a splitting strategy to the compacted files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
