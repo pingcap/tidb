@@ -137,9 +137,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 
 	store := s.TaskRuntime.Store()
 	sessPool := sess.NewSessionPool(s.TaskRuntime.SysSessionPool())
-	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	// TODO This is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)
+	tblIface, err := getUserTableFromTaskStore(ddlObj.ctx, store, jobMeta)
 	if err != nil {
 		return nil, err
 	}
