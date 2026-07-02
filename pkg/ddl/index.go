@@ -2405,7 +2405,7 @@ func newAddIndexTxnWorker(
 			continue
 		}
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index, err := tables.NewIndexWithCollate(t.UseNewCollate(), t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndexWithCollate(bfCtx.useNewCollate, t.GetPhysicalID(), t.Meta(), indexInfo)
 		if err != nil {
 			return nil, err
 		}
