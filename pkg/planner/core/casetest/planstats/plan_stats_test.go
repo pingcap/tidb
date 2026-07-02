@@ -672,6 +672,15 @@ func TestStatsAnalyzedInDDL(t *testing.T) {
 
 func TestPartialStatsInExplain(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, _, _ string) {
+		// The async stats-load queue is process-wide; isolate this test's partial/full stats transitions.
+		clearAsyncLoadHistogramNeededItems := func() {
+			for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+				asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+			}
+		}
+		clearAsyncLoadHistogramNeededItems()
+		t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 		testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
@@ -696,6 +705,7 @@ func TestPartialStatsInExplain(t *testing.T) {
 		testKit.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 		testKit.MustQuery("explain select * from tp where a = 1")
 		testKit.MustExec("set @@tidb_stats_load_sync_wait = 0")
+		clearAsyncLoadHistogramNeededItems()
 		type explainCase struct {
 			sql         string
 			contains    []string
