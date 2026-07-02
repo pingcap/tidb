@@ -436,11 +436,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 func TestGetTopUnfinishedTasks(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
-	bak := proto.MaxConcurrentTask
-	t.Cleanup(func() {
-		proto.MaxConcurrentTask = bak
-	})
-	proto.MaxConcurrentTask = 4
+	t.Cleanup(proto.SetMaxConcurrentTaskForTest(4))
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
@@ -505,18 +501,18 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	require.Len(t, tasks, 8)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
 
-	proto.MaxConcurrentTask = 6
+	proto.SetMaxConcurrentTaskForTest(6)
 	tasks, err = gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 11)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
 
-	proto.MaxConcurrentTask = 3
+	proto.SetMaxConcurrentTaskForTest(3)
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3", "key/4", "key/12"}, getTaskKeys(tasks))
 
-	proto.MaxConcurrentTask = 1
+	proto.SetMaxConcurrentTaskForTest(1)
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3"}, getTaskKeys(tasks))
@@ -990,6 +986,19 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
+	t.Run("get tasks in states limit follows max concurrent task", func(t *testing.T) {
+		t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
+		_, gm, ctx := testutil.InitTableTest(t)
+		require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+		for i := range 5 {
+			_, err := gm.CreateTask(ctx, fmt.Sprintf("limit-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+			require.NoError(t, err)
+		}
+		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
+		require.NoError(t, err)
+		require.Len(t, tasks, proto.GetMaxConcurrentTask()*3)
+	})
+
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
@@ -1131,6 +1140,32 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.ErrorContains(t, err2, "page size should be within")
 		_, err2 = gm.ListHistoryTasks(ctx, 201, 0, "")
 		require.ErrorContains(t, err2, "page size should be within")
+	})
+
+	t.Run("get tasks in states returns at most one batch", func(t *testing.T) {
+		taskQueryLimit := proto.GetMaxConcurrentTask() * 3
+		for _, sql := range []string{
+			"delete from mysql.tidb_background_subtask",
+			"delete from mysql.tidb_background_subtask_history",
+			"delete from mysql.tidb_global_task",
+			"delete from mysql.tidb_global_task_history",
+		} {
+			_, err = gm.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+		}
+
+		createdIDs := make([]int64, 0, taskQueryLimit+1)
+		for i := 0; i < taskQueryLimit+1; i++ {
+			taskID, err2 := gm.CreateTask(ctx, fmt.Sprintf("batch-task-%03d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+			require.NoError(t, err2)
+			createdIDs = append(createdIDs, taskID)
+		}
+		tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
+		require.NoError(t, err)
+		require.Len(t, tasks, taskQueryLimit)
+		for i, task := range tasks {
+			require.Equal(t, createdIDs[i], task.ID)
+		}
 	})
 }
 

@@ -51,6 +51,12 @@ var (
 	defaultCollectMetricsInterval = 15 * time.Second
 )
 
+const maxCleanupTaskBatchSize = 100
+
+type batchCleanUpRoutine interface {
+	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
+}
+
 func (sm *Manager) getSchedulerCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -155,7 +161,7 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			serverID: serverID,
 		}),
 		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		finishCh: make(chan struct{}, proto.MaxMaxConcurrentTask),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
@@ -244,7 +250,8 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.MaxConcurrentTask {
+	maxConcurrentTask := proto.GetMaxConcurrentTask()
+	if taskCnt >= maxConcurrentTask {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
@@ -291,7 +298,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
+			if taskCnt >= proto.GetMaxConcurrentTask() {
 				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
@@ -449,23 +456,36 @@ func (sm *Manager) doCleanupTask() {
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
-	cleanedTasks := make([]*proto.Task, 0)
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
 	var firstErr error
+	importIntoTasks := make([]*proto.Task, 0)
+	cleanUpImportIntoTasks := func() error {
+		if len(importIntoTasks) == 0 {
+			return nil
+		}
+		cleanedImportIntoTasks, err := sm.cleanupImportIntoTasks(importIntoTasks)
+		cleanedTasks = append(cleanedTasks, cleanedImportIntoTasks...)
+		importIntoTasks = importIntoTasks[:0]
+		return err
+	}
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanupFactory != nil {
-			cleanup := cleanupFactory()
-			err := cleanup.CleanUp(sm.ctx, task)
-			if err != nil {
-				firstErr = err
-				break
-			}
-			cleanedTasks = append(cleanedTasks, task)
-		} else {
-			// if task doesn't register cleanup function, mark it as cleaned.
-			cleanedTasks = append(cleanedTasks, task)
+		if task.Type == proto.ImportInto {
+			importIntoTasks = append(importIntoTasks, task)
+			continue
 		}
+		if err := cleanUpImportIntoTasks(); err != nil {
+			firstErr = err
+			break
+		}
+		if err := sm.cleanupSingleTask(task); err != nil {
+			firstErr = err
+			break
+		}
+		cleanedTasks = append(cleanedTasks, task)
+	}
+	if firstErr == nil {
+		firstErr = cleanUpImportIntoTasks()
 	}
 	if firstErr != nil {
 		// normally ScheduleEventCounter requires a task ID, but since scheduler
@@ -480,6 +500,41 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	})
 
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
+}
+
+func (sm *Manager) cleanupImportIntoTasks(tasks []*proto.Task) ([]*proto.Task, error) {
+	cleanupFactory := getSchedulerCleanUpFactory(proto.ImportInto)
+	if cleanupFactory == nil {
+		// if task doesn't register cleanup function, mark it as cleaned.
+		return tasks, nil
+	}
+	cleanup := cleanupFactory()
+	if batchCleanup, ok := cleanup.(batchCleanUpRoutine); ok {
+		if err := batchCleanup.CleanUpBatch(sm.ctx, tasks); err != nil {
+			return nil, err
+		}
+		return tasks, nil
+	}
+
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
+	for i, task := range tasks {
+		if i > 0 {
+			cleanup = cleanupFactory()
+		}
+		if err := cleanup.CleanUp(sm.ctx, task); err != nil {
+			return cleanedTasks, err
+		}
+		cleanedTasks = append(cleanedTasks, task)
+	}
+	return cleanedTasks, nil
+}
+
+func (sm *Manager) cleanupSingleTask(task *proto.Task) error {
+	cleanupFactory := getSchedulerCleanUpFactory(task.Type)
+	if cleanupFactory == nil {
+		return nil
+	}
+	return cleanupFactory().CleanUp(sm.ctx, task)
 }
 
 func (sm *Manager) collectLoop() {

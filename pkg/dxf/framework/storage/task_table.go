@@ -360,7 +360,7 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 	for _, s := range states {
 		args = append(args, s)
 	}
-	args = append(args, proto.MaxConcurrentTask*2)
+	args = append(args, proto.GetMaxConcurrentTask()*2)
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -440,10 +440,13 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
+	args := make([]any, 0, len(states)+1)
+	args = append(args, states...)
+	args = append(args, proto.GetMaxConcurrentTask()*3)
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			" order by priority asc, create_time asc, id asc", states...)
+			" order by priority asc, create_time asc, id asc limit %?", args...)
 	if err != nil {
 		return task, err
 	}
