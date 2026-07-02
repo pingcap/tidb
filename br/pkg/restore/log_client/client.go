@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -86,6 +87,7 @@ import (
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
 const maxReadMetaKVFilesConcurrency uint = 128
+const defaultTiKVMaxReplicas uint = 3
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
@@ -143,6 +145,8 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 // including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
 type SstRestoreManager struct {
 	restorer         restore.SstRestorer
+	storeCount       uint
+	replicaCount     uint
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
@@ -366,6 +370,8 @@ func (rc *LogClient) RestoreSSTFileSets(
 	ctx context.Context,
 	backupFileSets restore.BatchBackupFileSet,
 	importModeSwitcher *restore.ImportModeSwitcher,
+	snapshotRestoreDataSize uint64,
+	checkpointCompactedSSTSize uint64,
 	onProgress func(int64),
 ) error {
 	begin := time.Now()
@@ -373,6 +379,15 @@ func (rc *LogClient) RestoreSSTFileSets(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
+	if err := rc.adjustTiKVFlowControlForCompactedSSTRestore(
+		ctx,
+		backupFileSets,
+		snapshotRestoreDataSize,
+		checkpointCompactedSSTSize,
+	); err != nil {
+		return errors.Trace(err)
+	}
+
 	err := importModeSwitcher.GoSwitchToImportMode(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -565,6 +580,8 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
+	liveStoreCount := liveTiKVStoreCount(stores)
+	replicaCount := rc.getMaxReplica(ctx)
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
@@ -578,9 +595,10 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * uint(len(stores))
+	// Keep the global SST restore pool large enough to avoid starving stores when
+	// queued file sets temporarily point to other TiKVs.
+	const sstRestoreWorkerPoolSizePerStore uint = 7186
+	poolSize := sstRestoreWorkerPoolSizePerStore * uint(len(stores))
 	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
 	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
 
@@ -613,7 +631,7 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sstRestoreManager := &SstRestoreManager{}
+	sstRestoreManager := &SstRestoreManager{storeCount: liveStoreCount, replicaCount: replicaCount}
 	if sstCheckpointMetaManager != nil {
 		var err error
 		sstRestoreManager.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
@@ -630,6 +648,55 @@ func (rc *LogClient) InitClients(
 	}
 	rc.sstRestoreManager = sstRestoreManager
 	return nil
+}
+
+func liveTiKVStoreCount(stores []*metapb.Store) uint {
+	var count uint
+	for _, store := range stores {
+		if store.GetState() == metapb.StoreState_Up {
+			count++
+		}
+	}
+	return count
+}
+
+func (rc *LogClient) getMaxReplica(ctx context.Context) uint {
+	if rc.pdHTTPClient == nil {
+		return maxReplicaFromReplicateConfig(nil, errors.New("PD HTTP client is not initialized"))
+	}
+	var resp map[string]any
+	var err error
+	err = utils.WithRetry(ctx, func() error {
+		resp, err = rc.pdHTTPClient.GetReplicateConfig(ctx)
+		return err
+	}, utils.NewAggressivePDBackoffStrategy())
+	return maxReplicaFromReplicateConfig(resp, err)
+}
+
+func maxReplicaFromReplicateConfig(resp map[string]any, err error) uint {
+	if err != nil {
+		log.Warn("failed to get max replicas from PD replicate config, use default value",
+			zap.Uint("default-max-replicas", defaultTiKVMaxReplicas),
+			logutil.ShortError(err))
+		return defaultTiKVMaxReplicas
+	}
+
+	const key = "max-replicas"
+	val, ok := resp[key]
+	if !ok {
+		log.Warn("max replicas not found in PD replicate config, use default value",
+			zap.Uint("default-max-replicas", defaultTiKVMaxReplicas),
+			zap.Any("replicate-config", resp))
+		return defaultTiKVMaxReplicas
+	}
+	replicaCount, ok := val.(float64)
+	if !ok || replicaCount <= 0 {
+		log.Warn("invalid max replicas in PD replicate config, use default value",
+			zap.Uint("default-max-replicas", defaultTiKVMaxReplicas),
+			zap.Any("replicate-config", resp))
+		return defaultTiKVMaxReplicas
+	}
+	return uint(replicaCount)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
@@ -665,28 +732,34 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	ctx context.Context,
 	restoreStartTS, startTS, restoredTS uint64,
 	gcRatio string,
+	rocksDBMaxBackgroundJobs string,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) (string, error) {
+	snapshotRestoreDataSize uint64,
+) (string, string, uint64, error) {
 	rc.useCheckpoint = true
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
 	exists, err := logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", "", 0, errors.Trace(err)
 	}
 	if exists {
 		// load the checkpoint since this is not the first time to restore
 		log.Info("loading existing log restore checkpoint")
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", "", 0, errors.Trace(err)
 		}
 
-		log.Info("reuse gc ratio from checkpoint metadata", zap.String("old-gc-ratio", gcRatio),
-			zap.String("checkpoint-gc-ratio", meta.GcRatio))
-		return meta.GcRatio, nil
+		if meta.RocksDBMaxBackgroundJobs != "" {
+			rocksDBMaxBackgroundJobs = meta.RocksDBMaxBackgroundJobs
+		}
+		log.Info("reuse TiKV config from checkpoint metadata",
+			zap.String("gc-ratio", meta.GcRatio),
+			zap.String("rocksdb-max-background-jobs", rocksDBMaxBackgroundJobs))
+		return meta.GcRatio, rocksDBMaxBackgroundJobs, meta.SnapshotRestoreDataSize, nil
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
@@ -694,22 +767,25 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	if tiflashRecorder != nil {
 		items = tiflashRecorder.GetItems()
 	}
-	log.Info("save gc ratio into checkpoint metadata",
+	log.Info("save TiKV config into checkpoint metadata",
 		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
-		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
+		zap.String("gc-ratio", gcRatio), zap.String("rocksdb-max-background-jobs", rocksDBMaxBackgroundJobs),
+		zap.Int("tiflash-item-count", len(items)))
 	if err := logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
-		UpstreamClusterID: rc.upstreamClusterID,
-		RestoreStartTS:    restoreStartTS,
-		RestoredTS:        restoredTS,
-		StartTS:           startTS,
-		RewriteTS:         rc.currentTS,
-		GcRatio:           gcRatio,
-		TiFlashItems:      items,
+		UpstreamClusterID:        rc.upstreamClusterID,
+		RestoreStartTS:           restoreStartTS,
+		RestoredTS:               restoredTS,
+		StartTS:                  startTS,
+		RewriteTS:                rc.currentTS,
+		GcRatio:                  gcRatio,
+		RocksDBMaxBackgroundJobs: rocksDBMaxBackgroundJobs,
+		SnapshotRestoreDataSize:  snapshotRestoreDataSize,
+		TiFlashItems:             items,
 	}); err != nil {
-		return gcRatio, errors.Trace(err)
+		return gcRatio, rocksDBMaxBackgroundJobs, snapshotRestoreDataSize, errors.Trace(err)
 	}
 
-	return gcRatio, nil
+	return gcRatio, rocksDBMaxBackgroundJobs, snapshotRestoreDataSize, nil
 }
 
 type LockedMigrations struct {

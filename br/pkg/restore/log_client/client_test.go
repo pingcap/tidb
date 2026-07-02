@@ -1912,6 +1912,83 @@ func TestCollectSSTFileSets(t *testing.T) {
 	})
 }
 
+func TestEstimateCompactedSSTFlowControl(t *testing.T) {
+	fileSets := restore.BatchBackupFileSet{
+		{
+			TableID: 1,
+			SSTFiles: []*backuppb.File{
+				{
+					Name:  "file-1",
+					Size_: 16 * units.MiB,
+				},
+				{
+					Name:       "file-2",
+					TotalBytes: 8 * units.MiB,
+				},
+			},
+		},
+	}
+
+	snapshotBytes, compactedSSTBytes, l6BytesPerStore, l5BytesPerStore, pendingBytes :=
+		logclient.TEST_EstimateCompactedSSTFlowControl(fileSets, 5, 3, 120*units.MiB, 6*units.MiB)
+	require.Equal(t, uint64(120*units.MiB), snapshotBytes)
+	require.Equal(t, uint64(30*units.MiB), compactedSSTBytes)
+	require.Equal(t, uint64(72*units.MiB), l6BytesPerStore)
+	require.Equal(t, uint64(18*units.MiB), l5BytesPerStore)
+	require.InDelta(t, 54*float64(units.MiB), float64(pendingBytes), float64(units.KiB))
+
+	require.Equal(t, uint(2), logclient.TEST_LiveTiKVStoreCount([]*metapb.Store{
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Offline},
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Tombstone},
+	}))
+}
+
+func TestEstimatePendingCompactionBytes(t *testing.T) {
+	require.Equal(t, uint64(0), logclient.TEST_EstimatePendingCompactionBytes(11*units.TiB, units.TiB))
+	pendingBytes := logclient.TEST_EstimatePendingCompactionBytes(units.TiB, 512*units.GiB)
+	expectedPendingBytes := (512*float64(units.GiB) - float64(units.TiB)/10) * 3
+	require.InDelta(t, expectedPendingBytes, float64(pendingBytes), float64(units.MiB))
+}
+
+func TestCompactedSSTFlowControlTarget(t *testing.T) {
+	soft, hard := logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(units.TiB), soft)
+	require.Equal(t, uint64(2*units.TiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		3*units.TiB,
+	)
+	require.Equal(t, uint64(3840*units.GiB), soft)
+	require.Equal(t, uint64(7680*units.GiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"4TiB"},
+		[]string{"9TiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(4*units.TiB), soft)
+	require.Equal(t, uint64(9*units.TiB), hard)
+
+	require.False(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "192GiB"}, 4*units.TiB))
+	require.True(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "5TiB"}, 4*units.TiB))
+	require.Equal(t, "1TiB", logclient.TEST_FormatBytes(units.TiB))
+	require.Equal(t, "1536GiB", logclient.TEST_FormatBytes(1536*units.GiB))
+
+	require.Equal(t, uint(5), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(5)}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(nil, errors.New("pd unavailable")))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": "bad"}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(0)}, nil))
+}
+
 func TestCompactedSplitStrategy(t *testing.T) {
 	ctx := context.Background()
 
