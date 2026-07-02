@@ -129,6 +129,39 @@ func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, 
 	return tblInfo
 }
 
+func TestSchemaTrackerAddPartitionRebuildsStorageClass(t *testing.T) {
+	tests := []struct {
+		name   string
+		create string
+		alter  string
+	}{
+		{
+			name: "range expression",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"300"}}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
+			alter: `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+		},
+		{
+			name: "list expression",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["4"]}}'
+partition by list (id) (partition p0 values in (1, 2))`,
+			alter: `alter table test.t add partition (partition p1 values in (2 + 2))`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			execCreate(t, tracker, tt.create)
+			execAlter(t, tracker, tt.alter)
+
+			tblInfo := mustTableByName(t, tracker, "test", "t")
+			require.Equal(t, model.StorageClassTierIA, tblInfo.Partition.Definitions[len(tblInfo.Partition.Definitions)-1].StorageClassTier)
+		})
+	}
+}
+
 func requireExpressionIndexHiddenColumnsPublic(t *testing.T, tblInfo *model.TableInfo) {
 	t.Helper()
 
