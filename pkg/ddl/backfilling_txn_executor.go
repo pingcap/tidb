@@ -82,7 +82,7 @@ type txnBackfillExecutor struct {
 func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
 	jobCtx *ReorgContext) (backfillExecutor, error) {
-	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl, tbl.UseNewCollate())
+	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}
