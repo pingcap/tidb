@@ -340,7 +340,7 @@ func TestCheckpointCalculatorPrunesRemovedStoreAfterFilesSynced(t *testing.T) {
 
 func TestCheckpointCalculatorPrunesRemovedStoreBeforeAliveStoreBlocksAdvance(t *testing.T) {
 	ctx := context.Background()
-	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	upstream, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
 	pd := &fakePDMetaReader{}
@@ -374,7 +374,7 @@ func TestCheckpointCalculatorPrunesRemovedStoreBeforeAliveStoreBlocksAdvance(t *
 
 func TestCheckpointCalculatorSkipsMetaSyncedByStoreProgress(t *testing.T) {
 	ctx := context.Background()
-	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	upstream, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
 	staleMetaPath, staleLogPath := writeCheckpointTestMeta(ctx, t, upstream, 15, 2)
