@@ -981,7 +981,7 @@ func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hC
 		return false, waitTime, joinResult
 	}
 
-	for i := range probeSideChk.NumRows() {
+	for i := 0; i < probeSideChk.NumRows(); i++ {
 		probeKey, probeRow := hCtx.HashVals[i].Sum64(), probeSideChk.GetRow(i)
 		ok, oneWaitTime, joinResult = w.joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey, probeRow, hCtx, joinResult)
 		waitTime += oneWaitTime
