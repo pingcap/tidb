@@ -98,8 +98,8 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Same(t, safePartial, FindIndexByColumnsForForeignKey(tbl, []*IndexInfo{unsafePartialOnNonFKCol, safePartial}, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
 }
 
-func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
+func TestGlobalIndexMaxVersionForNextGen(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		require.True(t, GetGlobalIndexV1Supported())
+		require.Equal(t, GlobalIndexVersionV2, GetGlobalIndexMaxVersion())
 	}
 }
