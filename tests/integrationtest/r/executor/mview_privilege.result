@@ -280,7 +280,7 @@ Grants for u_create_mlog@%
 GRANT USAGE ON *.* TO 'u_create_mlog'@'%'
 GRANT SELECT ON `mview_privilege_test`.`t_revoke_create_mlog` TO 'u_create_mlog'@'%'
 create materialized view log on t_revoke_create_mlog (id, v);
-Error 1142 (42000): CREATE VIEW command denied to user 'u_create_mlog'@'%' for table '$mlog$t_revoke_create_mlog'
+Error 1142 (42000): CREATE MATERIALIZED VIEW LOG command denied to user 'u_create_mlog'@'%' for table 't_revoke_create_mlog'
 create user 'u_alter_mv'@'%';
 grant alter on mview_privilege_test.mv_revoke_ddl to 'u_alter_mv'@'%';
 revoke alter on mview_privilege_test.mv_revoke_ddl from 'u_alter_mv'@'%';

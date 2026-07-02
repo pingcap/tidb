@@ -6292,7 +6292,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
 		var createAuthErr, selectAuthErr error
 		if user := b.ctx.GetSessionVars().User; user != nil {
-			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE MATERIALIZED VIEW LOG", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
 			selectAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
 		}
 		// Creating a materialized view log creates a view-like maintenance object and

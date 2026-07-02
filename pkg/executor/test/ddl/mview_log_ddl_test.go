@@ -456,7 +456,9 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	tkNoCreate := testkit.NewTestKit(t, store)
 	require.NoError(t, tkNoCreate.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_no_create", Hostname: "%"}, nil, nil, nil))
 	err := tkNoCreate.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
-	require.ErrorContains(t, err, "CREATE VIEW command denied")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG command denied")
+	require.ErrorContains(t, err, "t_create_mlog_priv")
+	require.NotContains(t, err.Error(), "$mlog$")
 
 	tk.MustExec("grant create view on test.* to 'u_create_mlog_no_select'@'%'")
 	tkNoSelect := testkit.NewTestKit(t, store)
@@ -475,7 +477,9 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	tkTableCreate := testkit.NewTestKit(t, store)
 	require.NoError(t, tkTableCreate.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_table_create", Hostname: "%"}, nil, nil, nil))
 	err = tkTableCreate.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
-	require.ErrorContains(t, err, "CREATE VIEW command denied")
+	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG command denied")
+	require.ErrorContains(t, err, "t_create_mlog_priv")
+	require.NotContains(t, err.Error(), "$mlog$")
 }
 
 func TestGrantMaterializedViewObjectPrivileges(t *testing.T) {
