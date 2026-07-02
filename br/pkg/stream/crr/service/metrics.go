@@ -73,7 +73,7 @@ var (
 		Namespace: "tidb",
 		Subsystem: "br_crr",
 		Name:      "synced_ts",
-		Help:      "Current synced ts(minimum synced flush ts across all alive stores) of CRR.",
+		Help:      "Current synced ts(replication-complete checkpoint) of CRR.",
 	}, []string{"task"})
 	aliveStoreCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",

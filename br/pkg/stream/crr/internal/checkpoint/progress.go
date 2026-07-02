@@ -194,6 +194,7 @@ func (c *Calculator) advanceSyncedState(
 		}
 	}
 
+	syncedByStoreBeforePrune := maps.Clone(c.state.syncedByStore)
 	maps.DeleteFunc(c.state.syncedByStore, func(storeID uint64, _ uint64) bool {
 		_, ok := aliveStores[storeID]
 		return !ok
@@ -203,7 +204,7 @@ func (c *Calculator) advanceSyncedState(
 		return
 	}
 
-	storeSyncedTSs := slices.Collect(maps.Values(c.state.syncedByStore))
+	storeSyncedTSs := slices.Collect(maps.Values(syncedByStoreBeforePrune))
 	if len(storeSyncedTSs) == 0 {
 		return
 	}
