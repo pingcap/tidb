@@ -419,6 +419,64 @@ func TestServiceRetriesFailedResumeStatePersist(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
+func TestServiceFlushesPendingResumeStateOnShutdownAfterPersistFailure(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(ctx, t)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{
+		state: &PersistentState{
+			LastCheckpoint: initialCheckpoint,
+			SyncedTS:       initialCheckpoint,
+			SyncedByStore:  map[uint64]uint64{1: initialCheckpoint},
+		},
+		saveFailuresLeft: 1,
+	}
+
+	svc, err := New(
+		Deps{
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: time.Hour,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	record, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, record.CheckpointTS)
+	h.requireReplicateAllPending()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return stateStore.saveCount() == 1 &&
+			snapshot.State == stateDegraded &&
+			snapshot.LastError == "save resume state: persist boom"
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+
+	state := stateStore.savedState()
+	require.Equal(t, record.CheckpointTS, state.LastCheckpoint)
+	require.Equal(t, record.FlushTS, state.SyncedTS)
+	require.Equal(t, record.FlushTS, state.SyncedByStore[1])
+}
+
 func TestServiceRetriesFailedResumeStateLoad(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
