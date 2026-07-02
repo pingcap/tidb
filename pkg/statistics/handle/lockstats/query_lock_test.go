@@ -118,11 +118,11 @@ type ctxMatcher struct{}
 func (c *ctxMatcher) Matches(x any) bool {
 	ctx := x.(context.Context)
 	s := util.RequestSourceFromCtx(ctx)
-	return s == util.InternalRequest+"_"+kv.InternalTxnStats
+	return s == util.InternalRequest+"_"+kv.InternalTxnStatsNormalPriority
 }
 
 func (c *ctxMatcher) String() string {
-	return "all txns should be internal_stats source"
+	return "all txns should be internal stats normal priority source"
 }
 
 func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int, wantErr bool) (map[int64]struct{}, error) {

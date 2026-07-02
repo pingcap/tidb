@@ -115,7 +115,7 @@ func getApproximateTableCountFromStorage(
 	if partitionName != "" {
 		sqlescape.MustFormatSQL(sql, " partition(%n)", partitionName)
 	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsNormalPriority)
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, false
