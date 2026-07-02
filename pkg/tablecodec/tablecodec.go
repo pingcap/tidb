@@ -558,6 +558,12 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 // DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	return DecodeHandleToDatumMapWithCollate(collate.NewCollationEnabled(), handle, handleColIDs, cols, loc, row)
+}
+
+// DecodeHandleToDatumMapWithCollate decodes a handle into datum map with a fixed collation mode.
+func DecodeHandleToDatumMapWithCollate(useNewCollate bool, handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -569,7 +575,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 		if !ok {
 			continue
 		}
-		if types.NeedRestoredData(ft) {
+		if types.NeedRestoredDataWithCollate(ft, useNewCollate) {
 			continue
 		}
 		d, err := decodeHandleToDatum(handle, ft, idx)

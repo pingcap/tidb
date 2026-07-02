@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -83,8 +82,7 @@ type txnBackfillExecutor struct {
 func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
 	jobCtx *ReorgContext) (backfillExecutor, error) {
-	useNewCollate := info.ReorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())
-	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl, useNewCollate)
+	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl, tbl.UseNewCollate())
 	if err != nil {
 		return nil, err
 	}
