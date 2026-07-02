@@ -3,7 +3,6 @@
 package export
 
 import (
-	"bytes"
 	"database/sql"
 	"strings"
 
@@ -50,19 +49,6 @@ type SQLRowIter interface {
 	HasNext() bool
 	// release SQLRowIter
 	Close() error
-}
-
-// RowReceiverStringer is a combined interface of RowReceiver and Stringer
-type RowReceiverStringer interface {
-	RowReceiver
-	Stringer
-}
-
-// Stringer is an interface which represents sql types that support writing to buffer in sql/csv type
-type Stringer interface {
-	WriteToBuffer(*bytes.Buffer, bool)
-	WriteToBufferInCsv(*bytes.Buffer, bool, *csvOption)
-	GetRawBytes() []sql.RawBytes
 }
 
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
