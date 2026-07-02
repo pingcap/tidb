@@ -38,9 +38,7 @@ type SnapCacheSizeGetter interface {
 }
 
 func TestClusteredInsertIgnoreBatchGetKeyCount(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := createTestKit(t, store)
+	tk := createTestKit(t, clusteredIndexStore)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a varchar(10) primary key, b int)")
 	tk.MustExec("begin optimistic")
