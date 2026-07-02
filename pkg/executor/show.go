@@ -118,9 +118,11 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID       *int64
+	ImportJobIDFilter bool
 	ImportJobRaw      bool
 	DistributionJobID *int64
-	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY> and SHOW RAW IMPORT JOBS WHERE GROUP_KEY = ...
+	ImportGroupKeySet bool
 }
 
 type showTableRegionRowItem struct {
@@ -2615,6 +2617,93 @@ func isRawImportConflictStep(step proto.Step) bool {
 	return step == proto.ImportStepCollectConflicts || step == proto.ImportStepConflictResolution
 }
 
+func rawImportJobTerminal(status string) bool {
+	return status == importer.JobStatusFinished || status == "failed" || status == "cancelled"
+}
+
+func rawImportJobStatusCategory(status string) string {
+	switch status {
+	case "pending":
+		return importer.RawImportJobStatusCategoryPending
+	case importer.JobStatusRunning:
+		return importer.RawImportJobStatusCategoryRunning
+	case importer.JobStatusFinished, "failed", "cancelled":
+		return importer.RawImportJobStatusCategoryTerminal
+	case string(proto.TaskStateAwaitingResolution):
+		return importer.RawImportJobStatusCategoryAttentionNeeded
+	default:
+		return importer.RawImportJobStatusCategoryUnknown
+	}
+}
+
+func rawBool(v bool) *bool {
+	return &v
+}
+
+func buildRawImportJobError(status, message string) *importer.RawImportJobError {
+	switch status {
+	case "failed":
+		return &importer.RawImportJobError{
+			Message:  message,
+			Category: importer.RawImportJobErrorCategoryFailed,
+			Terminal: true,
+		}
+	case "cancelled":
+		return &importer.RawImportJobError{
+			Message:   message,
+			Category:  importer.RawImportJobErrorCategoryCancelled,
+			Terminal:  true,
+			Retryable: rawBool(false),
+		}
+	case string(proto.TaskStateAwaitingResolution):
+		return &importer.RawImportJobError{
+			Message:            message,
+			Category:           importer.RawImportJobErrorCategoryUserActionRequired,
+			Terminal:           false,
+			UserActionRequired: true,
+		}
+	default:
+		if message == "" {
+			return nil
+		}
+		return &importer.RawImportJobError{
+			Message:  message,
+			Category: importer.RawImportJobErrorCategoryUnknown,
+			Terminal: rawImportJobTerminal(status),
+		}
+	}
+}
+
+func buildRawImportJobSummary(summary *importer.Summary) *importer.RawImportJobSummary {
+	if summary == nil {
+		return nil
+	}
+	raw := &importer.RawImportJobSummary{
+		ImportedRows:     summary.ImportedRows,
+		ConflictRows:     summary.ConflictRowCnt,
+		TooManyConflicts: summary.TooManyConflicts,
+	}
+	appendStep := func(name string, summary importer.StepSummary, conflictStep bool) {
+		if summary.Bytes == 0 && summary.RowCnt == 0 {
+			return
+		}
+		step := importer.RawImportJobStepSummary{Name: name}
+		if conflictStep {
+			step.InputConflicts = summary.RowCnt
+		} else {
+			step.InputBytes = summary.Bytes
+			step.InputRows = summary.RowCnt
+		}
+		raw.Steps = append(raw.Steps, step)
+	}
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepEncodeAndSort), summary.EncodeSummary, false)
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepMergeSort), summary.MergeSummary, false)
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepWriteAndIngest), summary.IngestSummary, false)
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepCollectConflicts), summary.CollectConflictsSummary, true)
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepConflictResolution), summary.ResolveConflictsSummary, true)
+	return raw
+}
+
 // BuildRawImportJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
 func BuildRawImportJobStats(
 	location *time.Location,
@@ -2638,6 +2727,7 @@ func BuildRawImportJobStats(
 	}
 
 	stats := &importer.RawImportJobStats{
+		Version:             importer.RawImportJobStatsContractVersion,
 		JobID:               info.ID,
 		GroupKey:            info.GroupKey,
 		DataSource:          info.Parameters.FileLocation,
@@ -2645,10 +2735,16 @@ func BuildRawImportJobStats(
 		TableID:             info.TableID,
 		Phase:               info.Step,
 		Status:              info.Status,
+		StatusCategory:      rawImportJobStatusCategory(info.Status),
+		Terminal:            rawImportJobTerminal(info.Status),
 		SourceFileSizeBytes: info.SourceFileSize,
 		ErrorMessage:        info.ErrorMessage,
-		Summary:             info.Summary,
-		CreatedBy:           info.CreatedBy,
+		Error:               buildRawImportJobError(info.Status, info.ErrorMessage),
+		Summary:             buildRawImportJobSummary(info.Summary),
+	}
+	if info.CreatedBy != "" {
+		stats.CreatedBy = importer.RawImportJobCreatedByRedacted
+		stats.CreatedByRedacted = true
 	}
 
 	if runInfo != nil {
@@ -3007,7 +3103,13 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
 			return err2
 		}); err != nil {
+			if e.ImportJobIDFilter && exeerrors.ErrLoadDataJobNotFound.Equal(err) {
+				return nil
+			}
 			return err
+		}
+		if e.ImportGroupKeySet && info.GroupKey != e.ImportGroupKey {
+			return nil
 		}
 		return appendJob(info)
 	}
@@ -3017,7 +3119,11 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 		loc = se.GetSessionVars().Location()
 		exec := se.GetSQLExecutor()
 		var err2 error
-		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
+		if e.ImportGroupKeySet {
+			infos, err2 = importer.GetJobsByGroupKeyExact(ctx, exec, sctx.GetSessionVars().User.String(), e.ImportGroupKey, hasSuperPriv)
+		} else {
+			infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
+		}
 		return err2
 	}); err != nil {
 		return err

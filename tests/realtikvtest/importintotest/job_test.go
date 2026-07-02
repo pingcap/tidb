@@ -170,7 +170,11 @@ func (s *mockGCSSuite) TestShowJob() {
 	rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
 	var rawStats importer.RawImportJobStats
 	s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
-	s.Equal(jobInfo.ID, rawStats.JobID)
+	s.Equal(strconv.Itoa(int(jobInfo.ID)), rawRows[0][0])
+	s.Equal("<nil>", fmt.Sprintf("%v", rawRows[0][1]))
+	s.Equal(importer.RawImportJobStatsContractVersion, rawStats.Version)
+	s.Zero(rawStats.JobID)
+	s.Empty(rawStats.GroupKey)
 	urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
 	s.NoError(err)
 	urlGot, err := url.Parse(rawStats.DataSource)
@@ -182,9 +186,15 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Equal(jobInfo.TableID, rawStats.TableID)
 	s.Equal(jobInfo.Step, rawStats.Phase)
 	s.Equal(jobInfo.Status, rawStats.Status)
+	s.Equal(importer.RawImportJobStatusCategoryTerminal, rawStats.StatusCategory)
+	s.True(rawStats.Terminal)
 	s.Equal(jobInfo.SourceFileSize, rawStats.SourceFileSizeBytes)
 	s.NotNil(rawStats.ImportedRows)
 	s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
+	s.NotNil(rawStats.Summary)
+	s.Equal(jobInfo.Summary.ImportedRows, rawStats.Summary.ImportedRows)
+	s.Equal(importer.RawImportJobCreatedByRedacted, rawStats.CreatedBy)
+	s.True(rawStats.CreatedByRedacted)
 	s.Nil(rawStats.CurrentStep)
 
 	// test show job by id using test_show_job2
@@ -319,10 +329,15 @@ func (s *mockGCSSuite) TestShowJob() {
 		b := []byte(fmt.Sprintf("%s", r[2]))
 		var st importer.RawImportJobStats
 		s.NoError(json.Unmarshal(b, &st))
-		s.Equal(groupKey, st.GroupKey)
-		_, ok := wantJobIDs[st.JobID]
+		s.Equal(groupKey, r[1])
+		jobID, err := strconv.ParseInt(fmt.Sprintf("%s", r[0]), 10, 64)
+		s.NoError(err)
+		_, ok := wantJobIDs[jobID]
 		s.True(ok)
-		delete(wantJobIDs, st.JobID)
+		s.Zero(st.JobID)
+		s.Empty(st.GroupKey)
+		s.Equal(importer.RawImportJobStatsContractVersion, st.Version)
+		delete(wantJobIDs, jobID)
 	}
 	s.Len(wantJobIDs, 0)
 }

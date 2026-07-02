@@ -77,6 +77,9 @@ func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus,
 	query := fmt.Sprintf("SHOW RAW IMPORT JOB %d", jobID)
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
+		if isRawImportUnsupportedError(err) {
+			return m.getLegacyJobStatus(ctx, jobID)
+		}
 		return nil, errors.Trace(err)
 	}
 	defer rows.Close()
@@ -89,6 +92,23 @@ func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus,
 		return nil, errors.Trace(err)
 	}
 
+	return nil, ErrJobNotFound
+}
+
+func (m *jobManager) getLegacyJobStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
+	query := fmt.Sprintf("SHOW IMPORT JOB %d", jobID)
+	rows, err := m.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		return scanJobStatus(rows)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	return nil, ErrJobNotFound
 }
 
@@ -126,6 +146,9 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	query := fmt.Sprintf("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
+		if isRawImportUnsupportedError(err) {
+			return m.getLegacyJobsByGroup(ctx, groupKey)
+		}
 		return nil, errors.Trace(err)
 	}
 	defer rows.Close()
@@ -143,6 +166,40 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 		return nil, errors.Trace(err)
 	}
 	return jobs, nil
+}
+
+func (m *jobManager) getLegacyJobsByGroup(ctx context.Context, groupKey string) ([]*JobStatus, error) {
+	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	rows, err := m.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	var jobs []*JobStatus
+	for rows.Next() {
+		status, err := scanJobStatus(rows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
+func isRawImportUnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "syntax") ||
+		strings.Contains(msg, "parse") ||
+		strings.Contains(msg, "near 'raw'") ||
+		strings.Contains(msg, "near \"raw\"") ||
+		strings.Contains(msg, "not supported")
 }
 
 func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {
@@ -215,16 +272,25 @@ func jobStatusFromRawStats(stats *importer.RawImportJobStats) *JobStatus {
 		TableID:             stats.TableID,
 		Phase:               stats.Phase,
 		Status:              stats.Status,
+		ContractVersion:     stats.Version,
+		StatusCategory:      stats.StatusCategory,
+		Terminal:            stats.Terminal,
 		SourceFileSizeBytes: stats.SourceFileSizeBytes,
 		ResultMessage:       stats.ErrorMessage,
 		ErrorMessage:        stats.ErrorMessage,
+		Error:               stats.Error,
 		Summary:             stats.Summary,
 		CreatedBy:           stats.CreatedBy,
+		CreatedByRedacted:   stats.CreatedByRedacted,
 		CreateTimeUnix:      stats.CreateTimeUnix,
 		StartTimeUnix:       stats.StartTimeUnix,
 		EndTimeUnix:         stats.EndTimeUnix,
 		UpdateTimeUnix:      stats.UpdateTimeUnix,
 		CurrentStep:         stats.CurrentStep,
+	}
+	if stats.Error != nil && status.ErrorMessage == "" {
+		status.ErrorMessage = stats.Error.Message
+		status.ResultMessage = stats.Error.Message
 	}
 	if stats.ImportedRows != nil {
 		status.ImportedRows = *stats.ImportedRows

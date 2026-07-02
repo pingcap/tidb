@@ -18,9 +18,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,7 +79,7 @@ func TestGetJobStatus(t *testing.T) {
 	cols := []string{"Job_ID", "Group_Key", "Raw_Stats"}
 
 	// Case 1: Success
-	raw := []byte(`{"job_id":123,"status":"finished","source_file_size_bytes":100,"imported_rows":1000,"error_message":"success","create_time_unix":1672567200}`)
+	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true,"source_file_size_bytes":100,"imported_rows":1000,"error_message":"success","summary":{"imported_rows":1000},"create_time_unix":1672567200,"created_by":"<redacted>","created_by_redacted":true}`)
 	rows := sqlmock.NewRows(cols).AddRow(jobID, nil, raw)
 	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnRows(rows)
 
@@ -88,6 +90,13 @@ func TestGetJobStatus(t *testing.T) {
 	require.Equal(t, int64(100), status.SourceFileSizeBytes)
 	require.Equal(t, int64(1000), status.ImportedRows)
 	require.Equal(t, "success", status.ResultMessage)
+	require.Equal(t, importer.RawImportJobStatsContractVersion, status.ContractVersion)
+	require.Equal(t, importer.RawImportJobStatusCategoryTerminal, status.StatusCategory)
+	require.True(t, status.Terminal)
+	require.NotNil(t, status.Summary)
+	require.Equal(t, int64(1000), status.Summary.ImportedRows)
+	require.Equal(t, importer.RawImportJobCreatedByRedacted, status.CreatedBy)
+	require.True(t, status.CreatedByRedacted)
 	require.False(t, status.CreateTime.IsZero())
 
 	// Case 2: Job not found
@@ -100,6 +109,39 @@ func TestGetJobStatus(t *testing.T) {
 	_, err = manager.GetJobStatus(ctx, jobID)
 	require.Error(t, err)
 
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetJobStatusFallbackToLegacy(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	manager := NewJobManager(db)
+	ctx := context.Background()
+	jobID := int64(123)
+	rawUnsupported := errors.New("You have an error in your SQL syntax near 'RAW IMPORT JOB'")
+	legacyCols := []string{
+		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
+		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
+		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
+	}
+	rows := sqlmock.NewRows(legacyCols).AddRow(
+		jobID, "", "s3://bucket/file.csv", "db.table", int64(1),
+		"import", "finished", "100MB", int64(1000), "success",
+		"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
+		"", "100MB", "100MB", "100", "10MB/s", "0s",
+	)
+
+	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnError(rawUnsupported)
+	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnRows(rows)
+
+	status, err := manager.GetJobStatus(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, jobID, status.JobID)
+	require.Equal(t, "finished", status.Status)
+	require.Equal(t, int64(1000), status.ImportedRows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -188,10 +230,10 @@ func TestGetJobsByGroup(t *testing.T) {
 	// Case 1: Success
 	rows := sqlmock.NewRows(cols).
 		AddRow(
-			int64(1), groupKey, []byte(`{"job_id":1,"group_key":"test_group","status":"finished"}`),
+			int64(1), groupKey, []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true}`),
 		).
 		AddRow(
-			int64(2), groupKey, []byte(`{"job_id":2,"group_key":"test_group","status":"running","current_step":{"name":"import","processed_bytes":50,"total_bytes":100}}`),
+			int64(2), groupKey, []byte(`{"version":1,"status":"running","status_category":"running","terminal":false,"job_phase":"importing","current_step":{"name":"import","processed_bytes":50,"total_bytes":100}}`),
 		)
 	mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(rows)
 
@@ -201,7 +243,9 @@ func TestGetJobsByGroup(t *testing.T) {
 	require.Equal(t, int64(1), jobs[0].JobID)
 	require.Equal(t, "finished", jobs[0].Status)
 	require.Equal(t, int64(2), jobs[1].JobID)
+	require.Equal(t, groupKey, jobs[1].GroupKey)
 	require.Equal(t, "running", jobs[1].Status)
+	require.Equal(t, "importing", jobs[1].Phase)
 	require.NotNil(t, jobs[1].CurrentStep)
 	require.Equal(t, "import", jobs[1].Step)
 	require.Equal(t, "50", jobs[1].Percent)

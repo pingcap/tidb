@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -178,6 +179,7 @@ func testBuildRawImportJobStats(t *testing.T) {
 
 	stats, err := executor.BuildRawImportJobStats(loc, info, runInfo)
 	require.NoError(t, err)
+	require.Equal(t, importer.RawImportJobStatsContractVersion, stats.Version)
 	require.Equal(t, int64(1), stats.JobID)
 	require.Equal(t, "g1", stats.GroupKey)
 	require.Equal(t, "s3://bucket/prefix", stats.DataSource)
@@ -185,7 +187,16 @@ func testBuildRawImportJobStats(t *testing.T) {
 	require.Equal(t, int64(42), stats.TableID)
 	require.Equal(t, "importing", stats.Phase)
 	require.Equal(t, importer.JobStatusRunning, stats.Status)
+	require.Equal(t, importer.RawImportJobStatusCategoryRunning, stats.StatusCategory)
+	require.False(t, stats.Terminal)
 	require.Equal(t, int64(123), stats.SourceFileSizeBytes)
+	require.Equal(t, importer.RawImportJobCreatedByRedacted, stats.CreatedBy)
+	require.True(t, stats.CreatedByRedacted)
+	rawJSON, err := json.Marshal(stats)
+	require.NoError(t, err)
+	require.NotContains(t, string(rawJSON), "job_id")
+	require.NotContains(t, string(rawJSON), "group_key")
+	require.Contains(t, string(rawJSON), "job_phase")
 
 	require.NotNil(t, stats.ImportedRows)
 	require.Equal(t, int64(10), *stats.ImportedRows)
@@ -217,14 +228,32 @@ func testBuildRawImportJobStats(t *testing.T) {
 
 	// Finished job: ImportedRows comes from summary, CurrentStep omitted, update time follows EndTime.
 	info.Status = importer.JobStatusFinished
-	info.Summary = &importer.Summary{ImportedRows: 99}
+	info.Summary = &importer.Summary{
+		EncodeSummary: importer.StepSummary{Bytes: 10, RowCnt: 2},
+		ImportedRows:  99,
+	}
 	info.EndTime = t2025
 	stats, err = executor.BuildRawImportJobStats(loc, info, nil)
 	require.NoError(t, err)
 	require.NotNil(t, stats.ImportedRows)
 	require.Equal(t, int64(99), *stats.ImportedRows)
+	require.Equal(t, importer.RawImportJobStatusCategoryTerminal, stats.StatusCategory)
+	require.True(t, stats.Terminal)
+	require.NotNil(t, stats.Summary)
+	require.Equal(t, int64(99), stats.Summary.ImportedRows)
+	require.Len(t, stats.Summary.Steps, 1)
+	require.Equal(t, "encode", stats.Summary.Steps[0].Name)
+	require.Equal(t, int64(10), stats.Summary.Steps[0].InputBytes)
 	require.Nil(t, stats.CurrentStep)
 	require.Equal(t, int64(1735689600), stats.UpdateTimeUnix)
+
+	info.Status = "failed"
+	info.ErrorMessage = "load failed"
+	stats, err = executor.BuildRawImportJobStats(loc, info, nil)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Error)
+	require.Equal(t, importer.RawImportJobErrorCategoryFailed, stats.Error.Category)
+	require.True(t, stats.Error.Terminal)
 }
 
 func TestShow(t *testing.T) {
