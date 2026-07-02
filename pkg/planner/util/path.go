@@ -564,8 +564,8 @@ func (path *AccessPath) IsUndetermined() bool {
 // on mvi, it will return many index rows which breaks handle-unique attribute here.
 // So we cannot use mv index path for index join.
 // If path is partial index path:
-// We need to first determine whether we already meet the partial index condition.
-// Currently we don't support that, so we conservatively return true here.
+// The partial-index predicate has already been checked against pushed-down conditions before IndexJoin path
+// enumeration. A remaining partial-index path can be used as the IndexJoin inner path.
 func (path *AccessPath) IsIndexJoinUnapplicable() bool {
-	return path.IsUndetermined()
+	return !path.IsTablePath() && path.Index != nil && path.Index.MVIndex
 }

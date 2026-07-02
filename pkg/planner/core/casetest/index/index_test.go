@@ -451,6 +451,35 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 	})
 }
 
+func TestPartialIndexWithIndexJoin(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists pi_idxjoin_outer, pi_idxjoin_inner")
+		tk.MustExec("create table pi_idxjoin_outer(a int, b int)")
+		tk.MustExec("create table pi_idxjoin_inner(a int, b int, index idx_a(a) where a is not null)")
+		tk.MustExec("insert into pi_idxjoin_outer values (1, 10), (2, 20), (null, 30)")
+		tk.MustExec("insert into pi_idxjoin_inner values (1, 100), (2, 200), (null, 999)")
+
+		innerJoinSQL := `select /* issue:69524 */ /*+ INL_JOIN(pi_idxjoin_inner) */ pi_idxjoin_outer.a, pi_idxjoin_inner.b
+			from pi_idxjoin_outer join pi_idxjoin_inner on pi_idxjoin_outer.a = pi_idxjoin_inner.a
+			order by pi_idxjoin_outer.b`
+		tk.MustQuery("explain format = 'plan_tree' " + innerJoinSQL).MultiCheckContain([]string{"IndexJoin", "idx_a"})
+		tk.MustQuery(innerJoinSQL).Check(testkit.Rows("1 100", "2 200"))
+
+		leftJoinSQL := `select /* issue:69524 */ /*+ INL_JOIN(pi_idxjoin_inner) */ pi_idxjoin_outer.a, pi_idxjoin_inner.b
+			from pi_idxjoin_outer left join pi_idxjoin_inner on pi_idxjoin_outer.a = pi_idxjoin_inner.a
+			order by pi_idxjoin_outer.b`
+		tk.MustQuery("explain format = 'plan_tree' " + leftJoinSQL).MultiCheckContain([]string{"IndexJoin", "idx_a"})
+		tk.MustQuery(leftJoinSQL).Check(testkit.Rows("1 100", "2 200", "<nil> <nil>"))
+
+		nullEQSQL := `select /* issue:69524 */ /*+ INL_JOIN(pi_idxjoin_inner) */ pi_idxjoin_outer.a, pi_idxjoin_inner.b
+			from pi_idxjoin_outer join pi_idxjoin_inner on pi_idxjoin_outer.a <=> pi_idxjoin_inner.a
+			order by pi_idxjoin_outer.b, pi_idxjoin_inner.b`
+		tk.MustQuery("explain format = 'plan_tree' " + nullEQSQL).CheckNotContain("idx_a")
+		tk.MustQuery(nullEQSQL).Check(testkit.Rows("1 100", "2 200", "<nil> 999"))
+	})
+}
+
 func TestForceIndexLimit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec(`use test`)
