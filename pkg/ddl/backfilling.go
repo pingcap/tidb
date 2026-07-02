@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -169,7 +168,6 @@ type backfillCtx struct {
 	batchCnt   int
 	jobContext *ReorgContext
 
-	useNewCollate   bool
 	metricCounter   prometheus.Counter
 	conflictCounter prometheus.Counter
 }
@@ -215,20 +213,18 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	}
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
-	useNewCollate := rInfo.ReorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())
 	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
-		id:            id,
-		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
-		warnings:      warnHandler,
-		exprCtx:       exprCtx,
-		tblCtx:        tblCtx,
-		loc:           exprCtx.GetEvalCtx().Location(),
-		schemaName:    schemaName,
-		table:         tbl,
-		batchCnt:      batchCnt,
-		jobContext:    jobCtx,
-		useNewCollate: useNewCollate,
+		id:         id,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
+		warnings:   warnHandler,
+		exprCtx:    exprCtx,
+		tblCtx:     tblCtx,
+		loc:        exprCtx.GetEvalCtx().Location(),
+		schemaName: schemaName,
+		table:      tbl,
+		batchCnt:   batchCnt,
+		jobContext: jobCtx,
 		metricCounter: getBackfillTotalByTableID(
 			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 		conflictCounter: getBackfillTotalByTableID(
