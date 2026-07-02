@@ -1541,7 +1541,8 @@ type SessionVars struct {
 	EnableTiFlashReadForWriteStmt bool
 
 	// InMaterializedViewMaintenance indicates the session is executing internal MV refresh / MV log purge statements.
-	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict.
+	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict,
+	// and planner may collect predicate-column usage for MV maintenance SQL that scans user tables.
 	InMaterializedViewMaintenance bool
 	// MVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
 	MVMaintainIsolationReadEngines string

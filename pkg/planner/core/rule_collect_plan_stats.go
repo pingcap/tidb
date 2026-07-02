@@ -41,13 +41,19 @@ type CollectPredicateColumnsPoint struct{}
 // Optimize implements LogicalOptRule.<0th> interface.
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
-		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
+	sessVars := plan.SCtx().GetSessionVars()
+	intest.Assert(!sessVars.InRestrictedSQL || sessVars.InternalSQLScanUserTable || sessVars.InMaterializedViewMaintenance,
+		"CollectPredicateColumnsPoint should not be called in restricted SQL mode unless it scans user tables")
+	syncWait := sessVars.StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
+	}
+	if sessVars.InRestrictedSQL && sessVars.InMaterializedViewMaintenance && !sessVars.InternalSQLScanUserTable {
+		// MV maintenance uses this rule only to record predicate-column usage for later
+		// analyze decisions. Do not let internal maintenance SQL trigger stats loading.
+		return plan, planChanged, nil
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
