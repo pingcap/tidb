@@ -3006,11 +3006,8 @@ func purgeMaterializedViewLogData(
 			batchSize,
 		)
 	}
-	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
-	sessVars.InMaterializedViewMaintenance = true
-	defer func() {
-		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
-	}()
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	defer restoreMVMaintenanceFlags()
 
 	_, err := sqlExec.ExecuteInternal(kctx, deleteSQL)
 	if err != nil {
@@ -3269,11 +3266,8 @@ func countMLogPurgePendingRowsOnTiFlash(
 		return 0, errors.Trace(err)
 	}
 	defer restoreFallback()
-	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
-	sessVars.InMaterializedViewMaintenance = true
-	defer func() {
-		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
-	}()
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	defer restoreMVMaintenanceFlags()
 
 	countCtx, cancel := context.WithTimeout(kctx, mlogPurgeAdaptiveCountTimeout)
 	defer cancel()
@@ -4481,11 +4475,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}
 	defer restoreBuildSessVars()
 
-	origInMaterializedViewMaintenance := buildSessVars.InMaterializedViewMaintenance
-	buildSessVars.InMaterializedViewMaintenance = true
-	defer func() {
-		buildSessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
-	}()
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(buildSessVars)
+	defer restoreMVMaintenanceFlags()
 
 	if buildSessVars.InTxn() {
 		return 0, errors.New("refresh materialized view complete OUT OF PLACE: build session unexpectedly in transaction")
@@ -4698,19 +4689,37 @@ func applyMVMaintenanceSessionVars(
 	targetIsolationReadEngines string,
 	bestEffort bool,
 ) (func(), error) {
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
 	restoreMemQuota, err := applyMVMaintenanceMemQuota(sessVars, targetMemQuota, bestEffort)
 	if err != nil {
+		restoreMVMaintenanceFlags()
 		return nil, err
 	}
 	restoreIsolationReadEngines, err := applyMVMaintenanceIsolationReadEngines(sessVars, targetIsolationReadEngines, bestEffort)
 	if err != nil {
 		restoreMemQuota()
+		restoreMVMaintenanceFlags()
 		return nil, err
 	}
 	return func() {
 		restoreIsolationReadEngines()
 		restoreMemQuota()
+		restoreMVMaintenanceFlags()
 	}, nil
+}
+
+func enableMVMaintenanceFlags(sessVars *variable.SessionVars) func() {
+	if sessVars == nil {
+		return func() {}
+	}
+	originInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	originInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
+	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InternalSQLScanUserTable = true
+	return func() {
+		sessVars.InMaterializedViewMaintenance = originInMaterializedViewMaintenance
+		sessVars.InternalSQLScanUserTable = originInternalSQLScanUserTable
+	}
 }
 
 func applyMVMaintenanceIsolationReadEngines(
@@ -4767,8 +4776,9 @@ func applyRefreshExecutionSessionVars(
 	})
 
 	var (
-		restore func()
-		err     error
+		restore                   func()
+		err                       error
+		restoreMVMaintenanceFlags = enableMVMaintenanceFlags(sessVars)
 	)
 	if injectedErr != nil {
 		err = injectedErr
@@ -4778,6 +4788,7 @@ func applyRefreshExecutionSessionVars(
 		restore, err = ddl.ApplyMViewExecutionSessionVars(sessVars, target)
 	}
 	if err != nil {
+		restoreMVMaintenanceFlags()
 		if !bestEffort {
 			return nil, err
 		}
@@ -4801,7 +4812,10 @@ func applyRefreshExecutionSessionVars(
 		sessVars.TiFlashMaxQueryMemoryPerNode,
 		sessVars.TiFlashQuerySpillRatio,
 	)
-	return restore, nil
+	return func() {
+		restore()
+		restoreMVMaintenanceFlags()
+	}, nil
 }
 
 func buildMVRefreshShadowTableName(mviewID int64) string {
@@ -5389,11 +5403,8 @@ func executeRefreshMaterializedViewDataChanges(
 ) error {
 	// TiFlash read is blocked for write statements when sql_mode is strict. Refresh prefers TiFlash for the
 	// scan part, so we bypass this guard for MV maintenance statements.
-	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
-	sessVars.InMaterializedViewMaintenance = true
-	defer func() {
-		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
-	}()
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	defer restoreMVMaintenanceFlags()
 
 	switch refreshMode {
 	case ast.RefreshMaterializedViewModeCompleteInPlace:

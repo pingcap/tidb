@@ -86,9 +86,11 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 	parentVars := parent.GetSessionVars()
 	childVars := child.GetSessionVars()
 	childVars.InMaterializedViewMaintenance = parentVars.InMaterializedViewMaintenance
+	childVars.InternalSQLScanUserTable = parentVars.InternalSQLScanUserTable
 	failpoint.InjectCall(
 		"inheritMViewMaintenanceFlagApplied",
 		childVars.InMaterializedViewMaintenance,
+		childVars.InternalSQLScanUserTable,
 	)
 }
 

@@ -27,11 +27,59 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMVMaintenanceSessionVarsEnableMaintenanceFlags(t *testing.T) {
+	sctx := mock.NewContext()
+	sessVars := sctx.GetSessionVars()
+	sessVars.InMaterializedViewMaintenance = false
+	sessVars.InternalSQLScanUserTable = false
+
+	restore, err := applyMVMaintenanceSessionVars(
+		sessVars,
+		sessVars.MemQuotaQuery,
+		variable.GetIsolationReadEnginesString(sessVars),
+		false,
+	)
+	require.NoError(t, err)
+	require.True(t, sessVars.InMaterializedViewMaintenance)
+	require.True(t, sessVars.InternalSQLScanUserTable)
+	restore()
+	require.False(t, sessVars.InMaterializedViewMaintenance)
+	require.False(t, sessVars.InternalSQLScanUserTable)
+
+	restore, err = applyRefreshExecutionSessionVars(
+		sessVars,
+		variable.CaptureAppliedMViewExecutionSessionVars(sessVars),
+		false,
+	)
+	require.NoError(t, err)
+	require.True(t, sessVars.InMaterializedViewMaintenance)
+	require.True(t, sessVars.InternalSQLScanUserTable)
+	restore()
+	require.False(t, sessVars.InMaterializedViewMaintenance)
+	require.False(t, sessVars.InternalSQLScanUserTable)
+
+	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InternalSQLScanUserTable = true
+	restore, err = applyMVMaintenanceSessionVars(
+		sessVars,
+		sessVars.MemQuotaQuery,
+		variable.GetIsolationReadEnginesString(sessVars),
+		false,
+	)
+	require.NoError(t, err)
+	require.True(t, sessVars.InMaterializedViewMaintenance)
+	require.True(t, sessVars.InternalSQLScanUserTable)
+	restore()
+	require.True(t, sessVars.InMaterializedViewMaintenance)
+	require.True(t, sessVars.InternalSQLScanUserTable)
+}
 
 func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
