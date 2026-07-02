@@ -48,6 +48,8 @@ type partialResult4SumUint64 struct {
 }
 
 type partialResult4SumDistinctUint64 struct {
+	// valSet stores uint64 values as int64 bit-pattern keys only for equality
+	// deduplication. Convert keys back to uint64 before applying arithmetic.
 	valSet set.Int64SetWithMemoryUsage
 }
 
