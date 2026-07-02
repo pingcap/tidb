@@ -113,23 +113,28 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	sessionVars := tk.Session().GetSessionVars()
 	origRestricted := sessionVars.InRestrictedSQL
 	origMaintenance := sessionVars.InMaterializedViewMaintenance
+	origInternalSQLScanUserTable := sessionVars.InternalSQLScanUserTable
 	sessionVars.InRestrictedSQL = true
 	sessionVars.InMaterializedViewMaintenance = true
+	sessionVars.InternalSQLScanUserTable = true
 	defer func() {
 		sessionVars.InRestrictedSQL = origRestricted
 		sessionVars.InMaterializedViewMaintenance = origMaintenance
+		sessionVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
 	}()
 
 	var (
-		invoked          bool
-		childMaintenance bool
+		invoked                       bool
+		childMaintenance              bool
+		childInternalSQLScanUserTable bool
 	)
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/executor/inheritMViewMaintenanceFlagApplied",
-		func(maintenance bool) {
+		func(maintenance bool, internalSQLScanUserTable bool) {
 			invoked = true
 			childMaintenance = maintenance
+			childInternalSQLScanUserTable = internalSQLScanUserTable
 		},
 	)
 	testfailpoint.Enable(
@@ -142,6 +147,7 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	require.ErrorContains(t, err, "mock import from select setup error")
 	require.True(t, invoked)
 	require.True(t, childMaintenance)
+	require.True(t, childInternalSQLScanUserTable)
 }
 
 func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {

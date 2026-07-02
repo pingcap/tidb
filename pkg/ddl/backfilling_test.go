@@ -279,7 +279,7 @@ func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 	store := &mockStorage{client: &mock.Client{}}
 	sctx := newMockReorgSessCtx(store)
 	originalInMaterializedViewMaintenance := sctx.GetSessionVars().InMaterializedViewMaintenance
-	sctx.GetSessionVars().InMaterializedViewMaintenance = originalInMaterializedViewMaintenance
+	originalInternalSQLScanUserTable := sctx.GetSessionVars().InternalSQLScanUserTable
 
 	reorgMeta := &model.DDLReorgMeta{
 		Location:          &model.TimeZoneLocation{Name: "UTC"},
@@ -292,9 +292,11 @@ func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 	restore, err := initCreateMaterializedViewBuildSession(sctx, job, sctx.GetSessionVars().CurrentDB)
 	require.NoError(t, err)
 	require.True(t, sctx.GetSessionVars().InMaterializedViewMaintenance)
+	require.True(t, sctx.GetSessionVars().InternalSQLScanUserTable)
 
 	restore()
 	require.Equal(t, originalInMaterializedViewMaintenance, sctx.GetSessionVars().InMaterializedViewMaintenance)
+	require.Equal(t, originalInternalSQLScanUserTable, sctx.GetSessionVars().InternalSQLScanUserTable)
 }
 
 func TestReorgTableMutateContext(t *testing.T) {

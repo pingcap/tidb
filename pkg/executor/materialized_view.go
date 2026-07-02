@@ -3007,9 +3007,11 @@ func purgeMaterializedViewLogData(
 		)
 	}
 	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	restoreInternalSQLScanUserTable := enableInternalSQLScanUserTable(sessVars)
 	sessVars.InMaterializedViewMaintenance = true
 	defer func() {
 		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		restoreInternalSQLScanUserTable()
 	}()
 
 	_, err := sqlExec.ExecuteInternal(kctx, deleteSQL)
@@ -3270,9 +3272,11 @@ func countMLogPurgePendingRowsOnTiFlash(
 	}
 	defer restoreFallback()
 	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	restoreInternalSQLScanUserTable := enableInternalSQLScanUserTable(sessVars)
 	sessVars.InMaterializedViewMaintenance = true
 	defer func() {
 		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		restoreInternalSQLScanUserTable()
 	}()
 
 	countCtx, cancel := context.WithTimeout(kctx, mlogPurgeAdaptiveCountTimeout)
@@ -4482,9 +4486,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	defer restoreBuildSessVars()
 
 	origInMaterializedViewMaintenance := buildSessVars.InMaterializedViewMaintenance
+	restoreInternalSQLScanUserTable := enableInternalSQLScanUserTable(buildSessVars)
 	buildSessVars.InMaterializedViewMaintenance = true
 	defer func() {
 		buildSessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		restoreInternalSQLScanUserTable()
 	}()
 
 	if buildSessVars.InTxn() {
@@ -4698,19 +4704,34 @@ func applyMVMaintenanceSessionVars(
 	targetIsolationReadEngines string,
 	bestEffort bool,
 ) (func(), error) {
+	restoreInternalSQLScanUserTable := enableInternalSQLScanUserTable(sessVars)
 	restoreMemQuota, err := applyMVMaintenanceMemQuota(sessVars, targetMemQuota, bestEffort)
 	if err != nil {
+		restoreInternalSQLScanUserTable()
 		return nil, err
 	}
 	restoreIsolationReadEngines, err := applyMVMaintenanceIsolationReadEngines(sessVars, targetIsolationReadEngines, bestEffort)
 	if err != nil {
 		restoreMemQuota()
+		restoreInternalSQLScanUserTable()
 		return nil, err
 	}
 	return func() {
 		restoreIsolationReadEngines()
 		restoreMemQuota()
+		restoreInternalSQLScanUserTable()
 	}, nil
+}
+
+func enableInternalSQLScanUserTable(sessVars *variable.SessionVars) func() {
+	if sessVars == nil {
+		return func() {}
+	}
+	originInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
+	sessVars.InternalSQLScanUserTable = true
+	return func() {
+		sessVars.InternalSQLScanUserTable = originInternalSQLScanUserTable
+	}
 }
 
 func applyMVMaintenanceIsolationReadEngines(
@@ -4767,8 +4788,9 @@ func applyRefreshExecutionSessionVars(
 	})
 
 	var (
-		restore func()
-		err     error
+		restore                         func()
+		err                             error
+		restoreInternalSQLScanUserTable = enableInternalSQLScanUserTable(sessVars)
 	)
 	if injectedErr != nil {
 		err = injectedErr
@@ -4778,6 +4800,7 @@ func applyRefreshExecutionSessionVars(
 		restore, err = ddl.ApplyMViewExecutionSessionVars(sessVars, target)
 	}
 	if err != nil {
+		restoreInternalSQLScanUserTable()
 		if !bestEffort {
 			return nil, err
 		}
@@ -4801,7 +4824,10 @@ func applyRefreshExecutionSessionVars(
 		sessVars.TiFlashMaxQueryMemoryPerNode,
 		sessVars.TiFlashQuerySpillRatio,
 	)
-	return restore, nil
+	return func() {
+		restore()
+		restoreInternalSQLScanUserTable()
+	}, nil
 }
 
 func buildMVRefreshShadowTableName(mviewID int64) string {
@@ -5390,9 +5416,11 @@ func executeRefreshMaterializedViewDataChanges(
 	// TiFlash read is blocked for write statements when sql_mode is strict. Refresh prefers TiFlash for the
 	// scan part, so we bypass this guard for MV maintenance statements.
 	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	restoreInternalSQLScanUserTable := enableInternalSQLScanUserTable(sessVars)
 	sessVars.InMaterializedViewMaintenance = true
 	defer func() {
 		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		restoreInternalSQLScanUserTable()
 	}()
 
 	switch refreshMode {

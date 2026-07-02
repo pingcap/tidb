@@ -145,7 +145,7 @@ func TestSkipSystemTables(t *testing.T) {
 	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
 }
 
-func TestMVMaintenanceRestrictedSQLCollectsPredicateColumns(t *testing.T) {
+func TestInternalSQLScanUserTableCollectsPredicateColumns(t *testing.T) {
 	sql := "select * from t where a > 2"
 	s := createPlannerSuite()
 	defer s.Close()
@@ -181,16 +181,15 @@ func TestMVMaintenanceRestrictedSQLCollectsPredicateColumns(t *testing.T) {
 
 	sessVars.InMaterializedViewMaintenance = true
 	flags = adjustOptimizationFlags(baseFlags, lp)
-	require.NotZero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
 	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
-	_, err = logicalOptimize(ctx, flags, lp)
-	require.NoError(t, err)
 
-	sessVars.InMaterializedViewMaintenance = false
 	sessVars.InternalSQLScanUserTable = true
 	flags = adjustOptimizationFlags(baseFlags, lp)
 	require.NotZero(t, flags&rule.FlagCollectPredicateColumnsPoint)
 	require.NotZero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+	_, err = logicalOptimize(ctx, flags, lp)
+	require.NoError(t, err)
 }
 
 func TestCollectPredicateColumns(t *testing.T) {

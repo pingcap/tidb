@@ -1541,8 +1541,7 @@ type SessionVars struct {
 	EnableTiFlashReadForWriteStmt bool
 
 	// InMaterializedViewMaintenance indicates the session is executing internal MV refresh / MV log purge statements.
-	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict,
-	// and planner may collect predicate-column usage for MV maintenance SQL that scans user tables.
+	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict.
 	InMaterializedViewMaintenance bool
 	// MVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
 	MVMaintainIsolationReadEngines string
@@ -1742,7 +1741,7 @@ type SessionVars struct {
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
 
-	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	// InternalSQLScanUserTable indicates whether internal SQL scans user tables, for example TTL scan and MV maintenance SQL.
 	InternalSQLScanUserTable bool
 
 	// InPacketBytes records the total incoming packet bytes from clients for current session.

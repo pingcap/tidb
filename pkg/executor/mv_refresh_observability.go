@@ -885,20 +885,26 @@ func enableMVRefreshObserveMaintenanceFlags(sctx sessionctx.Context) func() {
 	sessVars := sctx.GetSessionVars()
 	origRestricted := sessVars.InRestrictedSQL
 	origMaintenance := sessVars.InMaterializedViewMaintenance
+	origInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
 	sessVars.InRestrictedSQL = true
 	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InternalSQLScanUserTable = true
 
 	planVars := sctx.GetPlanCtx().GetSessionVars()
 	origPlanRestricted := planVars.InRestrictedSQL
 	origPlanMaintenance := planVars.InMaterializedViewMaintenance
+	origPlanInternalSQLScanUserTable := planVars.InternalSQLScanUserTable
 	planVars.InRestrictedSQL = true
 	planVars.InMaterializedViewMaintenance = true
+	planVars.InternalSQLScanUserTable = true
 
 	return func() {
 		planVars.InRestrictedSQL = origPlanRestricted
 		planVars.InMaterializedViewMaintenance = origPlanMaintenance
+		planVars.InternalSQLScanUserTable = origPlanInternalSQLScanUserTable
 		sessVars.InRestrictedSQL = origRestricted
 		sessVars.InMaterializedViewMaintenance = origMaintenance
+		sessVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
 	}
 }
 
