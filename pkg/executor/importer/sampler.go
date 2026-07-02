@@ -82,7 +82,6 @@ type KVSizeSampleConfig struct {
 	FieldNullDef     []string
 	LineFieldsInfo   plannercore.LineFieldsInfo
 	IgnoreLines      uint64
-	UseNewCollate    *bool
 
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	ColumnAssignments  []*ast.Assignment
@@ -102,13 +101,6 @@ type kvSizeSampler struct {
 // TotalKVSize returns the total encoded KV size in the sample.
 func (r *SampledKVSizeResult) TotalKVSize() int64 {
 	return int64(r.DataKVSize + r.IndexKVSize)
-}
-
-func (cfg *KVSizeSampleConfig) getUseNewCollateOrDefault(defaultVal bool) bool {
-	if cfg == nil || cfg.UseNewCollate == nil {
-		return defaultVal
-	}
-	return *cfg.UseNewCollate
 }
 
 // SampleFileImportKVSize samples source rows with nextgen's KV encoder and returns
@@ -155,7 +147,6 @@ func (e *LoadDataController) sampleKVSize(
 }
 
 func (e *LoadDataController) buildKVSizeSampleConfig() *KVSizeSampleConfig {
-	useNewCollate := e.Table.UseNewCollate()
 	return &KVSizeSampleConfig{
 		Format:             e.Format,
 		SQLMode:            e.SQLMode,
@@ -164,7 +155,6 @@ func (e *LoadDataController) buildKVSizeSampleConfig() *KVSizeSampleConfig {
 		FieldNullDef:       append([]string(nil), e.FieldNullDef...),
 		LineFieldsInfo:     e.LineFieldsInfo,
 		IgnoreLines:        e.IgnoreLines,
-		UseNewCollate:      &useNewCollate,
 		ColumnsAndUserVars: e.ColumnsAndUserVars,
 		ColumnAssignments:  e.ColumnAssignments,
 	}
@@ -289,7 +279,6 @@ func (s *kvSizeSampler) getKVEncoder(
 	chunk *Chunk,
 	encTable table.Table,
 ) (*TableKVEncoder, error) {
-	useNewCollate := encTable.UseNewCollate()
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        s.cfg.SQLMode,
@@ -297,10 +286,9 @@ func (s *kvSizeSampler) getKVEncoder(
 			SysVars:        s.cfg.ImportantSysVars,
 			AutoRandomSeed: chunk.PrevRowIDMax,
 		},
-		Path:          chunk.Path,
-		Table:         encTable,
-		Logger:        log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
-		UseNewCollate: &useNewCollate,
+		Path:   chunk.Path,
+		Table:  encTable,
+		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
 	}
 	return newTableKVEncoderInner(cfg, s, s.fieldMappings, s.insertColumns)
 }

@@ -167,11 +167,7 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 	}
 
 	// collect expressions for evaluating stored generated columns
-	useNewCollate := config.Table.UseNewCollate()
-	if config.UseNewCollate != nil {
-		useNewCollate = *config.UseNewCollate
-	}
-	genCols, err := CollectGeneratedColumnsWithCollate(se, meta, cols, useNewCollate)
+	genCols, err := CollectGeneratedColumns(se, config.Table)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse generated column expressions")
 	}
