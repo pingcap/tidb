@@ -326,14 +326,6 @@ type outputFileNamer struct {
 	format     string
 }
 
-type csvOption struct {
-	nullValue      string
-	separator      []byte
-	delimiter      []byte
-	lineTerminator []byte
-	binaryFormat   BinaryFormat
-}
-
 func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outputFileNamer {
 	o := &outputFileNamer{
 		DB:    meta.DatabaseName(),

@@ -20,14 +20,9 @@ import (
 	"io"
 )
 
-// CSVWriter encodes CSV rows to an io.Writer, mirroring parquetfile.ParquetWriter.
-// It owns the row framing (field separators + line terminator) and the per-field
-// quoting/escaping; the caller supplies each row as already-stringified field
-// bytes (Dumpling from sql.RawBytes, the exporter from textrow.AppendValueText).
-//
-// It is a single-stream encoder: buffering, file-size based rotation and upload
-// stay with the caller, which swaps the sink at a row boundary via Reset (e.g.
-// Dumpling's buffer-pool flush, the exporter's file cut).
+// CSVWriter is a single-stream CSV encoder that writes framed/escaped rows to an
+// io.Writer, mirroring parquetfile.ParquetWriter. The caller owns buffering and
+// file rotation.
 type CSVWriter struct {
 	w     io.Writer
 	cfg   *Config

@@ -12,16 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package csvfile holds the CSV writer shared by Dumpling and the distributed
-// exporter, mirroring the sibling parquetfile package. The CSVWriter takes a row
-// as already-stringified field bytes (Dumpling from the driver's sql.RawBytes,
-// the exporter from textrow.AppendValueText) and writes the framed/escaped CSV
-// row. The framing/escaping is ported from dumpling/export/sql_type.go so output
-// stays byte-identical.
-//
-// WIP draft: dumpling is not wired to CSVWriter yet. FieldKind/BinaryFormat live
-// here for now; if a sibling sqlfile is added they should be lifted to a shared
-// home.
+// Package csvfile holds the CSV writer shared by Dumpling and the exporter,
+// the sibling of parquetfile and sqlfile.
 package csvfile
 
 // FieldKind classifies a column for CSV framing, mirroring dumpling's
