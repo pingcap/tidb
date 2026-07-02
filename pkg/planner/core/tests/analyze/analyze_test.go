@@ -68,6 +68,11 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	originalAutoBuildStatsConcurrency := tk.MustQuery("select @@global.tidb_auto_build_stats_concurrency").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_build_stats_concurrency = %v", originalAutoBuildStatsConcurrency))
+	}()
+	tk.MustExec("set global tidb_auto_build_stats_concurrency = 1")
 	require.True(t, h.HandleAutoAnalyze())
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
