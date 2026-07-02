@@ -1128,6 +1128,32 @@ func TestTaskHistoryTable(t *testing.T) {
 		_, err2 = gm.ListHistoryTasks(ctx, 201, 0, "")
 		require.ErrorContains(t, err2, "page size should be within")
 	})
+
+	t.Run("get tasks in states returns at most one batch", func(t *testing.T) {
+		const taskQueryLimit = 100
+		for _, sql := range []string{
+			"delete from mysql.tidb_background_subtask",
+			"delete from mysql.tidb_background_subtask_history",
+			"delete from mysql.tidb_global_task",
+			"delete from mysql.tidb_global_task_history",
+		} {
+			_, err = gm.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+		}
+
+		createdIDs := make([]int64, 0, taskQueryLimit+1)
+		for i := 0; i < taskQueryLimit+1; i++ {
+			taskID, err2 := gm.CreateTask(ctx, fmt.Sprintf("batch-task-%03d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+			require.NoError(t, err2)
+			createdIDs = append(createdIDs, taskID)
+		}
+		tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
+		require.NoError(t, err)
+		require.Len(t, tasks, taskQueryLimit)
+		for i, task := range tasks {
+			require.Equal(t, createdIDs[i], task.ID)
+		}
+	})
 }
 
 func TestPauseAndResume(t *testing.T) {

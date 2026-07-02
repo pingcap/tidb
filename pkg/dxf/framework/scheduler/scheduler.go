@@ -503,7 +503,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
 		// calculate the number of subtasks, so we need to do this before
 		// filtering nodes by available slots in scheduleSubtask.
-		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+		eligibleNodes = s.randomSelectNodes(eligibleNodes, task.MaxNodeCount)
 	}
 
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
@@ -525,6 +525,17 @@ func (s *BaseScheduler) switch2NextStep() error {
 	// and OnNextSubtasksBatch might change meta of task.
 	s.task.Store(task)
 	return nil
+}
+
+func (s *BaseScheduler) randomSelectNodes(nodes []string, maxNodeCount int) []string {
+	if maxNodeCount <= 0 || len(nodes) <= maxNodeCount {
+		return nodes
+	}
+	selectedNodes := append([]string(nil), nodes...)
+	s.rand.Shuffle(len(selectedNodes), func(i, j int) {
+		selectedNodes[i], selectedNodes[j] = selectedNodes[j], selectedNodes[i]
+	})
+	return selectedNodes[:maxNodeCount]
 }
 
 func (s *BaseScheduler) scheduleSubTask(

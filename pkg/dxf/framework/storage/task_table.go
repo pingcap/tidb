@@ -443,7 +443,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			" order by priority asc, create_time asc, id asc", states...)
+			" order by priority asc, create_time asc, id asc limit 100", states...)
 	if err != nil {
 		return task, err
 	}

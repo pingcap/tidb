@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -144,6 +145,58 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
+	require.NoError(t, sch.Switch2NextStep())
+	require.True(t, ctrl.Satisfied())
+}
+
+func TestSchedulerMaxNodeCountRandomlySelectsEligibleNodes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	schExt := schmock.NewMockExtension(ctrl)
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:            1,
+			State:         proto.TaskStatePending,
+			Step:          proto.StepInit,
+			MaxNodeCount:  1,
+			RequiredSlots: 1,
+		},
+	}
+	sch := createScheduler(&task, true, taskMgr, ctrl)
+	sch.Extension = schExt
+
+	eligibleNodes := []string{":4000", ":4001", ":4002"}
+	expectedNodes := append([]string(nil), eligibleNodes...)
+	seed := int64(1)
+	for {
+		r := rand.New(rand.NewSource(seed))
+		copy(expectedNodes, eligibleNodes)
+		r.Shuffle(len(expectedNodes), func(i, j int) {
+			expectedNodes[i], expectedNodes[j] = expectedNodes[j], expectedNodes[i]
+		})
+		if expectedNodes[0] != eligibleNodes[0] {
+			break
+		}
+		seed++
+	}
+	sch.rand = rand.New(rand.NewSource(seed))
+
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(eligibleNodes, nil)
+	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(
+			_ context.Context,
+			_ storage.TaskHandle,
+			_ *proto.Task,
+			nodes []string,
+			_ proto.Step,
+		) ([][]byte, error) {
+			require.Equal(t, expectedNodes[:task.MaxNodeCount], nodes)
+			return [][]byte{[]byte(`{"xx": "1"}`)}, nil
+		})
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	require.NoError(t, sch.Switch2NextStep())
 	require.True(t, ctrl.Satisfied())
 }

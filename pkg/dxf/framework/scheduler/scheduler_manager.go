@@ -51,6 +51,8 @@ var (
 	defaultCollectMetricsInterval = 15 * time.Second
 )
 
+const maxCleanupTaskBatchSize = 100
+
 func (sm *Manager) getSchedulerCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -450,7 +452,7 @@ func (sm *Manager) doCleanupTask() {
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
-	cleanedTasks := make([]*proto.Task, 0)
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
 	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
