@@ -92,6 +92,10 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 // encode will encode a datum and append it to a byte slice. If comparable1 is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
 func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
+	return encodeWithCollate(collate.NewCollationEnabled(), loc, b, vals, comparable1)
+}
+
+func encodeWithCollate(useNewCollate bool, loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
 	b = preRealloc(b, vals, comparable1)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
@@ -103,7 +107,7 @@ func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) 
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, vals[i].GetFloat64())
 		case types.KindString:
-			b = encodeString(b, vals[i], comparable1)
+			b = encodeString(useNewCollate, b, vals[i], comparable1)
 		case types.KindBytes:
 			b = encodeBytes(b, vals[i].GetBytes(), comparable1)
 		case types.KindMysqlTime:
@@ -215,8 +219,8 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 	return b, nil
 }
 
-func encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
-	if collate.NewCollationEnabled() && comparable1 {
+func encodeString(useNewCollate bool, b []byte, val types.Datum, comparable1 bool) []byte {
+	if useNewCollate && comparable1 {
 		return encodeBytes(b, collate.GetCollator(val.Collation()).ImmutableKey(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable1)
@@ -305,6 +309,13 @@ func sizeInt(comparable1 bool) int {
 // For decimal type, datum must set datum's length and frac.
 func EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(loc, b, v, true)
+}
+
+// EncodeKeyWithCollate appends the encoded values to byte slice b using the
+// specified new-collation mode. It is intended for background tasks that must
+// replay work using the collation mode captured when the task was created.
+func EncodeKeyWithCollate(useNewCollate bool, loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
+	return encodeWithCollate(useNewCollate, loc, b, v, true)
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
@@ -1887,7 +1898,7 @@ func HashCode(b []byte, d types.Datum) []byte {
 		b = append(b, floatFlag)
 		b = EncodeFloat(b, d.GetFloat64())
 	case types.KindString:
-		b = encodeString(b, d, false)
+		b = encodeString(collate.NewCollationEnabled(), b, d, false)
 	case types.KindBytes:
 		b = encodeBytes(b, d.GetBytes(), false)
 	case types.KindMysqlTime:

@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -2647,6 +2648,11 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface.
+func (it *infoschemaTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
@@ -2743,6 +2749,11 @@ func (vt *VirtualTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 // Meta implements table.Table Meta interface.
 func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
+}
+
+// UseNewCollate implements table.Table UseNewCollate interface.
+func (vt *VirtualTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.

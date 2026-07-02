@@ -81,6 +81,8 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
+	// useNewCollate is the new-collation mode captured when this table is built.
+	useNewCollate bool
 
 	// skipAssert is used for partitions that are in WriteOnly/DeleteOnly state.
 	skipAssert bool
@@ -140,7 +142,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 		return nil
 	}
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
+	initTableCommonWithCollate(collate.NewCollationEnabled(), &t, tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -164,6 +166,12 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	return TableFromMetaWithCollate(collate.NewCollationEnabled(), allocs, tblInfo)
+}
+
+// TableFromMetaWithCollate creates a Table instance using the specified
+// new-collation mode.
+func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -214,7 +222,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return nil, err
 	}
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs, constraints)
+	initTableCommonWithCollate(useNewCollate, &t, tblInfo, tblInfo.ID, columns, allocs, constraints)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -241,6 +249,10 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 
 // initTableCommon initializes a TableCommon struct.
 func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
+	initTableCommonWithCollate(collate.NewCollationEnabled(), t, tblInfo, physicalTableID, cols, allocs, constraints)
+}
+
+func initTableCommonWithCollate(useNewCollate bool, t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
 	t.tableID = tblInfo.ID
 	t.physicalTableID = physicalTableID
 	t.allocs = allocs
@@ -249,6 +261,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.Constraints = constraints
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
+	t.useNewCollate = useNewCollate
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
@@ -264,7 +277,7 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndexWithCollate(t.useNewCollate, t.physicalTableID, tblInfo, idxInfo)
 		if err != nil {
 			return err
 		}
@@ -308,7 +321,12 @@ func asIndex(idx table.Index) *index {
 }
 
 func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
-	initTableCommon(t, tblInfo, physicalTableID, cols, allocs, constraints)
+	initTableCommonWithCollate(collate.NewCollationEnabled(), t, tblInfo, physicalTableID, cols, allocs, constraints)
+	return initTableIndices(t)
+}
+
+func initTableCommonWithIndicesAndCollate(useNewCollate bool, t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
+	initTableCommonWithCollate(useNewCollate, t, tblInfo, physicalTableID, cols, allocs, constraints)
 	return initTableIndices(t)
 }
 
@@ -788,7 +806,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(tc.Location(), nil, pkDts...)
+			handleBytes, err = codec.EncodeKeyWithCollate(t.useNewCollate, tc.Location(), nil, pkDts...)
 			err = ec.HandleError(err)
 			if err != nil {
 				return
@@ -1031,7 +1049,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 			}
 			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
-		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
+		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -1311,7 +1329,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 }
 
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
-	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
+	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1517,15 +1535,17 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkip(t.Meta(), col, value)
+// UseNewCollate returns the new-collation mode captured for this table.
+func (t *TableCommon) UseNewCollate() bool {
+	return t.useNewCollate
 }
 
-// CanSkip is for these cases, we can skip the columns in encoded row:
+// canSkip returns whether the column can be omitted from the encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
-func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
+	info := t.Meta()
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
@@ -1536,7 +1556,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.NeedRestoredData(&col.FieldType)
+			canSkip = canSkip && !types.NeedRestoredDataWithCollate(&col.FieldType, t.useNewCollate)
 			return canSkip
 		}
 	}
@@ -1773,15 +1793,17 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+func TryGetHandleRestoredDataWrapper(tbl table.Table, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+	tblInfo := tbl.Meta()
+	useNewCollate := tbl.UseNewCollate()
+	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	rsData := make([]types.Datum, 0, 4)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
+		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
 			continue
 		}
 		var datum types.Datum

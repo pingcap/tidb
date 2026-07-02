@@ -251,11 +251,12 @@ func checkIndexKeys(
 		}
 
 		// when we cannot decode the key to get the original value
-		if len(value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
+		if len(value) == 0 && NeedRestoredDataWithCollate(t.useNewCollate, indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
-		decodedIndexValues, err := tablecodec.DecodeIndexKV(
+		decodedIndexValues, err := tablecodec.DecodeIndexKVWithCollate(
+			t.useNewCollate,
 			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {

@@ -257,11 +257,11 @@ func ExtractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []
 }
 
 // BuildHandle is exported for test.
-func BuildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
+func BuildHandle(useNewCollate bool, pkDts []types.Datum, tblInfo *model.TableInfo,
 	pkInfo *model.IndexInfo, loc *time.Location, errCtx errctx.Context) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.EncodeKey(loc, nil, pkDts...)
+		handleBytes, err := codec.EncodeKeyWithCollate(useNewCollate, loc, nil, pkDts...)
 		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, err
