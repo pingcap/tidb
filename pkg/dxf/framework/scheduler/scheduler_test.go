@@ -166,10 +166,9 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	// test scheduleTaskLoop
 	// test parallelism control
-	var originalConcurrency int
+	restoreMaxConcurrentTask := func() {}
 	if taskCnt == 1 {
-		originalConcurrency = proto.MaxConcurrentTask
-		proto.MaxConcurrentTask = 1
+		restoreMaxConcurrentTask = proto.SetMaxConcurrentTaskForTest(1)
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -190,10 +189,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	sch.Start()
 	defer func() {
 		sch.Stop()
-		// make data race happy
-		if taskCnt == 1 {
-			proto.MaxConcurrentTask = originalConcurrency
-		}
+		restoreMaxConcurrentTask()
 	}()
 
 	// 3s
