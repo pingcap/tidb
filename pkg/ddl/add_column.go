@@ -313,7 +313,7 @@ func buildColumnAndConstraint(
 	}
 
 	// specifiedCollate refers to the last collate specified in colDef.Options.
-	chs, coll, err := getCharsetAndCollateInColumnDef(colDef, ctx.GetDefaultCollationForUTF8MB4())
+	chs, coll, isExplicit, err := getCharsetAndCollateInColumnDef(colDef, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -329,6 +329,9 @@ func buildColumnAndConstraint(
 	if err := setCharsetCollationFlenDecimal(ctx, colDef.Tp, colDef.Name.Name.O, chs, coll); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	if isExplicit {
+		colDef.Tp.AddFlag(mysql.ExplicitCollateFlag)
+	}
 	decodeEnumSetBinaryLiteralToUTF8(colDef.Tp, chs)
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
@@ -339,24 +342,28 @@ func buildColumnAndConstraint(
 
 // getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
 // of column definition. If there's no collate in the option, the default collate of column's charset will be used.
-func getCharsetAndCollateInColumnDef(def *ast.ColumnDef, defaultUTF8MB4Coll string) (chs, coll string, err error) {
+func getCharsetAndCollateInColumnDef(def *ast.ColumnDef, defaultUTF8MB4Coll string) (chs, coll string, isExplicit bool, err error) {
 	chs = def.Tp.GetCharset()
 	coll = def.Tp.GetCollate()
+	// Note: def.Tp.GetCollate() is never set by the parser (collation always goes into
+	// def.Options as ColumnOptionCollate). Only check Options to determine if collation
+	// was explicitly specified by the user.
 	if chs != "" && coll == "" {
 		if coll, err = GetDefaultCollation(chs, defaultUTF8MB4Coll); err != nil {
-			return "", "", errors.Trace(err)
+			return "", "", false, errors.Trace(err)
 		}
 	}
 	for _, opt := range def.Options {
 		if opt.Tp == ast.ColumnOptionCollate {
+			isExplicit = true
 			info, err := collate.GetCollationByName(opt.StrValue)
 			if err != nil {
-				return "", "", errors.Trace(err)
+				return "", "", false, errors.Trace(err)
 			}
 			if chs == "" {
 				chs = info.CharsetName
 			} else if chs != info.CharsetName {
-				return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
+				return "", "", false, dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
 			coll = info.Name
 		}
