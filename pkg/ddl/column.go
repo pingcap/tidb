@@ -550,6 +550,7 @@ func (w *worker) updatePhysicalTableRow(
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
+	failpoint.InjectCall("beforeUpdatePhysicalTableRow", reorgInfo.Job)
 	logutil.DDLLogger().Info("start to update table row", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		done := false
@@ -614,8 +615,7 @@ func (w *worker) modifyTableColumn(
 
 type updateColumnWorker struct {
 	*backfillCtx
-	oldColInfo *model.ColumnInfo
-	newColInfo *model.ColumnInfo
+	colPairs []updateColumnPair
 
 	// The following attributes are used to reduce memory allocation.
 	rowRecords []*rowRecord
@@ -626,18 +626,62 @@ type updateColumnWorker struct {
 	checksumNeeded bool
 }
 
+type updateColumnPair struct {
+	oldColInfo *model.ColumnInfo
+	newColInfo *model.ColumnInfo
+}
+
 func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
+	colPairs := getOldAndNewColumnsForUpdateColumns(t, currElementID, false)
+	if len(colPairs) == 0 {
+		return nil, nil
+	}
+	return colPairs[0].oldColInfo, colPairs[0].newColInfo
+}
+
+func getOldAndNewColumnsForUpdateColumns(t table.Table, currElementID int64, allChanging bool) []updateColumnPair {
+	colPairs := make([]updateColumnPair, 0, 1)
+	if allChanging {
+		colPairs = make([]updateColumnPair, 0, len(t.WritableCols()))
+		for _, col := range t.WritableCols() {
+			if !col.IsChanging() {
+				continue
+			}
+			changingColumn := table.FindCol(t.Cols(), col.GetChangingOriginName())
+			if changingColumn == nil {
+				continue
+			}
+			colPairs = append(colPairs, updateColumnPair{
+				oldColInfo: changingColumn.ColumnInfo,
+				newColInfo: col.ColumnInfo,
+			})
+		}
+		slices.SortFunc(colPairs, func(a, b updateColumnPair) int {
+			switch {
+			case a.newColInfo.ID < b.newColInfo.ID:
+				return -1
+			case a.newColInfo.ID > b.newColInfo.ID:
+				return 1
+			default:
+				return 0
+			}
+		})
+		return colPairs
+	}
+
 	for _, col := range t.WritableCols() {
 		if col.ID == currElementID {
 			changingColumn := table.FindCol(t.Cols(), col.GetChangingOriginName())
 			if changingColumn != nil {
-				newCol = col.ColumnInfo
-				oldCol = changingColumn.ColumnInfo
-				return
+				colPairs = append(colPairs, updateColumnPair{
+					oldColInfo: changingColumn.ColumnInfo,
+					newColInfo: col.ColumnInfo,
+				})
+				return colPairs
 			}
 		}
 	}
-	return
+	return colPairs
 }
 
 func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*updateColumnWorker, error) {
@@ -651,7 +695,12 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 			zap.Stringer("reorgInfo", reorgInfo))
 		return nil, nil
 	}
-	oldCol, newCol := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
+	colPairs := getOldAndNewColumnsForUpdateColumns(t, reorgInfo.currElement.ID, reorgInfo.Job.Type == model.ActionMultiSchemaChange)
+	if len(colPairs) == 0 {
+		logutil.DDLLogger().Error("old/new columns for updateColumnWorker not found",
+			zap.String("jobQuery", reorgInfo.Query), zap.Stringer("reorgInfo", reorgInfo))
+		return nil, nil
+	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := vardef.EnableRowLevelChecksum.Load()
@@ -660,10 +709,9 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	})
 	return &updateColumnWorker{
 		backfillCtx:    bCtx,
-		oldColInfo:     oldCol,
-		newColInfo:     newCol,
+		colPairs:       colPairs,
 		rowDecoder:     rowDecoder,
-		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
+		rowMap:         make(map[int64]types.Datum, len(decodeColMap)+len(colPairs)),
 		checksumNeeded: vardef.EnableRowLevelChecksum.Load(),
 	}, nil
 }
@@ -751,49 +799,59 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
 
-	if _, ok := w.rowMap[w.newColInfo.ID]; ok {
-		// The column is already added by update or insert statement, skip it.
-		w.cleanRowMap()
-		return nil
-	}
-
 	var recordWarning *terror.Error
-	// Since every updateColumnWorker handle their own work individually, we can cache warning in statement context when casting datum.
+	// Since every updateColumnWorker handles its own work individually, we can cache warning
+	// in statement context when casting datum.
 	oldWarn := w.warnings.GetWarnings()
 	if oldWarn == nil {
 		oldWarn = []contextutil.SQLWarn{}
 	} else {
 		oldWarn = oldWarn[:0]
 	}
-	w.warnings.SetWarnings(oldWarn)
-	val := w.rowMap[w.oldColInfo.ID]
-	col := w.newColInfo
-	if val.Kind() == types.KindNull && col.FieldType.GetType() == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.GetFlag()) {
-		if v, err := expression.GetTimeCurrentTimestamp(w.exprCtx.GetEvalCtx(), col.GetType(), col.GetDecimal()); err == nil {
-			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
-			w.rowMap[w.oldColInfo.ID] = v
+	hasChanged := false
+	for _, colPair := range w.colPairs {
+		if _, ok := w.rowMap[colPair.newColInfo.ID]; ok {
+			// This column is already added by update or insert statement, skip this pair.
+			continue
 		}
-	}
-	newColVal, err := table.CastColumnValue(w.exprCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-	if err != nil {
-		return w.reformatErrors(err)
-	}
-	warn := w.warnings.GetWarnings()
-	if len(warn) != 0 {
-		//nolint:forcetypeassert
-		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
-	}
 
-	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&testCheckReorgTimeout, 0, 1) {
-				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
+		w.warnings.SetWarnings(oldWarn[:0])
+		val := w.rowMap[colPair.oldColInfo.ID]
+		col := colPair.newColInfo
+		if val.Kind() == types.KindNull && col.FieldType.GetType() == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.GetFlag()) {
+			if v, err := expression.GetTimeCurrentTimestamp(w.exprCtx.GetEvalCtx(), col.GetType(), col.GetDecimal()); err == nil {
+				// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
+				w.rowMap[colPair.oldColInfo.ID] = v
 			}
 		}
-	})
 
-	w.rowMap[w.newColInfo.ID] = newColVal
+		newColVal, err := table.CastColumnValue(w.exprCtx, w.rowMap[colPair.oldColInfo.ID], colPair.newColInfo, false, false)
+		if err != nil {
+			return w.reformatErrors(err, colPair)
+		}
+		warn := w.warnings.GetWarnings()
+		if len(warn) != 0 && recordWarning == nil {
+			//nolint:forcetypeassert
+			recordWarning = errors.Cause(w.reformatErrors(warn[0].Err, colPair)).(*terror.Error)
+		}
+
+		failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
+			//nolint:forcetypeassert
+			if val.(bool) {
+				if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&testCheckReorgTimeout, 0, 1) {
+					failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
+				}
+			}
+		})
+
+		w.rowMap[colPair.newColInfo.ID] = newColVal
+		hasChanged = true
+	}
+	if !hasChanged {
+		w.cleanRowMap()
+		return nil
+	}
+
 	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.exprCtx, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
@@ -822,16 +880,16 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 }
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
-func (w *updateColumnWorker) reformatErrors(err error) error {
+func (w *updateColumnWorker) reformatErrors(err error, colPair updateColumnPair) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) || types.ErrDataTooLong.Equal(err) {
-		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
-		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
+		dStr := datumToStringNoErr(w.rowMap[colPair.oldColInfo.ID])
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", colPair.oldColInfo.Name, dStr)
 	}
 
 	if types.ErrWarnDataOutOfRange.Equal(err) {
-		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
-		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", w.oldColInfo.Name, dStr)
+		dStr := datumToStringNoErr(w.rowMap[colPair.oldColInfo.ID])
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", colPair.oldColInfo.Name, dStr)
 	}
 	return err
 }
