@@ -986,6 +986,19 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
+	t.Run("get tasks in states limit follows max concurrent task", func(t *testing.T) {
+		t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
+		_, gm, ctx := testutil.InitTableTest(t)
+		require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+		for i := range 5 {
+			_, err := gm.CreateTask(ctx, fmt.Sprintf("limit-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+			require.NoError(t, err)
+		}
+		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
+		require.NoError(t, err)
+		require.Len(t, tasks, proto.GetMaxConcurrentTask()*3)
+	})
+
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
@@ -1130,7 +1143,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	})
 
 	t.Run("get tasks in states returns at most one batch", func(t *testing.T) {
-		const taskQueryLimit = 100
+		taskQueryLimit := proto.GetMaxConcurrentTask() * 3
 		for _, sql := range []string{
 			"delete from mysql.tidb_background_subtask",
 			"delete from mysql.tidb_background_subtask_history",
