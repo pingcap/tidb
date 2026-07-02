@@ -3404,6 +3404,7 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 
 func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
+	enableFastConnectionAliveMonitor(t)
 
 	for _, prepared := range []bool{false, true} {
 		name := "query"
@@ -3496,6 +3497,16 @@ func runClientDisconnectAutocommitInsert(t *testing.T, dbt *testkit.DBTestKit, t
 	err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from "+tableName).Scan(&cnt)
 	require.NoError(t, err)
 	require.Equal(t, 0, cnt)
+}
+
+func enableFastConnectionAliveMonitor(t *testing.T) {
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/server/mockConnectionAliveMonitorInterval",
+		`return(1)`,
+	))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/mockConnectionAliveMonitorInterval"))
+	})
 }
 
 func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {

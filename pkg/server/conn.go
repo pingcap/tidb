@@ -106,6 +106,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -2049,30 +2050,61 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 }
 
 // setSQLKillerConnectionAlive installs a connection-liveness probe on the
-// session SQLKiller for execution checkpoints such as HandleSignal and the
-// slow pre-commit backstop. It intentionally does not start a background
-// monitor, so short statements do not pay goroutine, ticker, or channel costs.
+// session SQLKiller and starts a background monitor for the current statement.
+// The returned cleanup is idempotent and must be called when the statement is
+// done to stop the monitor and clear the probe.
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
-	sessVars := cc.ctx.GetSessionVars()
-	isAlive := cc.isConnectionAlive
-	sessVars.SQLKiller.SetConnectionAliveFunc(isAlive)
+	fn := func() bool {
+		if cc.bufReadConn != nil {
+			// IsAlive returns 0 only when the connection is known dead. Treat
+			// unknown states as alive so we do not interrupt queries
+			// conservatively when the liveness check itself cannot run.
+			return cc.bufReadConn.IsAlive() != 0
+		}
+		return true
+	}
+	cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(fn)
+	stopMonitor := make(chan struct{})
+	doneMonitor := make(chan struct{})
+	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
 
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
-			sessVars.SQLKiller.SetConnectionAliveFunc(nil)
+			close(stopMonitor)
+			<-doneMonitor
+			cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(nil)
 		})
 	}
 }
 
-func (cc *clientConn) isConnectionAlive() bool {
-	if cc.bufReadConn != nil {
-		// IsAlive returns 0 only when the connection is known dead. Treat
-		// unknown states as alive so we do not interrupt queries
-		// conservatively when the liveness check itself cannot run.
-		return cc.bufReadConn.IsAlive() != 0
+func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	checkInterval := time.Second
+	failpoint.Inject("mockConnectionAliveMonitorInterval", func(val failpoint.Value) {
+		if interval, ok := val.(int); ok {
+			checkInterval = time.Duration(interval) * time.Millisecond
+		}
+	})
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !isAlive() {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				cc.ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+				cc.cancelDispatch()
+				return
+			}
+		case <-stop:
+			return
+		}
 	}
-	return true
 }
 
 func (cc *clientConn) cancelDispatch() {
@@ -2084,7 +2116,7 @@ func (cc *clientConn) cancelDispatch() {
 	}
 }
 
-func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+func shouldMonitorConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
 		return false
 	}
@@ -2128,8 +2160,8 @@ func (cc *clientConn) handleStmt(
 	}
 
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
-	if checkingConnectionAlive {
+	monitoringConnectionAlive := shouldMonitorConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
+	if monitoringConnectionAlive {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 		defer clearConnectionAlive()
 	}
@@ -2167,7 +2199,7 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
-		if !checkingConnectionAlive {
+		if !monitoringConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}
