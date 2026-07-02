@@ -1967,7 +1967,12 @@ func adjustRestoreConcurrencyPerStoreFromTiKV(ctx context.Context, mgr *conn.Mgr
 	}
 	httpCli := httputil.NewClient(mgr.GetTLSConfig())
 	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
-	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
+	cfg.ConcurrencyPerStore = markRestoreConcurrencyPerStoreAdjusted(kvConfigs.ImportGoroutines)
+}
+
+func markRestoreConcurrencyPerStoreAdjusted(concurrency pconfig.ConfigTerm[uint]) pconfig.ConfigTerm[uint] {
+	concurrency.Modified = true
+	return concurrency
 }
 
 func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {

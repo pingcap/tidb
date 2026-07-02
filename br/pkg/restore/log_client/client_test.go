@@ -1936,6 +1936,13 @@ func TestEstimateCompactedSSTFlowControl(t *testing.T) {
 	require.Equal(t, uint64(72*units.MiB), l6BytesPerStore)
 	require.Equal(t, uint64(18*units.MiB), l5BytesPerStore)
 	require.InDelta(t, 54*float64(units.MiB), float64(pendingBytes), float64(units.KiB))
+
+	require.Equal(t, uint(2), logclient.TEST_LiveTiKVStoreCount([]*metapb.Store{
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Offline},
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Tombstone},
+	}))
 }
 
 func TestEstimatePendingCompactionBytes(t *testing.T) {
@@ -1974,6 +1981,12 @@ func TestCompactedSSTFlowControlTarget(t *testing.T) {
 	require.True(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "5TiB"}, 4*units.TiB))
 	require.Equal(t, "1TiB", logclient.TEST_FormatBytes(units.TiB))
 	require.Equal(t, "1536GiB", logclient.TEST_FormatBytes(1536*units.GiB))
+
+	require.Equal(t, uint(5), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(5)}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(nil, errors.New("pd unavailable")))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": "bad"}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(0)}, nil))
 }
 
 func TestCompactedSplitStrategy(t *testing.T) {

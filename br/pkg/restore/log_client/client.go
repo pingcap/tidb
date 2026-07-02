@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -86,6 +87,7 @@ import (
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
 const maxReadMetaKVFilesConcurrency uint = 128
+const defaultTiKVMaxReplicas uint = 3
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
@@ -578,10 +580,8 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
-	replicaCount, err := rc.getMaxReplica(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	liveStoreCount := liveTiKVStoreCount(stores)
+	replicaCount := rc.getMaxReplica(ctx)
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
@@ -631,7 +631,7 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sstRestoreManager := &SstRestoreManager{storeCount: uint(len(stores)), replicaCount: replicaCount}
+	sstRestoreManager := &SstRestoreManager{storeCount: liveStoreCount, replicaCount: replicaCount}
 	if sstCheckpointMetaManager != nil {
 		var err error
 		sstRestoreManager.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
@@ -650,9 +650,19 @@ func (rc *LogClient) InitClients(
 	return nil
 }
 
-func (rc *LogClient) getMaxReplica(ctx context.Context) (uint, error) {
+func liveTiKVStoreCount(stores []*metapb.Store) uint {
+	var count uint
+	for _, store := range stores {
+		if store.GetState() == metapb.StoreState_Up {
+			count++
+		}
+	}
+	return count
+}
+
+func (rc *LogClient) getMaxReplica(ctx context.Context) uint {
 	if rc.pdHTTPClient == nil {
-		return 0, errors.New("PD HTTP client is not initialized")
+		return maxReplicaFromReplicateConfig(nil, errors.New("PD HTTP client is not initialized"))
 	}
 	var resp map[string]any
 	var err error
@@ -660,20 +670,33 @@ func (rc *LogClient) getMaxReplica(ctx context.Context) (uint, error) {
 		resp, err = rc.pdHTTPClient.GetReplicateConfig(ctx)
 		return err
 	}, utils.NewAggressivePDBackoffStrategy())
+	return maxReplicaFromReplicateConfig(resp, err)
+}
+
+func maxReplicaFromReplicateConfig(resp map[string]any, err error) uint {
 	if err != nil {
-		return 0, errors.Trace(err)
+		log.Warn("failed to get max replicas from PD replicate config, use default value",
+			zap.Uint("default-max-replicas", defaultTiKVMaxReplicas),
+			logutil.ShortError(err))
+		return defaultTiKVMaxReplicas
 	}
 
 	const key = "max-replicas"
 	val, ok := resp[key]
 	if !ok {
-		return 0, errors.Errorf("key %s not found in response %v", key, resp)
+		log.Warn("max replicas not found in PD replicate config, use default value",
+			zap.Uint("default-max-replicas", defaultTiKVMaxReplicas),
+			zap.Any("replicate-config", resp))
+		return defaultTiKVMaxReplicas
 	}
 	replicaCount, ok := val.(float64)
-	if !ok {
-		return 0, errors.Errorf("invalid %s value in response %v", key, resp)
+	if !ok || replicaCount <= 0 {
+		log.Warn("invalid max replicas in PD replicate config, use default value",
+			zap.Uint("default-max-replicas", defaultTiKVMaxReplicas),
+			zap.Any("replicate-config", resp))
+		return defaultTiKVMaxReplicas
 	}
-	return uint(replicaCount), nil
+	return uint(replicaCount)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(

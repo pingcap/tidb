@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -175,6 +176,14 @@ func TEST_CompactedSSTFlowControlTarget(
 		originConfig.hard = append(originConfig.hard, tikvConfigValue{value: value})
 	}
 	return compactedSSTFlowControlTarget(originConfig, pendingBytes)
+}
+
+func TEST_MaxReplicaFromReplicateConfig(resp map[string]any, err error) uint {
+	return maxReplicaFromReplicateConfig(resp, err)
+}
+
+func TEST_LiveTiKVStoreCount(stores []*metapb.Store) uint {
+	return liveTiKVStoreCount(stores)
 }
 
 func TEST_AllTiKVConfigsAtLeast(values []string, target uint64) bool {

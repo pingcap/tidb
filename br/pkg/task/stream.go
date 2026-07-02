@@ -1451,6 +1451,9 @@ func RunStreamRestore(
 
 	cfg.adjustRestoreConfigForStreamRestore()
 	cfg.tiflashRecorder = tiflashrec.New()
+	// createLogClient consumes ConcurrencyPerStore while initializing SST clients,
+	// so adjust it from TiKV before constructing the log client.
+	adjustRestoreConcurrencyPerStoreFromTiKV(ctx, mgr, cfg)
 	logClient, err := createLogClient(ctx, g, cfg, mgr)
 	if err != nil {
 		return errors.Trace(err)
@@ -1531,7 +1534,6 @@ func RunStreamRestore(
 			cfg.tiflashRecorder.Load(taskInfo.CheckpointInfo.Metadata.TiFlashItems)
 		}
 	}
-	adjustRestoreConcurrencyPerStoreFromTiKV(ctx, mgr, cfg)
 	logRestoreConfig := &LogRestoreConfig{
 		RestoreConfig:       cfg,
 		checkpointTaskInfo:  taskInfo.CheckpointInfo,
