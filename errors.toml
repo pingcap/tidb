@@ -66,6 +66,11 @@ error = '''
 the migration version isn't supported
 '''
 
+["BR:Common:ErrOperationAborted"]
+error = '''
+operation aborted by user
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables

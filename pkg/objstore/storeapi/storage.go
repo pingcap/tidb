@@ -32,10 +32,32 @@ import (
 // Permission represents the permission we need to check in create storage.
 type Permission string
 
-// StrongConsistency is a marker interface that indicates the storage is strong consistent
-// over its `Read`, `Write` and `WalkDir` APIs.
-type StrongConsistency interface {
-	MarkStrongConsistency()
+// Features is a bitset of optional capabilities a Storage implementation may expose.
+// It replaces ad-hoc marker interfaces so callers can probe multiple features with one
+// method call.
+type Features uint64
+
+const (
+	// FeatureStrongConsistency means the storage is strongly consistent over its
+	// Read, Write and WalkDir APIs.
+	FeatureStrongConsistency Features = 1 << iota
+	// FeatureSupportsStartAfter means the storage supports WalkDir StartAfter.
+	FeatureSupportsStartAfter
+)
+
+// FeatureProvider is an optional interface storages may implement to expose
+// capabilities via a Features bitset.
+type FeatureProvider interface {
+	Features() Features
+}
+
+// FeatureOf returns the Features bitset of s. If s does not implement
+// FeatureProvider, it returns 0.
+func FeatureOf(s Storage) Features {
+	if p, ok := s.(FeatureProvider); ok {
+		return p.Features()
+	}
+	return 0
 }
 
 const (

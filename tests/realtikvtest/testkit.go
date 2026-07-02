@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.opencensus.io/stats/view"
@@ -61,11 +62,21 @@ var (
 	mockPortAlloc = uberatomic.NewInt32(4000)
 )
 
+// CurrentPDAddr returns the PD address derived from the current -tikv-path value.
+// It parses flags on demand so callers don't depend on TestMain ordering.
+func CurrentPDAddr() string {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	return mustParsePDAddr(*TiKVPath)
+}
+
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
+	PDAddr = CurrentPDAddr()
 	vardef.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
@@ -101,6 +112,14 @@ func RunTestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func mustParsePDAddr(tikvPath string) string {
+	pdAddrs, _, _, err := tikvcfg.ParsePath(tikvPath)
+	if err != nil {
+		panic(err)
+	}
+	return strings.Join(pdAddrs, ",")
 }
 
 type realtikvStoreOption struct {
@@ -307,7 +326,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 func UpdateTiDBConfig() {
 	// need a real PD
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = "127.0.0.1:2379"
+		conf.Path = CurrentPDAddr()
 		if kerneltype.IsNextGen() {
 			conf.TiKVWorkerURL = "localhost:19000"
 			conf.KeyspaceName = keyspace.System

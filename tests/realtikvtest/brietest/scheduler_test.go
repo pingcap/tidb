@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -253,7 +254,7 @@ func checkSchedulerPausingBehavior(t *testing.T, baselineKeyRanges map[string][]
 	for i := 0; i < maxRetries; i++ {
 		time.Sleep(200 * time.Millisecond)
 
-		rules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+		rules, err := getPDSchedulerRules(t, realtikvtest.CurrentPDAddr())
 		if err != nil {
 			t.Logf("Failed to get scheduler rules (attempt %d): %v", i+1, err)
 			continue
@@ -305,7 +306,7 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 
 	// Get baseline scheduler rules
 	t.Log("Getting baseline scheduler rules...")
-	baselineRules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+	baselineRules, err := getPDSchedulerRules(t, realtikvtest.CurrentPDAddr())
 	require.NoError(t, err)
 	baselineKeyRanges := analyzeSchedulerRules(t, baselineRules, "BASELINE SCHEDULER RULES (before restore)")
 
@@ -345,7 +346,7 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 
 	// Get final scheduler rules after restore completes
 	t.Log("Getting final scheduler rules after restore...")
-	finalRules, err := getPDSchedulerRules(t, "127.0.0.1:2379")
+	finalRules, err := getPDSchedulerRules(t, realtikvtest.CurrentPDAddr())
 	require.NoError(t, err)
 	finalKeyRanges := analyzeSchedulerRules(t, finalRules, "FINAL SCHEDULER RULES (after filtered restore)")
 
