@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"go.uber.org/zap"
 )
 
 const (
@@ -52,6 +54,7 @@ type CheckpointEvent struct {
 	LoopIteration      uint64
 	UpstreamCheckpoint uint64
 	SyncedTS           uint64
+	SyncedByStore      map[uint64]uint64
 
 	AliveStoreCount  int
 	PendingFileCount int
@@ -64,6 +67,7 @@ type CheckpointEvent struct {
 // FileStatistic summarizes the files observed in the current calculation round.
 type FileStatistic struct {
 	UpstreamReadMetaFileCount       int
+	SkippedStoreSyncedMetaFileCount int
 	EstimatedSyncLogFileCount       int
 	DownstreamCheckFileCount        int
 	PlannedFileSuffixCounts         map[string]int
@@ -250,6 +254,14 @@ func (c *Calculator) RestorePersistentState(state PersistentState) error {
 	if c.state.syncedByStore == nil {
 		c.state.syncedByStore = map[uint64]uint64{}
 	}
+	log.Info(
+		"restore crr checkpoint calculator state",
+		zap.String("category", "crr checkpoint"),
+		zap.String("task", c.cfg.TaskName),
+		zap.Uint64("last-checkpoint", c.state.lastCheckpoint),
+		zap.Uint64("synced-ts", c.state.syncedTS),
+		zap.Any("synced-by-store", c.state.syncedByStore),
+	)
 	return nil
 }
 
@@ -312,6 +324,7 @@ func (c *Calculator) observeCheckpointAdvanced(
 		TaskName:           c.cfg.TaskName,
 		UpstreamCheckpoint: upstreamCheckpoint,
 		SyncedTS:           c.state.syncedTS,
+		SyncedByStore:      maps.Clone(c.state.syncedByStore),
 		AliveStoreCount:    len(aliveStores),
 		Statistic:          statistic,
 	})
