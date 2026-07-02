@@ -51,67 +51,129 @@ func newImportCleanUpS3() scheduler.CleanUpRoutine {
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
+func (c *ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
+	return c.CleanUpBatch(ctx, []*proto.Task{task})
+}
+
+type cleanUpTaskInfo struct {
+	task            *proto.Task
+	needFileCleanUp bool
+}
+
+type cleanUpFileGroup struct {
+	cloudStorageURI    string
+	nonPartitionedDirs []string
+	taskIDs            []int64
+}
+
+// CleanUpBatch cleans up multiple import tasks in batch.
+func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
-	taskMeta := &TaskMeta{}
-	err := json.Unmarshal(task.Meta, taskMeta)
-	if err != nil {
-		return err
-	}
-	defer redactSensitiveInfo(task, taskMeta)
-
-	if kerneltype.IsClassic() {
-		taskManager, err := storage.GetTaskManager()
+	cleanUpTasks := make([]cleanUpTaskInfo, 0, len(tasks))
+	fileGroupIdx := make(map[string]int)
+	fileGroups := make([]cleanUpFileGroup, 0, len(tasks))
+	for _, task := range tasks {
+		taskMeta := &TaskMeta{}
+		err := json.Unmarshal(task.Meta, taskMeta)
 		if err != nil {
 			return err
 		}
-		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-		}); err != nil {
-			// If the table is not found, it means the table has been either
-			// dropped or truncated. In such cases, the table mode has already
-			// been reset to normal, so we can ignore this error.
-			if !goerrors.Is(err, infoschema.ErrTableNotExists) {
-				return err
-			}
+		defer redactSensitiveInfo(task, taskMeta)
 
-			logutil.BgLogger().Warn(
-				"table not found during import cleanup, skip altering table mode",
-				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
-			)
+		if err = cleanUpTableMode(ctx, taskMeta); err != nil {
+			return err
+		}
+
+		failpoint.InjectCall("mockCleanupError", &err)
+		if err != nil {
+			return err
+		}
+
+		// Not use cloud storage, no need to cleanUp.
+		needFileCleanUp := taskMeta.Plan.CloudStorageURI != ""
+		cleanUpTasks = append(cleanUpTasks, cleanUpTaskInfo{
+			task:            task,
+			needFileCleanUp: needFileCleanUp,
+		})
+		if !needFileCleanUp {
+			continue
+		}
+		idx, ok := fileGroupIdx[taskMeta.Plan.CloudStorageURI]
+		if !ok {
+			idx = len(fileGroups)
+			fileGroupIdx[taskMeta.Plan.CloudStorageURI] = idx
+			fileGroups = append(fileGroups, cleanUpFileGroup{
+				cloudStorageURI: taskMeta.Plan.CloudStorageURI,
+			})
+		}
+		fileGroups[idx].nonPartitionedDirs = append(fileGroups[idx].nonPartitionedDirs, strconv.Itoa(int(task.ID)))
+		fileGroups[idx].taskIDs = append(fileGroups[idx].taskIDs, task.ID)
+	}
+
+	for _, fileGroup := range fileGroups {
+		if err := cleanUpExternalFiles(ctx, fileGroup); err != nil {
+			return err
 		}
 	}
 
-	failpoint.InjectCall("mockCleanupError", &err)
+	for _, cleanUpTask := range cleanUpTasks {
+		// send metering data for nextgen kernel, only for succeed tasks
+		if cleanUpTask.needFileCleanUp && kerneltype.IsNextGen() && cleanUpTask.task.State == proto.TaskStateSucceed {
+			logger := logutil.BgLogger().With(zap.Int64("task-id", cleanUpTask.task.ID))
+			if err := sendMeterOnCleanUp(ctx, cleanUpTask.task, logger); err != nil {
+				logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cleanUpTableMode(ctx context.Context, taskMeta *TaskMeta) error {
+	if !kerneltype.IsClassic() {
+		return nil
+	}
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+	}); err != nil {
+		// If the table is not found, it means the table has been either
+		// dropped or truncated. In such cases, the table mode has already
+		// been reset to normal, so we can ignore this error.
+		if !goerrors.Is(err, infoschema.ErrTableNotExists) {
+			return err
+		}
 
-	// Not use cloud storage, no need to cleanUp.
-	if taskMeta.Plan.CloudStorageURI == "" {
-		return nil
+		logutil.BgLogger().Warn(
+			"table not found during import cleanup, skip altering table mode",
+			zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
+		)
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	return nil
+}
+
+func cleanUpExternalFiles(ctx context.Context, fileGroup cleanUpFileGroup) error {
+	logger := logutil.BgLogger().With(zap.Int64s("task-ids", fileGroup.taskIDs))
 	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
 
-	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	store, err := importer.GetSortStore(ctx, fileGroup.cloudStorageURI)
 	if err != nil {
 		logger.Warn("failed to create store", zap.Error(err))
 		return err
 	}
 	defer store.Close()
-	if err = external.CleanUpFiles(ctx, store, strconv.Itoa(int(task.ID))); err != nil {
-		logger.Warn("failed to clean up files of task", zap.Error(err))
+	if err = external.CleanUpFiles(ctx, store, fileGroup.nonPartitionedDirs...); err != nil {
+		logger.Warn("failed to clean up files of tasks", zap.Error(err))
 		return err
-	}
-	// send metering data for nextgen kernel, only for succeed tasks
-	if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed {
-		if err = sendMeterOnCleanUp(ctx, task, logger); err != nil {
-			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-			return err
-		}
 	}
 	return nil
 }

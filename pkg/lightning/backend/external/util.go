@@ -145,12 +145,12 @@ func getReadRangeFromProps(
 	return readRangesPerKey, nil
 }
 
-// GetAllFileNames returns files with the same non-partitioned dir.
+// GetAllFileNames returns files with the same non-partitioned dirs.
 //   - for intermediate KV/stat files we store them with a partitioned way to mitigate
 //     limitation on Cloud, see randPartitionedPrefix for how we partition the files.
 //   - for meta files, we store them directly under the non-partitioned dir.
 //
-// for example, if nonPartitionedDir is '30001', the files returned might be
+// for example, if nonPartitionedDirs contains '30001', the files returned might be
 //   - 30001/6/meta.json
 //   - 30001/7/meta.json
 //   - 30001/plan/ingest/1/meta.json
@@ -160,8 +160,16 @@ func getReadRangeFromProps(
 func GetAllFileNames(
 	ctx context.Context,
 	store storeapi.Storage,
-	nonPartitionedDir string,
+	nonPartitionedDirs ...string,
 ) ([]string, error) {
+	if len(nonPartitionedDirs) == 0 {
+		return nil, nil
+	}
+	nonPartitionedDirSet := make(map[string]struct{}, len(nonPartitionedDirs))
+	for _, dir := range nonPartitionedDirs {
+		nonPartitionedDirSet[dir] = struct{}{}
+	}
+
 	var data []string
 
 	err := store.WalkDir(ctx,
@@ -175,7 +183,7 @@ func GetAllFileNames(
 			}
 
 			firstDir := bs[:firstIdx]
-			if string(firstDir) == nonPartitionedDir {
+			if _, ok := nonPartitionedDirSet[string(firstDir)]; ok {
 				data = append(data, path)
 				return nil
 			}
@@ -189,7 +197,7 @@ func GetAllFileNames(
 			}
 			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
 
-			if secondDir == nonPartitionedDir {
+			if _, ok := nonPartitionedDirSet[secondDir]; ok {
 				data = append(data, path)
 			}
 			return nil
@@ -202,13 +210,16 @@ func GetAllFileNames(
 	return data, nil
 }
 
-// CleanUpFiles delete all data and stat files under the same non-partitioned dir.
+// CleanUpFiles delete all data and stat files under the same non-partitioned dirs.
 // see randPartitionedPrefix for how we partition the files.
-func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir string) error {
+func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDirs ...string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
-	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
+	if len(nonPartitionedDirs) == 0 {
+		return nil
+	}
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDirs...)
 	if err != nil {
 		return err
 	}
