@@ -89,7 +89,8 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
-	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
+	b, savedSelectBlockState := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
+	defer restorePlannerSelectBlockState(sctx, savedSelectBlockState)
 	b.allowBuildCastArray = allowCastArray
 	fakePlan := logicalop.LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
@@ -101,7 +102,6 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
 	return newExpr, nil
 }
 

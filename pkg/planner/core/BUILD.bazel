@@ -220,6 +220,7 @@ go_test(
         "common_plans_test.go",
         "enforce_mpp_test.go",
         "exhaust_physical_plans_test.go",
+        "explain_format_hint_roundtrip_test.go",
         "expression_test.go",
         "find_best_task_test.go",
         "fts_resolve_index_test.go",

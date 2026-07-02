@@ -1,0 +1,72 @@
+drop table if exists t1, t2, t3, t4;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+create table t4(a int, b int, key(a));
+explain format='hint'
+select *
+from t1
+join t3 on t1.a = t3.a
+join t4 on t3.a = t4.a
+left join (
+select a, sum(b) as s
+from t2
+group by a
+) pm on t4.a = pm.a;
+hint
+leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t3`, `planner__core__join_subquery`.`t4`, `planner__core__join_subquery`.`pm`), hash_join_build(`planner__core__join_subquery`.`t4`), hash_join_build(`planner__core__join_subquery`.`t3`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` ), use_index(@`sel_1` `planner__core__join_subquery`.`t3` ), use_index(@`sel_1` `planner__core__join_subquery`.`t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `planner__core__join_subquery`.`t2` ), agg_to_cop(@`sel_2`)
+explain format='hint'
+select /*+ leading(`t1`, `t3`, `t4`, `pm`), hash_join_build(`t4`), hash_join_build(`t3`), use_index(@`sel_1` `t1` ), use_index(@`sel_1` `t3` ), use_index(@`sel_1` `t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `t2` ), agg_to_cop(@`sel_2`) */ *
+from t1
+join t3 on t1.a = t3.a
+join t4 on t3.a = t4.a
+left join (
+select a, sum(b) as s
+from t2
+group by a
+) pm on t4.a = pm.a;
+hint
+leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t3`, `planner__core__join_subquery`.`t4`, `planner__core__join_subquery`.`pm`), hash_join_build(`planner__core__join_subquery`.`t4`), hash_join_build(`planner__core__join_subquery`.`t3`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` ), use_index(@`sel_1` `planner__core__join_subquery`.`t3` ), use_index(@`sel_1` `planner__core__join_subquery`.`t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `planner__core__join_subquery`.`t2` ), agg_to_cop(@`sel_2`), leading(`t1`, `t3`, `t4`, `pm`), hash_join_build(`t4`), hash_join_build(`t3`), use_index(@`sel_1` `t1` ), use_index(@`sel_1` `t3` ), use_index(@`sel_1` `t4` ), use_index(@`sel_2` `t2` )
+show warnings;
+Level	Code	Message
+drop table if exists t1, t2, t3, t4;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t1, t2, t3;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a, b));
+select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+a	b	a	b	a	b	rn
+set @plan_digest = (select plan_digest from information_schema.statements_summary where query_sample_text = 'select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1');
+create session binding from history using plan digest @plan_digest;
+show warnings;
+Level	Code	Message
+Warning	1105	auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding. Plan Digest: 14ab34b51b13a373f4c336972020ab735ff93ed04c36207f549162647a88869d
+show bindings where source='history';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from ( `planner__core__join_subquery` . `t1` join `planner__core__join_subquery` . `t2` on `t1` . `a` = `t2` . `a` ) join ( select `a` , `b` , `row_number` ( ) `over` ( partition by `a` order by `b` desc ) as `rn` from `planner__core__join_subquery` . `t3` ) as `dt` on `t2` . `a` = `dt` . `a` where `dt` . `rn` = ?	SELECT /*+ hash_join_build(`planner__core__join_subquery`.`dt`) leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t2`, `planner__core__join_subquery`.`dt`) hash_join_build(`planner__core__join_subquery`.`t2`) use_index(@`sel_1` `planner__core__join_subquery`.`t1` ) use_index(@`sel_1` `planner__core__join_subquery`.`t2` ) use_index(@`sel_2` `planner__core__join_subquery`.`t3` `a`) no_order_index(@`sel_2` `planner__core__join_subquery`.`t3` `a`)*/ * FROM (`planner__core__join_subquery`.`t1` JOIN `planner__core__join_subquery`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN (SELECT `a`,`b`,row_number() OVER (PARTITION BY `a` ORDER BY `b` DESC) AS `rn` FROM `planner__core__join_subquery`.`t3`) AS `dt` ON `t2`.`a` = `dt`.`a` WHERE `dt`.`rn` = 1	planner__core__join_subquery	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	history	e6728522fc71055651667ae73c50e97e871ce00954c1f6397ca2dff591a6a203	14ab34b51b13a373f4c336972020ab735ff93ed04c36207f549162647a88869d
+select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+a	b	a	b	a	b	rn
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+drop session binding for select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1;
+set global tidb_enable_stmt_summary = default;
+drop table if exists t1, t2, t3;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+explain format='hint' select * from t1 join (select a, b from (select a, b from t2 limit 100) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a;
+hint
+inl_hash_join(`planner__core__join_subquery`.`t3`), leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`dt`, `planner__core__join_subquery`.`t3`), inl_hash_join(`planner__core__join_subquery`.`t1`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` `a`), no_order_index(@`sel_1` `planner__core__join_subquery`.`t1` `a`), use_index(@`sel_3` `planner__core__join_subquery`.`t2` ), limit_to_cop(@`sel_3`), use_index(@`sel_1` `planner__core__join_subquery`.`t3` `a`), no_order_index(@`sel_1` `planner__core__join_subquery`.`t3` `a`)
+explain format='hint' select /*+ leading(t1, dt, t3) */ * from t1 join (select a, b from (select a, b from t2 limit 100) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a;
+hint
+inl_hash_join(`planner__core__join_subquery`.`t3`), leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`dt`, `planner__core__join_subquery`.`t3`), inl_hash_join(`planner__core__join_subquery`.`t1`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` `a`), no_order_index(@`sel_1` `planner__core__join_subquery`.`t1` `a`), use_index(@`sel_3` `planner__core__join_subquery`.`t2` ), limit_to_cop(@`sel_3`), use_index(@`sel_1` `planner__core__join_subquery`.`t3` `a`), no_order_index(@`sel_1` `planner__core__join_subquery`.`t3` `a`), leading(`t1`, `dt`, `t3`)
+show warnings;
+Level	Code	Message
+explain format='hint' select sum(t1.b) over(order by t1.a range between 1 preceding and current row) as win_sum from t1 join (select a, b from (select a, b from t2 limit 100) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a;
+hint
+inl_hash_join(`planner__core__join_subquery`.`t3`), leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`dt`, `planner__core__join_subquery`.`t3`), inl_hash_join(`planner__core__join_subquery`.`t1`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` `a`), no_order_index(@`sel_1` `planner__core__join_subquery`.`t1` `a`), use_index(@`sel_3` `planner__core__join_subquery`.`t2` `a`), no_order_index(@`sel_3` `planner__core__join_subquery`.`t2` `a`), limit_to_cop(@`sel_3`), use_index(@`sel_1` `planner__core__join_subquery`.`t3` `a`), no_order_index(@`sel_1` `planner__core__join_subquery`.`t3` `a`)
+show warnings;
+Level	Code	Message

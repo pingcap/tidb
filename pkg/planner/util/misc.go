@@ -291,6 +291,114 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 }
 
+// ResolveVisibleHintTable resolves the hint table name that should be visible
+// for startOffset in targetOffset. It first walks the derived-table visibility
+// chain and falls back to the direct query-block alias if no outer-visible alias
+// exists in the recorded chain.
+func ResolveVisibleHintTable(sctx base.PlanContext, startOffset, targetOffset int) (*ast.HintTable, bool) {
+	if sctx == nil || startOffset <= 0 {
+		return nil, false
+	}
+	if targetOffset >= 0 {
+		if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+			if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, startOffset, targetOffset); ok {
+				return &ast.HintTable{DBName: resolved.DBName, TableName: resolved.TableName}, true
+			}
+		}
+	}
+	var queryBlockNames []ast.HintTable
+	if names := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
+		queryBlockNames = *names
+	}
+	if startOffset >= len(queryBlockNames) {
+		return nil, false
+	}
+	hintTable := queryBlockNames[startOffset]
+	if hintTable.TableName.L == "" {
+		return nil, false
+	}
+	copied := hintTable
+	return &copied, true
+}
+
+func hintTableToHintedTable(sctx base.PlanContext, hintTable *ast.HintTable, selectOffset int) *h.HintedTable {
+	if hintTable == nil {
+		return nil
+	}
+	dbName := hintTable.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	}
+	return &h.HintedTable{DBName: dbName, TblName: hintTable.TableName, SelectOffset: selectOffset}
+}
+
+// ExtractJoinHintTableAlias returns the alias that a logical join hint should
+// use for this plan node.
+//
+// It first tries to recover a derived-table alias from descendant query-block
+// metadata, then falls back to the plan's output names. The derived-table alias
+// belongs to the surrounding query block, so the returned SelectOffset is
+// always parentOffset in that case.
+func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTable {
+	if p == nil {
+		return nil
+	}
+
+	var queryBlockNames []ast.HintTable
+	if names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
+		queryBlockNames = *names
+	}
+	if len(queryBlockNames) > 0 {
+		if currentOffset := p.QueryBlockOffset(); currentOffset != parentOffset &&
+			currentOffset > 0 && currentOffset < len(queryBlockNames) &&
+			queryBlockNames[currentOffset].TableName.L != "" {
+			if hintTable, ok := ResolveVisibleHintTable(p.SCtx(), currentOffset, parentOffset); ok {
+				return hintTableToHintedTable(p.SCtx(), hintTable, parentOffset)
+			}
+		}
+
+		var (
+			found      *ast.HintTable
+			foundQbOff int
+			ambiguous  bool
+		)
+		var walk func(base.LogicalPlan)
+		walk = func(cur base.LogicalPlan) {
+			if ambiguous {
+				return
+			}
+			offset := cur.QueryBlockOffset()
+			if offset > 0 && offset < len(queryBlockNames) && offset != parentOffset {
+				hintTable := queryBlockNames[offset]
+				if hintTable.TableName.L != "" {
+					if found == nil {
+						copied := hintTable
+						found = &copied
+						foundQbOff = offset
+					} else if found.DBName.L != hintTable.DBName.L ||
+						found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
+						ambiguous = true
+						return
+					}
+				}
+			}
+			for _, child := range cur.Children() {
+				walk(child)
+			}
+		}
+		for _, child := range p.Children() {
+			walk(child)
+		}
+		if !ambiguous && found != nil {
+			if hintTable, ok := ResolveVisibleHintTable(p.SCtx(), foundQbOff, parentOffset); ok {
+				return hintTableToHintedTable(p.SCtx(), hintTable, parentOffset)
+			}
+			return hintTableToHintedTable(p.SCtx(), found, parentOffset)
+		}
+	}
+	return ExtractTableAlias(p, parentOffset)
+}
+
 // GetPushDownCtx creates a PushDownContext from PlanContext
 func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
