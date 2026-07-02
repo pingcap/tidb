@@ -36,7 +36,8 @@ const selectFromTTLTask = `SELECT LOW_PRIORITY
 	status,
 	status_update_time,
 	state,
-	created_time FROM mysql.tidb_ttl_task`
+	created_time,
+	split_by FROM mysql.tidb_ttl_task`
 const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	job_id = %?,
 	table_id = %?,
@@ -44,7 +45,8 @@ const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	scan_range_start = %?,
 	scan_range_end = %?,
 	expire_time = %?,
-	created_time = %?`
+	created_time = %?,
+	split_by = %?`
 
 // SelectFromTTLTaskWithJobID returns an SQL statement to get all tasks of the specified job in mysql.tidb_ttl_task
 func SelectFromTTLTaskWithJobID(jobID string) (string, []any) {
@@ -66,7 +68,7 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
 func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
+	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time, splitBy *int64) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
@@ -75,8 +77,12 @@ func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID i
 	if err != nil {
 		return "", nil, err
 	}
+	var splitByArg any
+	if splitBy != nil {
+		splitByArg = *splitBy
+	}
 	return insertIntoTTLTask, []any{jobID, tableID, int64(scanID),
-		rangeStart, rangeEnd, expireTime, createdTime}, nil
+		rangeStart, rangeEnd, expireTime, createdTime, splitByArg}, nil
 }
 
 // TaskStatus represents the current status of a task
@@ -106,6 +112,7 @@ type TTLTask struct {
 	StatusUpdateTime time.Time
 	State            *TTLTaskState
 	CreatedTime      time.Time
+	SplitBy          *int64
 }
 
 // TTLTaskState records the internal states of the ttl task
@@ -120,8 +127,11 @@ type TTLTaskState struct {
 	PreviousOwner string `json:"prev_owner,omitempty"`
 }
 
-// RowToTTLTask converts a row into TTL task
-func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
+// RowToTTLTask converts a row into TTL task.
+// schemaCache is used to look up the table's time column type so that index
+// scan ranges (which encode time as packed uint64) can be decoded back to
+// types.Time. If nil, scan ranges are decoded with the generic codec.Decode.
+func RowToTTLTask(timeZone *time.Location, row chunk.Row, schemaCache *InfoSchemaCache) (*TTLTask, error) {
 	var err error
 
 	task := &TTLTask{
@@ -129,11 +139,31 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 		TableID: row.GetInt64(1),
 		ScanID:  row.GetInt64(2),
 	}
+
+	var splitBy *int64
+	if !row.IsNull(13) {
+		v := row.GetInt64(13)
+		splitBy = &v
+	}
+
+	timeColType := byte(0)
+	if splitBy != nil && schemaCache != nil {
+		if tbl := schemaCache.Tables[task.TableID]; tbl != nil && tbl.TimeColumn != nil {
+			timeColType = tbl.TimeColumn.GetType()
+		}
+	}
+
 	if !row.IsNull(3) {
 		scanRangeStartBuf := row.GetBytes(3)
 		// it's still posibble to be empty even this column is not NULL
 		if len(scanRangeStartBuf) > 0 {
-			task.ScanRangeStart, err = codec.Decode(scanRangeStartBuf, len(scanRangeStartBuf))
+			if timeColType != 0 {
+				var d types.Datum
+				_, d, err = codec.DecodeAsDateTime(scanRangeStartBuf, timeColType, timeZone)
+				task.ScanRangeStart = []types.Datum{d}
+			} else {
+				task.ScanRangeStart, err = codec.Decode(scanRangeStartBuf, len(scanRangeStartBuf))
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -143,7 +173,13 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 		scanRangeEndBuf := row.GetBytes(4)
 		// it's still posibble to be empty even this column is not NULL
 		if len(scanRangeEndBuf) > 0 {
-			task.ScanRangeEnd, err = codec.Decode(scanRangeEndBuf, len(scanRangeEndBuf))
+			if timeColType != 0 {
+				var d types.Datum
+				_, d, err = codec.DecodeAsDateTime(scanRangeEndBuf, timeColType, timeZone)
+				task.ScanRangeEnd = []types.Datum{d}
+			} else {
+				task.ScanRangeEnd, err = codec.Decode(scanRangeEndBuf, len(scanRangeEndBuf))
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -194,6 +230,8 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	task.SplitBy = splitBy
 
 	return task, nil
 }

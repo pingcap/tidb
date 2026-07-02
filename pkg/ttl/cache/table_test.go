@@ -22,9 +22,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -289,4 +292,144 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1969-12-31 22:57:00", tm.In(time.UTC).Format(time.DateTime))
 	require.Same(t, tzBerlin, tm.Location())
+}
+
+func TestFindTTLIndex(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		def         string
+		hasTTLIndex bool
+		indexName   string
+	}{
+		{
+			def:         "(id int primary key, t datetime) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_t(t, id)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_t(id, t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_a(id), index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+	}
+
+	for i, c := range cases {
+		tblName := fmt.Sprintf("ttl_idx_%d", i)
+		tk.MustExec(fmt.Sprintf("create table %s %s", tblName, c.def))
+		tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tblName))
+		require.NoError(t, err)
+		tblInfo := tb.Meta()
+		ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
+		require.NoError(t, err)
+
+		idx := ttlTbl.FindTTLIndex()
+		if c.hasTTLIndex {
+			require.NotNil(t, idx, "table %s should have TTL index", tblName)
+			require.Equal(t, c.indexName, idx.Name.O)
+		} else {
+			require.Nil(t, idx, "table %s should not have TTL index", tblName)
+		}
+	}
+
+	tk.MustExec("create table ttl_idx_nil_time(id int primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day")
+	tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_idx_nil_time"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tb.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	ttlTbl.TimeColumn = nil
+	require.Nil(t, ttlTbl.FindTTLIndex())
+}
+
+func TestSplitIndexScanRanges(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.ttl_split(id int primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day")
+
+	tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_split"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tb.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	idx := ttlTbl.FindTTLIndex()
+	require.NotNil(t, idx)
+
+	indexKey := func(s string) []byte {
+		tm, err := time.ParseInLocation(time.DateTime, s, time.UTC)
+		require.NoError(t, err)
+		ft := ttlTbl.TimeColumn.FieldType
+		datum := types.NewTimeDatum(types.NewTime(types.FromGoTime(tm), ft.GetType(), ft.GetDecimal()))
+		encoded, err := codec.EncodeKey(time.UTC, nil, datum)
+		require.NoError(t, err)
+		encoded = codec.EncodeInt(encoded, 1)
+		return tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encoded)
+	}
+	minNotNullIndexKey := func() []byte {
+		encoded, err := codec.EncodeKey(time.UTC, nil, types.MinNotNullDatum())
+		require.NoError(t, err)
+		return tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encoded)
+	}
+	requireScanRange := func(r cache.ScanRange, start, end string) {
+		if start == "" {
+			require.Empty(t, r.Start)
+		} else {
+			require.Len(t, r.Start, 1)
+			require.Equal(t, start, r.Start[0].GetMysqlTime().String())
+		}
+		if end == "" {
+			require.Empty(t, r.End)
+		} else {
+			require.Len(t, r.End, 1)
+			require.Equal(t, end, r.End[0].GetMysqlTime().String())
+		}
+	}
+
+	expireTime := time.Date(2025, 5, 14, 0, 0, 0, 0, time.UTC)
+	tikvStore := newMockTiKVStore(t)
+
+	ranges, err := ttlTbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, time.UTC, 4)
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	require.Empty(t, ranges[0].Start)
+	require.Empty(t, ranges[0].End)
+
+	indexPrefix := tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, nil)
+	startKey := minNotNullIndexKey()
+	endKey := indexKey(expireTime.Format(time.DateTime))
+	tikvStore.clearRegions()
+	tikvStore.addRegion(indexPrefix, startKey)
+	tikvStore.addRegion(startKey, indexKey("2020-01-01 00:00:00"))
+	tikvStore.addRegion(indexKey("2020-01-01 00:00:00"), indexKey("2021-01-01 00:00:00"))
+	tikvStore.addRegion(indexKey("2021-01-01 00:00:00"), indexKey("2022-01-01 00:00:00"))
+	tikvStore.addRegion(indexKey("2022-01-01 00:00:00"), endKey)
+
+	ranges, err = ttlTbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, time.UTC, 4)
+	require.NoError(t, err)
+	require.Len(t, ranges, 4)
+	requireScanRange(ranges[0], "", "2020-01-01 00:00:00")
+	requireScanRange(ranges[1], "2020-01-01 00:00:00", "2021-01-01 00:00:00")
+	requireScanRange(ranges[2], "2021-01-01 00:00:00", "2022-01-01 00:00:00")
+	requireScanRange(ranges[3], "2022-01-01 00:00:00", "")
+
+	ttlTbl.TimeColumn = nil
+	ranges, err = ttlTbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, time.UTC, 4)
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	require.Empty(t, ranges[0].Start)
+	require.Empty(t, ranges[0].End)
 }

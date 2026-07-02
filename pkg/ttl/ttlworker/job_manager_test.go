@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -456,7 +457,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -478,7 +479,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -514,7 +515,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -544,7 +545,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -669,6 +670,87 @@ func TestLockTable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
+	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
+	vardef.TTLEnableIndexScan.Store(true)
+	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
+
+	idCol := &model.ColumnInfo{
+		ID:        1,
+		Name:      ast.NewCIStr("id"),
+		Offset:    0,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
+	}
+	idCol.AddFlag(mysql.PriKeyFlag)
+	timeCol := &model.ColumnInfo{
+		ID:        2,
+		Name:      ast.NewCIStr("t"),
+		Offset:    1,
+		FieldType: *types.NewFieldType(mysql.TypeDatetime),
+		State:     model.StatePublic,
+	}
+	tblInfo := &model.TableInfo{
+		ID:         1,
+		Name:       ast.NewCIStr("t1"),
+		Columns:    []*model.ColumnInfo{idCol, timeCol},
+		PKIsHandle: true,
+		Indices: []*model.IndexInfo{
+			{
+				ID:      10,
+				Name:    ast.NewCIStr("idx_t"),
+				Columns: []*model.IndexColumn{{Name: timeCol.Name, Offset: timeCol.Offset}},
+				State:   model.StatePublic,
+			},
+		},
+		TTLInfo: &model.TTLInfo{
+			ColumnName:       timeCol.Name,
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           true,
+			JobInterval:      "1h",
+		},
+		State: model.StatePublic,
+	}
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
+	require.NoError(t, err)
+
+	now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
+	expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
+	m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, nil)
+	m.infoSchemaCache.Tables[ttlTbl.ID] = ttlTbl
+	m.ctx = cache.SetMockExpireTime(context.Background(), expireTime)
+
+	se := newMockSession(t)
+	statusSQL, _ := cache.SelectFromTTLTableStatusWithID(1)
+	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now, nil)
+	require.NoError(t, err)
+	var taskArgs [][]any
+	se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+		switch sql {
+		case statusSQL + " FOR UPDATE NOWAIT":
+			return newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil
+		case setTableStatusOwnerTemplate:
+			return nil, nil
+		case createJobHistoryRowTemplate:
+			return nil, nil
+		case updateStatusSQL:
+			return newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil
+		}
+		require.Equal(t, insertTaskSQL, sql)
+		taskArgs = append(taskArgs, append([]any(nil), args...))
+		return nil, nil
+	}
+
+	job, err := m.lockNewJob(context.Background(), se, ttlTbl, now, "new-job-id", false)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Len(t, taskArgs, 1)
+	require.Empty(t, taskArgs[0][3])
+	require.Empty(t, taskArgs[0][4])
+	require.Equal(t, int64(10), taskArgs[0][7])
 }
 
 func TestLocalJobs(t *testing.T) {

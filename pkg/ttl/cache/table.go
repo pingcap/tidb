@@ -110,6 +110,10 @@ type PhysicalTable struct {
 	KeyColumns []*model.ColumnInfo
 	// KeyColumnTypes is the types of the key columns
 	KeyColumnTypes []*types.FieldType
+	// IndexScanColumnTypes is the types of the columns returned by an index scan:
+	// time column followed by the key columns. It is nil when the table has no
+	// TTL time column (e.g. runaway record tables).
+	IndexScanColumnTypes []*types.FieldType
 	// TimeColum is the time column used for TTL
 	TimeColumn *model.ColumnInfo
 }
@@ -155,7 +159,7 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		physicalID = partitionDef.ID
 	}
 
-	return &PhysicalTable{
+	pt := &PhysicalTable{
 		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
@@ -164,7 +168,13 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
 		TimeColumn:     timeColumn,
-	}, nil
+	}
+	if timeColumn != nil {
+		pt.IndexScanColumnTypes = make([]*types.FieldType, 0, 1+len(keyColumTypes))
+		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, &timeColumn.FieldType)
+		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, keyColumTypes...)
+	}
+	return pt, nil
 }
 
 // NewPhysicalTable create a new PhysicalTable
@@ -405,47 +415,19 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		return []ScanRange{newFullRange()}, nil
 	}
 
-	scanRanges := make([]ScanRange, 0, len(keyRanges))
-	curScanStart := nullDatum()
-	for i, keyRange := range keyRanges {
-		curScanEnd := nullDatum()
-		if i != len(keyRanges)-1 {
-			if isInt {
-				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
-			} else {
-				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
-				if decode != nil {
-					curScanEnd = decode(curScanEnd.GetBytes())
-				}
-
-				// "" is the smallest value for string/[]byte, skip to add it to ranges.
-				if len(curScanEnd.GetBytes()) == 0 {
-					continue
-				}
-			}
+	return scanRangesFromRawKeyRanges(keyRanges, func(endKey kv.Key) (types.Datum, bool, error) {
+		if isInt {
+			return GetNextIntDatumFromCommonHandle(endKey, recordPrefix, unsigned), false, nil
 		}
 
-		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
-			// Sometimes curScanStart >= curScanEnd because the edge datum is an approximate value.
-			// At this time, we should skip this range to ensure the incremental of ranges.
-			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
-			intest.AssertNoError(err)
-			if err != nil {
-				return nil, err
-			}
-
-			if cmp >= 0 {
-				continue
-			}
+		d := GetNextBytesHandleDatum(endKey, recordPrefix)
+		if decode != nil {
+			d = decode(d.GetBytes())
 		}
 
-		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
-		if curScanEnd.IsNull() {
-			break
-		}
-		curScanStart = curScanEnd
-	}
-	return scanRanges, nil
+		// "" is the smallest value for string/[]byte, skip to add it to ranges.
+		return d, len(d.GetBytes()) == 0, nil
+	})
 }
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
@@ -690,6 +672,138 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 	d.SetBytes(val)
 	return d
+}
+
+// FindTTLIndex finds a secondary index that contains the TTL column as its prefix.
+// Returns nil if no suitable index exists.
+func (t *PhysicalTable) FindTTLIndex() *model.IndexInfo {
+	if t.TimeColumn == nil {
+		return nil
+	}
+	for _, idx := range t.Indices {
+		if idx.Primary {
+			continue
+		}
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if idx.Invisible {
+			continue
+		}
+		if len(idx.Columns) == 0 {
+			continue
+		}
+		// Check if the TTL column is the first column of the index
+		if idx.Columns[0].Name.L == t.TimeColumn.Name.L {
+			return idx
+		}
+	}
+	return nil
+}
+
+// SplitIndexScanRanges splits index-scan ranges by the selected index's region distribution.
+// Each returned range is a [start, end) interval over the TTL column.
+func (t *PhysicalTable) SplitIndexScanRanges(ctx context.Context, store kv.Storage, idx *model.IndexInfo,
+	expireTime time.Time, loc *time.Location, splitCnt int) ([]ScanRange, error) {
+	if t.TimeColumn == nil || idx == nil || splitCnt <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	indexPrefix := tablecodec.EncodeIndexSeekKey(t.ID, idx.ID, nil)
+	encodedMinNotNull, err := codec.EncodeKey(loc, nil, types.MinNotNullDatum())
+	if err != nil {
+		return nil, err
+	}
+	startKey := tablecodec.EncodeIndexSeekKey(t.ID, idx.ID, encodedMinNotNull)
+
+	ft := t.TimeColumn.FieldType
+	expireDatum := types.NewTimeDatum(types.NewTime(types.FromGoTime(expireTime), ft.GetType(), ft.GetDecimal()))
+	encodedExpire, err := codec.EncodeKey(loc, nil, expireDatum)
+	if err != nil {
+		return nil, err
+	}
+	endKey := tablecodec.EncodeIndexSeekKey(t.ID, idx.ID, encodedExpire)
+	if endKey.Cmp(startKey) <= 0 {
+		return []ScanRange{newFullRange()}, nil
+	}
+	keyRanges, err := t.splitRawKeyRanges(ctx, tikvStore, startKey, endKey, splitCnt)
+	if err != nil {
+		return nil, err
+	}
+	if len(keyRanges) <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	scanRanges, err := scanRangesFromRawKeyRanges(keyRanges, func(endKey kv.Key) (types.Datum, bool, error) {
+		if endKey.Cmp(indexPrefix) <= 0 || !endKey.HasPrefix(indexPrefix) {
+			return nullDatum(), false, nil
+		}
+
+		data, _, err := codec.CutOne(endKey[len(indexPrefix):])
+		if err != nil {
+			return nullDatum(), false, nil
+		}
+		_, d, err := codec.DecodeAsDateTime(data, t.TimeColumn.FieldType.GetType(), loc)
+		if err != nil {
+			return nullDatum(), false, nil
+		}
+		return d, false, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(scanRanges) == 0 {
+		return []ScanRange{newFullRange()}, nil
+	}
+	return scanRanges, nil
+}
+
+func scanRangesFromRawKeyRanges(
+	keyRanges []kv.KeyRange,
+	decodeEnd func(kv.Key) (types.Datum, bool, error),
+) ([]ScanRange, error) {
+	scanRanges := make([]ScanRange, 0, len(keyRanges))
+	curScanStart := nullDatum()
+	for i, keyRange := range keyRanges {
+		curScanEnd := nullDatum()
+		if i != len(keyRanges)-1 {
+			var skip bool
+			var err error
+			curScanEnd, skip, err = decodeEnd(keyRange.EndKey)
+			if err != nil {
+				return nil, err
+			}
+			if skip {
+				continue
+			}
+		}
+
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
+			// Region boundaries can map to approximate datum boundaries. Skip
+			// non-incremental ranges rather than producing empty scan tasks.
+			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
+			intest.AssertNoError(err)
+			if err != nil {
+				return nil, err
+			}
+
+			if cmp >= 0 {
+				continue
+			}
+		}
+
+		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
+		if curScanEnd.IsNull() {
+			break
+		}
+		curScanStart = curScanEnd
+	}
+	return scanRanges, nil
 }
 
 // GetASCIIPrefixDatumFromBytes is used to convert bytes to string datum which only contains ASCII prefix string.
