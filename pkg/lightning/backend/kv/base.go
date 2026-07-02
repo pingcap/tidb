@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -167,7 +168,11 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 	}
 
 	// collect expressions for evaluating stored generated columns
-	genCols, err := CollectGeneratedColumns(se, meta, cols)
+	useNewCollate := collate.NewCollationEnabled()
+	if config.UseNewCollate != nil {
+		useNewCollate = *config.UseNewCollate
+	}
+	genCols, err := CollectGeneratedColumnsWithCollate(se, meta, cols, useNewCollate)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse generated column expressions")
 	}

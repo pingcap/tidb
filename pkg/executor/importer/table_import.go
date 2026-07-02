@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -90,6 +91,44 @@ var (
 	// it might not be the optimal value for other cases.
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
+
+type tableImporterOptions struct {
+	encTable table.Table
+}
+
+// TableImporterOption configures NewTableImporter.
+type TableImporterOption func(*tableImporterOptions)
+
+// WithEncodingTable sets the table used to encode rows and track allocated IDs.
+func WithEncodingTable(tbl table.Table) TableImporterOption {
+	return func(opts *tableImporterOptions) {
+		opts.encTable = tbl
+	}
+}
+
+func getTableImporterOptions(options []TableImporterOption) tableImporterOptions {
+	opts := tableImporterOptions{}
+	for _, opt := range options {
+		opt(&opts)
+	}
+	return opts
+}
+
+func newEncodingTable(e *LoadDataController) (table.Table, error) {
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
+	tbl, err := tables.TableFromMetaWithCollate(e.GetUseNewCollateOrDefault(collate.NewCollationEnabled()), idAlloc, e.Table.Meta())
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+	}
+	return tbl, nil
+}
+
+func getEncodingTable(e *LoadDataController, opts tableImporterOptions) (table.Table, error) {
+	if opts.encTable != nil {
+		return opts.encTable, nil
+	}
+	return newEncodingTable(e)
+}
 
 // Chunk records the chunk information.
 type Chunk struct {
@@ -188,11 +227,12 @@ func NewTableImporter(
 	e *LoadDataController,
 	id string,
 	kvStore tidbkv.Storage,
+	options ...TableImporterOption,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	opts := getTableImporterOptions(options)
+	tbl, err := getEncodingTable(e, opts)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return nil, err
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
@@ -284,12 +324,18 @@ func (s *storeHelper) GetTiKVCodec() tikv.Codec {
 var _ ingestctrl.StoreHelper = (*storeHelper)(nil)
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, kvStore tidbkv.Storage) (*TableImporter, error) {
+func NewTableImporterForTest(
+	ctx context.Context,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+	options ...TableImporterOption,
+) (*TableImporter, error) {
 	helper := &storeHelper{kvStore: kvStore}
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	opts := getTableImporterOptions(options)
+	tbl, err := getEncodingTable(e, opts)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return nil, err
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
@@ -393,9 +439,10 @@ func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encT
 			SysVars:        e.ImportantSysVars,
 			AutoRandomSeed: chunk.PrevRowIDMax,
 		},
-		Path:   chunk.Path,
-		Table:  encTable,
-		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
+		Path:          chunk.Path,
+		Table:         encTable,
+		Logger:        log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
+		UseNewCollate: e.UseNewCollate,
 	}
 	return NewTableKVEncoder(cfg, e)
 }
@@ -410,6 +457,7 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 		Table:                ti.encTable,
 		Logger:               log.Logger{Logger: ti.logger},
 		UseIdentityAutoRowID: true,
+		UseNewCollate:        ti.UseNewCollate,
 	}
 	return NewTableKVEncoderForDupResolve(cfg, ti.LoadDataController)
 }

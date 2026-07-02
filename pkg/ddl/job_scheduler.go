@@ -40,13 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -686,29 +684,6 @@ func (s *jobScheduler) workerPoolExhausted() bool {
 	return s.generalDDLWorkerPool.available() == 0 &&
 		s.reorgWorkerPool.available() == 0 &&
 		s.bgJobWorkerPool.available() == 0
-}
-
-func getTableByTxn(ctx context.Context, store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
-	var tbl table.Table
-	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		var err1 error
-		dbInfo, err1 = t.GetDatabase(schemaID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		tblInfo, err1 := getTableInfo(t, tableID, schemaID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		// This tableInfo should never interact with the autoid allocator,
-		// so we can use the autoid.Allocators{} here.
-		// TODO(tangenta): Use model.TableInfo instead of tables.Table.
-		tbl, err1 = table.TableFromMeta(autoid.Allocators{}, tblInfo)
-		return errors.Trace(err1)
-	})
-	return dbInfo, tbl, err
 }
 
 func updateDDLJob2Table(

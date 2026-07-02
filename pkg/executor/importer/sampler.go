@@ -39,6 +39,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"go.uber.org/zap"
@@ -82,6 +83,7 @@ type KVSizeSampleConfig struct {
 	FieldNullDef     []string
 	LineFieldsInfo   plannercore.LineFieldsInfo
 	IgnoreLines      uint64
+	UseNewCollate    *bool
 
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	ColumnAssignments  []*ast.Assignment
@@ -101,6 +103,13 @@ type kvSizeSampler struct {
 // TotalKVSize returns the total encoded KV size in the sample.
 func (r *SampledKVSizeResult) TotalKVSize() int64 {
 	return int64(r.DataKVSize + r.IndexKVSize)
+}
+
+func (cfg *KVSizeSampleConfig) getUseNewCollateOrDefault(defaultVal bool) bool {
+	if cfg == nil || cfg.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *cfg.UseNewCollate
 }
 
 // SampleFileImportKVSize samples source rows with nextgen's KV encoder and returns
@@ -155,6 +164,7 @@ func (e *LoadDataController) buildKVSizeSampleConfig() *KVSizeSampleConfig {
 		FieldNullDef:       append([]string(nil), e.FieldNullDef...),
 		LineFieldsInfo:     e.LineFieldsInfo,
 		IgnoreLines:        e.IgnoreLines,
+		UseNewCollate:      e.UseNewCollate,
 		ColumnsAndUserVars: e.ColumnsAndUserVars,
 		ColumnAssignments:  e.ColumnAssignments,
 	}
@@ -209,7 +219,12 @@ func validateKVSizeSampleConfig(cfg *KVSizeSampleConfig) error {
 func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 	ctx expression.BuildContext,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(s.cfg.ColumnAssignments, ctx, &s.colAssignMu)
+	return createColAssignSimpleExprs(
+		s.cfg.ColumnAssignments,
+		ctx,
+		&s.colAssignMu,
+		s.cfg.getUseNewCollateOrDefault(collate.NewCollationEnabled()),
+	)
 }
 
 func (s *kvSizeSampler) generateCSVConfig() *config.CSVConfig {
@@ -281,9 +296,10 @@ func (s *kvSizeSampler) getKVEncoder(
 			SysVars:        s.cfg.ImportantSysVars,
 			AutoRandomSeed: chunk.PrevRowIDMax,
 		},
-		Path:   chunk.Path,
-		Table:  encTable,
-		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
+		Path:          chunk.Path,
+		Table:         encTable,
+		Logger:        log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
+		UseNewCollate: s.cfg.UseNewCollate,
 	}
 	return newTableKVEncoderInner(cfg, s, s.fieldMappings, s.insertColumns)
 }
@@ -331,7 +347,7 @@ func (s *kvSizeSampler) sampleOneFile(
 		ParquetMeta: file.ParquetMeta,
 	}
 	idAlloc := kv.NewPanickingAllocators(s.table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, s.table.Meta())
+	tbl, err := tables.TableFromMetaWithCollate(s.cfg.getUseNewCollateOrDefault(collate.NewCollationEnabled()), idAlloc, s.table.Meta())
 	if err != nil {
 		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", s.table.Meta().Name)
 	}

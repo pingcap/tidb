@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -335,6 +336,10 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+	// UseNewCollate captures the collation mode used by background import workers
+	// when encoding keys. Nil means old metadata and should fall back to the
+	// caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
 // GetOnDupKeyMode returns the conflict handling mode.
@@ -347,6 +352,20 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 		return OnDupKeyModeError
 	}
 	return p.OnDupKey
+}
+
+// GetUseNewCollateOrDefault returns the captured collation mode, or defaultVal
+// for import metadata generated before the field existed.
+func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if p == nil || p.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *p.UseNewCollate
+}
+
+// SetUseNewCollate stores the collation mode used by background import workers.
+func (p *Plan) SetUseNewCollate(useNewCollate bool) {
+	p.UseNewCollate = &useNewCollate
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -553,6 +572,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
+	p.SetUseNewCollate(collate.NewCollationEnabled())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -1924,6 +1944,7 @@ func createColAssignSimpleExprs(
 	assignments []*ast.Assignment,
 	ctx expression.BuildContext,
 	mu *sync.Mutex,
+	useNewCollate bool,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
 	if mu != nil {
 		mu.Lock()
@@ -1932,7 +1953,7 @@ func createColAssignSimpleExprs(
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
-		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, expression.WithUseNewCollate(useNewCollate))
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		if ctx.GetEvalCtx().WarningCount() > 0 {
@@ -1948,7 +1969,12 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+	return createColAssignSimpleExprs(
+		e.ColumnAssignments,
+		ctx,
+		&e.colAssignMu,
+		e.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+	)
 }
 
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {
