@@ -6,8 +6,6 @@ import (
 	"database/sql"
 )
 
-var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
-
 // There are two kinds of scenes to use this dataType
 // The first is to be the receiver of table sample, which will use tidb's INFORMATION_SCHEMA.COLUMNS's DATA_TYPE column, which is from
 // https://github.com/pingcap/tidb/blob/619c4720059ea619081b01644ef3084b426d282f/executor/infoschema_reader.go#L654
@@ -28,12 +26,6 @@ func initColTypeRowReceiverMap() {
 		"UNSIGNED INT", "UNSIGNED BIGINT", "UNSIGNED TINYINT", "UNSIGNED SMALLINT", // introduced in https://github.com/go-sql-driver/mysql/pull/1238
 	}
 
-	dataTypeNumArr := append(dataTypeIntArr, []string{
-		"FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION",
-		"DECIMAL", "NUMERIC", "FIXED",
-		"BOOL", "BOOLEAN",
-	}...)
-
 	dataTypeBinArr := []string{
 		"BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "LONG",
 		"BINARY", "VARBINARY",
@@ -42,121 +34,52 @@ func initColTypeRowReceiverMap() {
 
 	for _, s := range dataTypeStringArr {
 		dataTypeString[s] = struct{}{}
-		colTypeRowReceiverMap[s] = SQLTypeStringMaker
 	}
 	for _, s := range dataTypeIntArr {
 		dataTypeInt[s] = struct{}{}
 	}
 	for _, s := range dataTypeNumArr {
 		dataTypeNum[s] = struct{}{}
-		colTypeRowReceiverMap[s] = SQLTypeNumberMaker
 	}
 	for _, s := range dataTypeBinArr {
 		dataTypeBin[s] = struct{}{}
-		colTypeRowReceiverMap[s] = SQLTypeBytesMaker
 	}
 }
 
 var dataTypeString, dataTypeInt, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
-// SQLTypeStringMaker returns a SQLTypeString
-func SQLTypeStringMaker() RowReceiverStringer {
-	return &SQLTypeString{}
-}
-
-// SQLTypeBytesMaker returns a SQLTypeBytes
-func SQLTypeBytesMaker() RowReceiverStringer {
-	return &SQLTypeBytes{}
-}
-
-// SQLTypeNumberMaker returns a SQLTypeNumber
-func SQLTypeNumberMaker() RowReceiverStringer {
-	return &SQLTypeNumber{}
-}
-
-// MakeRowReceiver constructs RowReceiverArr from column types
+// MakeRowReceiver constructs a RowReceiverArr for a row of len(colTypes) columns.
 func MakeRowReceiver(colTypes []string) *RowReceiverArr {
-	rowReceiverArr := make([]RowReceiverStringer, len(colTypes))
-	for i, colTp := range colTypes {
-		recMaker, ok := colTypeRowReceiverMap[colTp]
-		if !ok {
-			recMaker = SQLTypeStringMaker
-		}
-		rowReceiverArr[i] = recMaker()
-	}
-	return &RowReceiverArr{
-		bound:     false,
-		receivers: rowReceiverArr,
-	}
+	return &RowReceiverArr{data: make([]sql.RawBytes, len(colTypes))}
 }
 
-// RowReceiverArr is the combined RowReceiver array
+// RowReceiverArr scans one SQL row into a reusable []sql.RawBytes: BindAddress
+// points the driver at each element, and AppendRawBytes/GetRawBytes read them
+// back. The values alias the driver's buffer and are only valid until the next
+// scan, so the caller must consume them before advancing the row iterator.
 type RowReceiverArr struct {
-	bound     bool
-	receivers []RowReceiverStringer
+	bound bool
+	data  []sql.RawBytes
 }
 
-// BindAddress implements RowReceiver.BindAddress
+// BindAddress implements RowReceiver.BindAddress.
 func (r *RowReceiverArr) BindAddress(args []any) {
 	if r.bound {
 		return
 	}
 	r.bound = true
 	for i := range args {
-		r.receivers[i].BindAddress(args[i : i+1])
+		args[i] = &r.data[i]
 	}
 }
 
-// GetRawBytes implements Stringer.GetRawBytes.
-func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
-	return r.AppendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
+// GetRawBytes returns the current row's raw bytes as a fresh slice.
+func (r *RowReceiverArr) GetRawBytes() []sql.RawBytes {
+	return r.AppendRawBytes(make([]sql.RawBytes, 0, len(r.data)))
 }
 
-// AppendRawBytes appends each receiver's raw bytes to dst and returns it, so the
-// caller can reuse one slice across rows instead of allocating per row.
-func (r RowReceiverArr) AppendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
-	for _, receiver := range r.receivers {
-		dst = append(dst, receiver.GetRawBytes()[0])
-	}
-	return dst
-}
-
-// SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
-type SQLTypeNumber struct {
-	SQLTypeString
-}
-
-// GetRawBytes implements Stringer.GetRawBytes.
-func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
-}
-
-// SQLTypeString implements RowReceiverStringer which represents string type columns in database
-type SQLTypeString struct {
-	sql.RawBytes
-}
-
-// BindAddress implements RowReceiver.BindAddress
-func (s *SQLTypeString) BindAddress(arg []any) {
-	arg[0] = &s.RawBytes
-}
-
-// GetRawBytes implements Stringer.GetRawBytes.
-func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
-}
-
-// SQLTypeBytes implements RowReceiverStringer which represents bytes type columns in database
-type SQLTypeBytes struct {
-	sql.RawBytes
-}
-
-// BindAddress implements RowReceiver.BindAddress
-func (s *SQLTypeBytes) BindAddress(arg []any) {
-	arg[0] = &s.RawBytes
-}
-
-// GetRawBytes implements Stringer.GetRawBytes.
-func (s *SQLTypeBytes) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
+// AppendRawBytes appends the current row's raw bytes to dst and returns it, so
+// the caller can reuse one slice across rows instead of allocating per row.
+func (r *RowReceiverArr) AppendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
+	return append(dst, r.data...)
 }
