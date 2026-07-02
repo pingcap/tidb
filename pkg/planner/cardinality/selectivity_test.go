@@ -650,6 +650,56 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 		"exclusive lower bound on NULL must drop the NULL row, estimate must be < RealtimeCount")
 }
 
+// TestOutOfRangeEstimationWithoutIdx2ColMapping verifies that the StatsVer2 out-of-range
+// estimation does not panic when the index-to-column mapping (Idx2ColUniqueIDs) is empty.
+// getIndexRowCountForStatsV2 reads Idx2ColUniqueIDs[idx.ID][0] to prefer the leading
+// column's histogram for single-column ranges; if that mapping is not populated the
+// access must be guarded and the estimation must fall back to the index histogram.
+func TestOutOfRangeEstimationWithoutIdx2ColMapping(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// A fully-loaded StatsVer2 index whose histogram covers the encoded values [0, nonNullCount).
+	const nonNullCount = 50
+	statsTbl := mockStatsTable(tblInfo, nonNullCount)
+	idxValues := make([]types.Datum, nonNullCount)
+	for i := range idxValues {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	idxHist := mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob))
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram:         *idxHist,
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+	// Intentionally do NOT populate Idx2ColUniqueIDs: it stays empty, simulating a HistColl
+	// where the index-to-column mapping was not built. Before the guard, the out-of-range
+	// path indexed colIDs[0] on this empty slice and panicked.
+
+	idxID := tblInfo.Indices[0].ID
+	sctx := tk.Session().GetPlanCtx()
+
+	// An interval range fully above the histogram max forces the StatsVer2 out-of-range
+	// branch (a point range would short-circuit earlier). This must not panic and must
+	// return a small, positive estimate from the index histogram fallback.
+	require.NotPanics(t, func() {
+		countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(1000, 2000), nil)
+		require.NoError(t, err)
+		require.Greater(t, countResult.Est, 0.0)
+		require.Less(t, countResult.Est, float64(nonNullCount))
+	})
+}
+
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
