@@ -68,7 +68,11 @@ func NewTableKVEncoder(
 
 // CollectGeneratedColumns collects all expressions required to evaluate the
 // results of all generated columns. The returning slice is in evaluation order.
-func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.Column) ([]GeneratedCol, error) {
+func CollectGeneratedColumns(se *Session, tbl table.Table) ([]GeneratedCol, error) {
+	return collectGeneratedColumns(se, tbl.Meta(), tbl.Cols(), tbl.UseNewCollate())
+}
+
+func collectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.Column, useNewCollate bool) ([]GeneratedCol, error) {
 	hasGenCol := false
 	for _, col := range cols {
 		if col.GeneratedExpr != nil {
@@ -112,6 +116,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 				col.GeneratedExpr.Internal(),
 				expression.WithInputSchemaAndNames(schema, names, meta),
 				expression.WithAllowCastArray(true),
+				expression.WithUseNewCollate(useNewCollate),
 			)
 			if err != nil {
 				return nil, err

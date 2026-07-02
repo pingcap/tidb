@@ -459,6 +459,9 @@ type Table interface {
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
+	// UseNewCollate returns the collation mode used for table key encoding.
+	UseNewCollate() bool
+
 	// Type returns the type of table
 	Type() Type
 
