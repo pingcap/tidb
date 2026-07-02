@@ -280,6 +280,7 @@ go_test(
         "job_submitter_test.go",
         "job_worker_test.go",
         "main_test.go",
+        "masking_policy_internal_test.go",
         "masking_policy_test.go",
         "metabuild_test.go",
         "modify_column_test.go",
