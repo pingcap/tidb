@@ -323,7 +323,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	var lazy bool
 	if rs != nil {
-		if !checkingConnectionAlive {
+		if !checkingConnectionAlive && planCacheStmt != nil && planCacheStmt.PreparedAst != nil &&
+			shouldInstallConnectionAliveDuringResultSet(planCacheStmt.PreparedAst.Stmt, vars) {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}

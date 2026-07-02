@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -68,6 +70,36 @@ type Issue33699CheckType struct {
 	defVal            string
 	setVal            string
 	isSessionVariable bool
+}
+
+func TestShouldInstallConnectionAlivePolicy(t *testing.T) {
+	p := parser.New()
+	parseStmt := func(sql string) ast.StmtNode {
+		stmts, _, err := p.ParseSQL(sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		return stmts[0]
+	}
+
+	sessVars := variable.NewSessionVars(nil)
+	resultSetCases := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select * from t", false},
+		{"select 1", false},
+		{"select sleep(1)", true},
+		{"select if(1, sleep(1), 0)", true},
+	}
+	for _, tc := range resultSetCases {
+		require.Equal(t, tc.expect, shouldInstallConnectionAliveDuringResultSet(parseStmt(tc.sql), sessVars), tc.sql)
+	}
+
+	require.True(t, shouldInstallConnectionAliveDuringExecute(parseStmt("insert into t values (1)"), sessVars))
+	require.False(t, shouldInstallConnectionAliveDuringExecute(parseStmt("select 1"), sessVars))
+
+	sessVars.SetInTxn(true)
+	require.False(t, shouldInstallConnectionAliveDuringExecute(parseStmt("insert into t values (1)"), sessVars))
 }
 
 func (c *Issue33699CheckType) toSetSessionVar() string {

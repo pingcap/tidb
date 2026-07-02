@@ -2088,12 +2088,9 @@ func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *vari
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
 		return false
 	}
-	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
-		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
-		if err != nil || prepared.PreparedAst == nil {
-			return false
-		}
-		stmt = prepared.PreparedAst.Stmt
+	stmt = resolvePreparedStmtForConnectionAlive(stmt, sessVars)
+	if stmt == nil {
+		return false
 	}
 	switch stmt.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
@@ -2101,6 +2098,52 @@ func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *vari
 	default:
 		return false
 	}
+}
+
+// shouldInstallConnectionAliveDuringResultSet keeps the disconnect probe off
+// ordinary read-result hot paths while preserving `SELECT SLEEP(...)` cleanup.
+func shouldInstallConnectionAliveDuringResultSet(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+	stmt = resolvePreparedStmtForConnectionAlive(stmt, sessVars)
+	return stmtHasSleepFunc(stmt)
+}
+
+func resolvePreparedStmtForConnectionAlive(stmt ast.StmtNode, sessVars *variable.SessionVars) ast.StmtNode {
+	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
+		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
+		if err != nil || prepared.PreparedAst == nil {
+			return nil
+		}
+		return prepared.PreparedAst.Stmt
+	}
+	return stmt
+}
+
+func stmtHasSleepFunc(stmt ast.StmtNode) bool {
+	if stmt == nil {
+		return false
+	}
+	visitor := &sleepFuncVisitor{}
+	stmt.Accept(visitor)
+	return visitor.hasSleep
+}
+
+type sleepFuncVisitor struct {
+	hasSleep bool
+}
+
+func (v *sleepFuncVisitor) Enter(n ast.Node) (ast.Node, bool) {
+	if v.hasSleep {
+		return n, true
+	}
+	if fn, ok := n.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Sleep {
+		v.hasSleep = true
+		return n, true
+	}
+	return n, false
+}
+
+func (v *sleepFuncVisitor) Leave(n ast.Node) (ast.Node, bool) {
+	return n, !v.hasSleep
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
@@ -2167,7 +2210,7 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
-		if !checkingConnectionAlive {
+		if !checkingConnectionAlive && shouldInstallConnectionAliveDuringResultSet(stmt, cc.ctx.GetSessionVars()) {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}

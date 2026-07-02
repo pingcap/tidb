@@ -54,7 +54,10 @@ type SQLKiller struct {
 	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
 
-	lastCheckTime     atomic.Pointer[time.Time]
+	lastCheckTime atomic.Pointer[time.Time]
+	// IsConnectionAlive stores a statement-scoped callback token. Callers should
+	// clear it with CompareAndSwap using the same token, so cleanup from an older
+	// statement cannot remove a callback installed by a newer statement.
 	IsConnectionAlive atomic.Pointer[func() bool]
 }
 
@@ -131,17 +134,17 @@ func (killer *SQLKiller) HandleSignal() error {
 	// Checks if the connection is alive.
 	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
 	fn := killer.IsConnectionAlive.Load()
-	lastCheckTime := killer.lastCheckTime.Load()
 	if fn != nil {
 		var checkConnectionAliveDur time.Duration = time.Second
 		now := time.Now()
+		lastCheckTime := killer.lastCheckTime.Load()
 		if intest.InTest {
 			checkConnectionAliveDur = time.Millisecond
 		}
 		if lastCheckTime == nil {
-			killer.lastCheckTime.Store(&now)
+			killer.storeLastCheckTime(now)
 		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
-			killer.lastCheckTime.Store(&now)
+			killer.storeLastCheckTime(now)
 			if !(*fn)() {
 				killer.SendKillSignal(QueryInterrupted)
 			}
@@ -155,6 +158,14 @@ func (killer *SQLKiller) HandleSignal() error {
 			zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	return err
+}
+
+// storeLastCheckTime keeps the allocation on the throttled update path instead
+// of the high-frequency HandleSignal fast path.
+func (killer *SQLKiller) storeLastCheckTime(t time.Time) {
+	lastCheckTime := new(time.Time)
+	*lastCheckTime = t
+	killer.lastCheckTime.Store(lastCheckTime)
 }
 
 // CheckConnectionAlive checks whether the connection is alive immediately.
