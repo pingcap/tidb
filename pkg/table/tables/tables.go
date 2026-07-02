@@ -1049,7 +1049,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 			}
 			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
-		rsData := TryGetHandleRestoredDataWrapperWithCollate(t.useNewCollate, t.meta, r, nil, v.Meta())
+		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -1329,7 +1329,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 }
 
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
-	rsData := TryGetHandleRestoredDataWrapperWithCollate(t.useNewCollate, t.meta, newData, nil, idx.Meta())
+	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1533,6 +1533,11 @@ func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 // Type implements table.Table Type interface.
 func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
+}
+
+// UseNewCollate returns the new-collation mode captured for this table.
+func (t *TableCommon) UseNewCollate() bool {
+	return t.useNewCollate
 }
 
 // canSkip returns whether the column can be omitted from the encoded row:
@@ -1788,13 +1793,9 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	return TryGetHandleRestoredDataWrapperWithCollate(collate.NewCollationEnabled(), tblInfo, row, rowMap, idx)
-}
-
-// TryGetHandleRestoredDataWrapperWithCollate tries to get the restored data for
-// handle under the specified new-collation mode.
-func TryGetHandleRestoredDataWrapperWithCollate(useNewCollate bool, tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+func TryGetHandleRestoredDataWrapper(tbl table.Table, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+	tblInfo := tbl.Meta()
+	useNewCollate := tbl.UseNewCollate()
 	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
