@@ -1535,20 +1535,12 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkipWithCollate(t.useNewCollate, t.Meta(), col, value)
-}
-
-// CanSkip is for these cases, we can skip the columns in encoded row:
+// canSkip returns whether the column can be omitted from the encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
-func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
-	return CanSkipWithCollate(collate.NewCollationEnabled(), info, col, value)
-}
-
-// CanSkipWithCollate is like CanSkip but uses the specified new-collation mode.
-func CanSkipWithCollate(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
+	info := t.Meta()
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
@@ -1559,7 +1551,7 @@ func CanSkipWithCollate(useNewCollate bool, info *model.TableInfo, col *table.Co
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate)
+			canSkip = canSkip && !types.NeedRestoredDataWithCollate(&col.FieldType, t.useNewCollate)
 			return canSkip
 		}
 	}
