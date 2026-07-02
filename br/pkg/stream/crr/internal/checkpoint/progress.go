@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"maps"
 	"path"
 	"slices"

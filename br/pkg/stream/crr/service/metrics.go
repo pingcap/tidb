@@ -103,7 +103,8 @@ var (
 		Namespace: "tidb",
 		Subsystem: "br_crr",
 		Name:      "skipped_store_synced_meta_file_count",
-		Help:      "Skipped upstream meta file count because the store is already synced past the meta flush ts in latest round statistic.",
+		Help: "Skipped upstream meta file count because the store is already synced " +
+			"past the meta flush ts in latest round statistic.",
 	}, []string{"task"})
 	estimatedSyncLogFileCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
@@ -175,7 +176,9 @@ func observeStatusMetrics(snapshot *StatusSnapshot) {
 	pendingFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.PendingFileCount))
 	consecutiveFailures.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.ConsecutiveFailures))
 	upstreamReadMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.UpstreamReadMetaFileCount))
-	skippedStoreSyncedMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.SkippedStoreSyncedMetaFileCount))
+	skippedStoreSyncedMetaFileCount.WithLabelValues(snapshot.TaskName).Set(
+		float64(snapshot.Statistic.SkippedStoreSyncedMetaFileCount),
+	)
 	estimatedSyncLogFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.EstimatedSyncLogFileCount))
 	downstreamCheckFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.DownstreamCheckFileCount))
 }
