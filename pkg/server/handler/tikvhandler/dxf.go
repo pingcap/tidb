@@ -344,6 +344,40 @@ func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	}
 }
 
+// DXFTaskMaxConcurrentHandler handles the in-memory DXF task concurrency limit.
+type DXFTaskMaxConcurrentHandler struct{}
+
+// NewDXFTaskMaxConcurrentHandler creates a new DXFTaskMaxConcurrentHandler.
+func NewDXFTaskMaxConcurrentHandler() *DXFTaskMaxConcurrentHandler {
+	return &DXFTaskMaxConcurrentHandler{}
+}
+
+func (*DXFTaskMaxConcurrentHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		handler.WriteData(w, map[string]any{
+			"max_concurrent_task": proto.GetMaxConcurrentTask(),
+		})
+	case http.MethodPost:
+		valueStr := req.FormValue("value")
+		value, err := strconv.Atoi(valueStr)
+		if err != nil {
+			handler.WriteError(w, errors.Errorf("invalid value %s, error %v", valueStr, err))
+			return
+		}
+		if err := proto.SetMaxConcurrentTask(value); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		logutil.BgLogger().Info("set DXF max concurrent task", zap.Int("maxConcurrentTask", value))
+		handler.WriteData(w, map[string]any{
+			"max_concurrent_task": proto.GetMaxConcurrentTask(),
+		})
+	default:
+		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
+	}
+}
+
 // DXFTaskMaxRuntimeSlotsHandler handles changing max runtime slots of DXF task.
 type DXFTaskMaxRuntimeSlotsHandler struct{}
 

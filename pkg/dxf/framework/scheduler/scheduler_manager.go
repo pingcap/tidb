@@ -155,7 +155,7 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			serverID: serverID,
 		}),
 		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		finishCh: make(chan struct{}, proto.MaxMaxConcurrentTask),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
@@ -244,7 +244,7 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.MaxConcurrentTask {
+	if taskCnt >= proto.GetMaxConcurrentTask() {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
@@ -291,7 +291,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
+			if taskCnt >= proto.GetMaxConcurrentTask() {
 				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
