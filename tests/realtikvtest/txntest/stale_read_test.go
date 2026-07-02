@@ -1321,10 +1321,8 @@ func TestStaleReadCompatibility(t *testing.T) {
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 3)
 	// enable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness='-1'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
-	}()
+	tk.MustExec(fmt.Sprintf("set @@timestamp=%d", t1.Unix()))
+	defer tk.MustExec("set @@timestamp=default")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 	// assert select as of timestamp during tidb_read_staleness
 	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2Str)).Rows(), 2)
