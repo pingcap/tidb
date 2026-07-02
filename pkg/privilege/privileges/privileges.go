@@ -78,9 +78,19 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
+	"APPLICATION_PASSWORD_ADMIN",      // Self-service RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD; cross-user retain/discard requires CREATE USER.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
+
+// dualPasswordFallbackLogger rate-limits the "authenticated using retained
+// (secondary) password" info log so a partially-rotated high-churn service
+// doesn't flood logs. One entry per minute per process is enough for an
+// operator to confirm a rotation is in progress; auth events themselves are
+// recorded separately.
+var dualPasswordFallbackLogger = logutil.SampleLoggerFactory(
+	time.Minute, 1, zap.String(logutil.LogFieldCategory, "auth"),
+)
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -590,6 +600,33 @@ func BuildPasswordLockingJSON(failedLoginAttempts int64,
 	return newAttributesStr
 }
 
+// checkPasswordForPlugin verifies the client-supplied `authentication` scramble
+// against a single stored hash `storedHash` for a password-based auth plugin
+// (mysql_native_password / caching_sha2_password / tidb_sm3_password). It is the
+// single source of truth used for BOTH the primary authentication_string and the
+// retained secondary (additional_password) in ConnectionVerification, so the two
+// can never drift as plugins or hash handling evolve.
+//
+// It returns (false, nil) when storedHash is empty or the password simply does
+// not match; a non-nil error indicates a malformed stored hash (the caller
+// decides how to log/treat it). An unrecognized plugin returns (false, nil).
+func checkPasswordForPlugin(plugin, storedHash string, salt, authentication []byte) (bool, error) {
+	if len(storedHash) == 0 {
+		return false, nil
+	}
+	switch plugin {
+	case mysql.AuthNativePassword:
+		hpwd, err := auth.DecodePassword(storedHash)
+		if err != nil {
+			return false, err
+		}
+		return auth.CheckScrambledPassword(salt, hpwd, authentication), nil
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		return auth.CheckHashingPassword([]byte(storedHash), string(authentication), plugin)
+	}
+	return false, nil
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn) (info privilege.VerificationInfo, err error) {
 	if SkipWithGrant {
@@ -672,38 +709,63 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if err = p.authenticateWithPlugin(user, authentication, salt, sessionVars, authConn, authPlugin, pwd); err != nil {
 			return info, err
 		}
-	} else if len(pwd) > 0 && len(authentication) > 0 {
+	} else if len(pwd) > 0 || len(authentication) > 0 {
+		// Password-based plugins (native / caching_sha2 / sm3). The non-password
+		// plugins (LDAP, socket, token, extension) were handled by the branches
+		// above, so record.AuthPlugin here is a password plugin or genuinely
+		// unknown.
+		//
+		// The branch is entered whenever the stored primary is non-empty OR the
+		// client supplied credentials. It is therefore reachable with an EMPTY
+		// primary hash when the client sends a password (len(authentication)>0) —
+		// e.g. `ALTER USER u IDENTIFIED BY '' ` after a RETAIN leaves an empty
+		// primary alongside a non-empty additional_password; checkPasswordForPlugin
+		// returns (false, nil) for the empty primary and we fall through to the
+		// secondary so the still-valid secondary password can authenticate.
+		//
+		// NOTE: a passwordless login (empty primary AND empty client auth) does
+		// NOT enter here even when a secondary exists, so the empty primary still
+		// authenticates via the no-password success path below.
+		secondaryAccepted := false
 		switch record.AuthPlugin {
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
-		case mysql.AuthNativePassword:
-			hpwd, err := auth.DecodePassword(pwd)
-			if err != nil {
-				logutil.BgLogger().Warn("decode password string failed", zap.Error(err))
-				info.FailedDueToWrongPassword = true
-				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			primaryOK, perr := checkPasswordForPlugin(record.AuthPlugin, pwd, salt, authentication)
+			if perr != nil {
+				// A malformed stored primary hash: keep the historical,
+				// error-log-review-stable log lines (native warns; the hashing
+				// plugins log Error and continue treating the check as failed).
+				if record.AuthPlugin == mysql.AuthNativePassword {
+					logutil.BgLogger().Warn("decode password string failed", zap.Error(perr))
+					info.FailedDueToWrongPassword = true
+					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				}
+				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(perr))
 			}
-
-			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				info.FailedDueToWrongPassword = true
-				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-			}
-		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
-			if err != nil {
-				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
-			}
-
-			if !authok {
-				info.FailedDueToWrongPassword = true
-				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			if !primaryOK {
+				// MySQL-compatible dual-password fallback: try the retained
+				// secondary hash with the same per-plugin routine.
+				secondaryOK, _ := checkPasswordForPlugin(record.AuthPlugin, record.AdditionalAuthenticationString, salt, authentication)
+				if !secondaryOK {
+					info.FailedDueToWrongPassword = true
+					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				}
+				secondaryAccepted = true
 			}
 		default:
 			logutil.BgLogger().Warn("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-	} else if len(pwd) > 0 || len(authentication) > 0 {
-		info.FailedDueToWrongPassword = true
-		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		if secondaryAccepted {
+			// Surface fallback logins so operators can tell which accounts
+			// have finished rotating and can safely DISCARD OLD PASSWORD.
+			// Sampled to avoid log flooding on high-churn services that
+			// are mid-rotation.
+			dualPasswordFallbackLogger().Info("authenticated using retained (secondary) password",
+				zap.String("auth_user", authUser),
+				zap.String("auth_host", authHost),
+				zap.String("auth_plugin", record.AuthPlugin))
+		}
 	}
 
 	// Login a locked account is not allowed.
