@@ -170,6 +170,51 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 			tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
 			tk.MustExec("commit")
 			tk.MustExec("admin check table t1;")
+
+			tk.MustExec("drop table if exists t_union_unsigned")
+			tk.MustExec(`create table t_union_unsigned (
+				a int,
+				g bigint unsigned generated always as (a - 10) virtual,
+				key idx_g(g)
+			)`)
+			tk.MustExec("begin")
+			tk.MustExec("insert ignore into t_union_unsigned(a) values (1)")
+			tk.MustQuery("select /* issue:67991 */ a, g from t_union_unsigned").Check(testkit.Rows("1 0"))
+			tk.MustQuery("select /* issue:67991 */ a, g from t_union_unsigned use index(idx_g)").Check(testkit.Rows("1 0"))
+			tk.MustExec("commit")
+			tk.MustQuery("select /* issue:67991 */ a, g from t_union_unsigned").Check(testkit.Rows("1 0"))
+			tk.MustExec("admin check table t_union_unsigned")
+
+			tk.MustExec("drop table if exists union_vgc_limit_bug")
+			tk.MustExec(`create table union_vgc_limit_bug (
+				id int primary key,
+				a int,
+				b int generated always as (a + 1) virtual,
+				key idx_b(b)
+			)`)
+			tk.MustExec("analyze table union_vgc_limit_bug")
+			tk.MustExec("insert into union_vgc_limit_bug(id, a) values (1, 1), (2, 4)")
+			tk.MustQuery(`select /* issue:68003 */ id, a, b
+				from union_vgc_limit_bug use index(idx_b)
+				where b >= 2
+				order by b, id
+				limit 1`).Check(testkit.Rows("1 1 2"))
+			tk.MustExec("begin")
+			tk.MustExec("insert into union_vgc_limit_bug(id, a) values (3, 2)")
+			query := `select /* issue:68003 */ id, a, b
+				from union_vgc_limit_bug use index(idx_b)
+				where b >= 2
+				order by b, id
+				limit 1`
+			tk.MustHavePlan(query, "IndexLookUp")
+			tk.MustHavePlan(query, "UnionScan")
+			tk.MustQuery(query).Check(testkit.Rows("1 1 2"))
+			tk.MustQuery(`select /* issue:68003 */ id, a, b
+				from union_vgc_limit_bug ignore index(idx_b)
+				where b >= 2
+				order by b, id
+				limit 1`).Check(testkit.Rows("1 1 2"))
+			tk.MustExec("rollback")
 		}
 
 		// Test update with 2 index, one untouched, the other index is touched.
