@@ -1396,6 +1396,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// Older PD servers do not support the router client's QueryRegion RPC.
+		// Disable it for the post-process store used by auto-increment rebase.
 		kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
 		if !ok {
 			return errors.Errorf("TiKV store does not expose PD client")
