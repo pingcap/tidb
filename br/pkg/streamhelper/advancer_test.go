@@ -949,6 +949,7 @@ func TestOwnerDropped(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	installSubscribeSupport(c)
 	env := newTestEnv(c, t)
+	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/get_subscriber"
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -959,7 +960,69 @@ func TestOwnerDropped(t *testing.T) {
 	adv.OnStart(ctx)
 	adv.SpawnSubscriptionHandler(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	adv.OnStop()
+	require.True(t, adv.HasSubscriptions())
+
+	enterSubscribeTick := make(chan struct{})
+	releaseSubscribeTick := make(chan struct{})
+	var enterSubscribe sync.Once
+	var cleanup sync.Once
+	require.NoError(t, failpoint.EnableCall(fp, func() {
+		enterSubscribe.Do(func() {
+			close(enterSubscribeTick)
+		})
+		<-releaseSubscribeTick
+	}))
+	releaseHook := func() {
+		cleanup.Do(func() {
+			close(releaseSubscribeTick)
+			require.NoError(t, failpoint.Disable(fp))
+		})
+	}
+	defer func() {
+		releaseHook()
+	}()
+
+	tickDone := make(chan error, 1)
+	go func() {
+		tickDone <- adv.OnTick(ctx)
+	}()
+
+	select {
+	case <-enterSubscribeTick:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for in-flight OnTick to enter subscribeTick")
+	}
+
+	stopStarted := make(chan struct{})
+	stopDone := make(chan struct{})
+	go func() {
+		close(stopStarted)
+		adv.OnStop()
+		close(stopDone)
+	}()
+
+	<-stopStarted
+	select {
+	case <-stopDone:
+		t.Fatal("OnStop returned before subscribeTick was released")
+	default:
+	}
+
+	releaseHook()
+
+	select {
+	case err := <-tickDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for in-flight OnTick to finish")
+	}
+
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for OnStop to finish")
+	}
+
 	require.False(t, adv.HasSubscriptions())
 
 	cp := c.advanceCheckpoints()
