@@ -48,11 +48,63 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI string `json:"cloud_storage_uri"`
-	EstimateRowSize int    `json:"estimate_row_size"`
-	MergeTempIndex  bool   `json:"merge_temp_index"`
+	CloudStorageURI                                 string               `json:"cloud_storage_uri"`
+	EstimateRowSize                                 int                  `json:"estimate_row_size"`
+	MergeTempIndex                                  bool                 `json:"merge_temp_index"`
+	InitialTiKVCapacity                             *TiKVClusterCapacity `json:"initial_tikv_capacity,omitempty"`
+	BlockSamplePredictedTiKVIndexAllReplicaBytes    uint64               `json:"block_sample_predicted_tikv_index_all_replica_bytes,omitempty"`
+	BlockSamplePredictedTiKVIndexSingleReplicaBytes uint64               `json:"block_sample_predicted_tikv_index_single_replica_bytes,omitempty"`
+	LegacyBlockSampleSteadyPredictedTiKVIndexBytes  uint64               `json:"block_sample_steady_predicted_tikv_index_bytes,omitempty"`
+	BlockSampleMVCCOverheadTotalBytes               uint64               `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
+	BlockSampleUseStats                             bool                 `json:"block_sample_use_stats,omitempty"`
+	TiKVReplicaCount                                uint64               `json:"tikv_replica_count,omitempty"`
+	TiKVReplicaCountSource                          string               `json:"tikv_replica_count_source,omitempty"`
+	TiKVReplicaCountPhysicalID                      int64                `json:"tikv_replica_count_physical_id,omitempty"`
+	BlockSamplePredictionRegionCount                int                  `json:"block_sample_prediction_region_count,omitempty"`
+	BlockSamplePredictionRowCount                   int                  `json:"block_sample_prediction_row_count,omitempty"`
+	BlockSamplePredictionReadErrorCount             int                  `json:"block_sample_prediction_read_error_count,omitempty"`
+	BlockSampleEncodedKeySharedPrefixAvg            float64              `json:"block_sample_encoded_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeySharedPrefixAvg                float64              `json:"block_sample_raw_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeyLengthAvg                      float64              `json:"block_sample_raw_key_length_avg,omitempty"`
 
 	Version int `json:"version,omitempty"`
+}
+
+func (m *BackfillTaskMeta) blockSamplePredictedTiKVIndexAllReplicaBytes() uint64 {
+	if m.BlockSamplePredictedTiKVIndexAllReplicaBytes != 0 {
+		return m.BlockSamplePredictedTiKVIndexAllReplicaBytes
+	}
+	return m.LegacyBlockSampleSteadyPredictedTiKVIndexBytes
+}
+
+func (m *BackfillTaskMeta) blockSamplePredictedTiKVIndexSingleReplicaBytes() uint64 {
+	if m.BlockSamplePredictedTiKVIndexSingleReplicaBytes != 0 {
+		return m.BlockSamplePredictedTiKVIndexSingleReplicaBytes
+	}
+	allReplicaBytes := m.blockSamplePredictedTiKVIndexAllReplicaBytes()
+	if allReplicaBytes == 0 || m.TiKVReplicaCount == 0 {
+		return 0
+	}
+	return allReplicaBytes / m.TiKVReplicaCount
+}
+
+// TiKVStoreCapacity contains per-store capacity details needed by DXF add-index
+// capacity precheck.
+type TiKVStoreCapacity struct {
+	StoreID        int64  `json:"store_id"`
+	TotalBytes     uint64 `json:"total_bytes"`
+	AvailableBytes uint64 `json:"available_bytes"`
+	UsedBytes      uint64 `json:"used_bytes"`
+}
+
+// TiKVClusterCapacity is the aggregated TiKV capacity snapshot collected from PD.
+type TiKVClusterCapacity struct {
+	TotalBytes     uint64              `json:"total_bytes"`
+	AvailableBytes uint64              `json:"available_bytes"`
+	UsedBytes      uint64              `json:"used_bytes"`
+	StoreCount     int                 `json:"store_count"`
+	Stores         []TiKVStoreCapacity `json:"stores,omitempty"`
+	Source         string              `json:"source,omitempty"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -176,14 +228,18 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc,
+			cloudStorageURI, estRowSize, s.taskMeta.InitialTiKVCapacity != nil)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI)
+		return newCloudImportExecutor(
+			jobMeta, store, indexInfos, tbl, cloudStorageURI,
+			s.taskMeta.InitialTiKVCapacity != nil)
 	case proto.BackfillStepMergeTempIndex:
 		return newMergeTempIndexExecutor(&s.task.TaskBase, jobMeta, store, tbl)
 	default:

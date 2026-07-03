@@ -18,6 +18,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,15 @@ type regionJobWorker interface {
 	HandleTask(job *regionJob, f func(*regionJob)) error
 
 	Close() error
+}
+
+func recordIngestedSST(collector execute.Collector, identity string, size uint64) {
+	if collector == nil {
+		return
+	}
+	if c, ok := collector.(execute.IngestedSSTCollector); ok {
+		c.RecordIngestedSST(identity, size)
+	}
 }
 
 type regionJobBaseWorker struct {
@@ -457,6 +467,12 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 	if err != nil {
 		return err
 	}
+	id, size, ok := job.writeResult.nextGenWriteResp.GetSSTMeta()
+	if !ok {
+		recordIngestedSST(w.collector, "", 0)
+		return nil
+	}
+	recordIngestedSST(w.collector, "next-gen/"+strconv.FormatInt(id, 10), size)
 	return nil
 }
 
