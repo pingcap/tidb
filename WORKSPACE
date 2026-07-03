@@ -58,17 +58,6 @@ http_archive(
 )
 
 http_archive(
-    name = "rules_cc",
-    sha256 = "962251923438d27fc030c2d9d35c058a7f7da4fed42c42ad5342c7b4403d4cf2",
-    strip_prefix = "rules_cc-0.2.21",
-    url = "https://github.com/bazelbuild/rules_cc/releases/download/0.2.21/rules_cc-0.2.21.tar.gz",
-)
-
-load("@rules_cc//cc:extensions.bzl", "compatibility_proxy_repo")
-
-compatibility_proxy_repo()
-
-http_archive(
     name = "rules_python",
     sha256 = "9f9f3b300a9264e4c77999312ce663be5dee9a56e361a1f6fe7ec60e1beef9a3",
     strip_prefix = "rules_python-1.4.1",
