@@ -39,6 +39,12 @@ join (
 ) dt on t1.a = dt.a
 join t3 on dt.a = t3.a`
 
+const explainFormatHintNestedDerivedLeadingWarningSQL = `select *
+from (select * from (select * from t1) x1) o1
+join (select * from t2) o2 on o1.a = o2.a
+join (select * from t3) o3 on o2.a = o3.a
+join (select * from t4) o4 on o3.a = o4.a`
+
 const explainFormatHintMixedQueryBlockLeadingSQL = `select /*+ leading(t2, t1) */ *
 from t1
 join t2 on t1.a = t2.a
@@ -106,6 +112,22 @@ func TestExplainFormatHintRecoverableForDerivedTableAlias(t *testing.T) {
 		replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from t1 join (select a, b from (select a, b from t2 limit 100) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a", hints)).Rows()[0][0]
 		require.Contains(t, replayedHints, "leading(`test`.`t1`, `test`.`dt`, `test`.`t3`)")
 		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	})
+
+	t.Run("nested derived leading keeps warning semantics on replay", func(t *testing.T) {
+		tk.MustExec("create table t4(a int, b int, key(a))")
+
+		hints := tk.MustQuery("explain format='hint' " + explainFormatHintNestedDerivedLeadingWarningSQL).Rows()[0][0]
+		require.Contains(t, hints, "leading(@`sel_2` `test`.`x1`@`sel_2`, `test`.`o2`@`sel_3`, `test`.`o3`@`sel_4`, `test`.`o4`@`sel_5`)")
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+
+		replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from (select * from (select * from t1) x1) o1 join (select * from t2) o2 on o1.a = o2.a join (select * from t3) o3 on o2.a = o3.a join (select * from t4) o4 on o3.a = o4.a", hints)).Rows()[0][0]
+		require.Contains(t, replayedHints, "leading(@`sel_2` `test`.`x1`@`sel_2`, `test`.`o2`@`sel_3`, `test`.`o3`@`sel_4`, `test`.`o4`@`sel_5`)")
+
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, 1)
+		require.Contains(t, warnings[0].Err.Error(), "There are no matching table names for (x1, o2, o3, o4)")
+		require.NotContains(t, warnings[0].Err.Error(), "leading hint is inapplicable")
 	})
 }
 
