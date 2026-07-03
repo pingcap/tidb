@@ -48,7 +48,7 @@ func TestMVMaintenanceSessionVarsEnableMaintenanceFlags(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, sessVars.InMaterializedViewMaintenance)
-	require.True(t, sessVars.InternalSQLScanUserTable)
+	require.False(t, sessVars.InternalSQLScanUserTable)
 	restore()
 	require.False(t, sessVars.InMaterializedViewMaintenance)
 	require.False(t, sessVars.InternalSQLScanUserTable)
@@ -60,25 +60,17 @@ func TestMVMaintenanceSessionVarsEnableMaintenanceFlags(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, sessVars.InMaterializedViewMaintenance)
-	require.True(t, sessVars.InternalSQLScanUserTable)
+	require.False(t, sessVars.InternalSQLScanUserTable)
 	restore()
 	require.False(t, sessVars.InMaterializedViewMaintenance)
 	require.False(t, sessVars.InternalSQLScanUserTable)
 
-	sessVars.InMaterializedViewMaintenance = true
-	sessVars.InternalSQLScanUserTable = true
-	restore, err = applyMVMaintenanceSessionVars(
-		sessVars,
-		sessVars.MemQuotaQuery,
-		variable.GetIsolationReadEnginesString(sessVars),
-		false,
-	)
-	require.NoError(t, err)
+	restore = enableMVMaintenanceMLogScanFlags(sessVars)
 	require.True(t, sessVars.InMaterializedViewMaintenance)
 	require.True(t, sessVars.InternalSQLScanUserTable)
 	restore()
-	require.True(t, sessVars.InMaterializedViewMaintenance)
-	require.True(t, sessVars.InternalSQLScanUserTable)
+	require.False(t, sessVars.InMaterializedViewMaintenance)
+	require.False(t, sessVars.InternalSQLScanUserTable)
 }
 
 func TestNestedLoopApply(t *testing.T) {

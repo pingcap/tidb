@@ -695,12 +695,9 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 		ctx = w.workCtx
 	}
 	origInMaterializedViewMaintenance := w.sess.GetSessionVars().InMaterializedViewMaintenance
-	origInternalSQLScanUserTable := w.sess.GetSessionVars().InternalSQLScanUserTable
 	w.sess.GetSessionVars().InMaterializedViewMaintenance = true
-	w.sess.GetSessionVars().InternalSQLScanUserTable = true
 	defer func() {
 		w.sess.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
-		w.sess.GetSessionVars().InternalSQLScanUserTable = origInternalSQLScanUserTable
 	}()
 
 	checkSQL := sqlescape.MustEscapeSQL("SELECT 1 FROM %n.%n LIMIT 1", schemaName, mvTableName)
@@ -717,7 +714,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	}
 	restore := restoreSessCtx(sessCtx)
 	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
-	origInternalSQLScanUserTable := sessCtx.GetSessionVars().InternalSQLScanUserTable
 	origCurrentDB := sessCtx.GetSessionVars().CurrentDB
 	if err := initSessCtx(sessCtx, job.ReorgMeta); err != nil {
 		// initSessCtx may mutate session vars before returning error (for example invalid timezone).
@@ -739,7 +735,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
 	// Also marks the session as MV maintenance context so writes bypass the explicit-DML guard.
 	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
-	sessCtx.GetSessionVars().InternalSQLScanUserTable = true
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessCtx.GetSessionVars().MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -764,7 +759,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restoreExecutionVars()
 		restore(sessCtx)
 		sessCtx.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
-		sessCtx.GetSessionVars().InternalSQLScanUserTable = origInternalSQLScanUserTable
 		sessCtx.GetSessionVars().CurrentDB = origCurrentDB
 	}, nil
 }

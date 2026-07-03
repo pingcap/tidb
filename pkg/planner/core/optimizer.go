@@ -297,7 +297,7 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	// InternalSQLScanUserTable is for internal SQL that scans user tables, for example TTL scan and MV maintenance SQL.
+	// InternalSQLScanUserTable is for internal SQL that scans user tables, for example TTL scan and MV MLOG scans.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagSyncWaitStatsLoadPoint
 		flag |= rule.FlagCollectPredicateColumnsPoint

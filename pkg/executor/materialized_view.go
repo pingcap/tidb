@@ -3006,7 +3006,7 @@ func purgeMaterializedViewLogData(
 			batchSize,
 		)
 	}
-	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	restoreMVMaintenanceFlags := enableMVMaintenanceMLogScanFlags(sessVars)
 	defer restoreMVMaintenanceFlags()
 
 	_, err := sqlExec.ExecuteInternal(kctx, deleteSQL)
@@ -3266,7 +3266,7 @@ func countMLogPurgePendingRowsOnTiFlash(
 		return 0, errors.Trace(err)
 	}
 	defer restoreFallback()
-	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	restoreMVMaintenanceFlags := enableMVMaintenanceMLogScanFlags(sessVars)
 	defer restoreMVMaintenanceFlags()
 
 	countCtx, cancel := context.WithTimeout(kctx, mlogPurgeAdaptiveCountTimeout)
@@ -4475,7 +4475,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}
 	defer restoreBuildSessVars()
 
-	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(buildSessVars)
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlag(buildSessVars)
 	defer restoreMVMaintenanceFlags()
 
 	if buildSessVars.InTxn() {
@@ -4689,7 +4689,7 @@ func applyMVMaintenanceSessionVars(
 	targetIsolationReadEngines string,
 	bestEffort bool,
 ) (func(), error) {
-	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlag(sessVars)
 	restoreMemQuota, err := applyMVMaintenanceMemQuota(sessVars, targetMemQuota, bestEffort)
 	if err != nil {
 		restoreMVMaintenanceFlags()
@@ -4708,17 +4708,34 @@ func applyMVMaintenanceSessionVars(
 	}, nil
 }
 
-func enableMVMaintenanceFlags(sessVars *variable.SessionVars) func() {
+func enableMVMaintenanceFlag(sessVars *variable.SessionVars) func() {
 	if sessVars == nil {
 		return func() {}
 	}
 	originInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
-	originInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
 	sessVars.InMaterializedViewMaintenance = true
-	sessVars.InternalSQLScanUserTable = true
 	return func() {
 		sessVars.InMaterializedViewMaintenance = originInMaterializedViewMaintenance
+	}
+}
+
+func enableInternalSQLScanUserTable(sessVars *variable.SessionVars) func() {
+	if sessVars == nil {
+		return func() {}
+	}
+	originInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
+	sessVars.InternalSQLScanUserTable = true
+	return func() {
 		sessVars.InternalSQLScanUserTable = originInternalSQLScanUserTable
+	}
+}
+
+func enableMVMaintenanceMLogScanFlags(sessVars *variable.SessionVars) func() {
+	restoreMVMaintenanceFlag := enableMVMaintenanceFlag(sessVars)
+	restoreInternalSQLScanUserTable := enableInternalSQLScanUserTable(sessVars)
+	return func() {
+		restoreInternalSQLScanUserTable()
+		restoreMVMaintenanceFlag()
 	}
 }
 
@@ -4778,7 +4795,7 @@ func applyRefreshExecutionSessionVars(
 	var (
 		restore                   func()
 		err                       error
-		restoreMVMaintenanceFlags = enableMVMaintenanceFlags(sessVars)
+		restoreMVMaintenanceFlags = enableMVMaintenanceFlag(sessVars)
 	)
 	if injectedErr != nil {
 		err = injectedErr
@@ -5403,7 +5420,7 @@ func executeRefreshMaterializedViewDataChanges(
 ) error {
 	// TiFlash read is blocked for write statements when sql_mode is strict. Refresh prefers TiFlash for the
 	// scan part, so we bypass this guard for MV maintenance statements.
-	restoreMVMaintenanceFlags := enableMVMaintenanceFlags(sessVars)
+	restoreMVMaintenanceFlags := enableMVMaintenanceFlag(sessVars)
 	defer restoreMVMaintenanceFlags()
 
 	switch refreshMode {
@@ -5501,6 +5518,9 @@ func executeRefreshMaterializedViewFast(
 	stepObserver mvRefreshStepObserver,
 	explainFormat string,
 ) error {
+	restoreMLogScanFlags := enableMVMaintenanceMLogScanFlags(sessVars)
+	defer restoreMLogScanFlags()
+
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeFastMerge, func() error {
 		return executeRefreshMaterializedViewImplement(
 			kctx,
