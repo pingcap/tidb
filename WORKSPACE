@@ -16,9 +16,9 @@ host_platform_repo(name = "host_platform")
 
 http_archive(
     name = "bazel_features",
-    sha256 = "ba1282c1aa1d1fffdcf994ab32131d7c7551a9bc960fbf05f42d55a1b930cbfb",
-    strip_prefix = "bazel_features-1.15.0",
-    url = "https://github.com/bazel-contrib/bazel_features/releases/download/v1.15.0/bazel_features-v1.15.0.tar.gz",
+    sha256 = "9390b391a68d3b24aef7966bce8556d28003fe3f022a5008efc7807e8acaaf1a",
+    strip_prefix = "bazel_features-1.36.0",
+    url = "https://github.com/bazel-contrib/bazel_features/releases/download/v1.36.0/bazel_features-v1.36.0.tar.gz",
 )
 
 load("@bazel_features//:deps.bzl", "bazel_features_deps")
@@ -50,21 +50,23 @@ http_archive(
 
 http_archive(
     name = "bazel_gazelle",
-    sha256 = "675114d8b433d0a9f54d81171833be96ebc4113115664b791e6f204d58e93446",
+    sha256 = "49d9eba309b0b695824ff417d734242824ad9ab5edb56063b9d3400df1a61a56",
     urls = [
-        "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.47.0/bazel-gazelle-v0.47.0.tar.gz",
-        "https://cache.hawkingrei.com/bazel-contrib/bazel-gazelle/releases/download/v0.47.0/bazel-gazelle-v0.47.0.tar.gz",
+        "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.51.3/bazel-gazelle-v0.51.3.tar.gz",
+        "https://cache.hawkingrei.com/bazel-contrib/bazel-gazelle/releases/download/v0.51.3/bazel-gazelle-v0.51.3.tar.gz",
     ],
 )
 
 http_archive(
     name = "rules_cc",
-    sha256 = "d62624b45e0912713dcd3b8e30ba6ae55418ed6bf99e6d135cd61b8addae312b",
-    strip_prefix = "rules_cc-0.1.2",
-    urls = [
-        "https://github.com/bazelbuild/rules_cc/releases/download/0.1.2/rules_cc-0.1.2.tar.gz",
-    ],
+    sha256 = "962251923438d27fc030c2d9d35c058a7f7da4fed42c42ad5342c7b4403d4cf2",
+    strip_prefix = "rules_cc-0.2.21",
+    url = "https://github.com/bazelbuild/rules_cc/releases/download/0.2.21/rules_cc-0.2.21.tar.gz",
 )
+
+load("@rules_cc//cc:extensions.bzl", "compatibility_proxy_repo")
+
+compatibility_proxy_repo()
 
 http_archive(
     name = "rules_python",
@@ -140,11 +142,11 @@ http_archive(
 
 http_archive(
     name = "rules_proto",
-    sha256 = "303e86e722a520f6f326a50b41cfc16b98fe6d1955ce46642a5b7a67c11c0f5d",
-    strip_prefix = "rules_proto-6.0.0",
+    sha256 = "0e5c64a2599a6e26c6a03d6162242d231ecc0de219534c38cb4402171def21e8",
+    strip_prefix = "rules_proto-7.0.2",
     urls = [
-        "https://github.com/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
-        "https://cache.hawkingrei.com/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
+        "https://github.com/bazelbuild/rules_proto/releases/download/7.0.2/rules_proto-7.0.2.tar.gz",
+        "https://cache.hawkingrei.com/bazelbuild/rules_proto/releases/download/7.0.2/rules_proto-7.0.2.tar.gz",
     ],
 )
 
