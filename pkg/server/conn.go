@@ -2442,8 +2442,9 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 			return handled, errors.Errorf("missing file transfer handler for %s", key)
 		}
 		handled = true
-		defer cc.ctx.SetValue(key, nil)
-		if err := handler(cc, ctx, value); err != nil {
+		err := handler(cc, ctx, value)
+		cc.ctx.SetValue(key, nil)
+		if err != nil {
 			return handled, err
 		}
 	}
