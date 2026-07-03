@@ -127,7 +127,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			return initEvalBuffer(ret)
 		},
 	}
-	if err := initTableIndices(&ret.TableCommon); err != nil {
+	if err := ret.initTableIndices(); err != nil {
 		return nil, errors.Trace(err)
 	}
 	origIndices := ret.meta.Indices
@@ -1678,12 +1678,11 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	if err != nil {
 		return nil, err
 	}
-	var tc TableCommon
 	useNewCollate := collate.NewCollationEnabled()
 	if pt, ok := t.(*partitionedTable); ok {
 		useNewCollate = pt.encoder.UseNewCollate()
 	}
-	tc.initTableCommon(useNewCollate, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
+	tc := initTableCommon(useNewCollate, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)
