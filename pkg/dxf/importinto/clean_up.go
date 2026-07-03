@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -44,6 +45,8 @@ var (
 	_ scheduler.CleanUpRoutine      = (*ImportCleanUp)(nil)
 	_ scheduler.BatchCleanUpRoutine = (*ImportCleanUp)(nil)
 )
+
+const cleanUpMeteringConcurrency = 4
 
 // ImportCleanUp implements scheduler.BatchCleanUpRoutine.
 type ImportCleanUp struct {
@@ -63,6 +66,8 @@ type cleanUpFileGroup struct {
 	nonPartitionedDirs []string
 	taskIDs            []int64
 }
+
+type sendMeterOnCleanUpFunc func(context.Context, *proto.Task, *zap.Logger) error
 
 // CleanUpBatch implements scheduler.BatchCleanUpRoutine.
 // Global-sort files are partitioned by task ID, but finding them requires a scan
@@ -124,14 +129,27 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		}
 	}
 
-	for _, task := range meterTasks {
-		logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-		if err := sendMeterOnCleanUp(ctx, task, logger); err != nil {
-			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-			return err
-		}
+	if err := sendMeterOnCleanUpInParallel(ctx, meterTasks, sendMeterOnCleanUp); err != nil {
+		return err
 	}
 	return nil
+}
+
+func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, sendFn sendMeterOnCleanUpFunc) error {
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(cleanUpMeteringConcurrency)
+	for _, task := range tasks {
+		task := task
+		eg.Go(func() error {
+			logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+			if err := sendFn(egCtx, task, logger); err != nil {
+				logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+				return err
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
 }
 
 func cleanUpTableMode(ctx context.Context, taskMeta *TaskMeta) error {
