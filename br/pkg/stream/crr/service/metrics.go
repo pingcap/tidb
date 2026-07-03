@@ -73,7 +73,7 @@ var (
 		Namespace: "tidb",
 		Subsystem: "br_crr",
 		Name:      "synced_ts",
-		Help:      "Current synced ts(minimum synced flush ts across all alive stores) of CRR.",
+		Help:      "Current synced ts(replication-complete checkpoint) of CRR.",
 	}, []string{"task"})
 	aliveStoreCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
@@ -98,6 +98,13 @@ var (
 		Subsystem: "br_crr",
 		Name:      "upstream_read_meta_file_count",
 		Help:      "Read upstream meta file count in latest round statistic.",
+	}, []string{"task"})
+	skippedStoreSyncedMetaFileCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "br_crr",
+		Name:      "skipped_store_synced_meta_file_count",
+		Help: "Skipped upstream meta file count because the store is already synced " +
+			"past the meta flush ts in latest round statistic.",
 	}, []string{"task"})
 	estimatedSyncLogFileCount = metrics.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
@@ -127,6 +134,7 @@ func init() {
 	prometheus.MustRegister(pendingFileCount)
 	prometheus.MustRegister(consecutiveFailures)
 	prometheus.MustRegister(upstreamReadMetaFileCount)
+	prometheus.MustRegister(skippedStoreSyncedMetaFileCount)
 	prometheus.MustRegister(estimatedSyncLogFileCount)
 	prometheus.MustRegister(downstreamCheckFileCount)
 }
@@ -168,6 +176,9 @@ func observeStatusMetrics(snapshot *StatusSnapshot) {
 	pendingFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.PendingFileCount))
 	consecutiveFailures.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.ConsecutiveFailures))
 	upstreamReadMetaFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.UpstreamReadMetaFileCount))
+	skippedStoreSyncedMetaFileCount.WithLabelValues(snapshot.TaskName).Set(
+		float64(snapshot.Statistic.SkippedStoreSyncedMetaFileCount),
+	)
 	estimatedSyncLogFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.EstimatedSyncLogFileCount))
 	downstreamCheckFileCount.WithLabelValues(snapshot.TaskName).Set(float64(snapshot.Statistic.DownstreamCheckFileCount))
 }
