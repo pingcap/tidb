@@ -96,6 +96,7 @@
 ## pkg/dxf/importinto
 
 ### Tests
+- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests cleanup metering concurrency.
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.

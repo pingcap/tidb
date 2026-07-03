@@ -36,11 +36,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 var _ scheduler.CleanUpRoutine = (*ImportCleanUp)(nil)
+
+const cleanUpMeteringConcurrency = 4
 
 // ImportCleanUp implements scheduler.CleanUpRoutine.
 type ImportCleanUp struct {
@@ -65,6 +68,8 @@ type cleanUpFileGroup struct {
 	nonPartitionedDirs []string
 	taskIDs            []int64
 }
+
+type sendMeterOnCleanUpFunc func(context.Context, *proto.Task, *zap.Logger) error
 
 // CleanUpBatch cleans up multiple import tasks in batch.
 func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) error {
@@ -121,17 +126,33 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		}
 	}
 
-	for _, cleanUpTask := range cleanUpTasks {
+	if kerneltype.IsNextGen() {
 		// send metering data for nextgen kernel, only for succeed tasks
-		if cleanUpTask.needFileCleanUp && kerneltype.IsNextGen() && cleanUpTask.task.State == proto.TaskStateSucceed {
-			logger := logutil.BgLogger().With(zap.Int64("task-id", cleanUpTask.task.ID))
-			if err := sendMeterOnCleanUp(ctx, cleanUpTask.task, logger); err != nil {
-				logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-				return err
-			}
+		if err := sendMeterOnCleanUpInParallel(ctx, cleanUpTasks, sendMeterOnCleanUp); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func sendMeterOnCleanUpInParallel(ctx context.Context, cleanUpTasks []cleanUpTaskInfo, sendFn sendMeterOnCleanUpFunc) error {
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(cleanUpMeteringConcurrency)
+	for _, cleanUpTask := range cleanUpTasks {
+		cleanUpTask := cleanUpTask
+		if !cleanUpTask.needFileCleanUp || cleanUpTask.task.State != proto.TaskStateSucceed {
+			continue
+		}
+		eg.Go(func() error {
+			logger := logutil.BgLogger().With(zap.Int64("task-id", cleanUpTask.task.ID))
+			if err := sendFn(egCtx, cleanUpTask.task, logger); err != nil {
+				logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+				return err
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
 }
 
 func cleanUpTableMode(ctx context.Context, taskMeta *TaskMeta) error {
