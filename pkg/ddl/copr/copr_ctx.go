@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // CopContext contains the information that is needed when building a coprocessor request.
@@ -168,7 +167,7 @@ func NewCopContext(
 	useNewCollate bool,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return newCopContextSingleIndex(
+		return NewCopContextSingleIndex(
 			exprCtx,
 			pushDownFlags,
 			tblInfo,
@@ -177,28 +176,11 @@ func NewCopContext(
 			useNewCollate,
 		)
 	}
-	return newCopContextMultiIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource, useNewCollate)
+	return NewCopContextMultiIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource, useNewCollate)
 }
 
-// NewCopContextSingleIndex creates a CopContextSingleIndex.
+// NewCopContextSingleIndex creates a CopContextSingleIndex with a fixed collation mode.
 func NewCopContextSingleIndex(
-	exprCtx exprctx.BuildContext,
-	pushDownFlags uint64,
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	requestSource string,
-) (*CopContextSingleIndex, error) {
-	return newCopContextSingleIndex(
-		exprCtx,
-		pushDownFlags,
-		tblInfo,
-		idxInfo,
-		requestSource,
-		collate.NewCollationEnabled(),
-	)
-}
-
-func newCopContextSingleIndex(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
@@ -264,25 +246,8 @@ func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
 	return expr, nil
 }
 
-// NewCopContextMultiIndex creates a CopContextMultiIndex.
+// NewCopContextMultiIndex creates a CopContextMultiIndex with a fixed collation mode.
 func NewCopContextMultiIndex(
-	exprCtx exprctx.BuildContext,
-	pushDownFlags uint64,
-	tblInfo *model.TableInfo,
-	allIdxInfo []*model.IndexInfo,
-	requestSource string,
-) (*CopContextMultiIndex, error) {
-	return newCopContextMultiIndex(
-		exprCtx,
-		pushDownFlags,
-		tblInfo,
-		allIdxInfo,
-		requestSource,
-		collate.NewCollationEnabled(),
-	)
-}
-
-func newCopContextMultiIndex(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
