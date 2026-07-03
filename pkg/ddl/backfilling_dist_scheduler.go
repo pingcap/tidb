@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -285,11 +283,6 @@ func getTblInfo(ctx context.Context, store kv.Storage, job *model.Job) (tblInfo 
 	return tblInfo, nil
 }
 
-const (
-	scanRegionBackoffBase = 200 * time.Millisecond
-	scanRegionBackoffMax  = 2 * time.Second
-)
-
 func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
@@ -340,76 +333,80 @@ func generatePlanForPhysicalTable(
 		return nil, errors.Trace(err)
 	}
 
-	subTaskMetas := make([][]byte, 0, 4)
-	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
-		regionCache := store.(helper.Storage).GetRegionCache()
-		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-		if err != nil {
-			return false, err
-		}
-		sort.Slice(recordRegionMetas, func(i, j int) bool {
-			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-		})
-
-		// Check if regions are continuous.
-		shouldRetry := false
-		cur := recordRegionMetas[0]
-		for _, m := range recordRegionMetas[1:] {
-			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
-				shouldRetry = true
-				break
-			}
-			cur = m
-		}
-
-		if shouldRetry {
-			return true, nil
-		}
-
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
-		logger.Info("calculate region batch",
-			zap.Int("totalRegionCnt", len(recordRegionMetas)),
-			zap.Int("regionBatch", regionBatch),
-			zap.Int("instanceCnt", nodeCnt),
-			zap.Bool("useCloud", useCloud),
-		)
-
-		for i := 0; i < len(recordRegionMetas); i += regionBatch {
-			// It should be different for each subtask to determine if there are duplicate entries.
-			importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
-			if err != nil {
-				return true, nil
-			}
-			end := min(i+regionBatch, len(recordRegionMetas))
-			batch := recordRegionMetas[i:end]
-			subTaskMeta := &BackfillSubTaskMeta{
-				PhysicalTableID: tbl.GetPhysicalID(),
-				RowStart:        batch[0].StartKey(),
-				RowEnd:          batch[len(batch)-1].EndKey(),
-				TS:              importTS,
-			}
-			if i == 0 {
-				subTaskMeta.RowStart = startKey
-			}
-			if end == len(recordRegionMetas) {
-				subTaskMeta.RowEnd = endKey
-			}
-			metaBytes, err := subTaskMeta.Marshal()
-			if err != nil {
-				return false, err
-			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
-		}
-		return false, nil
-	})
+	regionCache := store.(helper.Storage).GetRegionCache()
+	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
+	logger.Info("calculate region batch",
+		zap.Int("totalRegionCnt", len(recordRegionMetas)),
+		zap.Int("regionBatch", regionBatch),
+		zap.Int("instanceCnt", nodeCnt),
+		zap.Bool("useCloud", useCloud),
+	)
+
+	regionStartKeys := make([]kv.Key, 0, len(recordRegionMetas))
+	for _, m := range recordRegionMetas {
+		regionStartKeys = append(regionStartKeys, m.StartKey())
+	}
+	keyRanges := buildContinuousKeyRangesByRegionStartKeys(startKey, endKey, regionStartKeys, regionBatch)
+	subTaskMetas := make([][]byte, 0, len(keyRanges))
+	for _, keyRange := range keyRanges {
+		// It should be different for each subtask to determine if there are duplicate entries.
+		importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subTaskMeta := &BackfillSubTaskMeta{
+			PhysicalTableID: tbl.GetPhysicalID(),
+			RowStart:        keyRange.StartKey,
+			RowEnd:          keyRange.EndKey,
+			TS:              importTS,
+		}
+		metaBytes, err := subTaskMeta.Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subTaskMetas = append(subTaskMetas, metaBytes)
+	}
 	if len(subTaskMetas) == 0 {
-		return nil, errors.Errorf("regions are not continuous")
+		return nil, errors.Errorf("failed to generate backfill subtask ranges")
 	}
 	return subTaskMetas, nil
+}
+
+func buildContinuousKeyRangesByRegionStartKeys(startKey, endKey kv.Key, regionStartKeys []kv.Key, regionBatch int) []kv.KeyRange {
+	if regionBatch <= 0 {
+		regionBatch = 1
+	}
+	sortedStartKeys := make([]kv.Key, 0, len(regionStartKeys))
+	for _, key := range regionStartKeys {
+		if bytes.Compare(key, startKey) <= 0 || bytes.Compare(key, endKey) >= 0 {
+			continue
+		}
+		sortedStartKeys = append(sortedStartKeys, key)
+	}
+	sort.Slice(sortedStartKeys, func(i, j int) bool {
+		return bytes.Compare(sortedStartKeys[i], sortedStartKeys[j]) < 0
+	})
+	uniqueStartKeys := sortedStartKeys[:0]
+	for _, key := range sortedStartKeys {
+		if len(uniqueStartKeys) > 0 && bytes.Equal(uniqueStartKeys[len(uniqueStartKeys)-1], key) {
+			continue
+		}
+		uniqueStartKeys = append(uniqueStartKeys, key)
+	}
+
+	keyRanges := make([]kv.KeyRange, 0, len(uniqueStartKeys)/regionBatch+1)
+	rangeStart := startKey
+	for i := regionBatch; i < len(uniqueStartKeys); i += regionBatch {
+		rangeEnd := uniqueStartKeys[i]
+		keyRanges = append(keyRanges, kv.KeyRange{StartKey: rangeStart, EndKey: rangeEnd})
+		rangeStart = rangeEnd
+	}
+	keyRanges = append(keyRanges, kv.KeyRange{StartKey: rangeStart, EndKey: endKey})
+	return keyRanges
 }
 
 // CalculateRegionBatch is exported for test.
@@ -878,70 +875,41 @@ func genMergeTempPlanForOneIndex(
 	pid := tbl.GetPhysicalID()
 	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
 
-	subTaskMetas := make([][]byte, 0, 4)
-	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
-		regionCache := store.(helper.Storage).GetRegionCache()
-		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
-		if err != nil {
-			return false, err
-		}
-		sort.Slice(regionMetas, func(i, j int) bool {
-			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
-		})
-
-		// Check if regions are continuous.
-		shouldRetry := false
-		cur := regionMetas[0]
-		for _, m := range regionMetas[1:] {
-			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
-				shouldRetry = true
-				break
-			}
-			cur = m
-		}
-
-		if shouldRetry {
-			return true, nil
-		}
-
-		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
-		logger.Info("calculate temp index region batch",
-			zap.Int64("physicalTableID", pid),
-			zap.Int("totalRegionCnt", len(regionMetas)),
-			zap.Int("regionBatch", regionBatch),
-			zap.Int("instanceCnt", nodeCnt),
-		)
-
-		for i := 0; i < len(regionMetas); i += regionBatch {
-			endIdx := min(i+regionBatch, len(regionMetas))
-			batch := regionMetas[i:endIdx]
-			subTaskMeta := &BackfillSubTaskMeta{
-				PhysicalTableID: pid,
-				SortedKVMeta: globalsort.SortedKVMeta{
-					StartKey: batch[0].StartKey(),
-					EndKey:   batch[len(batch)-1].EndKey(),
-				},
-			}
-			if i == 0 {
-				subTaskMeta.StartKey = start
-			}
-			if endIdx == len(regionMetas) {
-				subTaskMeta.EndKey = end
-			}
-			metaBytes, err := subTaskMeta.Marshal()
-			if err != nil {
-				return false, err
-			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
-		}
-		return false, nil
-	})
+	regionCache := store.(helper.Storage).GetRegionCache()
+	regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
+	logger.Info("calculate temp index region batch",
+		zap.Int64("physicalTableID", pid),
+		zap.Int("totalRegionCnt", len(regionMetas)),
+		zap.Int("regionBatch", regionBatch),
+		zap.Int("instanceCnt", nodeCnt),
+	)
+
+	regionStartKeys := make([]kv.Key, 0, len(regionMetas))
+	for _, m := range regionMetas {
+		regionStartKeys = append(regionStartKeys, m.StartKey())
+	}
+	keyRanges := buildContinuousKeyRangesByRegionStartKeys(start, end, regionStartKeys, regionBatch)
+	subTaskMetas := make([][]byte, 0, len(keyRanges))
+	for _, keyRange := range keyRanges {
+		subTaskMeta := &BackfillSubTaskMeta{
+			PhysicalTableID: pid,
+			SortedKVMeta: globalsort.SortedKVMeta{
+				StartKey: keyRange.StartKey,
+				EndKey:   keyRange.EndKey,
+			},
+		}
+		metaBytes, err := subTaskMeta.Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subTaskMetas = append(subTaskMetas, metaBytes)
+	}
 	if len(subTaskMetas) == 0 {
-		return nil, errors.Errorf("regions are not continuous")
+		return nil, errors.Errorf("failed to generate temp index merge subtask ranges")
 	}
 	return subTaskMetas, nil
 }
