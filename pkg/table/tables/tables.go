@@ -141,7 +141,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	if err != nil {
 		return nil
 	}
-	t := initTableCommon(collate.NewCollationEnabled(), tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints, collate.NewCollationEnabled())
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -220,7 +220,7 @@ func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblI
 	if err != nil {
 		return nil, err
 	}
-	t := initTableCommon(useNewCollate, tblInfo, tblInfo.ID, columns, allocs, constraints)
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, useNewCollate)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := t.initTableIndices(); err != nil {
 			return nil, err
@@ -245,7 +245,7 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 	return expr, nil
 }
 
-func initTableCommon(useNewCollate bool, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) TableCommon {
+func newTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint, useNewCollate bool) TableCommon {
 	t := TableCommon{
 		tableID:         tblInfo.ID,
 		physicalTableID: physicalTableID,
@@ -314,11 +314,6 @@ func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
 // asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
 func asIndex(idx table.Index) *index {
 	return idx.(*index)
-}
-
-func initTableCommonWithIndices(t *TableCommon, useNewCollate bool, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
-	*t = initTableCommon(useNewCollate, tblInfo, physicalTableID, cols, allocs, constraints)
-	return t.initTableIndices()
 }
 
 // Indices implements table.Table Indices interface.

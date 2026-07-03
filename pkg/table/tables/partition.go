@@ -181,9 +181,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		} else {
 			tblInfo.Indices = origIndices
 		}
-		err := initTableCommonWithIndices(
-			&t.TableCommon, tbl.encoder.UseNewCollate(), tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
-		if err != nil {
+		t.TableCommon = newTableCommon(tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints, tbl.encoder.UseNewCollate())
+		if err := t.initTableIndices(); err != nil {
 			return nil, errors.Trace(err)
 		}
 		t.table = ret
@@ -274,9 +273,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
 	var newPart partition
-	err := initTableCommonWithIndices(
-		&newPart.TableCommon, t.encoder.UseNewCollate(), t.meta, def.ID, t.Columns, t.allocs, t.Constraints)
-	if err != nil {
+	newPart.TableCommon = newTableCommon(t.meta, def.ID, t.Columns, t.allocs, t.Constraints, t.encoder.UseNewCollate())
+	if err := newPart.initTableIndices(); err != nil {
 		return nil, err
 	}
 	newPart.table = t
@@ -1677,7 +1675,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	if err != nil {
 		return nil, err
 	}
-	tc := initTableCommon(t.UseNewCollate(), tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
+	tc := newTableCommon(tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints, t.UseNewCollate())
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)
