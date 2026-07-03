@@ -271,6 +271,15 @@ func TestFilterPath(t *testing.T) {
 			expected: "",
 		},
 		{
+			name: "new format: empty flag is preserved by ts filter",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000000l0000000000000000u0000000000000000p0000000000000002.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000000l0000000000000000u0000000000000000p0000000000000002.meta",
+		},
+		{
 			name: "new format: invalid name should be preserved for compatibility",
 			args: args{
 				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
@@ -296,4 +305,42 @@ func TestFilterPath(t *testing.T) {
 			require.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestFastUnmarshalMetaDataSkipConditionCanSkipEmptyMeta(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	emptyPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(20), uint64(1), uint64(0), uint64(0), uint64(0), uint64(2),
+	)
+	normalPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(30), uint64(1), uint64(5), uint64(10), uint64(20), uint64(0),
+	)
+	require.NoError(t, s.WriteFile(ctx, emptyPath, []byte("invalid empty meta payload")))
+	require.NoError(t, s.WriteFile(ctx, normalPath, []byte("normal meta payload")))
+
+	var readCount atomic.Int32
+	err = stream.FastUnmarshalMetaData(
+		ctx,
+		s,
+		0,
+		100,
+		1,
+		func(filename string) bool {
+			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
+			return err == nil && parsedName.IsEmpty()
+		},
+		func(filename string, rawMetaData []byte) error {
+			readCount.Add(1)
+			require.Equal(t, normalPath, filename)
+			require.Equal(t, []byte("normal meta payload"), rawMetaData)
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), readCount.Load())
 }

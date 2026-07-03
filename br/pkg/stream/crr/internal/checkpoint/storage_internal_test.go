@@ -16,6 +16,7 @@ package checkpoint
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"testing"
 
@@ -90,4 +91,58 @@ func TestMetaFileSeqIncludesUppercaseMetaNamesAfterSyncedTS(t *testing.T) {
 		got = append(got, metaFile.path)
 	}
 	require.ElementsMatch(t, metaPaths, got)
+}
+
+func TestLoadEmptyMetaFileSkipsContentRead(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	const flushTS = uint64(0x06745D833D8C0014)
+	const storeID = uint64(1001)
+	metaPath := path.Join(
+		stream.GetStreamBackupMetaPrefix(),
+		fmt.Sprintf("%016X%016X-d%016Xl%016Xu%016Xp%016X.meta", flushTS, storeID, uint64(0), uint64(0), uint64(0), uint64(2)),
+	)
+	require.NoError(t, upstream.WriteFile(ctx, metaPath, []byte("invalid metadata payload")))
+
+	calc, err := NewCalculator(
+		CalculatorDeps{
+			PD:       stubPDMetaReader{},
+			Upstream: upstream,
+			Sync:     stubSyncChecker{},
+		},
+		CheckpointCalculatorConfig{TaskName: "task"},
+		nil,
+	)
+	require.NoError(t, err)
+
+	var parsed parsedMetaFile
+	for metaFile, err := range calc.newMetaFileSeq(ctx) {
+		require.NoError(t, err)
+		parsed = metaFile
+	}
+	require.True(t, parsed.empty)
+
+	loaded, ignored, err := loadMetaFile(ctx, upstream, parsed)
+	require.NoError(t, err)
+	require.False(t, ignored)
+	require.Equal(t, metaPath, loaded.path)
+	require.Equal(t, flushTS, loaded.flushTS)
+	require.Equal(t, storeID, loaded.storeID)
+	require.True(t, loaded.empty)
+	require.Empty(t, loaded.dataFilePaths)
+}
+
+func TestLoadEmptyMetaFileWithZeroStoreIDIsIgnored(t *testing.T) {
+	loaded, ignored, err := loadMetaFile(context.Background(), nil, parsedMetaFile{
+		path:    "v1/backupmeta/00000000000000140000000000000000-d0000000000000000l0000000000000000u0000000000000000p0000000000000002.meta",
+		flushTS: 20,
+		empty:   true,
+	})
+	require.NoError(t, err)
+	require.True(t, ignored)
+	require.True(t, loaded.empty)
+	require.Zero(t, loaded.storeID)
+	require.Empty(t, loaded.dataFilePaths)
 }
