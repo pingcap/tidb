@@ -710,22 +710,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			return info, err
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
-		// Password-based plugins (native / caching_sha2 / sm3). The non-password
-		// plugins (LDAP, socket, token, extension) were handled by the branches
-		// above, so record.AuthPlugin here is a password plugin or genuinely
-		// unknown.
-		//
-		// The branch is entered whenever the stored primary is non-empty OR the
-		// client supplied credentials. It is therefore reachable with an EMPTY
-		// primary hash when the client sends a password (len(authentication)>0) —
-		// e.g. `ALTER USER u IDENTIFIED BY '' ` after a RETAIN leaves an empty
-		// primary alongside a non-empty additional_password; checkPasswordForPlugin
-		// returns (false, nil) for the empty primary and we fall through to the
-		// secondary so the still-valid secondary password can authenticate.
-		//
-		// NOTE: a passwordless login (empty primary AND empty client auth) does
-		// NOT enter here even when a secondary exists, so the empty primary still
-		// authenticates via the no-password success path below.
+		// Password-based plugins (native / caching_sha2 / sm3); non-password
+		// plugins (LDAP, socket, token, extension) were handled above.
+		// Deliberately reachable with an EMPTY stored primary when the client
+		// supplied a password, so a secondary retained before the primary was
+		// blanked can still authenticate. A passwordless login (empty primary
+		// AND empty client auth) never enters here and keeps authenticating
+		// via the no-password success path below.
 		secondaryAccepted := false
 		switch record.AuthPlugin {
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.

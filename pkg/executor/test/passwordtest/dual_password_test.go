@@ -23,6 +23,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The tests in this file mirror MySQL 8.0's own dual-password coverage
+// (mysql-test/suite/auth_sec/t/multiple_passwords_ddl.test for DDL and
+// include/multiple_passwords.inc for login), plus TiDB-specific regressions
+// found during review. Scenario map (MySQL DDL test number -> tests here):
+//
+//	1/2  RETAIN/DISCARD storage      TestDualPasswordRetainAndDiscard, TestDualPasswordChainedRetain
+//	3    SET PASSWORD ... RETAIN     TestDualPasswordSetPasswordRetain, TestDualPasswordSelfSetPasswordRetainAcceptsMysqlUpdate
+//	4/5  RENAME / DROP USER          TestDualPasswordRenameUserPreservesSecondary, TestDualPasswordDropUserRemovesSecondary
+//	6    multi-user mix-n-match      TestDualPasswordMultiUserAlter
+//	7    privilege model             TestDualPasswordCrossUserRequiresCreateUser, TestDualPasswordSetPasswordSelfByExplicitName,
+//	                                 TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated
+//	9/14 plugin change               TestDualPasswordRejectsPluginChange, TestDualPasswordPluginChangeSilentlyDiscardsSecondary,
+//	                                 TestDualPasswordAlterWithoutRetainPreservesSecondary
+//	10   empty current password      TestDualPasswordRejectsEmptyPrimary
+//	13   ALTER USER USER()           TestDualPasswordAlterUserUserRetainAndDiscard,
+//	                                 TestDualPasswordAlterUserUserResolvesAuthUsername (#68937)
+//	15   empty new password          TestDualPasswordRejectsEmptyNew
+//
+// TiDB-specific:
+//
+//	CREATE USER grammar rejection    TestDualPasswordCreateUserRejectsRetain
+//	SHOW CREATE USER redaction       TestDualPasswordShowCreateUserHidesSecondary
+//	secondary login / empty primary  TestDualPasswordSecondaryLoginWithEmptyPrimary
+//	caching_sha2 storage format      TestDualPasswordCachingSha2PasswordStorage
+//	legacy empty-plugin resolution   TestDualPasswordLegacyEmptyPlugin{AcceptsNative,HonorsDefaultPlugin,RejectsLDAPDefault}
+//	DISCARD edge cases               TestDualPasswordDiscardNoopOnIncapablePlugin, TestDualPasswordDiscardCollapsesEmptyAttributesToNull
+
 // rootTK returns a testkit authenticated as root, ready to manage users.
 func rootTK(t *testing.T) *testkit.TestKit {
 	store := testkit.CreateMockStore(t)
@@ -621,4 +648,48 @@ func TestDualPasswordAlterUserUserResolvesAuthUsername(t *testing.T) {
 	require.NoError(t, authAs(t, tk, "dpauth", "%", "newauthpw"))
 	require.Error(t, authAs(t, tk, "dpauth", "%", "authpw"))
 	require.NoError(t, authAs(t, tk, "dplogin", "%", "loginpw"))
+}
+
+// TestDualPasswordAlterUserUserRetainAndDiscard mirrors MySQL's
+// multiple_passwords_ddl.test Test 13: the USER() form of ALTER USER accepts
+// RETAIN CURRENT PASSWORD and DISCARD OLD PASSWORD, is gated by
+// APPLICATION_PASSWORD_ADMIN like any other self-service dual-password
+// change, and operates on the caller's own account.
+func TestDualPasswordAlterUserUserRetainAndDiscard(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpuserfn")
+	tk.MustExec("CREATE USER dpuserfn IDENTIFIED BY 'u1'")
+
+	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpuserfn", Hostname: "%"}, sha1Password("u1"), nil, nil))
+
+	// Without APPLICATION_PASSWORD_ADMIN, both USER() dual-password forms are denied.
+	err := selfTK.ExecToErr("ALTER USER USER() IDENTIFIED BY 'u2' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "APPLICATION_PASSWORD_ADMIN")
+	err = selfTK.ExecToErr("ALTER USER USER() DISCARD OLD PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "APPLICATION_PASSWORD_ADMIN")
+	// The denied statements must not have changed the password.
+	require.NoError(t, authAs(t, tk, "dpuserfn", "%", "u1"))
+	require.Error(t, authAs(t, tk, "dpuserfn", "%", "u2"))
+
+	// With APPLICATION_PASSWORD_ADMIN, USER() ... RETAIN rotates and keeps the old password.
+	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpuserfn")
+	selfTK = testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpuserfn", Hostname: "%"}, sha1Password("u1"), nil, nil))
+	selfTK.MustExec("ALTER USER USER() IDENTIFIED BY 'u2' RETAIN CURRENT PASSWORD")
+
+	require.NoError(t, authAs(t, tk, "dpuserfn", "%", "u2"))
+	require.NoError(t, authAs(t, tk, "dpuserfn", "%", "u1"))
+	rows := tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpuserfn'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "1", rows[0][0])
+
+	// USER() ... DISCARD OLD PASSWORD drops the secondary.
+	selfTK.MustExec("ALTER USER USER() DISCARD OLD PASSWORD")
+	require.NoError(t, authAs(t, tk, "dpuserfn", "%", "u2"))
+	require.Error(t, authAs(t, tk, "dpuserfn", "%", "u1"))
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') FROM mysql.user WHERE User = 'dpuserfn'").Check(testkit.Rows("<nil>"))
 }

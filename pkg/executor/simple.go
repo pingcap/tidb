@@ -2842,12 +2842,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		u = s.User.Username
 		h = s.User.Hostname
 
-		// MySQL dual-password privilege model: changing ANOTHER account's
-		// password (with or without RETAIN CURRENT PASSWORD) requires the
-		// normal cross-user SET PASSWORD authority — here SUPER (or UPDATE on
-		// the mysql schema). APPLICATION_PASSWORD_ADMIN governs only
-		// self-account secondary passwords and is NOT a substitute for that
-		// authority, so RETAIN must not relax this check.
+		// Changing ANOTHER account's password requires TiDB's long-standing
+		// cross-user SET PASSWORD authority: SUPER. (MySQL also accepts UPDATE
+		// on the mysql schema — a pre-existing compatibility gap independent
+		// of dual passwords.) APPLICATION_PASSWORD_ADMIN covers only
+		// self-account secondary passwords, so RETAIN must not relax this check.
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := sessUser
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
