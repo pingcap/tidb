@@ -279,7 +279,6 @@ func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 	store := &mockStorage{client: &mock.Client{}}
 	sctx := newMockReorgSessCtx(store)
 	originalInMaterializedViewMaintenance := sctx.GetSessionVars().InMaterializedViewMaintenance
-	sctx.GetSessionVars().InMaterializedViewMaintenance = originalInMaterializedViewMaintenance
 
 	reorgMeta := &model.DDLReorgMeta{
 		Location:          &model.TimeZoneLocation{Name: "UTC"},

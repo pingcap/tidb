@@ -145,6 +145,53 @@ func TestSkipSystemTables(t *testing.T) {
 	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
 }
 
+func TestInternalSQLScanUserTableCollectsPredicateColumns(t *testing.T) {
+	sql := "select * from t where a > 2"
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err)
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok)
+	baseFlags := builder.GetOptFlag() &^ (rule.FlagCollectPredicateColumnsPoint | rule.FlagSyncWaitStatsLoadPoint)
+
+	sessVars := s.ctx.GetSessionVars()
+	origRestricted := sessVars.InRestrictedSQL
+	origInternalScan := sessVars.InternalSQLScanUserTable
+	origMVMaintenance := sessVars.InMaterializedViewMaintenance
+	defer func() {
+		sessVars.InRestrictedSQL = origRestricted
+		sessVars.InternalSQLScanUserTable = origInternalScan
+		sessVars.InMaterializedViewMaintenance = origMVMaintenance
+	}()
+
+	sessVars.InRestrictedSQL = true
+	sessVars.InternalSQLScanUserTable = false
+	sessVars.InMaterializedViewMaintenance = false
+	flags := adjustOptimizationFlags(baseFlags, lp)
+	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+
+	sessVars.InMaterializedViewMaintenance = true
+	flags = adjustOptimizationFlags(baseFlags, lp)
+	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+
+	sessVars.InternalSQLScanUserTable = true
+	flags = adjustOptimizationFlags(baseFlags, lp)
+	require.NotZero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.NotZero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+	_, err = logicalOptimize(ctx, flags, lp)
+	require.NoError(t, err)
+}
+
 func TestCollectPredicateColumns(t *testing.T) {
 	tests := []struct {
 		pruneMode string

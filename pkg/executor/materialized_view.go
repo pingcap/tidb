@@ -3007,9 +3007,12 @@ func purgeMaterializedViewLogData(
 		)
 	}
 	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	origInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
 	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InternalSQLScanUserTable = true
 	defer func() {
 		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		sessVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
 	}()
 
 	_, err := sqlExec.ExecuteInternal(kctx, deleteSQL)
@@ -3270,9 +3273,12 @@ func countMLogPurgePendingRowsOnTiFlash(
 	}
 	defer restoreFallback()
 	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	origInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
 	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InternalSQLScanUserTable = true
 	defer func() {
 		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		sessVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
 	}()
 
 	countCtx, cancel := context.WithTimeout(kctx, mlogPurgeAdaptiveCountTimeout)
@@ -5490,6 +5496,12 @@ func executeRefreshMaterializedViewFast(
 	stepObserver mvRefreshStepObserver,
 	explainFormat string,
 ) error {
+	origInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
+	sessVars.InternalSQLScanUserTable = true
+	defer func() {
+		sessVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
+	}()
+
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeFastMerge, func() error {
 		return executeRefreshMaterializedViewImplement(
 			kctx,

@@ -404,6 +404,13 @@ func TestExplainRefreshMVFastPlanUsesMLogCommitTSWindowSelectivity(t *testing.T)
 	txnMgr := sessiontxn.GetTxnManager(tk.Session())
 	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
 	defer txnMgr.OnStmtEnd()
+	retainedUpperTSO, err := txnMgr.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	expectedRows := fmt.Sprintf(
+		"%.2f",
+		10000*float64(oracle.ExtractPhysical(targetTSO)-oracle.ExtractPhysical(lastSuccessTSO))/
+			float64(oracle.ExtractPhysical(retainedUpperTSO)-oracle.ExtractPhysical(retainedLowerTSO)),
+	)
 
 	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
@@ -417,7 +424,7 @@ func TestExplainRefreshMVFastPlanUsesMLogCommitTSWindowSelectivity(t *testing.T)
 	explain.SetSCtx(p.SCtx())
 	require.NoError(t, explain.RenderResult())
 
-	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_est._tidb_commit_ts", "4000.00")
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_est._tidb_commit_ts", expectedRows)
 }
 
 func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T) {

@@ -1741,7 +1741,7 @@ type SessionVars struct {
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
 
-	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	// InternalSQLScanUserTable indicates whether internal SQL scans user tables, for example TTL scan and MV MLOG scans.
 	InternalSQLScanUserTable bool
 
 	// InPacketBytes records the total incoming packet bytes from clients for current session.

@@ -375,7 +375,7 @@ func (e *RefreshMaterializedViewDryRunExec) buildFastMergePlanRows(ctx context.C
 		}
 	}
 	implementOpts.targetRefreshReadTSO = targetRefreshReadTSO
-	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, implementOpts)
+	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, implementOpts, true)
 }
 
 func (e *RefreshMaterializedViewDryRunExec) buildCompleteDeltaRefreshPlanRows(ctx context.Context) ([][]string, error) {
@@ -387,7 +387,7 @@ func (e *RefreshMaterializedViewDryRunExec) buildCompleteDeltaRefreshPlanRows(ct
 	if _, _, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt); err != nil {
 		return nil, err
 	}
-	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, refreshImplementOptions{})
+	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, refreshImplementOptions{}, false)
 }
 
 func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanInput(
@@ -406,6 +406,7 @@ func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanRows(
 	ctx context.Context,
 	refreshStmt *ast.RefreshMaterializedViewStmt,
 	implementOpts refreshImplementOptions,
+	scanUserTable bool,
 ) ([][]string, error) {
 	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 		RefreshStmt:                  refreshStmt,
@@ -413,7 +414,7 @@ func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanRows(
 		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
 		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
 	}
-	return e.renderPlanRowsForInternalStmt(ctx, implementStmt)
+	return e.renderPlanRowsForInternalStmt(ctx, implementStmt, scanUserTable)
 }
 
 func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshImplementOptionsForDryRun(
@@ -538,7 +539,7 @@ func (e *RefreshMaterializedViewDryRunExec) buildOutOfPlaceRefreshPlanRows(ctx c
 	return e.renderPlanRowsForInternalSQL(ctx, loadSQL)
 }
 
-func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx context.Context, stmt ast.StmtNode) ([][]string, error) {
+func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx context.Context, stmt ast.StmtNode, scanUserTable bool) ([][]string, error) {
 	internalSctx, err := e.GetSysSession()
 	if err != nil {
 		return nil, err
@@ -559,6 +560,10 @@ func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx co
 	}
 	if err := txnPreparer.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
+	}
+	if scanUserTable {
+		restoreInternalSQLScanUserTable := enableInternalSQLScanUserTableForPlan(internalSctx)
+		defer restoreInternalSQLScanUserTable()
 	}
 
 	is := e.is
@@ -899,6 +904,21 @@ func enableMVRefreshObserveMaintenanceFlags(sctx sessionctx.Context) func() {
 		planVars.InMaterializedViewMaintenance = origPlanMaintenance
 		sessVars.InRestrictedSQL = origRestricted
 		sessVars.InMaterializedViewMaintenance = origMaintenance
+	}
+}
+
+func enableInternalSQLScanUserTableForPlan(sctx sessionctx.Context) func() {
+	sessVars := sctx.GetSessionVars()
+	origInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
+	sessVars.InternalSQLScanUserTable = true
+
+	planVars := sctx.GetPlanCtx().GetSessionVars()
+	origPlanInternalSQLScanUserTable := planVars.InternalSQLScanUserTable
+	planVars.InternalSQLScanUserTable = true
+
+	return func() {
+		planVars.InternalSQLScanUserTable = origPlanInternalSQLScanUserTable
+		sessVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
 	}
 }
 
