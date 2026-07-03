@@ -501,21 +501,24 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	require.Len(t, tasks, 8)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
 
-	proto.SetMaxConcurrentTaskForTest(6)
+	restoreMaxConcurrentTask := proto.SetMaxConcurrentTaskForTest(6)
 	tasks, err = gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 11)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
+	restoreMaxConcurrentTask()
 
-	proto.SetMaxConcurrentTaskForTest(3)
+	restoreMaxConcurrentTask = proto.SetMaxConcurrentTaskForTest(3)
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3", "key/4", "key/12"}, getTaskKeys(tasks))
+	restoreMaxConcurrentTask()
 
-	proto.SetMaxConcurrentTaskForTest(1)
+	restoreMaxConcurrentTask = proto.SetMaxConcurrentTaskForTest(1)
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3"}, getTaskKeys(tasks))
+	restoreMaxConcurrentTask()
 }
 
 func TestGetUsedSlotsOnNodesAndBusyNodes(t *testing.T) {
