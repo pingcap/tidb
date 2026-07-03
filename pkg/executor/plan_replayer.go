@@ -401,16 +401,25 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				}
 				dbName := r[0]
 				tableName := r[1]
+				replicaCount := strings.TrimSpace(r[2])
 				c := context.Background()
-				// Though we record tiflash replica in txt, we only set 1 hypothetical
-				// TiFlash replica as it's enough for reproducing the plan.
-				sql := fmt.Sprintf("alter table %s.%s set hypo tiflash replica 1", dbName, tableName)
+				sql := fmt.Sprintf("alter table %s.%s set tiflash replica %s", dbName, tableName, replicaCount)
 				_, err = ctx.GetSQLExecutor().Execute(c, sql)
+				if err != nil && isNoTiFlashStoreErr(err) {
+					// Without TiFlash stores, use one hypothetical replica so the
+					// optimizer can still reproduce TiFlash access paths.
+					sql = fmt.Sprintf("alter table %s.%s set hypo tiflash replica 1", dbName, tableName)
+					_, err = ctx.GetSQLExecutor().Execute(c, sql)
+				}
 				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 			}
 		}
 	}
 	return nil
+}
+
+func isNoTiFlashStoreErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "total tiflash server count: 0")
 }
 
 func loadAllBindings(ctx sessionctx.Context, z *zip.Reader, databaseSets map[string]struct{}) error {
