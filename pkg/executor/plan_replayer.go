@@ -401,15 +401,25 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				}
 				dbName := r[0]
 				tableName := r[1]
+				replicaCount := strings.TrimSpace(r[2])
 				c := context.Background()
-				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
-				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
+				sql := fmt.Sprintf("alter table %s.%s set tiflash replica %s", dbName, tableName, replicaCount)
 				_, err = ctx.GetSQLExecutor().Execute(c, sql)
+				if err != nil && isNoTiFlashStoreErr(err) {
+					// Without TiFlash stores, use one hypothetical replica so the
+					// optimizer can still reproduce TiFlash access paths.
+					sql = fmt.Sprintf("alter table %s.%s set hypo tiflash replica 1", dbName, tableName)
+					_, err = ctx.GetSQLExecutor().Execute(c, sql)
+				}
 				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 			}
 		}
 	}
 	return nil
+}
+
+func isNoTiFlashStoreErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "total tiflash server count: 0")
 }
 
 func loadAllBindings(ctx sessionctx.Context, z *zip.Reader, databaseSets map[string]struct{}) error {
@@ -581,6 +591,11 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	}
 	if err := json.Unmarshal(buf.Bytes(), jsonTbl); err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(fmt.Errorf("fail to unmarshal stats JSON for file %s", f.Name), err))
+		return nil
+	}
+	// Keep plan replayer consistent with LOAD STATS: a dumped stats file can be
+	// null when the source table has no stats, and loading it should be a no-op.
+	if jsonTbl.TableName == "" && jsonTbl.Version == 0 {
 		return nil
 	}
 	do := domain.GetDomain(ctx)
