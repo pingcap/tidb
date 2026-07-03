@@ -462,7 +462,11 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	// min version 10
 	data = append(data, 10)
 	// server version[00]
-	data = append(data, mysql.ServerVersion...)
+	if variable.EnableEAL.Load() {
+		data = append(data, mysql.ServerEALVersion...)
+	} else {
+		data = append(data, mysql.ServerVersion...)
+	}
 	data = append(data, 0)
 	// connection id
 	data = append(data, byte(cc.connectionID), byte(cc.connectionID>>8), byte(cc.connectionID>>16), byte(cc.connectionID>>24))

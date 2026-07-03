@@ -42,6 +42,8 @@ var (
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
 	ServerVersion = fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, TiDBReleaseVersion)
+	// ServerEALVersion is the version of TiDB server in EAL format.
+	ServerEALVersion = fmt.Sprintf("TiDB-%s", TiDBReleaseVersion)
 )
 
 // Header information.
