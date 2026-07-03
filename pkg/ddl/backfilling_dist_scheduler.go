@@ -353,22 +353,22 @@ func generatePlanForPhysicalTable(
 		zap.Bool("useCloud", useCloud),
 	)
 
-	regionStartKeys := make([]kv.Key, 0, len(recordRegionMetas))
-	for _, m := range recordRegionMetas {
-		regionStartKeys = append(regionStartKeys, m.StartKey())
-	}
-	keyRanges := buildContinuousKeyRangesByRegionStartKeys(startKey, endKey, regionStartKeys, regionBatch)
-	subTaskMetas := make([][]byte, 0, len(keyRanges))
-	for _, keyRange := range keyRanges {
-		// It should be different for each subtask to determine if there are duplicate entries.
+	sort.Slice(recordRegionMetas, func(i, j int) bool {
+		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
+	})
+
+	subTaskMetas := make([][]byte, 0, 4)
+	if len(recordRegionMetas) == 0 {
+		// Fall back to a single range when PD returns no region in a non-empty
+		// table range. The execution phase will split this range again.
 		importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: tbl.GetPhysicalID(),
-			RowStart:        keyRange.StartKey,
-			RowEnd:          keyRange.EndKey,
+			RowStart:        startKey,
+			RowEnd:          endKey,
 			TS:              importTS,
 		}
 		metaBytes, err := subTaskMeta.Marshal()
@@ -376,45 +376,38 @@ func generatePlanForPhysicalTable(
 			return nil, errors.Trace(err)
 		}
 		subTaskMetas = append(subTaskMetas, metaBytes)
+	} else {
+		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			end := min(i+regionBatch, len(recordRegionMetas))
+			batch := recordRegionMetas[i:end]
+			rowStart := batch[0].StartKey()
+			rowEnd := endKey
+			if i == 0 {
+				rowStart = startKey
+			}
+			if end < len(recordRegionMetas) {
+				rowEnd = recordRegionMetas[end].StartKey()
+			}
+
+			// It should be different for each subtask to determine if there are duplicate entries.
+			importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			subTaskMeta := &BackfillSubTaskMeta{
+				PhysicalTableID: tbl.GetPhysicalID(),
+				RowStart:        rowStart,
+				RowEnd:          rowEnd,
+				TS:              importTS,
+			}
+			metaBytes, err := subTaskMeta.Marshal()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
 	}
 	return subTaskMetas, nil
-}
-
-// buildContinuousKeyRangesByRegionStartKeys splits [startKey, endKey) using
-// region start keys only. It keeps the same batch boundaries as grouping
-// continuous regions by regionBatch, and falls back to one whole range when no
-// usable start key exists.
-func buildContinuousKeyRangesByRegionStartKeys(startKey, endKey kv.Key, regionStartKeys []kv.Key, regionBatch int) []kv.KeyRange {
-	if regionBatch <= 0 {
-		regionBatch = 1
-	}
-	sortedStartKeys := make([]kv.Key, 0, len(regionStartKeys))
-	for _, key := range regionStartKeys {
-		if bytes.Compare(key, startKey) <= 0 || bytes.Compare(key, endKey) >= 0 {
-			continue
-		}
-		sortedStartKeys = append(sortedStartKeys, key)
-	}
-	sort.Slice(sortedStartKeys, func(i, j int) bool {
-		return bytes.Compare(sortedStartKeys[i], sortedStartKeys[j]) < 0
-	})
-	uniqueStartKeys := sortedStartKeys[:0]
-	for _, key := range sortedStartKeys {
-		if len(uniqueStartKeys) > 0 && bytes.Equal(uniqueStartKeys[len(uniqueStartKeys)-1], key) {
-			continue
-		}
-		uniqueStartKeys = append(uniqueStartKeys, key)
-	}
-
-	keyRanges := make([]kv.KeyRange, 0, len(uniqueStartKeys)/regionBatch+1)
-	rangeStart := startKey
-	for i := regionBatch - 1; i < len(uniqueStartKeys); i += regionBatch {
-		rangeEnd := uniqueStartKeys[i]
-		keyRanges = append(keyRanges, kv.KeyRange{StartKey: rangeStart, EndKey: rangeEnd})
-		rangeStart = rangeEnd
-	}
-	keyRanges = append(keyRanges, kv.KeyRange{StartKey: rangeStart, EndKey: endKey})
-	return keyRanges
 }
 
 // CalculateRegionBatch is exported for test.
@@ -904,18 +897,17 @@ func genMergeTempPlanForOneIndex(
 		zap.Int("instanceCnt", nodeCnt),
 	)
 
-	regionStartKeys := make([]kv.Key, 0, len(regionMetas))
-	for _, m := range regionMetas {
-		regionStartKeys = append(regionStartKeys, m.StartKey())
-	}
-	keyRanges := buildContinuousKeyRangesByRegionStartKeys(start, end, regionStartKeys, regionBatch)
-	subTaskMetas := make([][]byte, 0, len(keyRanges))
-	for _, keyRange := range keyRanges {
+	sort.Slice(regionMetas, func(i, j int) bool {
+		return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
+	})
+
+	subTaskMetas := make([][]byte, 0, 4)
+	if len(regionMetas) == 0 {
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: pid,
 			SortedKVMeta: globalsort.SortedKVMeta{
-				StartKey: keyRange.StartKey,
-				EndKey:   keyRange.EndKey,
+				StartKey: start,
+				EndKey:   end,
 			},
 		}
 		metaBytes, err := subTaskMeta.Marshal()
@@ -923,6 +915,32 @@ func genMergeTempPlanForOneIndex(
 			return nil, errors.Trace(err)
 		}
 		subTaskMetas = append(subTaskMetas, metaBytes)
+	} else {
+		for i := 0; i < len(regionMetas); i += regionBatch {
+			endIdx := min(i+regionBatch, len(regionMetas))
+			batch := regionMetas[i:endIdx]
+			rangeStart := batch[0].StartKey()
+			rangeEnd := end
+			if i == 0 {
+				rangeStart = start
+			}
+			if endIdx < len(regionMetas) {
+				rangeEnd = regionMetas[endIdx].StartKey()
+			}
+
+			subTaskMeta := &BackfillSubTaskMeta{
+				PhysicalTableID: pid,
+				SortedKVMeta: globalsort.SortedKVMeta{
+					StartKey: rangeStart,
+					EndKey:   rangeEnd,
+				},
+			}
+			metaBytes, err := subTaskMeta.Marshal()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
 	}
 	return subTaskMetas, nil
 }
