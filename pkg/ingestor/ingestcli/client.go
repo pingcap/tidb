@@ -61,7 +61,6 @@ type nextGenResp struct {
 
 type nextGenSSTMeta struct {
 	ID         int64         `json:"id"`
-	Size       uint64        `json:"size"`
 	Smallest   jsonByteSlice `json:"smallest"`
 	Biggest    jsonByteSlice `json:"biggest"`
 	MetaOffset int           `json:"meta-offset"`
@@ -69,8 +68,8 @@ type nextGenSSTMeta struct {
 }
 
 func (m *nextGenSSTMeta) String() string {
-	return fmt.Sprintf("{ID: %d, Size: %d, Smallest: %s, Biggest: %s, CommitTs: %d}",
-		m.ID, m.Size, redact.Key(m.Smallest), redact.Key(m.Biggest), m.CommitTs)
+	return fmt.Sprintf("{ID: %d, Smallest: %s, Biggest: %s, CommitTs: %d}",
+		m.ID, redact.Key(m.Smallest), redact.Key(m.Biggest), m.CommitTs)
 }
 
 var _ WriteClient = &writeClient{}

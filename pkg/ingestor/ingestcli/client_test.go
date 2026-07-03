@@ -46,7 +46,7 @@ func TestJsonByteSlice(t *testing.T) {
 }
 
 func TestWriteClientWriteChunk(t *testing.T) {
-	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Size: 1024, Smallest: []byte{0}, Biggest: []byte{1}, MetaOffset: 1, CommitTs: 1}}
+	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []byte{0}, Biggest: []byte{1}, MetaOffset: 1, CommitTs: 1}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -78,10 +78,6 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.EqualValues(t, &sstMeta.SstMeta, resp.nextGenSSTMeta)
-	id, size, ok := resp.GetSSTMeta()
-	require.True(t, ok)
-	require.EqualValues(t, 1, id)
-	require.EqualValues(t, 1024, size)
 }
 
 func TestClientWriteServerError(t *testing.T) {

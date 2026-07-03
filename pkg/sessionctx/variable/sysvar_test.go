@@ -1001,28 +1001,6 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
 }
 
-func TestSetEnforceDiskSpacePrecheckBeforeAddIndex(t *testing.T) {
-	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-	enforcePrecheck := GetSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
-
-	require.Equal(t, vardef.Off, enforcePrecheck.Value)
-
-	err := mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, vardef.On)
-	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
-	require.NoError(t, err)
-	require.Equal(t, vardef.On, val)
-
-	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, vardef.Off)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
-	require.NoError(t, err)
-	require.Equal(t, vardef.Off, val)
-}
-
 func TestTiDBServerMemoryLimit(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

@@ -361,8 +361,6 @@ type recoverRows struct {
 func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult distsql.SelectResult, result *backfillResult) ([]recoverRows, error) {
 	e.recoverRows = e.recoverRows[:0]
 	idxValLen := len(e.index.Meta().Columns)
-	tblInfo := e.table.Meta()
-	pkIdx := tables.FindPrimaryIndex(tblInfo)
 	result.scanRowCount = 0
 
 	for {
@@ -406,8 +404,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 				return nil, err
 			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			handleDts := plannercore.GetCommonHandleDatum(e.handleCols, row)
-			rsData := tables.TryGetHandleRestoredData(tblInfo, pkIdx, handleDts, e.index.Meta())
+			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})
 			result.scanRowCount++
 			result.currentHandle = handle

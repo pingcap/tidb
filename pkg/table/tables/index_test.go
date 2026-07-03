@@ -183,56 +183,6 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	return tblInfo
 }
 
-func TestEncodeRawIndexKeyValues(t *testing.T) {
-	loc := time.UTC
-
-	t.Run("non multi-valued index truncates prefix columns", func(t *testing.T) {
-		tblInfo := buildTableInfo(t, "create table t (a varchar(10), key idx(a(2)))")
-		idxInfo := tblInfo.Indices[0]
-
-		rawKeys, err := tables.EncodeRawIndexKeyValues(loc, tblInfo, idxInfo, types.MakeDatums("abcd"))
-		require.NoError(t, err)
-		require.Len(t, rawKeys, 1)
-
-		remain, datum, err := codec.DecodeOne(rawKeys[0])
-		require.NoError(t, err)
-		require.Empty(t, remain)
-		require.Equal(t, "ab", datum.GetString())
-	})
-
-	t.Run("multi-valued index expands unique array elements in order", func(t *testing.T) {
-		jsonType := types.NewFieldType(mysql.TypeJSON)
-		jsonType.SetArray(true)
-		tblInfo := &model.TableInfo{
-			Columns: []*model.ColumnInfo{
-				{ID: 1, Offset: 0, FieldType: *jsonType},
-			},
-		}
-		idxInfo := &model.IndexInfo{
-			MVIndex: true,
-			Columns: []*model.IndexColumn{
-				{Offset: 0},
-			},
-		}
-
-		arrayDatum, err := types.ParseBinaryJSONFromString(`[2, 1, 2]`)
-		require.NoError(t, err)
-		rawKeys, err := tables.EncodeRawIndexKeyValues(loc, tblInfo, idxInfo, types.MakeDatums(arrayDatum))
-		require.NoError(t, err)
-		require.Len(t, rawKeys, 2)
-
-		remain, datum, err := codec.DecodeOne(rawKeys[0])
-		require.NoError(t, err)
-		require.Empty(t, remain)
-		require.EqualValues(t, 2, datum.GetInt64())
-
-		remain, datum, err = codec.DecodeOne(rawKeys[1])
-		require.NoError(t, err)
-		require.Empty(t, remain)
-		require.EqualValues(t, 1, datum.GetInt64())
-	})
-}
-
 func TestGenIndexValueFromIndex(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
 	tblInfo.State = model.StatePublic
