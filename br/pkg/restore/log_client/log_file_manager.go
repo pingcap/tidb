@@ -160,6 +160,11 @@ func (rc *LogFileManager) ShiftTS() uint64 {
 	return rc.shiftStartTS
 }
 
+func isEmptyTaggedBackupMeta(path string) bool {
+	parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(path)
+	return err == nil && parsedName.IsEmpty()
+}
+
 func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	shiftTS := struct {
 		sync.Mutex
@@ -177,6 +182,9 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
 			if err != nil {
 				return false
+			}
+			if parsedName.IsEmpty() {
+				return true
 			}
 			ts, status := parsedName.CalculateShiftTS(rc.startTS, rc.restoreTS)
 			switch status {
@@ -245,6 +253,9 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".meta") {
+			return nil
+		}
+		if isEmptyTaggedBackupMeta(path) {
 			return nil
 		}
 		newPath := stream.FilterPathByTs(path, rc.shiftStartTS, rc.restoreTS)
