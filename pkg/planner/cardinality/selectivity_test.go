@@ -652,7 +652,7 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 
 // TestOutOfRangeEstimationWithoutIdx2ColMapping verifies that the StatsVer2 out-of-range
 // estimation does not panic when the index-to-column mapping (Idx2ColUniqueIDs) is empty.
-// getIndexRowCountForStatsV2 reads Idx2ColUniqueIDs[idx.ID][0] to prefer the leading
+// getIndexRowCountForStatsV2 reads Idx2ColUniqueIDs[idx.Histogram.ID][0] to prefer the leading
 // column's histogram for single-column ranges; if that mapping is not populated the
 // access must be guarded and the estimation must fall back to the index histogram.
 func TestOutOfRangeEstimationWithoutIdx2ColMapping(t *testing.T) {
