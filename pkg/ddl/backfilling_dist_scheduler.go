@@ -339,11 +339,8 @@ func generatePlanForPhysicalTable(
 		return nil, errors.Trace(err)
 	}
 	if len(recordRegionMetas) == 0 {
-		logger.Warn("no region meta found when generating backfill ranges, fallback to single range",
-			zap.Int64("physicalTableID", tbl.GetPhysicalID()),
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)),
-		)
+		return nil, errors.Errorf("no region meta found when generating backfill ranges, physical table ID: %d",
+			tbl.GetPhysicalID())
 	}
 	sort.Slice(recordRegionMetas, func(i, j int) bool {
 		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
@@ -359,17 +356,27 @@ func generatePlanForPhysicalTable(
 	)
 
 	subTaskMetas := make([][]byte, 0, 4)
-	if len(recordRegionMetas) == 0 {
-		// Fall back to a single range when PD returns no region in a non-empty
-		// table range. The execution phase will split this range again.
+	for i := 0; i < len(recordRegionMetas); i += regionBatch {
+		end := min(i+regionBatch, len(recordRegionMetas))
+		batch := recordRegionMetas[i:end]
+		rowStart := batch[0].StartKey()
+		rowEnd := endKey
+		if i == 0 {
+			rowStart = startKey
+		}
+		if end < len(recordRegionMetas) {
+			rowEnd = recordRegionMetas[end].StartKey()
+		}
+
+		// It should be different for each subtask to determine if there are duplicate entries.
 		importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: tbl.GetPhysicalID(),
-			RowStart:        startKey,
-			RowEnd:          endKey,
+			RowStart:        rowStart,
+			RowEnd:          rowEnd,
 			TS:              importTS,
 		}
 		metaBytes, err := subTaskMeta.Marshal()
@@ -377,36 +384,6 @@ func generatePlanForPhysicalTable(
 			return nil, errors.Trace(err)
 		}
 		subTaskMetas = append(subTaskMetas, metaBytes)
-	} else {
-		for i := 0; i < len(recordRegionMetas); i += regionBatch {
-			end := min(i+regionBatch, len(recordRegionMetas))
-			batch := recordRegionMetas[i:end]
-			rowStart := batch[0].StartKey()
-			rowEnd := endKey
-			if i == 0 {
-				rowStart = startKey
-			}
-			if end < len(recordRegionMetas) {
-				rowEnd = recordRegionMetas[end].StartKey()
-			}
-
-			// It should be different for each subtask to determine if there are duplicate entries.
-			importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			subTaskMeta := &BackfillSubTaskMeta{
-				PhysicalTableID: tbl.GetPhysicalID(),
-				RowStart:        rowStart,
-				RowEnd:          rowEnd,
-				TS:              importTS,
-			}
-			metaBytes, err := subTaskMeta.Marshal()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
-		}
 	}
 	return subTaskMetas, nil
 }
@@ -901,12 +878,8 @@ func genMergeTempPlanForOneIndex(
 		return nil, errors.Trace(err)
 	}
 	if len(regionMetas) == 0 {
-		logger.Warn("no region meta found when generating temp index merge ranges, fallback to single range",
-			zap.Int64("physicalTableID", pid),
-			zap.Int64("indexID", idxInfo.ID),
-			zap.String("startKey", hex.EncodeToString(start)),
-			zap.String("endKey", hex.EncodeToString(end)),
-		)
+		return nil, errors.Errorf("no region meta found when generating temp index merge ranges, physical table ID: %d, index ID: %d",
+			pid, idxInfo.ID)
 	}
 	sort.Slice(regionMetas, func(i, j int) bool {
 		return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
@@ -922,12 +895,23 @@ func genMergeTempPlanForOneIndex(
 	)
 
 	subTaskMetas := make([][]byte, 0, 4)
-	if len(regionMetas) == 0 {
+	for i := 0; i < len(regionMetas); i += regionBatch {
+		endIdx := min(i+regionBatch, len(regionMetas))
+		batch := regionMetas[i:endIdx]
+		rangeStart := batch[0].StartKey()
+		rangeEnd := end
+		if i == 0 {
+			rangeStart = start
+		}
+		if endIdx < len(regionMetas) {
+			rangeEnd = regionMetas[endIdx].StartKey()
+		}
+
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: pid,
 			SortedKVMeta: globalsort.SortedKVMeta{
-				StartKey: start,
-				EndKey:   end,
+				StartKey: rangeStart,
+				EndKey:   rangeEnd,
 			},
 		}
 		metaBytes, err := subTaskMeta.Marshal()
@@ -935,32 +919,6 @@ func genMergeTempPlanForOneIndex(
 			return nil, errors.Trace(err)
 		}
 		subTaskMetas = append(subTaskMetas, metaBytes)
-	} else {
-		for i := 0; i < len(regionMetas); i += regionBatch {
-			endIdx := min(i+regionBatch, len(regionMetas))
-			batch := regionMetas[i:endIdx]
-			rangeStart := batch[0].StartKey()
-			rangeEnd := end
-			if i == 0 {
-				rangeStart = start
-			}
-			if endIdx < len(regionMetas) {
-				rangeEnd = regionMetas[endIdx].StartKey()
-			}
-
-			subTaskMeta := &BackfillSubTaskMeta{
-				PhysicalTableID: pid,
-				SortedKVMeta: globalsort.SortedKVMeta{
-					StartKey: rangeStart,
-					EndKey:   rangeEnd,
-				},
-			}
-			metaBytes, err := subTaskMeta.Marshal()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
-		}
 	}
 	return subTaskMetas, nil
 }
