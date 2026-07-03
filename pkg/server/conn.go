@@ -2416,29 +2416,40 @@ func (cc *clientConn) postprocessLoadDataLocal() {
 	}
 }
 
+type fileTransInConnHandler func(*clientConn, context.Context, any) error
+
+var fileTransInConnHandlers = map[fmt.Stringer]fileTransInConnHandler{
+	executor.LoadStatsVarKey: func(cc *clientConn, ctx context.Context, value any) error {
+		//nolint:forcetypeassert
+		return cc.handleLoadStats(ctx, value.(*executor.LoadStatsInfo))
+	},
+	executor.PlanReplayerLoadVarKey: func(cc *clientConn, ctx context.Context, value any) error {
+		//nolint:forcetypeassert
+		return cc.handlePlanReplayerLoad(ctx, value.(*executor.PlanReplayerLoadInfo))
+	},
+}
+
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 
-	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
-	if loadStats != nil {
+	for _, key := range executor.FileTransInConnKeys {
+		value := cc.ctx.Value(key)
+		if value == nil {
+			continue
+		}
+		handler, ok := fileTransInConnHandlers[key]
+		if !ok {
+			return handled, errors.Errorf("missing file transfer handler for %s", key)
+		}
 		handled = true
-		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+		defer cc.ctx.SetValue(key, nil)
+		if err := handler(cc, ctx, value); err != nil {
 			return handled, err
 		}
 	}
 
-	planReplayerLoad := cc.ctx.Value(executor.PlanReplayerLoadVarKey)
-	if planReplayerLoad != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.PlanReplayerLoadVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handlePlanReplayerLoad(ctx, planReplayerLoad.(*executor.PlanReplayerLoadInfo)); err != nil {
-			return handled, err
-		}
-	}
-
+	// PlanReplayerDumpVarKey follows the result-set path, so it is not part of
+	// executor.FileTransInConnKeys used by session.hasFileTransInConn.
 	planReplayerDump := cc.ctx.Value(executor.PlanReplayerDumpVarKey)
 	if planReplayerDump != nil {
 		handled = true

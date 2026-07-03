@@ -2846,17 +2846,11 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
-var fileTransInConnKeys = []fmt.Stringer{
-	executor.LoadStatsVarKey,
-	executor.PlanReplayerLoadVarKey,
-}
-
 func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, k := range fileTransInConnKeys {
+	for _, k := range executor.FileTransInConnKeys {
 		v := s.mu.values[k]
 		if v != nil {
 			return true
