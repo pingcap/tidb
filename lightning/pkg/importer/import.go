@@ -1396,6 +1396,13 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
+		if !ok {
+			return errors.Errorf("TiKV store does not expose PD client")
+		}
+		if err = kvStoreWithPD.GetPDClient().UpdateOption(opt.EnableRouterClient, false); err != nil {
+			return errors.Trace(err)
+		}
 		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
