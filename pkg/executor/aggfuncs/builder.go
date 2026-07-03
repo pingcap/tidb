@@ -564,7 +564,7 @@ func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFu
 	case types.ETDecimal:
 		return &maxMinCount4Decimal{base}
 	case types.ETString:
-		return &maxMinCount4String{baseMaxMinCountAggFunc: base}
+		return &maxMinCount4String{base}
 	case types.ETDatetime, types.ETTimestamp:
 		return &maxMinCount4Time{base}
 	case types.ETDuration:
