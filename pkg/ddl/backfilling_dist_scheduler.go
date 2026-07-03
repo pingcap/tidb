@@ -345,6 +345,11 @@ func generatePlanForPhysicalTable(
 			zap.String("endKey", hex.EncodeToString(endKey)),
 		)
 	}
+	sort.Slice(recordRegionMetas, func(i, j int) bool {
+		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
+	})
+	recordRegionMetas = deduplicateSortedRegionMetasByStartKey(recordRegionMetas)
+
 	regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 	logger.Info("calculate region batch",
 		zap.Int("totalRegionCnt", len(recordRegionMetas)),
@@ -352,10 +357,6 @@ func generatePlanForPhysicalTable(
 		zap.Int("instanceCnt", nodeCnt),
 		zap.Bool("useCloud", useCloud),
 	)
-
-	sort.Slice(recordRegionMetas, func(i, j int) bool {
-		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-	})
 
 	subTaskMetas := make([][]byte, 0, 4)
 	if len(recordRegionMetas) == 0 {
@@ -432,6 +433,24 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 		regionBatch = min(4000, avgTasksPerInstance)
 	}
 	return regionBatch
+}
+
+type regionMetaWithStartKey interface {
+	StartKey() []byte
+}
+
+func deduplicateSortedRegionMetasByStartKey[T regionMetaWithStartKey](regionMetas []T) []T {
+	if len(regionMetas) < 2 {
+		return regionMetas
+	}
+	deduplicatedRegionMetas := regionMetas[:1]
+	for _, regionMeta := range regionMetas[1:] {
+		if bytes.Equal(deduplicatedRegionMetas[len(deduplicatedRegionMetas)-1].StartKey(), regionMeta.StartKey()) {
+			continue
+		}
+		deduplicatedRegionMetas = append(deduplicatedRegionMetas, regionMeta)
+	}
+	return deduplicatedRegionMetas
 }
 
 func generateGlobalSortIngestPlan(
@@ -889,6 +908,11 @@ func genMergeTempPlanForOneIndex(
 			zap.String("endKey", hex.EncodeToString(end)),
 		)
 	}
+	sort.Slice(regionMetas, func(i, j int) bool {
+		return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
+	})
+	regionMetas = deduplicateSortedRegionMetasByStartKey(regionMetas)
+
 	regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
 	logger.Info("calculate temp index region batch",
 		zap.Int64("physicalTableID", pid),
@@ -896,10 +920,6 @@ func genMergeTempPlanForOneIndex(
 		zap.Int("regionBatch", regionBatch),
 		zap.Int("instanceCnt", nodeCnt),
 	)
-
-	sort.Slice(regionMetas, func(i, j int) bool {
-		return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
-	})
 
 	subTaskMetas := make([][]byte, 0, 4)
 	if len(regionMetas) == 0 {
