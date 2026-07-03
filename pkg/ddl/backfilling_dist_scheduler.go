@@ -334,7 +334,7 @@ func generatePlanForPhysicalTable(
 	}
 
 	regionCache := store.(helper.Storage).GetRegionCache()
-	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -873,7 +873,7 @@ func genMergeTempPlanForOneIndex(
 	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
 
 	regionCache := store.(helper.Storage).GetRegionCache()
-	regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
+	regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

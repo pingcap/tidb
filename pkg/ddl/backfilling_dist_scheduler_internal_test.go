@@ -29,6 +29,19 @@ func (r regionMetaForTest) StartKey() []byte {
 }
 
 func TestDeduplicateSortedRegionMetasByStartKey(t *testing.T) {
+	require.Empty(t, deduplicateSortedRegionMetasByStartKey([]regionMetaForTest{}))
+	require.Equal(t,
+		[]regionMetaForTest{{startKey: []byte("a")}},
+		deduplicateSortedRegionMetasByStartKey([]regionMetaForTest{{startKey: []byte("a")}}),
+	)
+
+	uniqueRegions := []regionMetaForTest{
+		{startKey: []byte("a")},
+		{startKey: []byte("b")},
+		{startKey: []byte("d")},
+	}
+	require.Equal(t, uniqueRegions, deduplicateSortedRegionMetasByStartKey(uniqueRegions))
+
 	regions := []regionMetaForTest{
 		{startKey: []byte("a")},
 		{startKey: []byte("a")},
