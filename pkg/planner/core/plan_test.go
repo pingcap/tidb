@@ -680,7 +680,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestBuildFinalModeAggregationMaxMinCountSchema(t *testing.T) {
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
