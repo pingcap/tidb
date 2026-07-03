@@ -137,7 +137,7 @@ func NewReorgCopContext(
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	pushDownFlags := stmtctx.PushDownFlagsWithTypeFlagsAndErrLevels(tc.Flags(), ec.LevelMap())
 
-	return copr.NewCopContextWithCollate(
+	return copr.NewCopContext(
 		exprCtx,
 		pushDownFlags,
 		tblInfo,
