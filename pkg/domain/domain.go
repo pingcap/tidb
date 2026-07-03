@@ -1754,9 +1754,29 @@ func DisablePlanReplayerBackgroundJob4Test() {
 	planReplayerHandleLease.Store(0)
 }
 
+// SetPlanReplayerBackgroundJobLease4Test sets plan replayer handle lease for test.
+func SetPlanReplayerBackgroundJobLease4Test(lease time.Duration) {
+	planReplayerHandleLease.Store(uint64(lease))
+}
+
+// GetPlanReplayerBackgroundJobLease4Test gets plan replayer handle lease for test.
+func GetPlanReplayerBackgroundJobLease4Test() time.Duration {
+	return time.Duration(planReplayerHandleLease.Load())
+}
+
 // DisableDumpHistoricalStats4Test disable historical dump worker for test
 func DisableDumpHistoricalStats4Test() {
 	enableDumpHistoricalStats.Store(false)
+}
+
+// SetDumpHistoricalStats4Test sets whether to dump historical stats for test.
+func SetDumpHistoricalStats4Test(enabled bool) {
+	enableDumpHistoricalStats.Store(enabled)
+}
+
+// GetDumpHistoricalStats4Test gets whether historical stats dump is enabled for test.
+func GetDumpHistoricalStats4Test() bool {
+	return enableDumpHistoricalStats.Load()
 }
 
 // StartPlanReplayerHandle start plan replayer handle job

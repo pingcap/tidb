@@ -776,6 +776,8 @@ func newFlashbackClusterTestStore(t *testing.T, minSafeTS *atomic.Uint64) kv.Sto
 
 	origSchemaLease := vardef.GetSchemaLease()
 	origStatsLease := vardef.GetStatsLease()
+	origPlanReplayerLease := domain.GetPlanReplayerBackgroundJobLease4Test()
+	origDumpHistoricalStats := domain.GetDumpHistoricalStats4Test()
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
@@ -790,6 +792,8 @@ func newFlashbackClusterTestStore(t *testing.T, minSafeTS *atomic.Uint64) kv.Sto
 		resourcemanager.InstanceResourceManager.Reset()
 		vardef.SetSchemaLease(origSchemaLease)
 		vardef.SetStatsLease(origStatsLease)
+		domain.SetPlanReplayerBackgroundJobLease4Test(origPlanReplayerLease)
+		domain.SetDumpHistoricalStats4Test(origDumpHistoricalStats)
 	})
 	return wrappedStore
 }
