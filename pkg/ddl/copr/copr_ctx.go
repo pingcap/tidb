@@ -158,26 +158,8 @@ func NewCopContextBase(
 	}, nil
 }
 
-// NewCopContext creates a CopContext.
+// NewCopContext creates a CopContext with a fixed collation mode.
 func NewCopContext(
-	exprCtx exprctx.BuildContext,
-	pushDownFlags uint64,
-	tblInfo *model.TableInfo,
-	allIdxInfo []*model.IndexInfo,
-	requestSource string,
-) (CopContext, error) {
-	return NewCopContextWithCollate(
-		exprCtx,
-		pushDownFlags,
-		tblInfo,
-		allIdxInfo,
-		requestSource,
-		collate.NewCollationEnabled(),
-	)
-}
-
-// NewCopContextWithCollate creates a CopContext with a fixed collation mode.
-func NewCopContextWithCollate(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
