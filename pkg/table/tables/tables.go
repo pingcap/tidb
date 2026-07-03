@@ -1772,50 +1772,29 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
 }
 
-// TryGetHandleRestoredData returns restored common-handle data if needed.
-func TryGetHandleRestoredData(tblInfo *model.TableInfo, pkIdx *model.IndexInfo, handleDts []types.Datum, idx *model.IndexInfo) []types.Datum {
-	if !needHandleRestoredData(tblInfo, pkIdx) {
-		return nil
-	}
-	for i, pkIdxCol := range pkIdx.Columns {
-		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
-			// Since the handle data cannot be null, SetNull marks this column as not restored.
-			handleDts[i].SetNull()
-			continue
-		}
-		TryTruncateRestoredData(&handleDts[i], pkCol, pkIdxCol, idx)
-		ConvertDatumToTailSpaceCount(&handleDts[i], pkCol)
-	}
-	rsData := handleDts[:0]
-	for _, handleDt := range handleDts {
-		if !handleDt.IsNull() {
-			rsData = append(rsData, handleDt)
-		}
-	}
-	return rsData
-}
-
-func needHandleRestoredData(tblInfo *model.TableInfo, pkIdx *model.IndexInfo) bool {
-	return collate.NewCollationEnabled() && tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion != 0 && pkIdx != nil
-}
-
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
 func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	pkIdx := FindPrimaryIndex(tblInfo)
-	if !needHandleRestoredData(tblInfo, pkIdx) {
+	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
-	handleDts := make([]types.Datum, 0, len(pkIdx.Columns))
+	rsData := make([]types.Datum, 0, 4)
+	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if len(rowMap) > 0 {
-			handleDts = append(handleDts, rowMap[pkCol.ID])
-		} else {
-			handleDts = append(handleDts, row[pkCol.Offset])
+		if !types.NeedRestoredData(&pkCol.FieldType) {
+			continue
 		}
+		var datum types.Datum
+		if len(rowMap) > 0 {
+			datum = rowMap[pkCol.ID]
+		} else {
+			datum = row[pkCol.Offset]
+		}
+		TryTruncateRestoredData(&datum, pkCol, pkIdxCol, idx)
+		ConvertDatumToTailSpaceCount(&datum, pkCol)
+		rsData = append(rsData, datum)
 	}
-	return TryGetHandleRestoredData(tblInfo, pkIdx, handleDts, idx)
+	return rsData
 }
 
 // TryTruncateRestoredData tries to truncate index values.
