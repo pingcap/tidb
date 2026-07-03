@@ -419,18 +419,24 @@ func (sm *Manager) cleanupTaskLoop() {
 			sm.logger.Info("cleanup loop exits")
 			return
 		case <-sm.finishCh:
-			sm.doCleanupTask()
+			sm.doCleanupTasks()
 		case <-ticker.C:
-			sm.doCleanupTask()
+			sm.doCleanupTasks()
 		}
 	}
 }
 
-// doCleanupTask processes clean up routine defined by each type of tasks and cleanupMeta.
+// doCleanupTasks keeps cleaning limited batches until there is no immediately cleanable task.
+func (sm *Manager) doCleanupTasks() {
+	for sm.doCleanupTask() {
+	}
+}
+
+// doCleanupTask processes one batch of cleanup routine defined by each type of tasks and cleanupMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanupTask() {
+func (sm *Manager) doCleanupTask() bool {
 	failpoint.InjectCall("doCleanupTask")
 	tasks, err := sm.taskMgr.GetTasksInStates(
 		sm.ctx,
@@ -440,19 +446,20 @@ func (sm *Manager) doCleanupTask() {
 	)
 	if err != nil {
 		sm.logger.Warn("get task in states failed", zap.Error(err))
-		return
+		return false
 	}
 	if len(tasks) == 0 {
-		return
+		return false
 	}
 	sm.logger.Info("cleanup routine start")
 	err = sm.cleanupFinishedTasks(tasks)
 	if err != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		return
+		return false
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
 	sm.logger.Info("cleanup routine success")
+	return true
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
@@ -499,7 +506,10 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		failpoint.Return(errors.New("transfer err"))
 	})
 
-	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
+	if err := sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks); err != nil {
+		return err
+	}
+	return firstErr
 }
 
 func (sm *Manager) cleanupImportIntoTasks(tasks []*proto.Task) ([]*proto.Task, error) {

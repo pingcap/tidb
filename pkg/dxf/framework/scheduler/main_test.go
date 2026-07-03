@@ -33,7 +33,7 @@ func (sm *Manager) DelRunningTask(id int64) {
 
 // DoCleanupRoutine implements Scheduler.DoCleanupRoutine interface.
 func (sm *Manager) DoCleanupRoutine() {
-	sm.doCleanupTask()
+	sm.doCleanupTasks()
 }
 
 func (s *BaseScheduler) Switch2NextStep() (err error) {

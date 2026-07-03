@@ -169,6 +169,27 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 
+	// wrapper cleans multiple limited batches in one tick.
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(manyTasks[:maxCleanupTaskBatchSize], nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, manyTasks[:maxCleanupTaskBatchSize]).Return(nil)
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(nil, nil)
+	mgr.doCleanupTasks()
+	require.True(t, ctrl.Satisfied())
+
 	// fail in transfer
 	mockErr := errors.New("transfer err")
 	taskMgr.EXPECT().GetTasksInStates(
@@ -177,7 +198,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		proto.TaskStateReverted,
 		proto.TaskStateSucceed).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
-	mgr.doCleanupTask()
+	mgr.doCleanupTasks()
 	require.True(t, ctrl.Satisfied())
 
 	taskMgr.EXPECT().GetTasksInStates(
