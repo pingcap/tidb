@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildContinuousKeyRangesByRegionStartKeys(t *testing.T) {
+func TestBuildContinuousKeyRangesByRegionStartKeysMatchesContinuousRegionBatching(t *testing.T) {
 	tableStart := kv.Key("a")
 	tableEnd := kv.Key("z")
 	regionStartKeys := []kv.Key{
@@ -37,8 +37,44 @@ func TestBuildContinuousKeyRangesByRegionStartKeys(t *testing.T) {
 	ranges := buildContinuousKeyRangesByRegionStartKeys(tableStart, tableEnd, regionStartKeys, 2)
 
 	require.Equal(t, []kv.KeyRange{
-		{StartKey: kv.Key("a"), EndKey: kv.Key("n")},
-		{StartKey: kv.Key("n"), EndKey: kv.Key("x")},
-		{StartKey: kv.Key("x"), EndKey: kv.Key("z")},
+		{StartKey: kv.Key("a"), EndKey: kv.Key("h")},
+		{StartKey: kv.Key("h"), EndKey: kv.Key("u")},
+		{StartKey: kv.Key("u"), EndKey: kv.Key("z")},
+	}, ranges)
+}
+
+func TestBuildContinuousKeyRangesByRegionStartKeysWithOneRegionPerBatch(t *testing.T) {
+	tableStart := kv.Key("a")
+	tableEnd := kv.Key("z")
+	regionStartKeys := []kv.Key{
+		kv.Key("a"),
+		kv.Key("c"),
+		kv.Key("h"),
+		kv.Key("n"),
+	}
+
+	ranges := buildContinuousKeyRangesByRegionStartKeys(tableStart, tableEnd, regionStartKeys, 1)
+
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: kv.Key("a"), EndKey: kv.Key("c")},
+		{StartKey: kv.Key("c"), EndKey: kv.Key("h")},
+		{StartKey: kv.Key("h"), EndKey: kv.Key("n")},
+		{StartKey: kv.Key("n"), EndKey: kv.Key("z")},
+	}, ranges)
+}
+
+func TestBuildContinuousKeyRangesByRegionStartKeysFallsBackToWholeRange(t *testing.T) {
+	tableStart := kv.Key("a")
+	tableEnd := kv.Key("z")
+	regionStartKeys := []kv.Key{
+		kv.Key("0"),
+		kv.Key("a"),
+		kv.Key("z"),
+	}
+
+	ranges := buildContinuousKeyRangesByRegionStartKeys(tableStart, tableEnd, regionStartKeys, 2)
+
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: tableStart, EndKey: tableEnd},
 	}, ranges)
 }

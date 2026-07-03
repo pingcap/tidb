@@ -338,6 +338,13 @@ func generatePlanForPhysicalTable(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(recordRegionMetas) == 0 {
+		logger.Warn("no region meta found when generating backfill ranges, fallback to single range",
+			zap.Int64("physicalTableID", tbl.GetPhysicalID()),
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)),
+		)
+	}
 	regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 	logger.Info("calculate region batch",
 		zap.Int("totalRegionCnt", len(recordRegionMetas)),
@@ -370,12 +377,13 @@ func generatePlanForPhysicalTable(
 		}
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
-	if len(subTaskMetas) == 0 {
-		return nil, errors.Errorf("failed to generate backfill subtask ranges")
-	}
 	return subTaskMetas, nil
 }
 
+// buildContinuousKeyRangesByRegionStartKeys splits [startKey, endKey) using
+// region start keys only. It keeps the same batch boundaries as grouping
+// continuous regions by regionBatch, and falls back to one whole range when no
+// usable start key exists.
 func buildContinuousKeyRangesByRegionStartKeys(startKey, endKey kv.Key, regionStartKeys []kv.Key, regionBatch int) []kv.KeyRange {
 	if regionBatch <= 0 {
 		regionBatch = 1
@@ -400,7 +408,7 @@ func buildContinuousKeyRangesByRegionStartKeys(startKey, endKey kv.Key, regionSt
 
 	keyRanges := make([]kv.KeyRange, 0, len(uniqueStartKeys)/regionBatch+1)
 	rangeStart := startKey
-	for i := regionBatch; i < len(uniqueStartKeys); i += regionBatch {
+	for i := regionBatch - 1; i < len(uniqueStartKeys); i += regionBatch {
 		rangeEnd := uniqueStartKeys[i]
 		keyRanges = append(keyRanges, kv.KeyRange{StartKey: rangeStart, EndKey: rangeEnd})
 		rangeStart = rangeEnd
@@ -880,6 +888,14 @@ func genMergeTempPlanForOneIndex(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(regionMetas) == 0 {
+		logger.Warn("no region meta found when generating temp index merge ranges, fallback to single range",
+			zap.Int64("physicalTableID", pid),
+			zap.Int64("indexID", idxInfo.ID),
+			zap.String("startKey", hex.EncodeToString(start)),
+			zap.String("endKey", hex.EncodeToString(end)),
+		)
+	}
 	regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
 	logger.Info("calculate temp index region batch",
 		zap.Int64("physicalTableID", pid),
@@ -907,9 +923,6 @@ func genMergeTempPlanForOneIndex(
 			return nil, errors.Trace(err)
 		}
 		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	if len(subTaskMetas) == 0 {
-		return nil, errors.Errorf("failed to generate temp index merge subtask ranges")
 	}
 	return subTaskMetas, nil
 }
