@@ -268,6 +268,42 @@ func TestReadMetaBetweenTS(t *testing.T) {
 	t.Run("MetaV2", func(t *testing.T) { testReadMetaBetweenTSWithVersion(t, m2) })
 }
 
+func TestLogFileManagerSkipsEmptyMetaByName(t *testing.T) {
+	ctx := context.Background()
+	loc, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	normalMeta := m2(wr(10, 20, 5))
+	normalPayload, err := normalMeta.Marshal()
+	require.NoError(t, err)
+	normalPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(30), uint64(normalMeta.StoreId), uint64(5), uint64(10), uint64(20), uint64(0),
+	)
+	emptyPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(40), uint64(999), uint64(0), uint64(0), uint64(0), uint64(2),
+	)
+	require.NoError(t, loc.WriteFile(ctx, normalPath, normalPayload))
+	require.NoError(t, loc.WriteFile(ctx, emptyPath, []byte("invalid empty meta payload")))
+
+	fm, err := logclient.CreateLogFileManager(ctx, logclient.LogFileManagerInit{
+		StartTS:                   1,
+		RestoreTS:                 100,
+		Storage:                   loc,
+		MigrationsBuilder:         logclient.NewMigrationBuilder(0, 1, 100),
+		Migrations:                emptyMigrations(),
+		MetadataDownloadBatchSize: 32,
+	})
+	require.NoError(t, err)
+
+	metas, err := fm.ReadStreamMeta(ctx)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	require.Equal(t, normalMeta.StoreId, metas[0].Meta().StoreId)
+	require.NotEmpty(t, emptyPath)
+}
+
 func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
 	type Case struct {
 		items    []*backuppb.Metadata
