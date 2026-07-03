@@ -755,6 +755,13 @@ func TestGetEngineAttributeFromStorageClassTableOptions(t *testing.T) {
 			hasErr: true,
 		},
 		{
+			name: "engine attribute without storage class remains unsupported",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"key":"value"}`},
+			},
+			hasErr: true,
+		},
+		{
 			name: "engine attribute then storage class",
 			options: []*ast.TableOption{
 				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`},

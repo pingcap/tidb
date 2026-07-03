@@ -213,7 +213,7 @@ func validateEngineAttributeTableOption(input string) error {
 		return dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(fmt.Sprintf("'%v'", err))
 	}
 	if attr.StorageClass == nil {
-		return nil
+		return dbterror.ErrUnsupportedEngineAttribute
 	}
 	_, err = BuildStorageClassSettingsFromJSON(attr.StorageClass)
 	return err
