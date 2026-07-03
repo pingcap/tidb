@@ -199,11 +199,21 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 
+	// wrapper cleans multiple limited batches in one tick.
+	nextTasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 2}}}
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(nextTasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, nextTasks).Return(nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(nil, nil)
+	mgr.doCleanupTasks()
+	require.True(t, ctrl.Satisfied())
+
 	// fail in transfer
 	mockErr := errors.New("transfer err")
 	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
-	mgr.doCleanupTask()
+	mgr.doCleanupTasks()
 	require.True(t, ctrl.Satisfied())
 
 	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
@@ -282,7 +292,7 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 		cleanedTasks := []*proto.Task{tasks[0], tasks[1], tasks[5]}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(cleanedTasks)).Return(nil)
 
-		require.NoError(t, mgr.cleanupFinishedTasks(tasks))
+		require.ErrorIs(t, mgr.cleanupFinishedTasks(tasks), cleanUpErr)
 		require.Equal(t, []int64{2, 4}, singleCleanUp.cleanUpCalls)
 		require.Empty(t, batchCleanUp.batchCalls)
 	})
@@ -319,7 +329,7 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 		cleanedTasks := []*proto.Task{tasks[2], tasks[5]}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(cleanedTasks)).Return(nil)
 
-		require.NoError(t, mgr.cleanupFinishedTasks(tasks))
+		require.ErrorIs(t, mgr.cleanupFinishedTasks(tasks), cleanUpErr)
 		require.Equal(t, []int64{3}, singleCleanUp.cleanUpCalls)
 		require.Equal(t, 1, len(importCleanUp.batchCalls)+len(otherBatchCleanUp.batchCalls))
 	})
