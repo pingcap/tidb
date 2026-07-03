@@ -95,9 +95,10 @@ type DDLReorgMeta struct {
 	MaxNodeCount      int                              `json:"max_node_count"`
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
-	// UseNewCollate captures the collation mode used by background reorg workers
-	// when encoding keys. Nil means the metadata was generated before this field
-	// existed and should fall back to the caller-provided default.
+	// UseNewCollate captures the submitting keyspace collation mode for key encoding.
+	// It is needed because a reorg task may execute in another keyspace with a
+	// different collation setting. Nil means old metadata and should fall back to
+	// the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
@@ -164,7 +165,7 @@ func (dm *DDLReorgMeta) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *dm.UseNewCollate
 }
 
-// SetUseNewCollate stores the collation mode used by background reorg workers.
+// SetUseNewCollate stores the submitting keyspace collation mode for key encoding.
 func (dm *DDLReorgMeta) SetUseNewCollate(useNewCollate bool) {
 	dm.UseNewCollate = &useNewCollate
 }

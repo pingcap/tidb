@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -1678,11 +1677,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	if err != nil {
 		return nil, err
 	}
-	useNewCollate := collate.NewCollationEnabled()
-	if pt, ok := t.(*partitionedTable); ok {
-		useNewCollate = pt.encoder.UseNewCollate()
-	}
-	tc := initTableCommon(useNewCollate, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
+	tc := initTableCommon(t.UseNewCollate(), tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)

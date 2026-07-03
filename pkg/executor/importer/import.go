@@ -336,9 +336,10 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
-	// UseNewCollate captures the collation mode used by background import workers
-	// when encoding keys. Nil means old metadata and should fall back to the
-	// caller-provided default.
+	// UseNewCollate captures the submitting keyspace collation mode for key encoding.
+	// It is needed because an import task may execute in another keyspace with a
+	// different collation setting. Nil means old metadata and should fall back to
+	// the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
@@ -363,7 +364,7 @@ func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *p.UseNewCollate
 }
 
-// SetUseNewCollate stores the collation mode used by background import workers.
+// SetUseNewCollate stores the submitting keyspace collation mode for key encoding.
 func (p *Plan) SetUseNewCollate(useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }
