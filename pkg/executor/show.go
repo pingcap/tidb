@@ -1347,7 +1347,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 	if len(tableInfo.EngineAttribute) > 0 {
 		tier, ok, err := ddl.GetSimpleTableStorageClassForShowCreate(tableInfo)
-		if err == nil && ok {
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			fmt.Fprintf(buf, " STORAGE_CLASS='%s'", tier)
 		} else {
 			fmt.Fprintf(buf, " ENGINE_ATTRIBUTE='%s'", format.OutputFormat(tableInfo.EngineAttribute))

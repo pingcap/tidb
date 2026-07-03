@@ -131,21 +131,38 @@ func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, 
 
 func TestSchemaTrackerAddPartitionRebuildsStorageClass(t *testing.T) {
 	tests := []struct {
-		name   string
-		create string
-		alter  string
+		name         string
+		create       string
+		alter        string
+		expectedTier string
 	}{
 		{
 			name: "range expression",
 			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"300"}}'
 partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
-			alter: `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			alter:        `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			expectedTier: model.StorageClassTierIA,
+		},
+		{
+			name: "range expression out of scope",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
+			alter:        `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			expectedTier: model.StorageClassTierStandard,
 		},
 		{
 			name: "list expression",
 			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["4"]}}'
 partition by list (id) (partition p0 values in (1, 2))`,
-			alter: `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			alter:        `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			expectedTier: model.StorageClassTierIA,
+		},
+		{
+			name: "list expression out of scope",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["5"]}}'
+partition by list (id) (partition p0 values in (1, 2))`,
+			alter:        `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			expectedTier: model.StorageClassTierStandard,
 		},
 	}
 
@@ -157,9 +174,19 @@ partition by list (id) (partition p0 values in (1, 2))`,
 			execAlter(t, tracker, tt.alter)
 
 			tblInfo := mustTableByName(t, tracker, "test", "t")
-			require.Equal(t, model.StorageClassTierIA, tblInfo.Partition.Definitions[len(tblInfo.Partition.Definitions)-1].StorageClassTier)
+			require.Equal(t, tt.expectedTier, tblInfo.Partition.Definitions[len(tblInfo.Partition.Definitions)-1].StorageClassTier)
 		})
 	}
+
+	t.Run("show create propagates invalid storage class engine attribute", func(t *testing.T) {
+		tracker := schematracker.NewSchemaTracker(2)
+		tracker.CreateTestDB(nil)
+		execCreate(t, tracker, "create table test.t (id int)")
+
+		tblInfo := mustTableByName(t, tracker, "test", "t")
+		tblInfo.EngineAttribute = `{"storage_class":`
+		checkShowCreateTableError(t, tblInfo, "unexpected end of JSON input")
+	})
 }
 
 func requireExpressionIndexHiddenColumnsPublic(t *testing.T, tblInfo *model.TableInfo) {
@@ -285,6 +312,14 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
 	require.NoError(t, err)
 	require.Equal(t, expected, result.String())
+}
+
+func checkShowCreateTableError(t *testing.T, tblInfo *model.TableInfo, expectedErr string) {
+	sctx := mock.NewContext()
+
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	require.ErrorContains(t, err, expectedErr)
 }
 
 func TestIndexLength(t *testing.T) {
