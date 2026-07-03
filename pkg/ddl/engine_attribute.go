@@ -124,6 +124,10 @@ func onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64
 }
 
 func onAlterTableStorageClassSettings(storageClass json.RawMessage, tblInfo *model.TableInfo) error {
+	if storageClass == nil {
+		return nil
+	}
+
 	settings, err := BuildStorageClassSettingsFromJSON(storageClass)
 	if err != nil {
 		return errors.Trace(err)

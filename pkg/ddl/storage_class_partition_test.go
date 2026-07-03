@@ -78,6 +78,22 @@ partition by list (id) (partition p0 values in (1, 2))`,
 			}
 		})
 	}
+
+	t.Run("alter without storage class keeps existing metadata", func(t *testing.T) {
+		ctx := metabuild.NewContext()
+		tbInfo := buildStorageClassTableInfo(t, ctx, `create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`)
+		require.Equal(t, model.StorageClassTierIA, tbInfo.StorageClassTier)
+		require.Len(t, tbInfo.Partition.Definitions, 2)
+		require.Equal(t, model.StorageClassTierIA, tbInfo.Partition.Definitions[0].StorageClassTier)
+		require.Equal(t, model.StorageClassTierIA, tbInfo.Partition.Definitions[1].StorageClassTier)
+
+		tbInfo.EngineAttribute = `{"future_field":true}`
+		require.NoError(t, onAlterTableStorageClassSettings(nil, tbInfo))
+		require.Equal(t, model.StorageClassTierIA, tbInfo.StorageClassTier)
+		require.Equal(t, model.StorageClassTierIA, tbInfo.Partition.Definitions[0].StorageClassTier)
+		require.Equal(t, model.StorageClassTierIA, tbInfo.Partition.Definitions[1].StorageClassTier)
+	})
 }
 
 func TestStorageClassReorganizePartitionUsesCheckedDefinitions(t *testing.T) {
