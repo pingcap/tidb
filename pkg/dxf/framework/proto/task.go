@@ -17,6 +17,7 @@ package proto
 import (
 	"cmp"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -83,9 +84,44 @@ const (
 	NormalPriority = 512
 )
 
-// MaxConcurrentTask is the max concurrency of task.
-// TODO: remove this limit later.
-var MaxConcurrentTask = 16
+const (
+	// DefaultMaxConcurrentTask is the default max concurrency of task.
+	DefaultMaxConcurrentTask = 16
+	// MinMaxConcurrentTask is the minimum allowed max concurrency of task.
+	MinMaxConcurrentTask = 16
+	// MaxMaxConcurrentTask is the maximum allowed max concurrency of task.
+	MaxMaxConcurrentTask = 1000
+)
+
+var maxConcurrentTask atomic.Int64
+
+func init() {
+	maxConcurrentTask.Store(DefaultMaxConcurrentTask)
+}
+
+// GetMaxConcurrentTask returns the max concurrency of task.
+func GetMaxConcurrentTask() int {
+	return int(maxConcurrentTask.Load())
+}
+
+// SetMaxConcurrentTask updates the max concurrency of task.
+func SetMaxConcurrentTask(value int) error {
+	if value < MinMaxConcurrentTask || value > MaxMaxConcurrentTask {
+		return fmt.Errorf("max_concurrent_task %d is out of range [%d, %d]",
+			value, MinMaxConcurrentTask, MaxMaxConcurrentTask)
+	}
+	maxConcurrentTask.Store(int64(value))
+	return nil
+}
+
+// SetMaxConcurrentTaskForTest updates the max concurrency of task and returns a restore function.
+func SetMaxConcurrentTaskForTest(value int) func() {
+	old := GetMaxConcurrentTask()
+	maxConcurrentTask.Store(int64(value))
+	return func() {
+		maxConcurrentTask.Store(int64(old))
+	}
+}
 
 // ExtraParams is the extra params of task.
 // Note: only store params that's not used for filter or sort in this struct.

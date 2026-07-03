@@ -146,6 +146,50 @@ func TestDXFAPI(t *testing.T) {
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
 
+	t.Run("max concurrent task api", func(t *testing.T) {
+		restore := proto.SetMaxConcurrentTaskForTest(proto.DefaultMaxConcurrentTask)
+		defer restore()
+
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET and POST method", func() (*http.Response, error) {
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL("/dxf/task/max_concurrent"), nil)
+			require.NoError(t, err)
+			return http.DefaultClient.Do(req)
+		})
+		for _, c := range [][2]string{
+			{"/dxf/task/max_concurrent", "invalid value "},
+			{"/dxf/task/max_concurrent?value=aa", "invalid value "},
+			{"/dxf/task/max_concurrent?value=15", "out of range"},
+			{fmt.Sprintf("/dxf/task/max_concurrent?value=%d", proto.MaxMaxConcurrentTask+1), "out of range"},
+		} {
+			path, errMsg := c[0], c[1]
+			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
+				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
+			})
+		}
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/task/max_concurrent")
+		})
+		out := struct {
+			MaxConcurrentTask int `json:"max_concurrent_task"`
+		}{}
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.Equal(t, proto.DefaultMaxConcurrentTask, out.MaxConcurrentTask)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus("/dxf/task/max_concurrent?value=128", "", bytes.NewBuffer([]byte("")))
+		})
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.Equal(t, 128, out.MaxConcurrentTask)
+		require.Equal(t, 128, proto.GetMaxConcurrentTask())
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/task/max_concurrent")
+		})
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.Equal(t, 128, out.MaxConcurrentTask)
+	})
+
 	t.Run("task history api", func(t *testing.T) {
 		seedHistoryTasks := func(t *testing.T) []int64 {
 			t.Helper()

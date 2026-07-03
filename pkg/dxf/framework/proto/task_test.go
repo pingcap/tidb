@@ -74,6 +74,23 @@ func TestTaskIsDone(t *testing.T) {
 	}
 }
 
+func TestMaxConcurrentTask(t *testing.T) {
+	restore := SetMaxConcurrentTaskForTest(DefaultMaxConcurrentTask)
+	defer restore()
+
+	require.Equal(t, DefaultMaxConcurrentTask, GetMaxConcurrentTask())
+	require.Equal(t, 1000, MaxMaxConcurrentTask)
+	for _, value := range []int{MinMaxConcurrentTask - 1, MaxMaxConcurrentTask + 1} {
+		require.Error(t, SetMaxConcurrentTask(value))
+		require.Equal(t, DefaultMaxConcurrentTask, GetMaxConcurrentTask())
+	}
+
+	require.NoError(t, SetMaxConcurrentTask(128))
+	require.Equal(t, 128, GetMaxConcurrentTask())
+	require.NoError(t, SetMaxConcurrentTask(MaxMaxConcurrentTask))
+	require.Equal(t, MaxMaxConcurrentTask, GetMaxConcurrentTask())
+}
+
 func TestTaskCompare(t *testing.T) {
 	taskA := Task{TaskBase: TaskBase{
 		ID:         100,
