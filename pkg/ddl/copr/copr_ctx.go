@@ -82,23 +82,6 @@ func NewCopContextBase(
 	tblInfo *model.TableInfo,
 	idxCols []*model.IndexColumn,
 	requestSource string,
-) (*CopContextBase, error) {
-	return newCopContextBase(
-		exprCtx,
-		pushDownFlags,
-		tblInfo,
-		idxCols,
-		requestSource,
-		collate.NewCollationEnabled(),
-	)
-}
-
-func newCopContextBase(
-	exprCtx exprctx.BuildContext,
-	pushDownFlags uint64,
-	tblInfo *model.TableInfo,
-	idxCols []*model.IndexColumn,
-	requestSource string,
 	useNewCollate bool,
 ) (*CopContextBase, error) {
 	var err error
@@ -249,7 +232,7 @@ func newCopContextSingleIndex(
 	cols = append(cols, neededCols...)
 	cols = tables.DedupIndexColumns(cols)
 
-	base, err := newCopContextBase(exprCtx, pushDownFlags, tblInfo, cols, requestSource, useNewCollate)
+	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, cols, requestSource, useNewCollate)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +324,7 @@ func newCopContextMultiIndex(
 	}
 	allIdxCols = tables.DedupIndexColumns(allIdxCols)
 
-	base, err := newCopContextBase(exprCtx, pushDownFlags, tblInfo, allIdxCols, requestSource, useNewCollate)
+	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, allIdxCols, requestSource, useNewCollate)
 	if err != nil {
 		return nil, err
 	}
