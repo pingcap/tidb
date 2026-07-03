@@ -149,17 +149,28 @@ func TestDXFAPI(t *testing.T) {
 	t.Run("max concurrent task api", func(t *testing.T) {
 		restore := proto.SetMaxConcurrentTaskForTest(proto.DefaultMaxConcurrentTask)
 		defer restore()
+		const maxConcurrentTaskPath = "/dxf/schedule/max_concurrent_task"
+		checkMaxConcurrentTaskOutput := func(body []byte, expected int) {
+			out := struct {
+				MaxConcurrentTask int    `json:"max_concurrent_task"`
+				Persistence       string `json:"persistence"`
+			}{}
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Equal(t, expected, out.MaxConcurrentTask)
+			require.Equal(t, "memory_only", out.Persistence)
+			require.NotContains(t, string(body), "scope")
+		}
 
 		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET and POST method", func() (*http.Response, error) {
-			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL("/dxf/task/max_concurrent"), nil)
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL(maxConcurrentTaskPath), nil)
 			require.NoError(t, err)
 			return http.DefaultClient.Do(req)
 		})
 		for _, c := range [][2]string{
-			{"/dxf/task/max_concurrent", "invalid value "},
-			{"/dxf/task/max_concurrent?value=aa", "invalid value "},
-			{"/dxf/task/max_concurrent?value=15", "out of range"},
-			{fmt.Sprintf("/dxf/task/max_concurrent?value=%d", proto.MaxMaxConcurrentTask+1), "out of range"},
+			{maxConcurrentTaskPath, "invalid value "},
+			{maxConcurrentTaskPath + "?value=aa", "invalid value "},
+			{maxConcurrentTaskPath + "?value=15", "out of range"},
+			{fmt.Sprintf("%s?value=%d", maxConcurrentTaskPath, proto.MaxConcurrentTaskUpperBound+1), "out of range"},
 		} {
 			path, errMsg := c[0], c[1]
 			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
@@ -168,26 +179,20 @@ func TestDXFAPI(t *testing.T) {
 		}
 
 		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
-			return ts.FetchStatus("/dxf/task/max_concurrent")
+			return ts.FetchStatus(maxConcurrentTaskPath)
 		})
-		out := struct {
-			MaxConcurrentTask int `json:"max_concurrent_task"`
-		}{}
-		require.NoError(t, json.Unmarshal(body, &out))
-		require.Equal(t, proto.DefaultMaxConcurrentTask, out.MaxConcurrentTask)
+		checkMaxConcurrentTaskOutput(body, proto.DefaultMaxConcurrentTask)
 
 		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
-			return ts.PostStatus("/dxf/task/max_concurrent?value=128", "", bytes.NewBuffer([]byte("")))
+			return ts.PostStatus(maxConcurrentTaskPath+"?value=128", "", bytes.NewBuffer([]byte("")))
 		})
-		require.NoError(t, json.Unmarshal(body, &out))
-		require.Equal(t, 128, out.MaxConcurrentTask)
+		checkMaxConcurrentTaskOutput(body, 128)
 		require.Equal(t, 128, proto.GetMaxConcurrentTask())
 
 		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
-			return ts.FetchStatus("/dxf/task/max_concurrent")
+			return ts.FetchStatus(maxConcurrentTaskPath)
 		})
-		require.NoError(t, json.Unmarshal(body, &out))
-		require.Equal(t, 128, out.MaxConcurrentTask)
+		checkMaxConcurrentTaskOutput(body, 128)
 	})
 
 	t.Run("task history api", func(t *testing.T) {

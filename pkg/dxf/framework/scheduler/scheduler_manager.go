@@ -154,8 +154,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxMaxConcurrentTask),
+		logger: logger,
+		// finishCh must be able to buffer finish signals for the largest runtime
+		// value of maxConcurrentTask. Otherwise, raising the limit after startup
+		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)

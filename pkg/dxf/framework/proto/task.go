@@ -85,14 +85,21 @@ const (
 )
 
 const (
-	// DefaultMaxConcurrentTask is the default max concurrency of task.
-	DefaultMaxConcurrentTask = 16
-	// MinMaxConcurrentTask is the minimum allowed max concurrency of task.
-	MinMaxConcurrentTask = 16
-	// MaxMaxConcurrentTask is the maximum allowed max concurrency of task.
-	MaxMaxConcurrentTask = 1000
+	// maxConcurrentTaskLowerBound is the minimum allowed DXF task concurrency.
+	maxConcurrentTaskLowerBound = 16
+	// MaxConcurrentTaskUpperBound is the current safety cap for DXF task concurrency.
+	// TODO: remove this cap after the DXF scheduler no longer runs all schedulers on the owner node.
+	MaxConcurrentTaskUpperBound = 1000
+	// DefaultMaxConcurrentTask is the default DXF task concurrency.
+	DefaultMaxConcurrentTask = maxConcurrentTaskLowerBound
 )
 
+// maxConcurrentTask is an owner-local emergency tuning knob for DXF scheduling.
+// It is intentionally kept in memory only: it is not persisted to TiKV, is reset
+// on restart, and only affects the TiDB node that receives the update. Operators
+// should change it through the DXF owner node when many small tasks are blocked
+// by the default limit. Raising it increases scheduler overhead and memory usage
+// on the owner, so the owner node may need a larger resource spec first.
 var maxConcurrentTask atomic.Int64
 
 func init() {
@@ -106,9 +113,9 @@ func GetMaxConcurrentTask() int {
 
 // SetMaxConcurrentTask updates the max concurrency of task.
 func SetMaxConcurrentTask(value int) error {
-	if value < MinMaxConcurrentTask || value > MaxMaxConcurrentTask {
+	if value < maxConcurrentTaskLowerBound || value > MaxConcurrentTaskUpperBound {
 		return fmt.Errorf("max_concurrent_task %d is out of range [%d, %d]",
-			value, MinMaxConcurrentTask, MaxMaxConcurrentTask)
+			value, maxConcurrentTaskLowerBound, MaxConcurrentTaskUpperBound)
 	}
 	maxConcurrentTask.Store(int64(value))
 	return nil

@@ -352,12 +352,15 @@ func NewDXFTaskMaxConcurrentHandler() *DXFTaskMaxConcurrentHandler {
 	return &DXFTaskMaxConcurrentHandler{}
 }
 
+// ServeHTTP implements http.Handler interface.
+//
+// The configured value is local to the TiDB process that handles the request
+// and is kept in memory only. Send the request to the current DXF owner when
+// tuning scheduler concurrency.
 func (*DXFTaskMaxConcurrentHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
-		handler.WriteData(w, map[string]any{
-			"max_concurrent_task": proto.GetMaxConcurrentTask(),
-		})
+		writeMaxConcurrentTask(w)
 	case http.MethodPost:
 		valueStr := req.FormValue("value")
 		value, err := strconv.Atoi(valueStr)
@@ -369,13 +372,18 @@ func (*DXFTaskMaxConcurrentHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 			handler.WriteError(w, err)
 			return
 		}
-		logutil.BgLogger().Info("set DXF max concurrent task", zap.Int("maxConcurrentTask", value))
-		handler.WriteData(w, map[string]any{
-			"max_concurrent_task": proto.GetMaxConcurrentTask(),
-		})
+		logutil.BgLogger().Info("set in-memory DXF max concurrent task", zap.Int("maxConcurrentTask", value))
+		writeMaxConcurrentTask(w)
 	default:
 		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
 	}
+}
+
+func writeMaxConcurrentTask(w http.ResponseWriter) {
+	handler.WriteData(w, map[string]any{
+		"max_concurrent_task": proto.GetMaxConcurrentTask(),
+		"persistence":         "memory_only",
+	})
 }
 
 // DXFTaskMaxRuntimeSlotsHandler handles changing max runtime slots of DXF task.
