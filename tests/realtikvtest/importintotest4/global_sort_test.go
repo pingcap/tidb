@@ -342,11 +342,14 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	s.EqualValues(sum.RowCnt.Load(), 10000)
+	// If a region job is retried after writing KVs, the processed bytes can be
+	// counted more than once. The summary should still record at least the
+	// deterministic KV size for this import.
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Processed.Load(), 2622604)
+		s.GreaterOrEqual(sum.Processed.Load(), int64(2622604))
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Processed.Load(), 2782604)
+		s.GreaterOrEqual(sum.Processed.Load(), int64(2782604))
 	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	// No conflicts in this case, no need to rewrite the external subtask meta.
