@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -399,11 +400,31 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
+	taskKey := importinto.TaskKey(jobID)
 	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
+		return manager.CancelTaskByKeySession(ctx, se, taskKey)
 	}); err != nil {
 		return err
 	}
-	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(jobID))
+	if err := handle.WaitTaskDoneByKey(ctx, taskKey); err != nil {
+		if goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
+			logutil.Logger(ctx).Info("cancel import job directly because dxf task is not found",
+				zap.Int64("jobID", jobID),
+				zap.String("taskKey", taskKey))
+			return cancelImportJobOnly(ctx, jobID)
+		}
+		return err
+	}
+	return nil
+}
+
+func cancelImportJobOnly(ctx context.Context, jobID int64) error {
+	manager, err := dxfstorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return importer.CancelJob(ctx, se.GetSQLExecutor(), jobID)
+	})
 }

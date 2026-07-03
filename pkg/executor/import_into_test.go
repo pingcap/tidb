@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,6 +40,7 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 var (
@@ -237,6 +239,26 @@ func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestCancelImportJobWithoutDXFTask(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	ctx := tikvutil.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	jobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
 }
 
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
