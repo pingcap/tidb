@@ -43,6 +43,17 @@ show create table t;
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 
 drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
+show create table t;
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}';
+show create table t;
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+alter table t STORAGE_CLASS='IA';
+show create table t;
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+
+drop table if exists t;
 -- error 8271
 create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}' STORAGE_CLASS='IA';
 -- error 8271

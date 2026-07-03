@@ -64,6 +64,34 @@ select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_
 table_name	TIDB_STORAGE_CLASS
 t	STANDARD
 drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB ENGINE_ATTRIBUTE='{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB ENGINE_ATTRIBUTE='{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+alter table t STORAGE_CLASS='IA';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB STORAGE_CLASS='IA' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	IA
+drop table if exists t;
 create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}' STORAGE_CLASS='IA';
 Error 8271 (HY000): Invalid storage class: can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together
 create table t (a int) STORAGE_CLASS='IA' ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}';
