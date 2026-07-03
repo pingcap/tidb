@@ -82,12 +82,7 @@ func (w *worker) run() {
 			preparedResult := w.tk.MustQuery(stmt.execStmt)
 			normalResult.Sort().Check(preparedResult.Sort().Rows())
 		} else if isDML(stmt.normalStmt) { // DML
-			// Deadlocks can occur when multiple workers update the same row concurrently.
-			// This is expected database behavior - skip the statement on deadlock.
-			_, err := w.tk.Exec(stmt.normalStmt)
-			if err != nil && strings.Contains(err.Error(), "Deadlock") {
-				continue
-			}
+			w.tk.MustExec(stmt.normalStmt)
 			w.tk.MustExec(stmt.prepStmt)
 			w.tk.MustExec(stmt.setStmt)
 			w.tk.MustExec(stmt.execStmt)
@@ -97,13 +92,16 @@ func (w *worker) run() {
 
 func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 	nStmts := make([][]*testStmt, len(TKs))
+	// Keep writes in one session; worker transaction progress is not synchronized,
+	// so splitting writes across sessions can deadlock and break normal/prepared
+	// symmetry after rollback.
+	dmlWorker := rand.Intn(len(TKs))
 	for _, stmt := range stmts {
 		if stmt == nil {
 			continue
 		}
 		if isDML(stmt.normalStmt) { // avoid duplicate DML
-			x := rand.Intn(len(TKs))
-			nStmts[x] = append(nStmts[x], stmt)
+			nStmts[dmlWorker] = append(nStmts[dmlWorker], stmt)
 		} else {
 			for i := range TKs {
 				nStmts[i] = append(nStmts[i], stmt)
