@@ -2302,7 +2302,9 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 }
 
 // getPredicateColumns gets the columns used in predicates.
-func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnceMap) (map[int64]struct{}, error) {
+// When warnEmpty is true and no predicate column has been collected for the table,
+// it appends a warning about falling back to analyzing only indexed columns.
+func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnceMap, warnEmpty bool) (map[int64]struct{}, error) {
 	// Already calculated in the previous call.
 	if cols.calculated {
 		return cols.data, nil
@@ -2316,13 +2318,15 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(
-			errors.NewNoStackErrorf(
-				"No predicate column has been collected yet for table %s.%s, so only indexes and the columns composing the indexes will be analyzed",
-				tbl.Schema.L,
-				tbl.Name.L,
-			),
-		)
+		if warnEmpty {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+				errors.NewNoStackErrorf(
+					"No predicate column has been collected yet for table %s.%s, so only indexes and the columns composing the indexes will be analyzed",
+					tbl.Schema.L,
+					tbl.Name.L,
+				),
+			)
+		}
 	} else {
 		// Some predicate columns are generated columns so we also need to add the columns that make up those generated columns.
 		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
@@ -2449,7 +2453,7 @@ func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
 	if rewriteAllStatsNeeded {
 		return tbl.TableInfo.Columns, nil
 	}
-	predicate, err := b.getPredicateColumns(tbl, predicateCols)
+	predicate, err := b.getPredicateColumns(tbl, predicateCols, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2459,6 +2463,58 @@ func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
 	}
 	colSet := combineColumnSets(predicate, mustAnalyzed)
 	return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil
+}
+
+// getFullStatsColsAndRatio decides which columns keep the configured (full) TopN/bucket
+// numbers when tidb_analyze_non_predicate_column_ratio is smaller than 1:
+//   - Predicate columns always keep the full numbers.
+//   - Columns explicitly specified in ANALYZE TABLE ... COLUMNS keep the full numbers.
+//   - When no predicate column has been collected for the table yet, the handle column and
+//     the first column of each index keep the full numbers, since they are the most likely
+//     columns to be used in future predicates.
+//
+// Every other column only collects ratio times the configured TopN/bucket numbers.
+// It returns a nil map when the reduction is disabled (ratio >= 1), meaning every column
+// keeps the configured numbers.
+func (b *PlanBuilder) getFullStatsColsAndRatio(
+	tbl *resolve.TableNameW,
+	predicateCols *calcOnceMap,
+	specifiedCols []*model.ColumnInfo,
+) (map[int64]struct{}, float64, error) {
+	ratio := vardef.AnalyzeNonPredicateColumnRatio.Load()
+	if ratio >= 1 {
+		return nil, 1, nil
+	}
+	predicate, err := b.getPredicateColumns(tbl, predicateCols, false)
+	if err != nil {
+		return nil, 1, err
+	}
+	var fullStatsCols map[int64]struct{}
+	if len(predicate) > 0 {
+		fullStatsCols = make(map[int64]struct{}, len(predicate)+len(specifiedCols))
+		maps.Copy(fullStatsCols, predicate)
+	} else {
+		// No predicate column has been collected for the table yet, so fall back to
+		// keeping full stats for the handle column and the first column of each index.
+		tblInfo := tbl.TableInfo
+		fullStatsCols = make(map[int64]struct{}, len(tblInfo.Indices)+len(specifiedCols)+1)
+		if tblInfo.PKIsHandle {
+			if pkCol := tblInfo.GetPkColInfo(); pkCol != nil {
+				fullStatsCols[pkCol.ID] = struct{}{}
+			}
+		}
+		fullStatsCols[model.ExtraHandleID] = struct{}{}
+		for _, idx := range tblInfo.Indices {
+			if idx.State != model.StatePublic || len(idx.Columns) == 0 {
+				continue
+			}
+			fullStatsCols[tblInfo.Columns[idx.Columns[0].Offset].ID] = struct{}{}
+		}
+	}
+	for _, col := range specifiedCols {
+		fullStatsCols[col.ID] = struct{}{}
+	}
+	return fullStatsCols, ratio, nil
 }
 
 // Helper function to combine two column sets.
@@ -2737,6 +2793,11 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		return err
 	}
 
+	fullStatsCols, nonPredicateColRatio, err := b.getFullStatsColsAndRatio(tbl, &predicateCols, astColList)
+	if err != nil {
+		return err
+	}
+
 	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns)
 	if err != nil {
 		return err
@@ -2777,12 +2838,14 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
-				HandleCols:   handleCols,
-				ColsInfo:     execColsInfo,
-				AnalyzeInfo:  info,
-				TblInfo:      tbl.TableInfo,
-				Indexes:      indexes,
-				SkipColsInfo: skipColsInfo,
+				HandleCols:           handleCols,
+				ColsInfo:             execColsInfo,
+				AnalyzeInfo:          info,
+				TblInfo:              tbl.TableInfo,
+				Indexes:              indexes,
+				SkipColsInfo:         skipColsInfo,
+				FullStatsCols:        fullStatsCols,
+				NonPredicateColRatio: nonPredicateColRatio,
 			}
 			if newTask.HandleCols == nil {
 				extraCol := model.NewExtraHandleColInfo()

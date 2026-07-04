@@ -37,6 +37,9 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
 	}()
 	tk.MustExec("set global tidb_persist_analyze_options = true")
+	// Keep the configured TopN/bucket numbers for all columns; the reduction for
+	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
+	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
 	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
@@ -136,6 +139,9 @@ func TestSavedPartitionAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
 	}()
 	tk.MustExec("set global tidb_persist_analyze_options = true")
+	// Keep the configured TopN/bucket numbers for all columns; the reduction for
+	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
+	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")

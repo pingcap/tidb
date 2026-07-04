@@ -1208,6 +1208,21 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeNonPredicateColumnRatio,
+		Value:    strconv.FormatFloat(vardef.DefTiDBAnalyzeNonPredicateColumnRatio, 'f', -1, 64),
+		Type:     vardef.TypeFloat,
+		MinValue: 0,
+		MaxValue: 1,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatFloat(vardef.AnalyzeNonPredicateColumnRatio.Load(), 'f', -1, 64), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.AnalyzeNonPredicateColumnRatio.Store(tidbOptFloat64(val, vardef.DefTiDBAnalyzeNonPredicateColumnRatio))
+			return nil
+		},
+	},
+	{
 		Scope: vardef.ScopeGlobal,
 		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),

@@ -395,6 +395,14 @@ type AnalyzeColumnsTask struct {
 	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
+	// FullStatsCols holds the IDs of the columns that keep the configured TopN/bucket
+	// numbers when tidb_analyze_non_predicate_column_ratio < 1. Columns absent from the
+	// set only collect NonPredicateColRatio times the configured numbers. A nil map
+	// disables the reduction and every column keeps the configured numbers.
+	FullStatsCols map[int64]struct{}
+	// NonPredicateColRatio is the value of tidb_analyze_non_predicate_column_ratio
+	// captured when the plan was built.
+	NonPredicateColRatio float64
 	AnalyzeInfo
 }
 

@@ -867,7 +867,16 @@ workLoop:
 				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+			numBuckets := int(e.opts[ast.AnalyzeOptNumBuckets])
 			if task.isColumn {
+				if e.fullStatsCols != nil {
+					if _, ok := e.fullStatsCols[e.colsInfo[task.slicePos].ID]; !ok {
+						// The column is not a predicate column, so only collect
+						// nonPredicateColRatio times the configured TopN/bucket numbers.
+						numTopN = int(float64(numTopN) * e.nonPredicateColRatio)
+						numBuckets = max(1, int(float64(numBuckets)*e.nonPredicateColRatio))
+					}
+				}
 				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
 					numTopN = 0
 				}
@@ -877,7 +886,7 @@ workLoop:
 					numTopN = 0
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, numBuckets, numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()

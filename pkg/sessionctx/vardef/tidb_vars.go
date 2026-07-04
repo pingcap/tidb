@@ -1171,6 +1171,11 @@ const (
 	// `PREDICATE`: Analyze only the columns that are used in the predicates of the query.
 	// `ALL`: Analyze all columns in the table.
 	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
+	// TiDBAnalyzeNonPredicateColumnRatio scales down the number of TopN values and histogram buckets
+	// collected for columns that are not predicate columns. When ANALYZE collects statistics for a
+	// column that has never been used in query predicates, it collects only
+	// `ratio * (the configured TopN/bucket numbers)`. Setting it to 1 disables the reduction.
+	TiDBAnalyzeNonPredicateColumnRatio = "tidb_analyze_non_predicate_column_ratio"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory, and we directly get/set the variable value from/to mysql.tidb.
@@ -1676,6 +1681,7 @@ const (
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
 	DefTiDBAnalyzeColumnOptions                       = "ALL"
+	DefTiDBAnalyzeNonPredicateColumnRatio             = 0.1
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 3
@@ -1849,20 +1855,24 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions           = atomic.NewString(DefTiDBAnalyzeColumnOptions)
-	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU              = atomic.NewBool(false)
-	EnableBatchDML                 = atomic.NewBool(false)
-	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
-	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
-	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency
-	DDLErrorCountLimit       int64 = DefTiDBDDLErrorCountLimit
-	DDLReorgRowFormat        int64 = DefTiDBRowFormatV2
-	DDLReorgMaxWriteSpeed          = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	MaxDeltaSchemaCount      int64 = DefTiDBMaxDeltaSchemaCount
-	GlobalSlowLogRateLimiter       = rate.NewLimiter(rate.Inf, 1)
+	AnalyzeColumnOptions = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	// AnalyzeNonPredicateColumnRatio is a global variable that scales down the TopN/bucket numbers
+	// collected by ANALYZE for columns that are not predicate columns. See
+	// TiDBAnalyzeNonPredicateColumnRatio for the detailed behavior.
+	AnalyzeNonPredicateColumnRatio       = atomic.NewFloat64(DefTiDBAnalyzeNonPredicateColumnRatio)
+	GlobalLogMaxDays                     = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                       = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU                    = atomic.NewBool(false)
+	EnableBatchDML                       = atomic.NewBool(false)
+	EnableTmpStorageOnOOM                = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	DDLReorgWorkerCounter          int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize              int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency        int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit             int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat              int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed                = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	MaxDeltaSchemaCount            int64 = DefTiDBMaxDeltaSchemaCount
+	GlobalSlowLogRateLimiter             = rate.NewLimiter(rate.Inf, 1)
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	GlobalSlowLogRules  = atomic.NewPointer[slowlogrule.GlobalSlowLogRules](

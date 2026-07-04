@@ -55,6 +55,12 @@ type AnalyzeColumnsExec struct {
 	// concurrent lookup across partition workers.
 	samplingStatsConcurrency int
 
+	// fullStatsCols holds the IDs of the columns that keep the configured TopN/bucket
+	// numbers; the other columns only collect nonPredicateColRatio times the configured
+	// numbers. A nil map disables the reduction. See AnalyzeColumnsTask.FullStatsCols.
+	fullStatsCols        map[int64]struct{}
+	nonPredicateColRatio float64
+
 	memTracker *memory.Tracker
 }
 
