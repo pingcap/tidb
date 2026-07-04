@@ -3083,6 +3083,12 @@ var defaultSysVars = []*SysVar{
 		vardef.DDLDiskQuota.Store(TidbOptUint64(val, vardef.DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableDiskSpacePrecheckBeforeAddIndex, Value: BoolToOnOff(vardef.DefEnableDiskSpacePrecheckBeforeAddIndex), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableDiskSpacePrecheckBeforeAddIndex.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		vardef.EnableDiskSpacePrecheckBeforeAddIndex.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, Value: BoolToOnOff(vardef.DefEnforceDiskSpacePrecheckBeforeAddIndex), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {

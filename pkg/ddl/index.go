@@ -3278,6 +3278,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		taskID                                              int64
 		lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed int
 	)
+	diskSpacePrecheckEnabled := vardef.EnableDiskSpacePrecheckBeforeAddIndex.Load()
 	if task != nil {
 		if shouldAutoPauseExistingKVDiskFullTask(reorgInfo.Job, task) {
 			logutil.DDLLogger().Warn("auto pause add-index DDL job because existing DXF task hit storage node disk full",
@@ -3330,20 +3331,29 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	} else {
 		job := reorgInfo.Job
 		workerCntLimit := job.ReorgMeta.GetConcurrency()
+		adjustConcurrencyStart := time.Now()
 		requiredSlots, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
+		adjustConcurrencyDuration := time.Since(adjustConcurrencyStart)
 		if err != nil {
 			return err
 		}
 		logutil.DDLLogger().Info("adjusted add-index task required slots",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
+		estimateRowSizeStart := time.Now()
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
-		precheckResult := addIndexTiKVSpacePrecheckResult{}
-		if !reorgInfo.mergingTmpIdx {
+		estimateRowSizeDuration := time.Since(estimateRowSizeStart)
+		precheckResult := addIndexTiKVSpacePrecheckResult{
+			precheckStatus:     "skipped",
+			precheckSkipReason: "merge_temp_index",
+		}
+		if !reorgInfo.mergingTmpIdx && diskSpacePrecheckEnabled {
 			precheckResult, err = w.runAddIndexTiKVSpacePrecheck(ctx, w.sess.Session(), t, reorgInfo, taskKey)
 			if err != nil {
 				return err
 			}
+		} else if !reorgInfo.mergingTmpIdx {
+			precheckResult.precheckSkipReason = "disabled_by_enable_disk_space_precheck_before_add_index"
 		}
 		taskMeta := &BackfillTaskMeta{
 			Job:                 *job.Clone(),
@@ -3376,11 +3386,29 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		targetScope := reorgInfo.ReorgMeta.TargetScope
 		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
+		submitTaskStart := time.Now()
 		task, err := handle.SubmitTaskWithExtraParams(ctx, taskKey, taskType, w.store.GetKeyspace(),
 			requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{PauseOnKVDiskFull: true}, metaData)
+		submitTaskDuration := time.Since(submitTaskStart)
 		if err != nil {
 			return err
 		}
+		submissionLogFields := []zap.Field{
+			zap.Int64("jobID", job.ID),
+			zap.Int64("taskID", task.ID),
+			zap.String("task-key", taskKey),
+			zap.Bool("enable_disk_space_precheck_before_add_index", diskSpacePrecheckEnabled),
+			zap.Bool("enforce_disk_space_precheck_before_add_index", vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()),
+			zap.String("precheck_status", precheckResult.precheckStatus),
+			zap.Int64("adjust_concurrency_ms", adjustConcurrencyDuration.Milliseconds()),
+			zap.Int64("estimate_row_size_ms", estimateRowSizeDuration.Milliseconds()),
+			zap.Int64("submit_task_ms", submitTaskDuration.Milliseconds()),
+		}
+		if precheckResult.precheckSkipReason != "" {
+			submissionLogFields = append(submissionLogFields, zap.String("precheck_skip_reason", precheckResult.precheckSkipReason))
+		}
+		submissionLogFields = appendAddIndexTiKVSpacePrecheckTimingLogFields(submissionLogFields, precheckResult.timings)
+		logutil.DDLLogger().Info("submitted add-index dist task with disk-space precheck perf fields", submissionLogFields...)
 
 		taskID = task.ID
 		lastRequiredSlots = requiredSlots
@@ -3433,7 +3461,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	})
 
 	err = g.Wait()
-	if err == nil {
+	if err == nil && diskSpacePrecheckEnabled && !reorgInfo.mergingTmpIdx {
 		w.logDistTaskIngestedSSTUsage(taskManager, taskKey, reorgInfo.Job.ID)
 	}
 	return err
@@ -3786,12 +3814,15 @@ type ingestedSSTBytesObservation struct {
 	count                uint64
 	zeroSizeCount        uint64
 	invalidIdentityCount uint64
+	readIndexSubtasks    int
+	writeIngestSubtasks  int
 	reliable             bool
 	reason               string
 	source               string
 }
 
 func (w *worker) logDistTaskIngestedSSTUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
+	logStart := time.Now()
 	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get add-index task for ingested SST logging",
@@ -3815,6 +3846,7 @@ func (w *worker) logDistTaskIngestedSSTUsage(taskMgr *storage.TaskManager, taskK
 		return
 	}
 
+	readIndexSummaryCollectStart := time.Now()
 	subtasks, err := taskMgr.GetSubtasksWithHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		logutil.DDLLogger().Warn("failed to collect read-index subtasks for add-index task",
@@ -3827,8 +3859,11 @@ func (w *worker) logDistTaskIngestedSSTUsage(taskMgr *storage.TaskManager, taskK
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
 		return
 	}
+	readIndexSummaryCollectDuration := time.Since(readIndexSummaryCollectStart)
 
+	ingestedSSTSummaryCollectStart := time.Now()
 	observation, err := collectDistTaskIngestedSSTBytes(w.workCtx, taskMgr, task.ID, logicalIndexKVBytes)
+	ingestedSSTSummaryCollectDuration := time.Since(ingestedSSTSummaryCollectStart)
 	if err != nil {
 		logutil.DDLLogger().Warn("failed to collect ingested SST bytes for add-index task",
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
@@ -3860,12 +3895,20 @@ func (w *worker) logDistTaskIngestedSSTUsage(taskMgr *storage.TaskManager, taskK
 	logFields = append(logFields,
 		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
 		zap.Uint64("ingested_sst_bytes", observation.bytes),
+		zap.Uint64("ingested_sst_count", observation.count),
+		zap.Uint64("ingested_sst_zero_size_count", observation.zeroSizeCount),
+		zap.Uint64("ingested_sst_invalid_identity_count", observation.invalidIdentityCount),
+		zap.Int("read_index_subtask_count", observation.readIndexSubtasks),
+		zap.Int("write_ingest_subtask_count", observation.writeIngestSubtasks),
 		zap.Bool("ingested_sst_bytes_reliable", observation.reliable),
 		zap.String("ingested_sst_bytes_reliable_reason", observation.reason),
 		zap.String("ingested_sst_bytes_source", observation.source),
 		zap.String("initial_tikv_capacity_source", initialCapacity.Source),
 		zap.Uint64("initial_tikv_used_bytes", initialCapacity.UsedBytes),
 		zap.Int("initial_tikv_store_count", initialCapacity.StoreCount),
+		zap.Int64("read_index_summary_collect_ms", readIndexSummaryCollectDuration.Milliseconds()),
+		zap.Int64("ingested_sst_summary_collect_ms", ingestedSSTSummaryCollectDuration.Milliseconds()),
+		zap.Int64("ingested_sst_log_total_ms", time.Since(logStart).Milliseconds()),
 	)
 	logutil.DDLLogger().Info("observed successfully ingested SST bytes for add-index task", logFields...)
 	failpoint.InjectCall("afterLogIngestedSSTBytes",
@@ -3882,15 +3925,28 @@ func collectDistTaskIngestedSSTBytes(
 	if kerneltype.IsNextGen() {
 		source = ingestedSSTBytesSourceNextGen
 	}
+	observation := ingestedSSTBytesObservation{}
 	subtasksByStep := make([][]*proto.Subtask, 0, 2)
 	for _, step := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepWriteAndIngest} {
 		subtasks, err := taskMgr.GetSubtasksWithHistory(ctx, taskID, step)
 		if err != nil {
 			return ingestedSSTBytesObservation{}, err
 		}
+		switch step {
+		case proto.BackfillStepReadIndex:
+			observation.readIndexSubtasks = len(subtasks)
+		case proto.BackfillStepWriteAndIngest:
+			observation.writeIngestSubtasks = len(subtasks)
+		}
 		subtasksByStep = append(subtasksByStep, subtasks)
 	}
-	return summarizeIngestedSSTBytes(source, logicalIndexKVBytes, subtasksByStep...)
+	summaryObservation, err := summarizeIngestedSSTBytes(source, logicalIndexKVBytes, subtasksByStep...)
+	if err != nil {
+		return ingestedSSTBytesObservation{}, err
+	}
+	summaryObservation.readIndexSubtasks = observation.readIndexSubtasks
+	summaryObservation.writeIngestSubtasks = observation.writeIngestSubtasks
+	return summaryObservation, nil
 }
 
 func summarizeIngestedSSTBytes(
@@ -3943,6 +3999,33 @@ type addIndexTiKVSpacePrecheckResult struct {
 	tikvReplicaCount                       uint64
 	tikvReplicaCountSource                 string
 	tikvReplicaCountPhysicalID             int64
+	precheckStatus                         string
+	precheckSkipReason                     string
+	timings                                addIndexTiKVSpacePrecheckTimings
+}
+
+type addIndexTiKVSpacePrecheckTimings struct {
+	total                 time.Duration
+	capacityCollect       time.Duration
+	blockSamplePrediction time.Duration
+	buildPhysicalTables   time.Duration
+	buildRegionTasks      time.Duration
+	sampleBytesPerRow     time.Duration
+	replicaScaling        time.Duration
+	precheckEvaluate      time.Duration
+}
+
+func appendAddIndexTiKVSpacePrecheckTimingLogFields(fields []zap.Field, timings addIndexTiKVSpacePrecheckTimings) []zap.Field {
+	return append(fields,
+		zap.Int64("precheck_total_ms", timings.total.Milliseconds()),
+		zap.Int64("capacity_collect_ms", timings.capacityCollect.Milliseconds()),
+		zap.Int64("block_sample_prediction_ms", timings.blockSamplePrediction.Milliseconds()),
+		zap.Int64("build_physical_tables_ms", timings.buildPhysicalTables.Milliseconds()),
+		zap.Int64("build_region_tasks_ms", timings.buildRegionTasks.Milliseconds()),
+		zap.Int64("sample_bytes_per_row_ms", timings.sampleBytesPerRow.Milliseconds()),
+		zap.Int64("replica_scaling_ms", timings.replicaScaling.Milliseconds()),
+		zap.Int64("precheck_evaluate_ms", timings.precheckEvaluate.Milliseconds()),
+	)
 }
 
 func (w *worker) runAddIndexTiKVSpacePrecheck(
@@ -3954,65 +4037,89 @@ func (w *worker) runAddIndexTiKVSpacePrecheck(
 ) (addIndexTiKVSpacePrecheckResult, error) {
 	result := addIndexTiKVSpacePrecheckResult{}
 	jobID := reorgInfo.Job.ID
+	precheckStart := time.Now()
+	enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
+	appendPerfFields := func(fields []zap.Field, status, skipReason string) []zap.Field {
+		result.precheckStatus = status
+		result.precheckSkipReason = skipReason
+		result.timings.total = time.Since(precheckStart)
+		fields = append(fields,
+			zap.Bool("enable_disk_space_precheck_before_add_index", true),
+			zap.String("precheck_status", status))
+		if skipReason != "" {
+			fields = append(fields, zap.String("precheck_skip_reason", skipReason))
+		}
+		return appendAddIndexTiKVSpacePrecheckTimingLogFields(fields, result.timings)
+	}
+	baseLogFields := func(status, skipReason string) []zap.Field {
+		return appendPerfFields([]zap.Field{
+			zap.Int64("jobID", jobID),
+			zap.String("task-key", taskKey),
+			zap.Bool("enforce_disk_space_precheck_before_add_index", enforceTiKVSpacePrecheck),
+		}, status, skipReason)
+	}
 	initialCapacityAvailable, err := canRunTiKVSpacePrecheck(w.store)
 	if err != nil {
 		logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because PD gRPC client capability check failed",
-			zap.Int64("jobID", jobID),
-			zap.String("task-key", taskKey),
-			zap.Error(err))
+			append(baseLogFields("skipped", "pd_grpc_client_capability_check_failed"), zap.Error(err))...)
 		initialCapacityAvailable = false
 	}
 	if !initialCapacityAvailable {
 		logutil.DDLLogger().Info("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because initial TiKV capacity is unavailable",
-			zap.Int64("jobID", jobID),
-			zap.String("task-key", taskKey))
+			baseLogFields("skipped", "initial_tikv_capacity_unavailable")...)
 		return result, nil
 	}
 
 	precheckCtx, cancelPrecheck := context.WithTimeout(ctx, addIndexSubmissionPrecheckTimeout)
 	defer cancelPrecheck()
+	capacityCollectStart := time.Now()
 	initialCapacity, err := collectTiKVStoreCapacity(precheckCtx, w.store)
+	result.timings.capacityCollect = time.Since(capacityCollectStart)
 	if err != nil {
 		msg := "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot failed"
+		skipReason := "capacity_snapshot_failed"
 		if isContextDoneError(err) {
 			msg = "skip TiKV index size prediction, ingest observation, and space precheck for add-index task because the submission-time precheck timed out while collecting TiKV capacity"
+			skipReason = "capacity_collect_timeout"
 		}
 		logutil.DDLLogger().Warn(msg,
-			zap.Int64("jobID", jobID),
-			zap.String("task-key", taskKey),
-			zap.Error(err))
+			append(baseLogFields("skipped", skipReason), zap.Error(err))...)
 		return result, nil
 	}
 	if initialCapacity == nil || initialCapacity.StoreCount == 0 {
 		logutil.DDLLogger().Warn("skip TiKV index size prediction, ingest observation, and space precheck for add-index task because TiKV capacity snapshot is empty",
-			zap.Int64("jobID", jobID),
-			zap.String("task-key", taskKey))
+			baseLogFields("skipped", "capacity_snapshot_empty")...)
 		return result, nil
 	}
 	result.initialCapacity = initialCapacity
 
-	blockSamplePrediction, err := w.predictTiKVIndexBytesBlockSample(precheckCtx, sctx, tbl, reorgInfo)
+	blockSamplePredictionStart := time.Now()
+	blockSamplePrediction, err := w.predictTiKVIndexBytesBlockSampleWithTimings(precheckCtx, sctx, tbl, reorgInfo, &result.timings)
+	result.timings.blockSamplePrediction = time.Since(blockSamplePredictionStart)
 	if err != nil {
 		msg := "skip TiKV index size prediction and space precheck for add-index task because prediction failed"
+		skipReason := "prediction_failed"
 		if isContextDoneError(err) {
 			msg = "skip TiKV index size prediction and space precheck for add-index task because the submission-time precheck timed out"
+			skipReason = "prediction_timeout"
 		}
 		logutil.DDLLogger().Warn(msg,
-			zap.Int64("jobID", jobID),
-			zap.String("task-key", taskKey),
-			zap.String("prediction-phase", "block-sample"),
-			zap.Error(err))
+			append(baseLogFields("skipped", skipReason),
+				zap.String("prediction-phase", "block-sample"),
+				zap.Error(err))...)
 		return result, nil
 	}
 
 	result.blockSampleSingleReplicaPredictedBytes = blockSamplePrediction.PredictedBytes
 	var weightedReplicaRows uint64
+	replicaScalingStart := time.Now()
 	result.tikvReplicaCount, result.tikvReplicaCountSource, result.tikvReplicaCountPhysicalID, weightedReplicaRows = w.resolveAddIndexTiKVReplicaScaling(
 		precheckCtx,
 		sctx,
 		tbl,
 		blockSamplePrediction.physicalTables,
 	)
+	result.timings.replicaScaling = time.Since(replicaScalingStart)
 	blockSamplePrediction.PredictedBytes = scalePredictedBytesByWeightedReplicaRows(
 		blockSamplePrediction.PredictedBytes,
 		blockSamplePrediction.totalRowCount,
@@ -4025,21 +4132,27 @@ func (w *worker) runAddIndexTiKVSpacePrecheck(
 	)
 	result.blockSamplePrediction = blockSamplePrediction
 
-	enforceTiKVSpacePrecheck := vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Load()
 	precheckLogFields := addIndexTiKVSpacePrecheckLogFields(
 		jobID, taskKey, result.blockSamplePrediction, result.blockSampleSingleReplicaPredictedBytes,
 		result.tikvReplicaCount, result.tikvReplicaCountSource, result.tikvReplicaCountPhysicalID,
 		result.initialCapacity, enforceTiKVSpacePrecheck)
+	precheckEvaluateStart := time.Now()
 	precheckErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(
 		result.initialCapacity,
 		result.blockSamplePrediction.PredictedBytes,
 		result.blockSamplePrediction.UseStats,
 		enforceTiKVSpacePrecheck,
 	)
+	result.timings.precheckEvaluate = time.Since(precheckEvaluateStart)
 	if precheckErr != nil {
 		if enforceTiKVSpacePrecheck && !result.blockSamplePrediction.UseStats {
 			precheckLogFields = append(precheckLogFields, zap.String("tikv_space_precheck_enforcement_skip_reason", "pseudo_stats"))
 		}
+		status := "failed"
+		if rejectErr != nil {
+			status = "rejected"
+		}
+		precheckLogFields = appendPerfFields(precheckLogFields, status, "")
 		logutil.DDLLogger().Warn("insufficient TiKV space predicted for add-index task",
 			append(precheckLogFields, zap.Error(precheckErr))...)
 		if rejectErr != nil {
@@ -4047,6 +4160,7 @@ func (w *worker) runAddIndexTiKVSpacePrecheck(
 		}
 		return result, nil
 	}
+	precheckLogFields = appendPerfFields(precheckLogFields, "passed", "")
 	logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
 		precheckLogFields...)
 	return result, nil
@@ -4531,11 +4645,22 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	tbl table.Table,
 	reorgInfo *reorgInfo,
 ) (sampleTiKVIndexPredictionResult, error) {
+	return w.predictTiKVIndexBytesBlockSampleWithTimings(ctx, sctx, tbl, reorgInfo, nil)
+}
+
+func (w *worker) predictTiKVIndexBytesBlockSampleWithTimings(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tbl table.Table,
+	reorgInfo *reorgInfo,
+	timings *addIndexTiKVSpacePrecheckTimings,
+) (sampleTiKVIndexPredictionResult, error) {
 	result := sampleTiKVIndexPredictionResult{}
 	if reorgInfo == nil {
 		return result, errors.New("reorg info is nil")
 	}
 
+	buildPhysicalTablesStart := time.Now()
 	targetIndexInfos, err := collectBackfillIndexes(tbl.Meta(), reorgInfo)
 	if err != nil {
 		return result, err
@@ -4543,6 +4668,9 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	physicalTables, totalRowCount, useStats, err := w.buildSamplePredictionPhysicalTables(tbl, targetIndexInfos)
 	if err != nil {
 		return result, err
+	}
+	if timings != nil {
+		timings.buildPhysicalTables = time.Since(buildPhysicalTablesStart)
 	}
 	result.UseStats = useStats
 	if totalRowCount <= 0 {
@@ -4557,7 +4685,11 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	}
 
 	baseSeed := samplePredictionSeed(reorgInfo.Job.ID, tbl.Meta().ID)
+	buildRegionTasksStart := time.Now()
 	regionTasks, readErrors, err := w.buildSamplePredictionRegionTasks(ctx, reorgInfo.Job.ID, "block sample prediction", physicalTables, baseSeed)
+	if timings != nil {
+		timings.buildRegionTasks = time.Since(buildRegionTasksStart)
+	}
 	if readErrors > 0 {
 		result.ReadErrorCount += readErrors
 		if result.ReadErrorCount > samplePredictionMaxReadErrors {
@@ -4572,6 +4704,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 		return result, nil
 	}
 
+	sampleBytesPerRowStart := time.Now()
 	predictedAvgBytesPerRow, mvccAvgBytesPerRow, encodedKeySharedPrefixAvg, rawKeySharedPrefixAvg, rawKeyLengthAvg, sampledRegions, sampledRows, readErrors, err := w.estimateBlockSampleBytesPerRow(
 		ctx,
 		jobCtx,
@@ -4580,6 +4713,9 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 		currentVer.Ver,
 		baseSeed^0xd1b54a32d192ed03,
 	)
+	if timings != nil {
+		timings.sampleBytesPerRow = time.Since(sampleBytesPerRowStart)
+	}
 	result.SampledRegionCount += sampledRegions
 	result.SampledRowCount += sampledRows
 	if readErrors > 0 {

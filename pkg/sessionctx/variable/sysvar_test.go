@@ -1002,17 +1002,35 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 }
 
 func TestSetEnforceDiskSpacePrecheckBeforeAddIndex(t *testing.T) {
+	t.Cleanup(func() {
+		vardef.EnableDiskSpacePrecheckBeforeAddIndex.Store(vardef.DefEnableDiskSpacePrecheckBeforeAddIndex)
+		vardef.EnforceDiskSpacePrecheckBeforeAddIndex.Store(vardef.DefEnforceDiskSpacePrecheckBeforeAddIndex)
+	})
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
+	enablePrecheck := GetSysVar(vardef.TiDBEnableDiskSpacePrecheckBeforeAddIndex)
 	enforcePrecheck := GetSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
 
+	require.Equal(t, vardef.On, enablePrecheck.Value)
 	require.Equal(t, vardef.Off, enforcePrecheck.Value)
 
-	err := mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, vardef.On)
+	err := mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnableDiskSpacePrecheckBeforeAddIndex, vardef.Off)
 	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
+	val, err := mock.GetGlobalSysVar(vardef.TiDBEnableDiskSpacePrecheckBeforeAddIndex)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, val)
+
+	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnableDiskSpacePrecheckBeforeAddIndex, vardef.On)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(vardef.TiDBEnableDiskSpacePrecheckBeforeAddIndex)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	err = mock.SetGlobalSysVar(context.Background(), vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex, vardef.On)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(vardef.TiDBEnforceDiskSpacePrecheckBeforeAddIndex)
 	require.NoError(t, err)
 	require.Equal(t, vardef.On, val)
 
