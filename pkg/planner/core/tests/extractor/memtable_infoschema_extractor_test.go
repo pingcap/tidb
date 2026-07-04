@@ -510,3 +510,31 @@ func TestMemtableInfoschemaExtractorPart4(t *testing.T) {
 	}
 	testMemtableInfoschemaExtractor(t, tcs)
 }
+
+func TestInfoSchemaTableNameLikeEscape(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database like_escape")
+	tk.MustExec("use like_escape")
+	tk.MustExec("create table `abc_def` (a int)")
+	tk.MustExec("create table `abc#x` (a int)")
+
+	// With ESCAPE '#', "#_" is a literal underscore, so only `abc_def` matches.
+	// The memtable extractor must not push the LIKE pattern down while ignoring
+	// the custom escape: doing so compiles the pattern with the default '\'
+	// escape, which instead matches `abc#x` (a row that fails its own
+	// predicate) and drops `abc_def`. Every returned row must satisfy the same
+	// LIKE ... ESCAPE predicate it was selected by. See issue #69653.
+	tk.MustQuery("select table_name, table_name like '%#_%' escape '#' as self_true " +
+		"from information_schema.tables " +
+		"where table_schema = 'like_escape' and table_name like '%#_%' escape '#'").
+		Check(testkit.Rows("abc_def 1"))
+
+	// A non-default escape must be kept as a scalar Selection rather than folded
+	// into the pushed-down table_name pattern.
+	plan := tk.MustQuery("explain format='brief' select table_name from information_schema.tables " +
+		"where table_schema = 'like_escape' and table_name like '%#_%' escape '#'").String()
+	if !strings.Contains(plan, "Selection") {
+		t.Fatalf("expected the custom-escape LIKE to be kept as a Selection, plan:\n%s", plan)
+	}
+}

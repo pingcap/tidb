@@ -459,6 +459,14 @@ func (helper extractHelper) extractLikePattern(
 	case ast.EQ:
 		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 	case ast.Like, ast.Ilike:
+		// The extracted pattern is compiled with the default escape ('\') by
+		// stringutil.CompileLike2Regexp, so a non-default ESCAPE would make the
+		// pushed-down pattern diverge from the original predicate. Only build a
+		// pattern when the escape is the default; otherwise skip extraction so
+		// the scalar predicate is kept and rechecked (issue #69653).
+		if !likeEscapeIsDefault(fn) {
+			return false, ""
+		}
 		if needLike2Regexp {
 			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 		}
@@ -468,6 +476,23 @@ func (helper extractHelper) extractLikePattern(
 	default:
 		return false, ""
 	}
+}
+
+// likeEscapeIsDefault reports whether the ESCAPE argument of a LIKE/ILIKE
+// ScalarFunction is the default backslash escape. Only then is it safe to
+// compile the pattern with stringutil.CompileLike2Regexp, which hardcodes '\'
+// as the escape. A non-default (or non-constant) escape must fall back to a
+// scalar recheck instead of being pushed down. See issue #69653.
+func likeEscapeIsDefault(fn *expression.ScalarFunction) bool {
+	args := fn.GetArgs()
+	if len(args) < 3 {
+		return false
+	}
+	escape, ok := args[2].(*expression.Constant)
+	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
+		return false
+	}
+	return escape.Value.GetInt64() == int64('\\')
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
