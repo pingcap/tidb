@@ -17,6 +17,7 @@
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
+* [Appendix: PostGIS compatibility delta](#appendix-postgis-compatibility-delta)
 
 ## Introduction
 
@@ -535,3 +536,64 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
 - 3D: 2D is required (MySQL/MariaDB are 2D-only; PostGIS has 3D/4D with ND-GiST). The
   cell-key encoding is kept dimension-tagged to allow a future 3D coverer, but 3D is out
   of scope and gated on the type carrying a Z coordinate.
+
+## Appendix: PostGIS compatibility delta
+
+This project's compatibility target is **MySQL 8.0**, not PostGIS: the SQL syntax, the
+`SHOW CREATE TABLE` byte-form, the single-`TypeGeometry`-plus-subtype model, and the
+`simplefeatures`-vs-MySQL predicate parity all anchor on MySQL. MySQL's spatial surface is
+a strict subset of PostGIS's (roughly 70 `ST_*` functions vs 300+, a 2D R-tree vs GiST/
+SP-GiST/BRIN/ND-GiST, no reprojection, no raster/topology), so **full PostGIS
+compatibility is an explicit non-goal**, not an omission. This appendix catalogs the delta
+so the scope boundary is unambiguous, and so a later reader does not mistake a deliberate
+MySQL-alignment choice for a gap to be closed.
+
+Most of the delta lives **not in the index** (this document's scope) but in the
+prerequisite geometry-type and `ST_*` function layer, which follows the MySQL-subset staged
+design (PR #38916 and the type/parser PRs; see Motivation). The tiers below separate what
+this index could add from what that prerequisite layer bounds.
+
+### Tier 1: index-layer gaps (this document's scope)
+
+| Capability | PostGIS | This design |
+|---|---|---|
+| Index-ordered kNN (`ORDER BY geom <-> q LIMIT k`, no radius) | Served incrementally from GiST via the `<->` operator (best-first branch-and-bound over stored, data-tight MBRs) | Only **radius-bounded** proximity is index-served; unbounded kNN needs a deferred expanding-ring / quadtree best-first operator, because the SFC index materializes only curve-ordered leaves, not a pointer-linked box hierarchy (see Query path, and Investigation) |
+| KNN / bbox operators (`<->`, `<#>`, `&&`, `@`, `~`) | PostgreSQL operator grammar | TiDB stays on the MySQL `MBR*` function family (`MBRContains`, `MBRIntersects`, ...); operator spellings are non-compat by construction, not planned |
+| Index DDL surface | `CREATE INDEX ... USING GIST (geom)` | MySQL `SPATIAL INDEX` / `SPATIAL KEY` (see SQL syntax); dialect-incompatible by design |
+| Functional / partial spatial indexes | `gist(ST_Centroid(geom))`, partial `WHERE`, `btree_gist` multicolumn | Column-only; composite scalar-prefix indexes are a very-late milestone, functional/partial not planned |
+| Index-type menu | GiST / SP-GiST / BRIN / ND-GiST | A single cell-covering / MVI index kind |
+
+The kNN row is the one structural (not merely dialectal) index gap: GiST reuses the same
+tight, pointer-linked MBR hierarchy that answers containment to also emit rows in exact
+distance order for free, whereas the cell index is sorted on the space-filling curve (not
+distance) and exposes no materialized internal-node bounds, so distance-ordered retrieval
+must be reconstructed with an iterative expanding search plus an external top-k heap. See
+Investigation & Alternatives and `research.md` -> "Query support matrix".
+
+### Tier 2: type and function layer (prerequisite, not owned here)
+
+Bounded by the MySQL-subset type/function work, listed so the full-stack delta is visible:
+
+| Area | PostGIS | MySQL-subset stack (this project's base) |
+|---|---|---|
+| SRID / CRS | Full EPSG catalog via `spatial_ref_sys`, `ST_Transform` on-the-fly reprojection | Only SRID 0 and 4326; `3857` and all other codes rejected at DDL; no `ST_Transform` |
+| Type model | Distinct `geometry` (planar) and `geography` (geodesic) types | One type; planar-vs-spherical folded into SRID (0 = planar, 4326 = spherical), per MySQL |
+| Distance semantics | `geography` distance is geodesic on the WGS 84 **ellipsoid** by default | 4326 refine uses a **sphere** (matches `ST_Distance_Sphere`); ellipsoidal `ST_Distance` is index-optimized only via a conservatively inflated cap or a scan fallback |
+| Function breadth | 300+ `ST_*` | ~70 MySQL-style; missing families include buffer/convex-hull/simplify/subdivide/segmentize, overlay set-ops, spatial clustering (`ST_ClusterDBSCAN`/`KMeans`), spatial aggregates (`ST_Union` agg, `ST_Collect`, `ST_Polygonize`, `ST_MakeLine`), linear referencing, Hausdorff/Frechet distance, `ST_MakeValid`, output formats (`ST_AsMVT`/`KML`/`GML`/`SVG`/TWKB) |
+| Geometry types | Adds CIRCULARSTRING, COMPOUNDCURVE, CURVEPOLYGON, POLYHEDRALSURFACE, TIN, TRIANGLE | OGC Simple Features only (`simplefeatures` scope); no curved or TIN geometries |
+| Dimensionality | XYZ / XYM / XYZM with ND-GiST | 2D only, gated on the type carrying a Z coordinate (see the 3D item in Unresolved Questions) |
+
+### Tier 3: whole subsystems (out of scope)
+
+PostGIS raster (`postgis_raster`), topology (`TopoGeometry`), 3D solids via SFCGAL, and the
+ecosystem extensions (pgRouting network routing, Tiger geocoder). None are planned.
+
+### Path to parity (ascending cost)
+
+Reaching **MySQL** parity requires the type layer, the ~70 functions, and this index.
+Moving from there toward **PostGIS**, roughly in ascending effort: arbitrary-SRID plus
+`ST_Transform`; index-ordered kNN; the ~230 additional processing/measurement/output
+functions; ellipsoidal geography; 3D / ND indexing; curved geometry types; and finally the
+raster / topology / routing subsystems. Realistically only the first two or three are
+plausible follow-ons; full PostGIS parity is a different-magnitude effort and, as stated
+above, a non-goal.
