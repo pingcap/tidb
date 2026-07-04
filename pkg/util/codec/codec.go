@@ -75,8 +75,8 @@ func NewEncoder(useNewCollate bool) Encoder {
 }
 
 // UseNewCollate returns whether the encoder is using new collation.
-func (encoder Encoder) UseNewCollate() bool {
-	return encoder.useNewCollate
+func (enc Encoder) UseNewCollate() bool {
+	return enc.useNewCollate
 }
 
 func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
@@ -106,7 +106,7 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 
 // encode will encode a datum and append it to a byte slice. If comparable1 is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
-func (encoder Encoder) encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
+func (enc Encoder) encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
 	b = preRealloc(b, vals, comparable1)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
@@ -118,7 +118,7 @@ func (encoder Encoder) encode(loc *time.Location, b []byte, vals []types.Datum, 
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, vals[i].GetFloat64())
 		case types.KindString:
-			b = encoder.encodeString(b, vals[i], comparable1)
+			b = enc.encodeString(b, vals[i], comparable1)
 		case types.KindBytes:
 			b = encodeBytes(b, vals[i].GetBytes(), comparable1)
 		case types.KindMysqlTime:
@@ -230,9 +230,9 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 	return b, nil
 }
 
-func (encoder Encoder) encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
-	if encoder.useNewCollate && comparable1 {
-		return encodeBytes(b, collate.GetCollator(val.Collation()).ImmutableKey(val.GetString()), true)
+func (enc Encoder) encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
+	if enc.useNewCollate && comparable1 {
+		return encodeBytes(b, collate.GetCollatorWithCollate(enc.useNewCollate, val.Collation()).ImmutableKey(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable1)
 }
@@ -325,8 +325,8 @@ func EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 // EncodeKey appends the encoded values to byte slice b using the encoder's
 // fixed collation setting. It guarantees the encoded value is in ascending order
 // for comparison. For decimal type, datum must set datum's length and frac.
-func (encoder Encoder) EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
-	return encoder.encode(loc, b, v, true)
+func (enc Encoder) EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
+	return enc.encode(loc, b, v, true)
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
@@ -338,8 +338,8 @@ func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error)
 // EncodeValue appends the encoded values to byte slice b using the encoder's
 // fixed collation setting, returning the appended slice. It does not guarantee
 // the order for comparison.
-func (encoder Encoder) EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
-	return encoder.encode(loc, b, v, false)
+func (enc Encoder) EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
+	return enc.encode(loc, b, v, false)
 }
 
 // EncodeHashChunkRowIdx encodes value for further comparison
@@ -1914,7 +1914,7 @@ func HashCode(b []byte, d types.Datum) []byte {
 // collation setting. It is mostly the same as EncodeValue, but it doesn't
 // contain truncation or verification logic in order to make the encoding
 // lossless.
-func (encoder Encoder) HashCode(b []byte, d types.Datum) []byte {
+func (enc Encoder) HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:
 		b = encodeSignedInt(b, d.GetInt64(), false)
@@ -1924,7 +1924,7 @@ func (encoder Encoder) HashCode(b []byte, d types.Datum) []byte {
 		b = append(b, floatFlag)
 		b = EncodeFloat(b, d.GetFloat64())
 	case types.KindString:
-		b = encoder.encodeString(b, d, false)
+		b = enc.encodeString(b, d, false)
 	case types.KindBytes:
 		b = encodeBytes(b, d.GetBytes(), false)
 	case types.KindMysqlTime:
