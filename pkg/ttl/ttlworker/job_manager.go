@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -44,6 +46,11 @@ import (
 )
 
 const scanTaskNotificationType string = "scan"
+
+const (
+	ttlJobManagerLeaderPath = "/tidb/ttl_job_manager/leader"
+	ttlJobManagerPrompt     = "ttl_job_manager"
+)
 
 const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
 const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
@@ -126,14 +133,19 @@ type JobManager struct {
 
 	lastReportDelayMetricsTime time.Time
 	leaderFunc                 func() bool
+	ownerManager               owner.Manager
+	extWorkload                extworkload.Manager
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool, extWorkloadMgr ...extworkload.Manager) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
 	manager.sessPool = sessPool
+	if len(extWorkloadMgr) > 0 {
+		manager.extWorkload = extWorkloadMgr[0]
+	}
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
@@ -156,7 +168,23 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 
 	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 	manager.leaderFunc = leaderFunc
+	if extworkload.IsTTLTaskWorker(manager.extWorkload) && etcdCli != nil && !intest.InTest {
+		manager.ownerManager = owner.NewOwnerManager(context.Background(), etcdCli, ttlJobManagerPrompt, id, ttlJobManagerLeaderPath)
+		manager.ownerManager.SetListener(&ttlJobManagerOwnerListener{})
+		if err := manager.ownerManager.CampaignOwner(5); err != nil {
+			logutil.BgLogger().Error("failed to campaign ttl job manager owner", zap.Error(err))
+		}
+		manager.leaderFunc = manager.ownerManager.IsOwner
+	}
 	return
+}
+
+type ttlJobManagerOwnerListener struct{}
+
+func (*ttlJobManagerOwnerListener) OnRetireOwner() {}
+
+func (*ttlJobManagerOwnerListener) OnBecomeOwner() {
+	logutil.BgLogger().Info("leader change of TTL job manager service, this node become owner")
 }
 
 func (m *JobManager) isLeader() bool {
@@ -165,6 +193,9 @@ func (m *JobManager) isLeader() bool {
 
 func (m *JobManager) jobLoop() error {
 	defer func() {
+		if m.ownerManager != nil {
+			m.ownerManager.Close()
+		}
 		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
 	}()
 	return withSession(m.sessPool, m.jobLoopWithSession)
@@ -570,6 +601,9 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 }
 
 func (m *JobManager) checkFinishedJob(se session.Session) {
+	runningJobsCount := len(m.runningJobs)
+	totalFinishedJobs := 0
+	maxJobCreateTime := uint64(0)
 	// reverse iteration so that we could remove the job safely in the loop
 	for i := len(m.runningJobs) - 1; i >= 0; i-- {
 		job := m.runningJobs[i]
@@ -603,6 +637,17 @@ func (m *JobManager) checkFinishedJob(se session.Session) {
 				continue
 			}
 			m.removeJob(job)
+			totalFinishedJobs++
+			if createTime := uint64(job.createTime.Unix()); maxJobCreateTime < createTime {
+				maxJobCreateTime = createTime
+			}
+		}
+	}
+	if runningJobsCount > 0 && totalFinishedJobs == runningJobsCount && extworkload.IsTTLTaskWorker(m.extWorkload) {
+		if err := m.extWorkload.RecycleTTLTask(m.ctx, maxJobCreateTime); err != nil {
+			logutil.Logger(m.ctx).Warn("failed to recycle TTL task from external workload controller",
+				zap.Uint64("completedJobCreateTime", maxJobCreateTime),
+				zap.Error(err))
 		}
 	}
 }

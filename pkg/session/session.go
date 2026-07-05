@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -4293,12 +4294,17 @@ func InitMDLVariable(store kv.Storage) error {
 
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, createSessions)
+	return BootstrapSessionWithExternalWorkloadManager(store, nil)
+}
+
+// BootstrapSessionWithExternalWorkloadManager bootstraps session and domain with an external workload manager.
+func BootstrapSessionWithExternalWorkloadManager(store kv.Storage, manager extworkload.Manager) (*domain.Domain, error) {
+	return bootstrapSessionImpl(context.Background(), store, createSessions, manager)
 }
 
 // BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing.
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution)
+	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution, nil)
 }
 
 // bootstrapSessionImpl bootstraps session and domain.
@@ -4313,7 +4319,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
-func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
@@ -4360,7 +4366,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
-
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
 		proto.ImportInto,
@@ -4384,6 +4389,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		concurrency = 0
 	}
 
+	if extWorkloadMgr != nil {
+		if _, err := domap.getWithEtcdClient(store, nil, nil, domainCreateOptions{extWorkloadMgr: extWorkloadMgr}); err != nil {
+			return nil, err
+		}
+	}
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err

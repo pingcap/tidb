@@ -249,6 +249,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
+	if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
