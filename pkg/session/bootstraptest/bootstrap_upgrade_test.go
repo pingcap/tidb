@@ -97,6 +97,64 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	}
 }
 
+func TestBootstrapNonTransactionalDMLCheckpointTable(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se := session.CreateSessionAndSetID(t, store)
+	assertNonTransactionalDMLCheckpointTable(t, se)
+}
+
+func TestUpgradeVersion239CreatesNonTransactionalDMLCheckpointTable(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV227 := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, seV227, "drop table if exists mysql.tidb_nontransactional_dml_checkpoint")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.FinishBootstrap(227))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, seV227, 227)
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+
+	domV239, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV239.Close()
+	seV239 := session.CreateSessionAndSetID(t, store)
+	assertNonTransactionalDMLCheckpointTable(t, seV239)
+	ver, err := session.GetBootstrapVersion(seV239)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+}
+
+func assertNonTransactionalDMLCheckpointTable(t *testing.T, se sessiontypes.Session) {
+	assertSingleStringResult(t, se, `
+		SELECT CAST(COUNT(*) AS CHAR)
+		FROM information_schema.tables
+		WHERE table_schema='mysql' AND table_name='tidb_nontransactional_dml_checkpoint'`, "1")
+	assertSingleStringResult(t, se, `
+		SELECT GROUP_CONCAT(column_name ORDER BY ordinal_position)
+		FROM information_schema.columns
+		WHERE table_schema='mysql' AND table_name='tidb_nontransactional_dml_checkpoint'`, "job_id,range_id,mode,dml_type,db_name,table_id,physical_table_id,handle_kind,range_start,range_start_inclusive,range_end,range_end_inclusive,checkpoint,status,retry_count,error_class,error_text,scanned,affected,created_at,updated_at,finished_at")
+	assertSingleStringResult(t, se, `
+		SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index)
+		FROM information_schema.statistics
+		WHERE table_schema='mysql' AND table_name='tidb_nontransactional_dml_checkpoint' AND index_name='PRIMARY'`, "job_id,range_id")
+}
+
+func assertSingleStringResult(t *testing.T, se sessiontypes.Session, sql string, expected string) {
+	rs := session.MustExecToRecodeSet(t, se, sql)
+	defer rs.Close()
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, expected, req.GetRow(0).GetString(0))
+}
+
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	session.MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= 195 {
