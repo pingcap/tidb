@@ -19,11 +19,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -234,6 +237,52 @@ func TestNonTransactionalDMLRangeConditionUsesCheckpointExclusively(t *testing.T
 	require.Contains(t, sql, "`id` > 'v1:pacer_largepayload0001'")
 	require.Contains(t, sql, "`id` <= 'v1:pacer_largepayload0100'")
 	require.True(t, strings.Contains(sql, "AND"), sql)
+}
+
+func TestNonTransactionalDMLSessionContextCaptureApply(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	source := CreateSessionAndSetID(t, store)
+	worker := CreateSessionAndSetID(t, store)
+	MustExec(t, source, "create database if not exists ntdml_ctx")
+	MustExec(t, source, "use ntdml_ctx")
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.SQLModeVar, "ANSI_QUOTES"))
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.TimeZone, "+08:00"))
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"))
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.CollationConnection, "utf8mb4_bin"))
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.ForeignKeyChecks, "0"))
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.TiDBConstraintCheckInPlace, "1"))
+	require.NoError(t, source.GetSessionVars().SetSystemVar(variable.TiDBRedactLog, variable.Marker))
+	source.GetSessionVars().User = &auth.UserIdentity{Username: "ntdml_user", Hostname: "%", AuthUsername: "ntdml_user", AuthHostname: "%"}
+	source.GetSessionVars().ActiveRoles = []*auth.RoleIdentity{{Username: "ntdml_role", Hostname: "%"}}
+	source.GetSessionVars().SetResourceGroupName("ntdml_rg")
+	source.GetSessionVars().StmtCtx.ResourceGroupName = "ntdml_stmt_rg"
+
+	captured, err := captureNonTransactionalDMLSessionContext(source)
+	require.NoError(t, err)
+	require.NoError(t, applyNonTransactionalDMLSessionContext(worker, captured))
+
+	workerVars := worker.GetSessionVars()
+	require.Equal(t, "ntdml_ctx", workerVars.CurrentDB)
+	require.True(t, workerVars.SQLMode.HasANSIQuotesMode())
+	timeZone, err := workerVars.GetSessionOrGlobalSystemVar(context.Background(), variable.TimeZone)
+	require.NoError(t, err)
+	require.Equal(t, "+08:00", timeZone)
+	charset, collation := workerVars.GetCharsetInfo()
+	require.Equal(t, "utf8mb4", charset)
+	require.Equal(t, "utf8mb4_bin", collation)
+	require.False(t, workerVars.ForeignKeyChecks)
+	require.True(t, workerVars.ConstraintCheckInPlace)
+	require.Equal(t, errors.RedactLogMarker, workerVars.EnableRedactLog)
+	require.Equal(t, "ntdml_user", workerVars.User.Username)
+	require.Equal(t, "%", workerVars.User.Hostname)
+	require.Len(t, workerVars.ActiveRoles, 1)
+	require.Equal(t, "ntdml_role", workerVars.ActiveRoles[0].Username)
+	require.Equal(t, "ntdml_rg", workerVars.ResourceGroupName)
+	require.Equal(t, "ntdml_stmt_rg", workerVars.StmtCtx.ResourceGroupName)
 }
 
 func buildNonTransactionalDMLHandleDescriptorForTest(t *testing.T, se sessiontypes.Session, sql string) (*nonTransactionalDMLHandleDescriptor, error) {
