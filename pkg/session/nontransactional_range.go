@@ -15,10 +15,14 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -30,9 +34,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -55,6 +63,8 @@ type nonTransactionalDMLRangeContext struct {
 	OriginalWhereSQL  string
 	OriginalCondition ast.ExprNode
 	BatchSize         int
+	Concurrency       int
+	IgnoreError       bool
 	TableID           int64
 	PhysicalTableID   int64
 }
@@ -63,6 +73,11 @@ type nonTransactionalDMLScannedChunk struct {
 	first nonTransactionalDMLBoundary
 	last  nonTransactionalDMLBoundary
 	size  int
+}
+
+type nonTransactionalDMLRangeSpan struct {
+	lower *nonTransactionalDMLBoundary
+	upper *nonTransactionalDMLBoundary
 }
 
 func handleNonTransactionalDMLByRange(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session,
@@ -190,33 +205,100 @@ func buildNonTransactionalDMLRangeContext(stmt *ast.NonTransactionalDMLStmt, se 
 		OriginalWhereSQL:  originalWhereSQL,
 		OriginalCondition: stmt.DMLStmt.WhereExpr(),
 		BatchSize:         int(stmt.Limit),
+		Concurrency:       se.GetSessionVars().NonTransactionalDMLConcurrency,
+		IgnoreError:       se.GetSessionVars().NonTransactionalIgnoreError,
 		TableID:           tnW.TableInfo.ID,
 		PhysicalTableID:   tnW.TableInfo.ID,
 	}, nil
 }
 
 func runNonTransactionalDMLRange(ctx context.Context, se sessiontypes.Session, rangeCtx *nonTransactionalDMLRangeContext) ([]job, error) {
-	worker, err := CreateSession(se.GetStore())
+	ranges, err := buildNonTransactionalDMLRangeSpans(ctx, se, rangeCtx)
 	if err != nil {
 		return nil, err
 	}
-	defer worker.Close()
-	if err := applyNonTransactionalDMLSessionContext(worker, rangeCtx.SessionCtx); err != nil {
-		return nil, err
+	if len(ranges) == 0 {
+		ranges = []nonTransactionalDMLRangeSpan{{}}
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	workerCount := nonTransactionalDMLRangeWorkerCount(rangeCtx.Concurrency, len(ranges))
+	rangeCh := make(chan nonTransactionalDMLRangeSpan)
+	var nextChunkID int64
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	jobs := make([]job, 0, len(ranges))
+	var firstErr error
+	recordResult := func(rangeJobs []job, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		jobs = append(jobs, rangeJobs...)
+		if err != nil && firstErr == nil {
+			firstErr = err
+			if !rangeCtx.IgnoreError {
+				cancel()
+			}
+		}
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	var lower *nonTransactionalDMLBoundary
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			worker, err := CreateSession(se.GetStore())
+			if err != nil {
+				recordResult(nil, err)
+				return
+			}
+			defer worker.Close()
+			if err := applyNonTransactionalDMLSessionContext(worker, rangeCtx.SessionCtx); err != nil {
+				recordResult(nil, err)
+				return
+			}
+			for rangeSpan := range rangeCh {
+				if ctx.Err() != nil {
+					return
+				}
+				rangeJobs, err := runNonTransactionalDMLRangeSpan(ctx, worker, rangeCtx, rangeSpan, &nextChunkID)
+				recordResult(rangeJobs, err)
+				if err != nil && !rangeCtx.IgnoreError {
+					return
+				}
+			}
+		}()
+	}
+
+sendLoop:
+	for _, rangeSpan := range ranges {
+		select {
+		case <-ctx.Done():
+			break sendLoop
+		case rangeCh <- rangeSpan:
+		}
+	}
+	close(rangeCh)
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return jobs, nil
+}
+
+func runNonTransactionalDMLRangeSpan(ctx context.Context, worker sessiontypes.Session, rangeCtx *nonTransactionalDMLRangeContext,
+	rangeSpan nonTransactionalDMLRangeSpan, nextChunkID *int64) ([]job, error) {
+	lower := cloneNonTransactionalDMLBoundaryPtr(rangeSpan.lower)
 	jobs := make([]job, 0)
 	for {
-		scanned, err := scanNonTransactionalDMLRangeChunk(ctx, worker, rangeCtx, lower)
+		scanned, err := scanNonTransactionalDMLRangeChunk(ctx, worker, rangeCtx, lower, rangeSpan.upper)
 		if err != nil {
 			return nil, err
 		}
 		if scanned == nil {
 			break
 		}
-		chunkID := int64(len(jobs) + 1)
+		chunkID := atomic.AddInt64(nextChunkID, 1)
 		dmlSQL, err := buildNonTransactionalDMLRangeMutationSQL(rangeCtx, lower, &scanned.last)
 		if err != nil {
 			return nil, err
@@ -232,8 +314,8 @@ func runNonTransactionalDMLRange(ctx context.Context, se sessiontypes.Session, r
 		if execErr != nil {
 			chunkJob.err = execErr
 			jobs = append(jobs, chunkJob)
-			if !se.GetSessionVars().NonTransactionalIgnoreError {
-				return nil, ErrNonTransactionalJobFailure.GenWithStackByArgs(chunkJob.jobID, len(jobs), chunkJob.start.String(), chunkJob.end.String(), chunkJob.String(se.GetSessionVars().EnableRedactLog), execErr.Error())
+			if !rangeCtx.IgnoreError {
+				return nil, ErrNonTransactionalJobFailure.GenWithStackByArgs(chunkJob.jobID, len(jobs), chunkJob.start.String(), chunkJob.end.String(), chunkJob.String(worker.GetSessionVars().EnableRedactLog), execErr.Error())
 			}
 		} else {
 			jobs = append(jobs, chunkJob)
@@ -245,9 +327,144 @@ func runNonTransactionalDMLRange(ctx context.Context, se sessiontypes.Session, r
 	return jobs, nil
 }
 
+func nonTransactionalDMLRangeWorkerCount(concurrency int, rangeCount int) int {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if rangeCount < 1 {
+		return 1
+	}
+	if concurrency > rangeCount {
+		return rangeCount
+	}
+	return concurrency
+}
+
+func buildNonTransactionalDMLRangeSpans(ctx context.Context, se sessiontypes.Session,
+	rangeCtx *nonTransactionalDMLRangeContext) ([]nonTransactionalDMLRangeSpan, error) {
+	regionRanges, ok, err := loadNonTransactionalDMLRegionKeyRanges(ctx, se.GetStore(), rangeCtx.PhysicalTableID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return []nonTransactionalDMLRangeSpan{{}}, nil
+	}
+	return buildNonTransactionalDMLRangesFromRegionKeyRanges(se.GetSessionVars().StmtCtx, rangeCtx.Descriptor, rangeCtx.PhysicalTableID, regionRanges)
+}
+
+func loadNonTransactionalDMLRegionKeyRanges(ctx context.Context, store kv.Storage, physicalTableID int64) ([]kv.KeyRange, bool, error) {
+	tikvStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, false, nil
+	}
+	recordStart := tablecodec.GenTableRecordPrefix(physicalTableID)
+	recordEnd := recordStart.PrefixNext()
+	regions, err := tikvStore.GetRegionCache().LoadRegionsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), recordStart, recordEnd)
+	if err != nil {
+		return nil, true, err
+	}
+	regionRanges := make([]kv.KeyRange, 0, len(regions))
+	for _, region := range regions {
+		regionRanges = append(regionRanges, kv.KeyRange{
+			StartKey: append(kv.Key(nil), region.StartKey()...),
+			EndKey:   append(kv.Key(nil), region.EndKey()...),
+		})
+	}
+	return regionRanges, true, nil
+}
+
+func buildNonTransactionalDMLRangesFromRegionKeyRanges(sc *stmtctx.StatementContext, desc *nonTransactionalDMLHandleDescriptor,
+	physicalTableID int64, regionRanges []kv.KeyRange) ([]nonTransactionalDMLRangeSpan, error) {
+	if len(regionRanges) == 0 {
+		return []nonTransactionalDMLRangeSpan{{}}, nil
+	}
+	boundaries := make([]nonTransactionalDMLBoundary, 0, len(regionRanges))
+	seen := make(map[string]struct{}, len(regionRanges))
+	appendBoundary := func(key kv.Key) error {
+		boundary, ok, err := decodeNonTransactionalDMLRegionSplitBoundary(sc, desc, physicalTableID, key)
+		if err != nil || !ok {
+			return err
+		}
+		encoded := string(boundary.encoded)
+		if _, exists := seen[encoded]; exists {
+			return nil
+		}
+		seen[encoded] = struct{}{}
+		boundaries = append(boundaries, boundary)
+		return nil
+	}
+	for _, regionRange := range regionRanges {
+		if err := appendBoundary(regionRange.StartKey); err != nil {
+			return nil, err
+		}
+		if err := appendBoundary(regionRange.EndKey); err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(boundaries, func(i, j int) bool {
+		return bytes.Compare(boundaries[i].encoded, boundaries[j].encoded) < 0
+	})
+
+	ranges := make([]nonTransactionalDMLRangeSpan, 0, len(boundaries)+1)
+	var lower *nonTransactionalDMLBoundary
+	for i := range boundaries {
+		upper := boundaries[i]
+		upper.inclusive = false
+		ranges = append(ranges, nonTransactionalDMLRangeSpan{
+			lower: cloneNonTransactionalDMLBoundaryPtr(lower),
+			upper: &upper,
+		})
+		nextLower := boundaries[i]
+		nextLower.inclusive = true
+		lower = &nextLower
+	}
+	ranges = append(ranges, nonTransactionalDMLRangeSpan{
+		lower: cloneNonTransactionalDMLBoundaryPtr(lower),
+	})
+	return ranges, nil
+}
+
+func decodeNonTransactionalDMLRegionSplitBoundary(sc *stmtctx.StatementContext, desc *nonTransactionalDMLHandleDescriptor,
+	physicalTableID int64, key kv.Key) (nonTransactionalDMLBoundary, bool, error) {
+	if len(key) == 0 {
+		return nonTransactionalDMLBoundary{}, false, nil
+	}
+	recordStart := tablecodec.GenTableRecordPrefix(physicalTableID)
+	recordEnd := recordStart.PrefixNext()
+	if bytes.Compare(key, recordStart) <= 0 || bytes.Compare(key, recordEnd) >= 0 {
+		return nonTransactionalDMLBoundary{}, false, nil
+	}
+	if !bytes.HasPrefix(key, recordStart) {
+		return nonTransactionalDMLBoundary{}, false, nil
+	}
+	tableID, handle, err := tablecodec.DecodeRecordKey(key)
+	if err != nil || tableID != physicalTableID {
+		return nonTransactionalDMLBoundary{}, false, nil
+	}
+	values, err := handle.Data()
+	if err != nil || len(values) != 1 {
+		return nonTransactionalDMLBoundary{}, false, nil
+	}
+	boundary, err := encodeNonTransactionalDMLBoundary(sc, desc, values[0], true)
+	if err != nil {
+		return nonTransactionalDMLBoundary{}, false, err
+	}
+	return boundary, true, nil
+}
+
+func cloneNonTransactionalDMLBoundaryPtr(boundary *nonTransactionalDMLBoundary) *nonTransactionalDMLBoundary {
+	if boundary == nil {
+		return nil
+	}
+	cloned := *boundary
+	cloned.value = *boundary.value.Clone()
+	cloned.encoded = append([]byte(nil), boundary.encoded...)
+	return &cloned
+}
+
 func scanNonTransactionalDMLRangeChunk(ctx context.Context, se sessiontypes.Session, rangeCtx *nonTransactionalDMLRangeContext,
-	lower *nonTransactionalDMLBoundary) (*nonTransactionalDMLScannedChunk, error) {
-	whereSQL, err := buildNonTransactionalDMLRangeSelectWhereSQL(rangeCtx, lower)
+	lower *nonTransactionalDMLBoundary, upper *nonTransactionalDMLBoundary) (*nonTransactionalDMLScannedChunk, error) {
+	whereSQL, err := buildNonTransactionalDMLRangeSelectWhereSQL(rangeCtx, lower, upper)
 	if err != nil {
 		return nil, err
 	}
@@ -281,8 +498,9 @@ func nonTransactionalDMLBoundaryFromRowDatum(se sessiontypes.Session, desc *nonT
 	return encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, *value.Clone(), true)
 }
 
-func buildNonTransactionalDMLRangeSelectWhereSQL(rangeCtx *nonTransactionalDMLRangeContext, lower *nonTransactionalDMLBoundary) (string, error) {
-	rangeCondition := buildNonTransactionalDMLRangeCondition(rangeCtx.Descriptor, lower, nil)
+func buildNonTransactionalDMLRangeSelectWhereSQL(rangeCtx *nonTransactionalDMLRangeContext, lower *nonTransactionalDMLBoundary,
+	upper *nonTransactionalDMLBoundary) (string, error) {
+	rangeCondition := buildNonTransactionalDMLRangeCondition(rangeCtx.Descriptor, lower, upper)
 	rangeSQL, err := restoreNonTransactionalDMLExpr(rangeCondition)
 	if err != nil {
 		return "", err

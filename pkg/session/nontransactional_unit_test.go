@@ -30,7 +30,9 @@ import (
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -243,6 +245,105 @@ func TestNonTransactionalDMLRangeConditionUsesCheckpointExclusively(t *testing.T
 	require.True(t, strings.Contains(sql, "AND"), sql)
 }
 
+func TestNonTransactionalDMLRangeSelectWhereSQLIncludesRegionUpperBound(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "create table t_select_where(id bigint primary key clustered, b int)")
+	desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, "batch on id limit 2 delete from t_select_where where b > 0")
+	require.NoError(t, err)
+	lower, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewIntDatum(10), true)
+	require.NoError(t, err)
+	upper, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewIntDatum(20), false)
+	require.NoError(t, err)
+
+	whereSQL, err := buildNonTransactionalDMLRangeSelectWhereSQL(&nonTransactionalDMLRangeContext{
+		Descriptor:       desc,
+		OriginalWhereSQL: "`b` > 0",
+	}, &lower, &upper)
+	require.NoError(t, err)
+	require.Contains(t, whereSQL, "(`b` > 0)")
+	require.Contains(t, whereSQL, "`id` >= 10")
+	require.Contains(t, whereSQL, "`id` < 20")
+}
+
+func TestNonTransactionalDMLRangeWorkerCount(t *testing.T) {
+	require.Equal(t, 1, nonTransactionalDMLRangeWorkerCount(0, 0))
+	require.Equal(t, 1, nonTransactionalDMLRangeWorkerCount(0, 3))
+	require.Equal(t, 2, nonTransactionalDMLRangeWorkerCount(2, 5))
+	require.Equal(t, 3, nonTransactionalDMLRangeWorkerCount(8, 3))
+}
+
+func TestNonTransactionalDMLRegionRangePlanningIntHandle(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "create table t_region_int(id bigint primary key clustered, b int)")
+	desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, "batch on id limit 2 delete from t_region_int")
+	require.NoError(t, err)
+
+	recordStart := tablecodec.GenTableRecordPrefix(desc.tableInfo.ID)
+	recordEnd := recordStart.PrefixNext()
+	key0 := tablecodec.EncodeRowKeyWithHandle(desc.tableInfo.ID, kv.IntHandle(0))
+	key10 := tablecodec.EncodeRowKeyWithHandle(desc.tableInfo.ID, kv.IntHandle(10))
+	ranges, err := buildNonTransactionalDMLRangesFromRegionKeyRanges(se.GetSessionVars().StmtCtx, desc, desc.tableInfo.ID, []kv.KeyRange{
+		{StartKey: tablecodec.GenTableRecordPrefix(desc.tableInfo.ID - 1), EndKey: tablecodec.GenTableRecordPrefix(desc.tableInfo.ID - 1).PrefixNext()},
+		{StartKey: recordStart, EndKey: key0},
+		{StartKey: key0, EndKey: key10},
+		{StartKey: key10, EndKey: recordEnd},
+		{StartKey: tablecodec.GenTableRecordPrefix(desc.tableInfo.ID + 1), EndKey: tablecodec.GenTableRecordPrefix(desc.tableInfo.ID + 1).PrefixNext()},
+	})
+	require.NoError(t, err)
+	require.Len(t, ranges, 3)
+	require.Nil(t, ranges[0].lower)
+	requireBoundaryInt(t, ranges[0].upper, 0, false)
+	requireBoundaryInt(t, ranges[1].lower, 0, true)
+	requireBoundaryInt(t, ranges[1].upper, 10, false)
+	requireBoundaryInt(t, ranges[2].lower, 10, true)
+	require.Nil(t, ranges[2].upper)
+}
+
+func TestNonTransactionalDMLRegionRangePlanningCommonHandleCoalescesUnsafeBoundaries(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "create table t_region_varchar(id varchar(128) collate utf8mb4_bin primary key clustered, b int)")
+	desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, "batch on id limit 2 delete from t_region_varchar")
+	require.NoError(t, err)
+
+	recordStart := tablecodec.GenTableRecordPrefix(desc.tableInfo.ID)
+	recordEnd := recordStart.PrefixNext()
+	key10 := encodeCommonHandleRegionKeyForTest(t, se, desc.tableInfo.ID, "v1:pacer_largepayload0010")
+	key20 := encodeCommonHandleRegionKeyForTest(t, se, desc.tableInfo.ID, "v1:pacer_largepayload0020")
+	unsafeKey := append(recordStart.Clone(), 0xff)
+	ranges, err := buildNonTransactionalDMLRangesFromRegionKeyRanges(se.GetSessionVars().StmtCtx, desc, desc.tableInfo.ID, []kv.KeyRange{
+		{StartKey: recordStart, EndKey: key10},
+		{StartKey: key10, EndKey: unsafeKey},
+		{StartKey: unsafeKey, EndKey: key20},
+		{StartKey: key20, EndKey: recordEnd},
+	})
+	require.NoError(t, err)
+	require.Len(t, ranges, 3)
+	require.Nil(t, ranges[0].lower)
+	requireBoundaryString(t, ranges[0].upper, "v1:pacer_largepayload0010", false)
+	requireBoundaryString(t, ranges[1].lower, "v1:pacer_largepayload0010", true)
+	requireBoundaryString(t, ranges[1].upper, "v1:pacer_largepayload0020", false)
+	requireBoundaryString(t, ranges[2].lower, "v1:pacer_largepayload0020", true)
+	require.Nil(t, ranges[2].upper)
+}
+
 func TestNonTransactionalDMLSessionContextCaptureApply(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	t.Cleanup(func() {
@@ -413,4 +514,24 @@ func restoreNonTransactionalDMLExprForTest(t *testing.T, expr ast.ExprNode) stri
 		format.RestoreBracketAroundBinaryOperation|
 		format.RestoreStringWithoutCharset, &sb)))
 	return sb.String()
+}
+
+func encodeCommonHandleRegionKeyForTest(t *testing.T, se sessiontypes.Session, tableID int64, value string) kv.Key {
+	encoded, err := codec.EncodeKey(se.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewStringDatum(value))
+	require.NoError(t, err)
+	return tablecodec.EncodeRowKey(tableID, encoded)
+}
+
+func requireBoundaryInt(t *testing.T, boundary *nonTransactionalDMLBoundary, expected int64, inclusive bool) {
+	require.NotNil(t, boundary)
+	require.True(t, boundary.hasValue)
+	require.Equal(t, inclusive, boundary.inclusive)
+	require.Equal(t, expected, boundary.value.GetInt64())
+}
+
+func requireBoundaryString(t *testing.T, boundary *nonTransactionalDMLBoundary, expected string, inclusive bool) {
+	require.NotNil(t, boundary)
+	require.True(t, boundary.hasValue)
+	require.Equal(t, inclusive, boundary.inclusive)
+	require.Equal(t, expected, boundary.value.GetString())
 }
