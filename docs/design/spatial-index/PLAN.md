@@ -6,7 +6,7 @@ Reference: `PLANS.md` at repository root; this plan must be maintained according
 
 ## Purpose / Big Picture
 
-After this change, a TiDB user can create a spatial index on a `GEOMETRY` column and have proximity and containment queries served by selective index lookups instead of full table scans. Concretely, given a table of store locations, a query for "all stores within 10 km of a point" (a distance-bounded predicate) and "which region contains this point" (`ST_Contains` / `ST_Within`) will use the index.
+After this change, a TiDB user can create a spatial index on a `GEOMETRY` column and have proximity and containment queries served by selective index lookups instead of full table scans. Concretely, given a table of store locations, a query for "all stores within 10 km of a point" (a distance-bounded predicate) and "which area contains this point" (`ST_Contains` / `ST_Within`) will use the index.
 
 You can observe it working by running `EXPLAIN` on such a query and seeing a spatial index access path (a range scan over covering-cell keys) plus a refine filter, instead of a `TableFullScan`, and by confirming the result rows are identical with and without the index.
 
@@ -38,7 +38,7 @@ Concrete first deliverable: the points-only MVP is planned in detail in `docs/de
 ## Decision Log
 
 - Decision: Target the TiKV OLTP path via MVI machinery first; keep the covering logic engine-neutral so a future TiFlash (TiCI columnar) spatial index can reuse it, but build no TiFlash plumbing now.
-  Rationale: the primary user need is OLTP "find near me / which region" point queries; MVI already provides the distributed one-row-many-keys primitive. Over-generalizing to TiFlash up front would block the first implementation.
+  Rationale: the primary user need is OLTP "find near me / which area" point queries; MVI already provides the distributed one-row-many-keys primitive. Over-generalizing to TiFlash up front would block the first implementation.
   Date/Author: 2026-06-23, Mattias Jonsson.
 
 - Decision: Treat the geometry type, EWKB storage, and spatial functions as a prerequisite that lands independently in master; code the index against it behind a `Geometry` abstraction, expecting minor churn before merge.
@@ -91,7 +91,7 @@ A novice reader needs these definitions and locations.
 
 **MBR**: minimum bounding rectangle, the smallest axis-aligned box containing a geometry. The 2D MBR is what gets covered by cells.
 
-**Cell covering**: decomposing a geometry (or a query region) into a set of hierarchical grid cells that contain it. Indexing stores one entry per covering cell; querying scans the cells covering the query region. Coarse cells yield a candidate superset, refined by exact geometry tests.
+**Cell covering**: decomposing a geometry (or a query shape) into a set of hierarchical grid cells that contain it. Indexing stores one entry per covering cell; querying scans the cells covering the query shape. Coarse cells yield a candidate superset, refined by exact geometry tests.
 
 **Multi-valued index (MVI)**: TiDB's existing index kind where one row produces many index entries. Defined by `MVIndex` in `pkg/meta/model/index.go`; set in `pkg/ddl/index.go` for array columns; used today for JSON `MEMBER OF`/`JSON_CONTAINS`/`JSON_OVERLAPS`. This project reuses the same fan-out to write one index entry per covering cell.
 
@@ -114,7 +114,7 @@ The geometry type and basic functions land independently in master. Milestone 0 
 
 The work proceeds bottom-up: prove the covering math in isolation, then the storage/DDL fan-out, then the query path, then the spherical coverer, then compatibility.
 
-First, in the new covering package, define the `CellCoverer` interface and the order-preserving `CellKey` encoding (dimension-tagged for a future 3D extension). Implement `planarQuadtreeCoverer` for SRID 0 over a bounded, configurable coordinate domain with a fixed maximum subdivision depth and a maximum cell count per geometry. Provide `Cover(geom)` for stored geometries and `CoverQuery(region)` returning candidate cell-key ranges for a query polygon and for a distance-bounded disc. This is the riskiest core and is validated as a prototype before any storage wiring.
+First, in the new covering package, define the `CellCoverer` interface and the order-preserving `CellKey` encoding (dimension-tagged for a future 3D extension). Implement `planarQuadtreeCoverer` for SRID 0 over a bounded, configurable coordinate domain with a fixed maximum subdivision depth and a maximum cell count per geometry. Provide `Cover(geom)` for stored geometries and `CoverQuery(shape)` returning candidate cell-key ranges for a query polygon and for a distance-bounded disc. This is the riskiest core and is validated as a prototype before any storage wiring.
 
 Second, add the spatial index kind to the index model and DDL. On row insert/update, compute the covering and write one index entry per cell using the existing MVI fan-out write path. Implement `CREATE SPATIAL INDEX` (parser grammar already has the `Rtree` token and a `SPATIAL INDEX` surface to wire) and backfill of existing rows through the index backfill framework, covering each existing geometry.
 
@@ -134,7 +134,7 @@ Prototype the SRID 0 coverer in isolation (Milestone 1). After adding the packag
     go test ./pkg/util/spatial/... -run TestPlanarQuadtreeCover -v
     make failpoint-disable
 
-Expected: the test asserts that a point covers to exactly one leaf cell, a polygon covers to a bounded set of cells whose union contains the polygon's MBR, and that `CoverQuery` of a region returns ranges that include every cell a contained point would be indexed under (no false negatives).
+Expected: the test asserts that a point covers to exactly one leaf cell, a polygon covers to a bounded set of cells whose union contains the polygon's MBR, and that `CoverQuery` of a shape returns ranges that include every cell a contained point would be indexed under (no false negatives).
 
 Because new Go files and a new top-level test function are added, regenerate Bazel metadata before relying on Bazel builds:
 
@@ -149,7 +149,7 @@ Acceptance is human-verifiable behavior, not just compilation:
 - Milestone 1: the prototype unit test fails before the coverer is implemented and passes after; covering of a sample geometry has no false negatives against a brute-force point-membership check.
 - Milestone 2: after `CREATE SPATIAL INDEX`, the index entry count for a known table matches the sum of per-row covering-cell counts (fan-out is observable), and backfill plus subsequent inserts both populate entries.
 - Milestone 3: for a seeded table, a `ST_Contains`/distance-bound query returns identical rows with and without the index, and `EXPLAIN` shows a covering-cell range scan plus a refine filter rather than a full scan.
-- Milestone 4: the same equivalence holds for SRID 4326 data, including query regions that cross the antimeridian and that sit near a pole.
+- Milestone 4: the same equivalence holds for SRID 4326 data, including query shapes that cross the antimeridian and that sit near a pole.
 - Milestone 5: the chosen MySQL GIS-suite subset passes via `mysql-tester`, and Dumpling/Lightning round-trips of a table with a spatial index are unaffected.
 
 The single end-to-end scenario that proves the feature: seed a "stores" table with points, run "within 10 km of (x,y) order by distance limit 20" both with the index dropped and created, and confirm identical ordered results while `EXPLAIN` shows index use only in the second case.
@@ -171,8 +171,8 @@ The stable seam, in the new engine-neutral package (final path to be confirmed, 
     type CellCoverer interface {
         // Cover returns the cell keys a stored geometry is indexed under.
         Cover(geom Geometry) ([]CellKey, error)
-        // CoverQuery returns the candidate cell-key ranges to scan for a query region.
-        CoverQuery(region QueryRegion) ([]CellKeyRange, error)
+        // CoverQuery returns the candidate cell-key ranges to scan for a query shape.
+        CoverQuery(shape QueryShape) ([]CellKeyRange, error)
     }
 
 Implementations: `planarQuadtreeCoverer` (SRID 0, domain default `[-(1<<31), (1<<31)-1]` per axis, overridable), `s2Coverer` (SRID 4326). Dependencies: `github.com/twpayne/go-geom` for geometry parsing and bounds (already proposed by the prior design); `github.com/golang/geo/s2` (Apache 2.0, Google's Go S2 port) for the 4326 coverer. The index model/DDL reuse the existing MVI write path (`pkg/ddl/index.go`); the planner access-path and executor refine reuse standard scan-plus-filter plumbing in `pkg/planner/core` and `pkg/executor`.

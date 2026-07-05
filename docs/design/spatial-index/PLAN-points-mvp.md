@@ -6,7 +6,7 @@ Reference: `PLANS.md` at repository root; this plan must be maintained according
 
 ## Purpose / Big Picture
 
-After this change a user can create a spatial index on a `POINT` column and have proximity and point-in-region queries served by a selective index scan instead of a full table scan. Concretely, for a table of locations, "find rows within radius r of a point" and "find rows whose point lies in a polygon/window" use the index.
+After this change a user can create a spatial index on a `POINT` column and have proximity and point-in-polygon queries served by a selective index scan instead of a full table scan. Concretely, for a table of locations, "find rows within radius r of a point" and "find rows whose point lies in a polygon/window" use the index.
 
 Observable outcome: on a seeded table, `EXPLAIN` shows a spatial index range scan plus a refine filter (not `TableFullScan`), and the query returns identical rows with and without the index.
 
@@ -63,7 +63,7 @@ To be filled in at Milestone 3 (pipeline working for SRID 0) and at MVP completi
 
 Definitions for a novice reader.
 
-A **POINT geometry** is stored as EWKB: a 4-byte little-endian SRID prefix then OGC WKB (byte order, type, X, Y). **SRID 0** is an abstract Cartesian plane; **SRID 4326** is WGS 84 lat/long. A **space-filling curve (SFC)** linearizes 2D into a 1D ordered value; a point maps to one cell whose id is its position on the curve. **Covering** a query region means producing the set of cell-id ranges that can contain matching points. **Refine** means re-checking candidates with the exact predicate, since cells are coarse.
+A **POINT geometry** is stored as EWKB: a 4-byte little-endian SRID prefix then OGC WKB (byte order, type, X, Y). **SRID 0** is an abstract Cartesian plane; **SRID 4326** is WGS 84 lat/long. A **space-filling curve (SFC)** linearizes 2D into a 1D ordered value; a point maps to one cell whose id is its position on the curve. **Covering** a query shape means producing the set of cell-id ranges that can contain matching points. **Refine** means re-checking candidates with the exact predicate, since cells are coarse.
 
 **Prerequisite contract** (lands independently; this MVP codes against it behind one thin accessor):
 
@@ -86,11 +86,11 @@ Today only `TypeGeometry` (`pkg/parser/mysql/type.go:47`) exists; the rest is ab
 
 The work goes bottom-up so the riskiest piece is proven before the rest is built on it.
 
-First, add an engine-neutral coverer package (proposed `pkg/util/spatial`). Define the shared `CellCoverer` seam (`CellKey []byte`; see PLAN.md / research.md) with `EncodePoint(srid, x, y) (CellKey, error)` returning a point's encoded cell key, and `CoverQuery(srid, region) ([]CellKeyRange, error)` returning the cell-key ranges covering a query region (a rectangle, or a distance-bounded disc on a plane). Implement `planarCoverer` for SRID 0 over a configurable bounded domain (default `[-(1<<31), (1<<31)-1]` per axis, per `research.md`). Validate in isolation: a point encodes to one cell; `CoverQuery` of a region returns ranges that include the cell of every point inside the region (no false negatives), checked against brute force on random points. In the same milestone, write a throwaway test that constructs an `AccessPath` and confirms coverer-produced ranges can be injected as `path.Ranges` and drive an index scan, this de-risks the planner hook before committing to its final location.
+First, add an engine-neutral coverer package (proposed `pkg/util/spatial`). Define the shared `CellCoverer` seam (`CellKey []byte`; see PLAN.md / research.md) with `EncodePoint(srid, x, y) (CellKey, error)` returning a point's encoded cell key, and `CoverQuery(srid, shape) ([]CellKeyRange, error)` returning the cell-key ranges covering a query shape (a rectangle, or a distance-bounded disc on a plane). Implement `planarCoverer` for SRID 0 over a configurable bounded domain (default `[-(1<<31), (1<<31)-1]` per axis, per `research.md`). Validate in isolation: a point encodes to one cell; `CoverQuery` of a shape returns ranges that include the cell of every point inside the shape (no false negatives), checked against brute force on random points. In the same milestone, write a throwaway test that constructs an `AccessPath` and confirms coverer-produced ranges can be injected as `path.Ranges` and drive an index scan, this de-risks the planner hook before committing to its final location.
 
 Second, wire DDL. Add an internal builtin `tidb_spatial_key(geom)` returning the point's encoded cell key (the `CellKey`, an order-preserving fixed-width binary value) in a new `pkg/expression/builtin_spatial.go`, registered in the `funcs` map, that calls `spatial.EncodePoint` on the decoded point. Creating a spatial index on a `POINT` column generates a hidden virtual generated column whose `GeneratedExprString` is `tidb_spatial_key(<col>)` and builds a plain (non-MVI) secondary index on it, reusing the expression-index path. Record minimal metadata on `IndexInfo` marking it spatial and recording the source column and SRID so the planner can recognize it. Enforce the `POINT`, `NOT NULL`, SRID-constrained column restriction at DDL validation.
 
-Third, the planner hook and refine. In access-path construction for a `DataSource`, for each spatial index whose point column appears in a recognized spatial predicate (`ST_Distance(col, const) <= r`, `ST_Distance_Sphere(...) <= r`, `ST_Contains(const_poly, col)`, `ST_Within(col, const_poly)`, or a rectangular MBR test), evaluate the constant query region at plan time, call `CoverQuery`, set the resulting cell ranges as the path's `Ranges`, and leave the original exact predicate in `TableFilters` so the Selection above the scan refines. Confirm via `EXPLAIN` and result-equivalence. The bounded form `WHERE within radius ORDER BY distance LIMIT k` is supported automatically: the index serves the `WHERE`, an ordinary `TopN` sorts the small candidate set.
+Third, the planner hook and refine. In access-path construction for a `DataSource`, for each spatial index whose point column appears in a recognized spatial predicate (`ST_Distance(col, const) <= r`, `ST_Distance_Sphere(...) <= r`, `ST_Contains(const_poly, col)`, `ST_Within(col, const_poly)`, or a rectangular MBR test), evaluate the constant query shape at plan time, call `CoverQuery`, set the resulting cell ranges as the path's `Ranges`, and leave the original exact predicate in `TableFilters` so the Selection above the scan refines. Confirm via `EXPLAIN` and result-equivalence. The bounded form `WHERE within radius ORDER BY distance LIMIT k` is supported automatically: the index serves the `WHERE`, an ordinary `TopN` sorts the small candidate set.
 
 Fourth, add `s2Coverer` for SRID 4326 using `github.com/golang/geo/s2`, behind the same `CellCoverer` interface, with spherical-cap covering for distance queries and correct antimeridian/pole handling. No code above the coverer interface changes.
 
@@ -124,7 +124,7 @@ Acceptance is behavior, not compilation.
 - Milestone 1: coverer unit test fails before, passes after; zero false negatives vs brute force; the range-injection prototype drives an index scan.
 - Milestone 2: after `CREATE SPATIAL INDEX` on a seeded `POINT` column, the index entry count equals the row count (one entry per row), and later inserts add one entry each.
 - Milestone 3: for a seeded table, `ST_Distance`-within and `ST_Contains` queries return identical rows with the index dropped and created, and `EXPLAIN` shows a spatial index range scan plus a refine filter rather than a full scan; `WHERE within radius ORDER BY distance LIMIT k` returns the same ordered rows as the no-index plan.
-- Milestone 4: the same equivalence holds for SRID 4326 data, including a query region crossing the antimeridian and one near a pole.
+- Milestone 4: the same equivalence holds for SRID 4326 data, including a query shape crossing the antimeridian and one near a pole.
 - Milestone 5: targeted tests pass; `make bazel_prepare` changes are included; `make lint` is clean.
 
 End-to-end scenario proving the feature: seed a points table, run "within radius of (x,y) order by distance limit 20" with the index dropped and then created, confirm identical ordered results while `EXPLAIN` shows index use only in the second case.
@@ -146,7 +146,7 @@ In `pkg/util/spatial` (final path to be confirmed):
 
     type CellCoverer interface {
         EncodePoint(srid uint32, x, y float64) (CellKey, error)        // a point covers to one cell
-        CoverQuery(srid uint32, region QueryRegion) ([]CellKeyRange, error)
+        CoverQuery(srid uint32, shape QueryShape) ([]CellKeyRange, error)
     }
 
 `CellKey` is the byte form used across the design (it models S2's unsigned cell ids

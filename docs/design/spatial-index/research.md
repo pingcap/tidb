@@ -42,7 +42,7 @@ not as deliverables of this effort.
 Geospatial support is one of the most requested TiDB features (issue #6347 carries
 the `feature/accepted` label and ranks among the top issues by 👍 reactions).
 The dominant real-world workload is simple: store points (latitude/longitude) and
-answer "what is near me" or "which region is this point in". Concretely, bike-share
+answer "what is near me" or "which area is this point in". Concretely, bike-share
 and parcel-delivery style applications storing a location per row and querying by
 proximity or containment.
 
@@ -137,7 +137,7 @@ abstraction in the covering package, so churn stays localized.
 The spatial surface is large (~70 `ST_*` functions), but real workloads cluster
 tightly. In priority order:
 
-1. **Point storage** (`POINT`), and `POLYGON` for regions/geofences.
+1. **Point storage** (`POINT`), and `POLYGON` for areas/geofences.
 2. **Proximity**: "within X meters/units" via a distance bound, and
    `ORDER BY distance LIMIT k` over a bounded candidate set.
 3. **Containment**: point-in-polygon (`ST_Contains` / `ST_Within`), the geofence
@@ -194,7 +194,7 @@ Recursively split a 2D plane into four quadrants; a cell ID is the path from the
 root, equal to the bit-interleaving (Morton/Z-order code) of the coordinates.
 Geohash is a base-32 encoding of that. MySQL even exposes `ST_Geohash()`, which
 lets users fake a spatial index today via a generated column plus a regular index,
-but a prefix index on geohash does not correctly answer arbitrary region queries
+but a prefix index on geohash does not correctly answer arbitrary window queries
 (antimeridian, variable precision, no true range covering).
 
 - Benefits: trivial to implement, cheap, maps directly onto ordered KV keys, no
@@ -298,7 +298,7 @@ A spatial index maps onto this directly:
   multiple keys, and that is the multi-valued index. A point therefore produces one
   entry and needs no MVI; only polygons/linestrings fan out and use it.
 - **Query time** (filter-and-refine, the standard spatial query pattern):
-  1. Cover the query region (a polygon, or a distance-bounded disc/cap) with cells.
+  1. Cover the query shape (a polygon, or a distance-bounded disc/cap) with cells.
   2. Range-scan those cell-key ranges to get a candidate row set.
   3. Refine each candidate with the exact geometry predicate to drop false
      positives (cells are coarse, so the candidate set is a superset).
@@ -378,7 +378,7 @@ CREATE TABLE t (id bigint primary key, position geometry, load json);
 
 These shorthand pipelines are used below and in the comparison table.
 
-- **Cover**: turn the query region (a window rectangle, or a distance-bounded disc on a
+- **Cover**: turn the query shape (a window rectangle, or a distance-bounded disc on a
   plane / cap on the sphere) into the set of index keys that could hold matches,
   covering cells for the cell/MVI index, covering Hilbert ranges for a Hilbert index.
 - **Range-scan**: scan the index over those cells/ranges to collect candidate handles.
@@ -483,7 +483,7 @@ fan-out, and the multi-level ("zoom") search. Coordinates here use a small domai
 `[0,16)²` for readability; the real domain is far larger (±2^31) but the mechanics are
 identical.
 
-Take a triangle `T` with vertices `(4,4), (8,4), (4,8)` (the region `x>=4, y>=4,
+Take a triangle `T` with vertices `(4,4), (8,4), (4,8)` (the area `x>=4, y>=4,
 x+y<=12`). Its bounding box is `minX=4, minY=4, maxX=8, maxY=8`: a small box well
 inside the domain, and the triangle fills only half of it.
 
@@ -811,7 +811,7 @@ SRID 4326 is WGS 84 lat/long on the globe: naturally bounded, but treating it as
 flat rectangle (plain geohash) has three correctness hazards:
 
 1. **Antimeridian discontinuity**: lon 179.9° and -179.9° are neighbours on Earth
-   but far apart in a flat grid; any query region crossing it must be split.
+   but far apart in a flat grid; any query shape crossing it must be split.
 2. **Pole distortion**: near-pole cells cover tiny real areas; coverage is wildly
    non-uniform.
 3. **Distance covering**: "within 10 km" is a spherical cap, not a lat/long box;
@@ -831,8 +831,8 @@ type CellKey []byte
 type CellCoverer interface {
     // Cover returns the cell keys a stored geometry is indexed under.
     Cover(geom Geometry) ([]CellKey, error)
-    // CoverQuery returns the candidate cell-key ranges to scan for a query region.
-    CoverQuery(region QueryRegion) ([]CellKeyRange, error)
+    // CoverQuery returns the candidate cell-key ranges to scan for a query shape.
+    CoverQuery(shape QueryShape) ([]CellKeyRange, error)
 }
 ```
 
@@ -852,7 +852,7 @@ distributed plumbing is validated before spherical-geometry complexity lands.
 
 | Query | Index-accelerated? | How |
 |---|---|---|
-| `ST_Intersects`, `ST_Contains`, `ST_Within`, `ST_Covers`, `ST_Overlaps`, MBR* | Yes | Cell/region overlap → candidates → exact refine |
+| `ST_Intersects`, `ST_Contains`, `ST_Within`, `ST_Covers`, `ST_Overlaps`, MBR* | Yes | Cell/shape overlap → candidates → exact refine |
 | `ST_Distance(g,p) < r` (bounded radius) | Yes | Cover a disc (SRID 0) / spherical cap (4326) of radius r → candidates → exact distance refine |
 | `WHERE within radius ORDER BY distance LIMIT k` | Yes (filter only) | Index prunes by radius; ordinary TopN sorts the small candidate set |
 | `ORDER BY distance LIMIT k` with no radius | Not directly | Cell index is not distance-sorted; needs an expanding-ring KNN operator (deferred) or a user-supplied radius |

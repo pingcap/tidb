@@ -27,7 +27,7 @@ geometry column. The index is a TiKV secondary index that decomposes a geometry 
 set of covering cells of a space-filling curve (Hilbert ordering, S2 cells for
 geographic data and a planar quadtree for Cartesian data), stores one ordered key per
 covering cell using TiDB's existing multi-valued-index mechanism, and answers spatial
-queries by scanning the cell ranges that cover the query region and then refining
+queries by scanning the cell ranges that cover the query shape and then refining
 candidates with the exact predicate.
 
 The scope of this document is the **index only**. The `GEOMETRY` data type, its EWKB
@@ -43,7 +43,7 @@ concrete first-deliverable plan live alongside this file under
 Geospatial support is one of the most requested TiDB features. Tracking issue #6347
 carries the `feature/accepted` label and ranks among the top open issues by reactions.
 The dominant real-world workload is simple and concrete: store a location per row
-(latitude/longitude or a planar coordinate) and answer "what is near me", "which region
+(latitude/longitude or a planar coordinate) and answer "what is near me", "which area
 contains this point", or "what overlaps this box". Bike-share, ride-hailing, parcel
 delivery, and asset-tracking applications all reduce to points plus proximity and
 geofence queries.
@@ -83,7 +83,7 @@ TiDB already has the needed primitive: the **multi-valued index (MVI)**, where o
 produces many ordered index entries (today used for JSON array membership). A spatial
 index maps onto it directly: cover each geometry with a set of hierarchical cells and
 write one index entry per covering cell. Queries follow the standard spatial
-**filter-and-refine** pattern: cover the query region into cell ranges, range-scan to
+**filter-and-refine** pattern: cover the query shape into cell ranges, range-scan to
 get candidate rows, then evaluate the exact predicate to drop false positives. The
 index always returns a superset; correctness lives in the refine step.
 
@@ -167,7 +167,7 @@ A single engine-neutral `Coverer` abstraction isolates the curve/cell math:
 
     EncodePoint(srid, x, y) -> cell_key            // for a stored geometry (point: one cell)
     Cover(srid, geometry)   -> []cell_key          // covering cells of an extent
-    CoverQuery(srid, region) -> []cell_range       // cell ranges covering a query region
+    CoverQuery(srid, shape) -> []cell_range       // cell ranges covering a query shape
 
 Two implementations, chosen by the column's SRID, sit behind it:
 
@@ -221,9 +221,9 @@ Index maintenance is transactional with the row, identical to any TiDB secondary
 
 ### Query path
 
-1. Compute the query region (a window rectangle, or a distance-bounded disc on a plane /
+1. Compute the query shape (a window rectangle, or a distance-bounded disc on a plane /
    cap on the sphere) from the predicate's constant arguments.
-2. `CoverQuery` the region into cell ranges.
+2. `CoverQuery` the shape into cell ranges.
 3. Range-scan those ranges over the index.
 4. Apply the bbox-intersection filter on the index's bbox columns (`minX <= q_maxX AND
    maxX >= q_minX AND minY <= q_maxY AND maxY >= q_minY`; for a point index it degenerates
@@ -250,7 +250,7 @@ TiKV/TiFlash evaluator and is a later, optional increment (see Compatibility -> 
 `research.md` -> "Exact refine location and coprocessor pushdown"). The baseline runs step 7
 at the TiDB root as a retained `Selection`, so Phases 1-2 need no new executor operator.
 
-For **prepared/parameterized** queries the query region and its cell ranges depend on the
+For **prepared/parameterized** queries the query shape and its cell ranges depend on the
 parameter values, so the ranges are rebuilt at execution from the parameters (as for any
 parameterized index range), not frozen in a cached plan; if runtime rebuild is not wired,
 the spatial plan is marked non-cacheable (a `NoncacheableReason`).
@@ -263,7 +263,7 @@ plain cell index and is deferred (it needs an expanding-ring operator).
 ### Worked example: indexing and querying a triangle
 
 This condenses the full walkthrough in `docs/design/spatial-index/research.md`. Take a triangle `T = (4,4), (8,4), (4,8)` (the
-region `x>=4, y>=4, x+y<=12`) in a small domain `[0,16)²`; its bounding box is
+area `x>=4, y>=4, x+y<=12`) in a small domain `[0,16)²`; its bounding box is
 `[4,8]×[4,8]`, a small box well inside the domain. Cells are squares of side
 `domain/2^L`; a cell id is a path of quadrant digits, so a cell's ancestors are its id
 prefixes and its descendants share its id as a prefix (a contiguous key range).
@@ -290,7 +290,7 @@ These multiple keys are the MVI fan-out: an MVI is one row writing multiple inde
 (as for JSON-array columns), not multiple values under one key. A point would write a
 single entry and need no MVI.
 
-Search covers the query region into cells, then for each query cell finds stored cells
+Search covers the query shape into cells, then for each query cell finds stored cells
 that are it, an ancestor, or a descendant: a finer query matches a coarser stored cell
 via ancestor prefixes (a few point lookups); a coarser query matches finer stored cells
 via a descendant range scan; the bbox index columns cheaply reject non-overlaps (pushed
@@ -390,7 +390,7 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
 
 ### Functional Tests
 
-- Coverer unit tests: a point encodes to one cell; `CoverQuery` of a region returns
+- Coverer unit tests: a point encodes to one cell; `CoverQuery` of a shape returns
   ranges that include the cell of every contained point (zero false negatives vs a
   brute-force check over random points), for both SRID 0 and 4326.
 - Result-equivalence: for seeded tables, distance-within, `ST_Contains`/`ST_Within`, and
@@ -408,8 +408,8 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
 ### Scenario Tests
 
 - Proximity ("stores within 10 km of a point", including `ORDER BY distance LIMIT k`).
-- Geofence (point-in-polygon over a region table).
-- SRID 4326 edge cases: a query region crossing the antimeridian and one near a pole.
+- Geofence (point-in-polygon over a geofence table).
+- SRID 4326 edge cases: a query shape crossing the antimeridian and one near a pole.
 - Multi-tenant partitioned table: per-tenant spatial query (local index prunes) and, in
   Phase 3, cross-tenant spatial query (global index).
 
