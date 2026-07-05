@@ -111,7 +111,7 @@ func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
 			defer func() {
 				panicVal = recover()
 			}()
-			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub)
+			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub, nil)
 		}()
 		require.NotNil(t, panicVal)
 		panicMsg := fmt.Sprint(panicVal)

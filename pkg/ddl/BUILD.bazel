@@ -112,6 +112,7 @@ go_library(
         "//pkg/expression",
         "//pkg/expression/exprctx",
         "//pkg/expression/exprstatic",
+        "//pkg/extworkload",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/ingestor/engineapi",

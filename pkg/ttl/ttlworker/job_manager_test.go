@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -36,6 +38,49 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
+
+type fakeExternalWorkloadManager struct {
+	role             config.ExternalWorkloadRole
+	recycledCreateTS uint64
+}
+
+func (m *fakeExternalWorkloadManager) Close() error { return nil }
+func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, int64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, int64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterTTLTask(context.Context, int64, bool) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) DeleteTTLTableInfo(context.Context, int64) error {
+	return nil
+}
+func (m *fakeExternalWorkloadManager) RecycleTTLTask(_ context.Context, completedJobCreateTime uint64) error {
+	m.recycledCreateTS = completedJobCreateTime
+	return nil
+}
+func (*fakeExternalWorkloadManager) UpdateTTLJobEnable(context.Context, bool) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
@@ -240,6 +285,57 @@ func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) 
 
 func (j *ttlJob) ID() string {
 	return j.id
+}
+
+func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
+	createTime := time.Unix(1234, 0)
+	externalMgr := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
+	m := NewJobManager("test-id", nil, nil, nil, nil, externalMgr)
+	m.runningJobs = []*ttlJob{
+		{
+			id:         "job1",
+			ownerID:    "test-id",
+			createTime: createTime,
+			tableID:    1,
+			status:     cache.JobStatusRunning,
+		},
+	}
+
+	se := newMockSession(t)
+	sqlCounter := 0
+	se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+		sqlCounter++
+		if sqlCounter == 1 {
+			expectedSQL, expectedArgs := cache.SelectFromTTLTaskWithJobID("job1")
+			require.Equal(t, expectedSQL, sql)
+			require.Equal(t, expectedArgs, args)
+		}
+		return nil, nil
+	}
+
+	m.CheckFinishedJob(se)
+	require.Empty(t, m.runningJobs)
+	require.Equal(t, uint64(createTime.Unix()), externalMgr.recycledCreateTS)
+	require.Equal(t, 4, sqlCounter)
+}
+
+func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
+	externalMgr := &fakeExternalWorkloadManager{role: config.RoleMaster}
+	m := NewJobManager("test-id", nil, nil, nil, nil, externalMgr)
+	m.runningJobs = []*ttlJob{
+		{
+			id:         "job1",
+			ownerID:    "test-id",
+			createTime: time.Unix(1234, 0),
+			tableID:    1,
+			status:     cache.JobStatusRunning,
+		},
+	}
+	se := newMockSession(t)
+
+	m.CheckFinishedJob(se)
+	require.Empty(t, m.runningJobs)
+	require.Zero(t, externalMgr.recycledCreateTS)
 }
 
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {

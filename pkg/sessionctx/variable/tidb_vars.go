@@ -44,6 +44,8 @@ var (
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
+	// UpdateExternalWorkloadTTLJobEnable is the func registered by domain to update external TTL worker scheduling.
+	UpdateExternalWorkloadTTLJobEnable func(ctx context.Context, enable bool) error
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.

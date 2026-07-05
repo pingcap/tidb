@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -62,11 +63,15 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+type domainCreateOptions struct {
+	extWorkloadMgr extworkload.Manager
+}
+
 // Get or create the domain for store.
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, nil)
+	return dm.getWithEtcdClient(store, nil, nil, domainCreateOptions{})
 }
 
 // GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
@@ -74,10 +79,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 // Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
 // the actual schema filter of the returned `Domain` is the one when the domain were created.
 func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, filter)
+	return dm.getWithEtcdClient(store, nil, filter, domainCreateOptions{})
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter, opts domainCreateOptions) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -113,6 +118,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			etcdClient,
 			schemaFilter,
 		)
+		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
