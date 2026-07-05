@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -74,6 +74,11 @@ func (s *resourceGroupProviderStub) Put(context.Context, []byte, []byte, ...opt.
 }
 
 func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
+	originalEdition := versioninfo.TiDBEdition
+	t.Cleanup(func() {
+		versioninfo.TiDBEdition = originalEdition
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -90,6 +95,7 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 		resourceErr: errors.New("resource group unavailable"),
 	}
 
+	versioninfo.TiDBEdition = "Starter"
 	controllerWithFallback, err := rmclient.NewResourceGroupController(
 		ctx,
 		1,
@@ -112,13 +118,14 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 		RUSettings: newDefaultDegradedRUSettings(),
 	}, group)
 
+	versioninfo.TiDBEdition = versioninfo.CommunityEdition
 	controllerWithoutFallback, err := rmclient.NewResourceGroupController(
 		ctx,
 		2,
 		provider,
 		nil,
 		0,
-		rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration),
+		newResourceGroupsControllerOptions()...,
 	)
 	require.NoError(t, err)
 	controllerWithoutFallback.Start(ctx)
