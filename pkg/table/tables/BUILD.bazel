@@ -71,6 +71,7 @@ go_test(
         "assertion_test.go",
         "bench_test.go",
         "cache_test.go",
+        "canskip_test.go",
         "export_test.go",
         "index_test.go",
         "main_test.go",
@@ -80,7 +81,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 43,
+    shard_count = 50,
     deps = [
         "//pkg/ddl",
         "//pkg/domain",
