@@ -1793,43 +1793,6 @@ func (cc *clientConn) getDataFromPath(ctx context.Context, path string) ([]byte,
 	return prevData, nil
 }
 
-// handleLoadStats does the additional work after processing the 'load stats' query.
-// It sends client a file path, then reads the file content from client, loads it into the storage.
-func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
-	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if loadStatsInfo == nil {
-		return errors.New("load stats: info is empty")
-	}
-	data, err := cc.getDataFromPath(ctx, loadStatsInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return nil
-	}
-	return loadStatsInfo.Update(data)
-}
-
-func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if planReplayerLoadInfo == nil {
-		return errors.New("plan replayer load: info is empty")
-	}
-	data, err := cc.getDataFromPath(ctx, planReplayerLoadInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return nil
-	}
-	return planReplayerLoadInfo.Update(data)
-}
-
 func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.PlanReplayerDumpInfo) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
@@ -2416,33 +2379,20 @@ func (cc *clientConn) postprocessLoadDataLocal() {
 	}
 }
 
-type fileTransInConnHandler func(*clientConn, context.Context, any) error
-
-var fileTransInConnHandlers = map[fmt.Stringer]fileTransInConnHandler{
-	executor.LoadStatsVarKey: func(cc *clientConn, ctx context.Context, value any) error {
-		//nolint:forcetypeassert
-		return cc.handleLoadStats(ctx, value.(*executor.LoadStatsInfo))
-	},
-	executor.PlanReplayerLoadVarKey: func(cc *clientConn, ctx context.Context, value any) error {
-		//nolint:forcetypeassert
-		return cc.handlePlanReplayerLoad(ctx, value.(*executor.PlanReplayerLoadInfo))
-	},
-}
-
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 
-	for _, key := range executor.FileTransInConnKeys {
+	for key, handler := range executor.FileTransInConnHandlers {
 		value := cc.ctx.Value(key)
 		if value == nil {
 			continue
 		}
-		handler, ok := fileTransInConnHandlers[key]
-		if !ok {
-			return handled, errors.Errorf("missing file transfer handler for %s", key)
-		}
 		handled = true
-		err := handler(cc, ctx, value)
+		if cc.capability&mysql.ClientLocalFiles == 0 {
+			cc.ctx.SetValue(key, nil)
+			return handled, servererr.ErrNotAllowedCommand
+		}
+		err := handler(ctx, value, cc.getDataFromPath)
 		cc.ctx.SetValue(key, nil)
 		if err != nil {
 			return handled, err
@@ -2450,7 +2400,7 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 	}
 
 	// PlanReplayerDumpVarKey follows the result-set path, so it is not part of
-	// executor.FileTransInConnKeys used by session.hasFileTransInConn.
+	// executor.FileTransInConnHandlers used by session.hasFileTransInConn.
 	planReplayerDump := cc.ctx.Value(executor.PlanReplayerDumpVarKey)
 	if planReplayerDump != nil {
 		handled = true

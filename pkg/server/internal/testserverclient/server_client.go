@@ -437,14 +437,15 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	slowLog, err := os.CreateTemp("", "tidb-slow-*.log")
+	slowLogPath := filepath.Join(t.TempDir(), "tidb-slow.log")
+	slowLog, err := os.Create(slowLogPath)
 	require.NoError(t, err)
 	require.NoError(t, slowLog.Close())
-	newCfg.Log.SlowQueryFile = slowLog.Name()
+	newCfg.Log.SlowQueryFile = slowLogPath
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
-		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+		require.NoError(t, logutil.InitLogger(originCfg.Log.ToLogConfig()))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 

@@ -34,7 +34,6 @@ go_library(
         "distsql.go",
         "expand.go",
         "explain.go",
-        "file_trans_in_conn.go",
         "foreign_key.go",
         "grant.go",
         "import_into.go",
