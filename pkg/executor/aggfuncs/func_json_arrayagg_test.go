@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 func TestMergePartialResult4JsonArrayagg(t *testing.T) {
@@ -55,7 +54,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries3 = append(entries3, entries1...)
 		entries3 = append(entries3, entries2...)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
 	}
 
 	for _, test := range tests {
@@ -82,7 +81,7 @@ func TestJsonArrayagg(t *testing.T) {
 		// to adapt the `genSrcChk` Chunk format
 		entries = append(entries, nil)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, types.CreateBinaryJSON(entries)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, nil, types.CreateBinaryJSON(entries)))
 	}
 
 	for _, test := range tests {
@@ -90,10 +89,10 @@ func TestJsonArrayagg(t *testing.T) {
 	}
 }
 
-func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func jsonArrayaggMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := range srcChk.NumRows() {
-		row := srcChk.GetRow(i)
+	for i := range param.srcChk.NumRows() {
+		row := param.srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, aggfuncs.DefInterfaceSize)
 			continue
@@ -101,7 +100,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 
 		memDelta := int64(0)
 		memDelta += aggfuncs.DefInterfaceSize
-		switch dataType.GetType() {
+		switch param.keyType.GetType() {
 		case mysql.TypeLonglong:
 			memDelta += aggfuncs.DefUint64Size
 		case mysql.TypeFloat:
@@ -122,7 +121,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefFloat64Size
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
+			return memDeltas, errors.Errorf("unsupported type - %v", param.keyType.GetType())
 		}
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -135,7 +134,7 @@ func TestMemJsonArrayagg(t *testing.T) {
 	tests := make([]aggMemTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
-		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))
+		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))
 	}
 
 	for _, test := range tests {

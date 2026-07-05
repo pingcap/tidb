@@ -92,6 +92,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_max_chunk_size":                             {},
 	"tidb_min_paging_size":                            {},
 	"tidb_max_paging_size":                            {},
+	"tidb_paging_size_bytes":                          {},
 	"tidb_enable_cascades_planner":                    {},
 	"tidb_merge_join_concurrency":                     {},
 	"tidb_index_merge_intersection_concurrency":       {},
@@ -144,6 +145,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
 	"max_execution_time":      {},
+	"tidb_max_keys_read":      {},
 }
 
 func setHintUpdatable(vars []*SysVar) {

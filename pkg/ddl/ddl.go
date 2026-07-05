@@ -71,8 +71,6 @@ import (
 )
 
 const (
-	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
@@ -224,7 +222,6 @@ type JobWrapper struct {
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
 	ResultCh []chan jobSubmitResult
-	cacheErr error
 }
 
 // NewJobWrapper creates a new JobWrapper.
@@ -246,17 +243,6 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 		IDAllocated: idAllocated,
 		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
-	}
-}
-
-// FillArgsWithSubJobs fill args for job and its sub jobs
-func (jobW *JobWrapper) FillArgsWithSubJobs() {
-	if jobW.Type != model.ActionMultiSchemaChange {
-		jobW.FillArgs(jobW.JobArgs)
-	} else {
-		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			sub.FillArgs(jobW.Version)
-		}
 	}
 }
 
@@ -761,7 +747,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
-		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
+		manager = owner.NewMockManager(ctx, id, opt.Store, util.DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
@@ -1331,19 +1317,30 @@ var (
 	RunInGoTest bool
 )
 
+// GetRecoverSnapshotTS returns the snapshot timestamp for reconstructing
+// metadata from a finished drop/truncate table or drop schema job.
+func GetRecoverSnapshotTS(job *model.Job) uint64 {
+	if job.RealStartTS != 0 {
+		return job.RealStartTS
+	}
+	return job.StartTS
+}
+
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-		if err != nil {
-			return false, err
-		}
 		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 			continue
 		}
 
-		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
+		snapshotTS := GetRecoverSnapshotTS(job)
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(snapshotTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+
+		tbl, err := getTable(snapshotTS, job.SchemaID, job.TableID)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
 				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
@@ -1471,25 +1468,6 @@ func cancelRunningJob(job *model.Job,
 	return nil
 }
 
-// pauseRunningJob check and pause the running Job
-func pauseRunningJob(job *model.Job,
-	byWho model.AdminCommandOperator) (err error) {
-	if job.IsPausing() || job.IsPaused() {
-		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-	}
-	if !job.IsPausable() {
-		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
-		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
-		if err != nil {
-			return err
-		}
-	}
-
-	job.State = model.JobStatePausing
-	job.AdminOperator = byWho
-	return nil
-}
-
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
@@ -1498,16 +1476,39 @@ func resumePausedJob(job *model.Job,
 			job.State, job.SchemaState)
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
-	// The Paused job should only be resumed by who paused it
-	if job.AdminOperator != byWho {
+	// The Paused job should only be resumed by who paused it, except system
+	// pauses with a reason that explicitly allows end-user recovery.
+	if job.AdminOperator != byWho && !canEndUserResumeSystemPausedJob(job, byWho) {
 		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
 			job.AdminOperator.String(), byWho.String())
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
+	resumeFromKVDiskFullByEndUser := byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 	job.State = model.JobStateQueueing
+	job.ClearPauseReason()
+	job.Error = nil
+	if resumeFromKVDiskFullByEndUser {
+		job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	} else {
+		job.ClearResumeReason()
+	}
 
 	return nil
+}
+
+// resumePausedJobForUpgradeFinish resumes jobs paused for upgrade, but leaves
+// resource-protection pauses for explicit user recovery.
+func resumePausedJobForUpgradeFinish(job *model.Job,
+	byWho model.AdminCommandOperator) error {
+	if job.IsPausedBySystemForKVDiskFull() {
+		return nil
+	}
+	return resumePausedJob(job, byWho)
+}
+
+func canEndUserResumeSystemPausedJob(job *model.Job, byWho model.AdminCommandOperator) bool {
+	return byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 }
 
 // processJobs command on the Job according to the process
@@ -1603,7 +1604,7 @@ func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs [
 
 // PauseJobs pause all the DDL jobs according to user command.
 func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
@@ -1620,7 +1621,7 @@ func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 // PauseJobsBySystem pauses Jobs because of internal reasons.
 func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
-	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandBySystem)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
@@ -1694,12 +1695,12 @@ func processAllJobs(
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
 func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), pauseRunningJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), util.PauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
 func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), resumePausedJobForUpgradeFinish, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.

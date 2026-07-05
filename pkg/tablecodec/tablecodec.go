@@ -1175,7 +1175,8 @@ func IsUntouchedIndexKValue(k, v []byte) bool {
 		return vLen > 0 && v[vLen-1] == kv.UnCommitIndexKVFlag
 	}
 	if vLen <= MaxOldEncodeValueLen {
-		return (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag
+		// vLen = 1/9 for legacy layout, 4 for common-handle-v1 layout
+		return (vLen == 1 || vLen == 9 || vLen == 4) && v[vLen-1] == kv.UnCommitIndexKVFlag
 	}
 	// New index value format
 	tailLen := int(v[0])
@@ -1545,7 +1546,45 @@ func TempIndexValueIsUntouched(b []byte) bool {
 }
 
 // GenIndexValuePortal is the portal for generating index value.
-// Value layout:
+// TiDB has several physical index-value layouts. The layout is selected by
+// table/index metadata and the current scenario; it is not a simple version
+// upgrade path. A new cluster can still contain or generate more than one
+// layout. The variants are:
+//
+//  1. Legacy compact layout, also known as "Old Encoding".
+//  2. Extensible layout, used by common-handle unique indexes, global indexes,
+//     and restored-data cases. This is also called IndexValueVersion0.
+//  3. Clustered common-handle V1 layout, used by tables whose
+//     CommonHandleVersion is 1. This is also called IndexValueForClusteredIndexVersion1.
+//
+// These layouts are not a monotonic format-version chain. In particular,
+// eligible indexes still use the legacy and extensible layouts. The
+// selection matrix is:
+//
+//	+------------------+-------------------+------------------+--------------------+
+//	| Row handle type  | Non-unique local, | Unique local,    | Global index or    |
+//	|                  | no restored data  | no restored data | need restored data |
+//	+------------------+-------------------+------------------+--------------------+
+//	| int handle       | legacy            | legacy           | extensible         |
+//	| common handle v0 | legacy            | extensible       | extensible         |
+//	| common handle v1 | common-handle-v1  | common-handle-v1 | common-handle-v1   |
+//	+------------------+-------------------+------------------+--------------------+
+//
+// The generated length ranges and in-band markers are enough to identify the
+// layout without table metadata. The legacy layout has no explicit in-band
+// marker, so it is distinguished from the extensible layout by length.
+// Common-handle-v1 values carry an in-band version marker.
+//
+//	+------------------+-----------------------------------+------------------+
+//	| Layout           | In-band marker                    | Generated length |
+//	+------------------+-----------------------------------+------------------+
+//	| Legacy           | none                              | 1, 8, or 9       |
+//	| Extensible       | none; byte 0 is TailLen           | >= 10            |
+//	| common-handle-v1 | byte 1 == IndexVersionFlag(0x7d); | 3, 4, or >= 10   |
+//	|                  | byte 2 == 1; byte 0 is TailLen    |                  |
+//	+------------------+-----------------------------------+------------------+
+//
+// Details of different layouts:
 //
 //	+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
 //	|

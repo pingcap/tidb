@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -65,7 +65,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		return err
 	}
 	prefix := strconv.Itoa(int(task.ID))
-	err = external.CleanUpFiles(ctx, extStore, prefix)
+	err = globalsort.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
 		logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
@@ -74,7 +74,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// for old task meta version, we use job ID as prefix to clean up files.
 	if taskMeta.Version < BackfillTaskMetaVersion1 {
 		oldPrefix := strconv.Itoa(int(taskMeta.Job.ID))
-		err = external.CleanUpFiles(ctx, extStore, oldPrefix)
+		err = globalsort.CleanUpFiles(ctx, extStore, oldPrefix)
 		if err != nil {
 			logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
 			return err

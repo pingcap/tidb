@@ -75,6 +75,7 @@ func TestJobCodec(t *testing.T) {
 	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: ast.NewCIStr("table1")})
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: ast.NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: ast.NewCIStr("test_history_tbl")})
+	job.SetResumeReason(JobResumeReasonKVDiskFull)
 
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
@@ -87,6 +88,7 @@ func TestJobCodec(t *testing.T) {
 	require.Greater(t, len(newJob.String()), 0)
 	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
+	require.True(t, newJob.HasResumeReason(JobResumeReasonKVDiskFull))
 
 	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)
@@ -153,6 +155,7 @@ func TestJobClone(t *testing.T) {
 		TableName:       "t",
 		State:           JobStateDone,
 		MultiSchemaInfo: nil,
+		ResumeReason:    &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	clone := job.Clone()
 	require.Equal(t, job.ID, clone.ID)
@@ -163,6 +166,20 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
+	require.Equal(t, job.ResumeReason, clone.ResumeReason)
+}
+
+func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
+	parentJob := &Job{
+		ID:           100,
+		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+	}
+	subJob := &SubJob{
+		Type:  ActionAddIndex,
+		State: JobStateQueueing,
+	}
+	proxyJob := subJob.ToProxyJob(parentJob, 0)
+	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
 }
 
 func TestJobSize(t *testing.T) {
@@ -170,7 +187,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 400, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 416, int(unsafe.Sizeof(Job{})), msg)
 	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
@@ -448,4 +465,32 @@ func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("normalize scheduler names", func(t *testing.T) {
+		job := &Job{
+			SchemaName: "TestDB",
+			TableName:  "T1",
+			InvolvingSchemaInfo: []InvolvingSchemaInfo{
+				{Database: "TestDB", Table: "T1"},
+				{Database: "AnotherDB", Table: InvolvingAll},
+				{Database: InvolvingAll, Table: InvolvingAll},
+				{Database: InvolvingNone, Table: InvolvingNone},
+				{Policy: "PolicyName"},
+				{ResourceGroup: "ResourceGroupName"},
+			},
+		}
+
+		job.NormalizeInvolvingSchemaInfo()
+
+		require.Equal(t, "testdb", job.SchemaName)
+		require.Equal(t, "t1", job.TableName)
+		require.Equal(t, []InvolvingSchemaInfo{
+			{Database: "testdb", Table: "t1"},
+			{Database: "anotherdb", Table: InvolvingAll},
+			{Database: InvolvingAll, Table: InvolvingAll},
+			{Database: InvolvingNone, Table: InvolvingNone},
+			{Policy: "policyname"},
+			{ResourceGroup: "resourcegroupname"},
+		}, job.InvolvingSchemaInfo)
+	})
 }

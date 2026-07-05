@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	streamhelperconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	testutil "github.com/pingcap/tidb/br/pkg/utiltest/crr"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +35,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{}
 
 	svc, err := New(
 		Deps{
@@ -41,6 +43,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 			Watcher:  h.PDSim,
 			Upstream: h.Upstream,
 			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -74,6 +77,7 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 
 		return snapshot.SafeCheckpoint == upstreamCheckpoint &&
 			snapshot.SyncedTS > 0 &&
+			stateStore.savedState().LastCheckpoint == upstreamCheckpoint &&
 			sawExpectedStats &&
 			snapshot.ConsecutiveFailures == 0 &&
 			!snapshot.LastSuccessTime.IsZero()
@@ -179,6 +183,7 @@ func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{}
 
 	svc, err := New(
 		Deps{
@@ -186,6 +191,7 @@ func TestServiceWaitsForCheckpointWatch(t *testing.T) {
 			Watcher:  h.PDSim,
 			Upstream: h.Upstream,
 			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -234,6 +240,7 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
 	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{}
 
 	pd := &watchErrorPDSim{
 		PDSim:     h.PDSim,
@@ -246,6 +253,7 @@ func TestServiceRecoversFromCheckpointWatchError(t *testing.T) {
 			Watcher:  pd,
 			Upstream: h.Upstream,
 			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
 		},
 		Config{
 			CalculatorConfig: CalculatorConfig{
@@ -339,6 +347,7 @@ func TestServiceLoadsPersistedResumeState(t *testing.T) {
 		snapshot := svc.Status()
 		return snapshot.SafeCheckpoint == firstRecord.CheckpointTS &&
 			snapshot.SyncedTS == firstRecord.FlushTS &&
+			snapshot.SyncedByStore[1] == firstRecord.FlushTS &&
 			snapshot.PendingFileCount > 0 &&
 			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
 			snapshot.Statistic.EstimatedSyncLogFileCount == 1
@@ -349,6 +358,7 @@ func TestServiceLoadsPersistedResumeState(t *testing.T) {
 		snapshot := svc.Status()
 		return snapshot.SafeCheckpoint == secondRecord.CheckpointTS &&
 			snapshot.SyncedTS == secondRecord.FlushTS &&
+			snapshot.SyncedByStore[1] == secondRecord.FlushTS &&
 			stateStore.savedState().LastCheckpoint == secondRecord.CheckpointTS &&
 			stateStore.savedState().SyncedTS == secondRecord.FlushTS &&
 			stateStore.savedState().SyncedByStore[1] == secondRecord.FlushTS
@@ -409,6 +419,64 @@ func TestServiceRetriesFailedResumeStatePersist(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
+func TestServiceFlushesPendingResumeStateOnShutdownAfterPersistFailure(t *testing.T) {
+	ctx := context.Background()
+	h := newServiceHarness(ctx, t)
+	initialCheckpoint := h.requireInitialCheckpointByTick()
+	stateStore := &inMemoryResumeStateStore{
+		state: &PersistentState{
+			LastCheckpoint: initialCheckpoint,
+			SyncedTS:       initialCheckpoint,
+			SyncedByStore:  map[uint64]uint64{1: initialCheckpoint},
+		},
+		saveFailuresLeft: 1,
+	}
+
+	svc, err := New(
+		Deps{
+			PD:       h.PDSim,
+			Watcher:  h.PDSim,
+			Upstream: h.Upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(h.Downstream),
+			State:    stateStore,
+		},
+		Config{
+			CalculatorConfig: CalculatorConfig{
+				TaskName:     "drr_test_task",
+				PollInterval: 5 * time.Millisecond,
+			},
+			RetryInterval: time.Hour,
+		},
+	)
+	require.NoError(t, err)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Run(runCtx)
+	}()
+
+	record, err := h.FlushSim.FlushStore(ctx, 1)
+	require.NoError(t, err)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, record.CheckpointTS)
+	h.requireReplicateAllPending()
+
+	require.Eventually(t, func() bool {
+		snapshot := svc.Status()
+		return stateStore.saveCount() == 1 &&
+			snapshot.State == stateDegraded &&
+			snapshot.LastError == "save resume state: persist boom"
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+
+	state := stateStore.savedState()
+	require.Equal(t, record.CheckpointTS, state.LastCheckpoint)
+	require.Equal(t, record.FlushTS, state.SyncedTS)
+	require.Equal(t, record.FlushTS, state.SyncedByStore[1])
+}
+
 func TestServiceRetriesFailedResumeStateLoad(t *testing.T) {
 	ctx := context.Background()
 	h := newServiceHarness(ctx, t)
@@ -467,15 +535,20 @@ func TestServiceStatusEndpoints(t *testing.T) {
 		Type:               checkpoint.EventCheckpointAdvanced,
 		Time:               time.Now(),
 		UpstreamCheckpoint: 42,
-		SafeCheckpoint:     42,
 		SyncedTS:           42,
 		Statistic: &checkpoint.FileStatistic{
 			UpstreamReadMetaFileCount:       3,
+			SkippedStoreSyncedMetaFileCount: 5,
 			EstimatedSyncLogFileCount:       7,
 			DownstreamCheckFileCount:        11,
 			PlannedFileSuffixCounts:         map[string]int{".log": 7, ".meta": 3},
 			DownstreamCheckFileSuffixCounts: map[string]int{".log": 8, ".meta": 3},
 		},
+	})
+	status.setPersistentState(PersistentState{
+		LastCheckpoint: 42,
+		SyncedTS:       42,
+		SyncedByStore:  map[uint64]uint64{1: 42},
 	})
 
 	rec = httptest.NewRecorder()
@@ -500,7 +573,9 @@ func TestServiceStatusEndpoints(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snapshot))
 	require.Equal(t, uint64(42), snapshot.SafeCheckpoint)
 	require.Equal(t, uint64(42), snapshot.SyncedTS)
+	require.Equal(t, map[uint64]uint64{1: 42}, snapshot.SyncedByStore)
 	require.Equal(t, 3, snapshot.Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 5, snapshot.Statistic.SkippedStoreSyncedMetaFileCount)
 	require.Equal(t, 7, snapshot.Statistic.EstimatedSyncLogFileCount)
 	require.Equal(t, 11, snapshot.Statistic.DownstreamCheckFileCount)
 	require.Equal(t, map[string]int{".log": 7, ".meta": 3}, snapshot.Statistic.PlannedFileSuffixCounts)
@@ -510,15 +585,21 @@ func TestServiceStatusEndpoints(t *testing.T) {
 func TestStatusStoreTracksFileStatistic(t *testing.T) {
 	status := newStatusStore("task")
 	status.start()
+	status.setPersistentState(PersistentState{
+		LastCheckpoint: 10,
+		SyncedTS:       10,
+		SyncedByStore:  map[uint64]uint64{1: 10},
+	})
 	status.beginRound()
 	status.applyEvent(checkpoint.CheckpointEvent{
 		Type:             checkpoint.EventRoundPlanned,
 		Time:             time.Now(),
 		PendingFileCount: 2,
 		Statistic: &checkpoint.FileStatistic{
-			UpstreamReadMetaFileCount: 1,
-			EstimatedSyncLogFileCount: 1,
-			PlannedFileSuffixCounts:   map[string]int{".log": 1, ".meta": 1},
+			UpstreamReadMetaFileCount:       1,
+			SkippedStoreSyncedMetaFileCount: 3,
+			EstimatedSyncLogFileCount:       1,
+			PlannedFileSuffixCounts:         map[string]int{".log": 1, ".meta": 1},
 		},
 	})
 	status.applyEvent(checkpoint.CheckpointEvent{
@@ -526,6 +607,7 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 		Time: time.Now(),
 		Statistic: &checkpoint.FileStatistic{
 			UpstreamReadMetaFileCount:       1,
+			SkippedStoreSyncedMetaFileCount: 4,
 			EstimatedSyncLogFileCount:       1,
 			DownstreamCheckFileCount:        2,
 			PlannedFileSuffixCounts:         map[string]int{".log": 1, ".meta": 1},
@@ -535,13 +617,17 @@ func TestStatusStoreTracksFileStatistic(t *testing.T) {
 
 	snapshot := status.snapshotCopy()
 	require.Equal(t, 1, snapshot.Statistic.UpstreamReadMetaFileCount)
+	require.Equal(t, 4, snapshot.Statistic.SkippedStoreSyncedMetaFileCount)
 	require.Equal(t, 1, snapshot.Statistic.EstimatedSyncLogFileCount)
 	require.Equal(t, 2, snapshot.Statistic.DownstreamCheckFileCount)
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, snapshot.Statistic.PlannedFileSuffixCounts)
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, snapshot.Statistic.DownstreamCheckFileSuffixCounts)
+	require.Equal(t, 4.0, promtest.ToFloat64(skippedStoreSyncedMetaFileCount.WithLabelValues("task")))
 
 	snapshot.Statistic.PlannedFileSuffixCounts[".txt"] = 99
+	snapshot.SyncedByStore[1] = 99
 	require.Equal(t, map[string]int{".log": 1, ".meta": 1}, status.snapshotCopy().Statistic.PlannedFileSuffixCounts)
+	require.Equal(t, map[uint64]uint64{1: 10}, status.snapshotCopy().SyncedByStore)
 }
 
 func TestStatusStorePreservesFailureStoreCountAndTracksZeroAliveStores(t *testing.T) {
@@ -573,61 +659,7 @@ func TestStatusStorePreservesFailureStoreCountAndTracksZeroAliveStores(t *testin
 }
 
 func TestGetStatusFileName(t *testing.T) {
-	testCases := []struct {
-		name      string
-		subDir    string
-		expect    string
-		errSubstr string
-	}{
-		{
-			name:   "valid subdir",
-			subDir: "state/subdir",
-			expect: "state/subdir/resume-state.json",
-		},
-		{
-			name:   "leading and trailing slashes",
-			subDir: "/state/subdir/",
-			expect: "state/subdir/resume-state.json",
-		},
-		{
-			name:   "clean dot segments",
-			subDir: "state/./subdir/../subdir2",
-			expect: "state/subdir2/resume-state.json",
-		},
-		{
-			name:      "empty subdir",
-			subDir:    "",
-			errSubstr: "must not be empty",
-		},
-		{
-			name:      "only slash",
-			subDir:    "/",
-			errSubstr: "must not be empty",
-		},
-		{
-			name:      "parent directory",
-			subDir:    "../state",
-			errSubstr: "must stay within selected storage",
-		},
-		{
-			name:      "clean to parent directory",
-			subDir:    "state/../../escape",
-			errSubstr: "must stay within selected storage",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			actual, err := GetStatusFileName(tc.subDir)
-			if tc.errSubstr != "" {
-				require.Error(t, err)
-				require.ErrorContains(t, err, tc.errSubstr)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tc.expect, actual)
-		})
-	}
+	require.Equal(t, "crr-checkpoint/resume-state.json", GetStatusFileName())
 }
 
 func TestServiceRegisterPanicsOnNilMux(t *testing.T) {

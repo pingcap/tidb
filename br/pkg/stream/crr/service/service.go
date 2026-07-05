@@ -125,63 +125,58 @@ func New(
 func (s *Service) Run(ctx context.Context) error {
 	s.status.start()
 	defer s.status.stop()
+	defer s.flushPendingResumeStateOnShutdown()
 
 	for {
 		if ctx.Err() != nil {
-			s.flushPendingResumeStateOnShutdown()
 			return nil
 		}
-		if err := s.prepareResumeState(ctx); err != nil {
-			if shouldStop(ctx, err) {
-				return nil
-			}
-			s.recordServiceFailure(err)
-			if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
+		if err := s.runOnce(ctx); err != nil {
+			if !s.retryAfterRunError(ctx, err) {
 				return nil
 			}
 			continue
-		}
-
-		s.observer.BeginCalculationRound()
-		lastCheckpoint := s.calc.LastCheckpoint()
-		nextCheckpoint, err := s.calc.ComputeNextCheckpoint(ctx)
-		if err == nil {
-			s.queueResumeStateSave(lastCheckpoint, nextCheckpoint)
-			if err := s.flushPendingResumeState(ctx); err != nil {
-				if shouldStop(ctx, err) {
-					s.flushPendingResumeStateOnShutdown()
-					return nil
-				}
-				s.recordServiceFailure(err)
-				if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
-					return nil
-				}
-				continue
-			}
-			if nextCheckpoint == lastCheckpoint {
-				if err := s.waitCheckpointAdvance(ctx, lastCheckpoint); err != nil {
-					if shouldStop(ctx, err) {
-						return nil
-					}
-					s.recordServiceFailure(err)
-					if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
-						return nil
-					}
-				}
-			}
-			continue
-		}
-		if shouldStop(ctx, err) {
-			return nil
-		}
-		if err := sleepContext(ctx, s.cfg.RetryInterval); err != nil {
-			return nil
 		}
 	}
 }
 
+func (s *Service) runOnce(ctx context.Context) error {
+	if err := s.prepareResumeState(ctx); err != nil {
+		return err
+	}
+
+	s.observer.BeginCalculationRound()
+	lastCheckpoint := s.calc.LastCheckpoint()
+	nextCheckpoint, err := s.calc.ComputeNextCheckpoint(ctx)
+	if err != nil {
+		return observedCalculatorError{err: err}
+	}
+
+	s.queueResumeStateSave(lastCheckpoint, nextCheckpoint)
+	if err := s.flushPendingResumeState(ctx); err != nil {
+		return err
+	}
+
+	if nextCheckpoint == lastCheckpoint {
+		return s.waitCheckpointAdvance(ctx, lastCheckpoint)
+	}
+	return nil
+}
+
 func (s *Service) waitCheckpointAdvance(ctx context.Context, current uint64) error {
 	return s.pd.WaitGlobalCheckpointAdvance(ctx, s.cfg.TaskName, current)
+}
+
+type observedCalculatorError struct {
+	err error
+}
+
+func (e observedCalculatorError) Error() string {
+	return e.err.Error()
+}
+
+func (e observedCalculatorError) Unwrap() error {
+	return e.err
 }
 
 // recordServiceFailure reports failures that happen outside ComputeNextCheckpoint.
@@ -194,13 +189,20 @@ func (s *Service) recordServiceFailure(err error) {
 	})
 }
 
-func shouldStop(ctx context.Context, err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		if ctx.Err() != nil {
-			return true
-		}
+func (s *Service) retryAfterRunError(ctx context.Context, err error) bool {
+	if shouldStop(ctx, err) {
+		return false
 	}
-	return false
+	var observed observedCalculatorError
+	if !errors.As(err, &observed) {
+		s.recordServiceFailure(err)
+	}
+	return sleepContext(ctx, s.cfg.RetryInterval) == nil
+}
+
+func shouldStop(ctx context.Context, err error) bool {
+	return ctx.Err() != nil &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }
 
 // Status returns a consistent snapshot of the current service status.
@@ -248,6 +250,7 @@ func (s *Service) flushPendingResumeState(ctx context.Context) error {
 	if err := s.state.SaveState(ctx, *s.pendingResumeState); err != nil {
 		return fmt.Errorf("save resume state: %w", err)
 	}
+	s.status.setPersistentState(*s.pendingResumeState)
 	s.pendingResumeState = nil
 	s.status.clearFailure()
 	return nil
