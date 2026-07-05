@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -27,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 func TestNonTransactionalDMLHandleDescriptorSupportedShapes(t *testing.T) {
@@ -283,6 +287,107 @@ func TestNonTransactionalDMLSessionContextCaptureApply(t *testing.T) {
 	require.Equal(t, "ntdml_role", workerVars.ActiveRoles[0].Username)
 	require.Equal(t, "ntdml_rg", workerVars.ResourceGroupName)
 	require.Equal(t, "ntdml_stmt_rg", workerVars.StmtCtx.ResourceGroupName)
+}
+
+func TestNonTransactionalDMLCheckpointWriteReadSummaryAndCleanup(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "create table t_checkpoint(id bigint primary key clustered, b int)")
+	desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, "batch on id limit 2 delete from t_checkpoint")
+	require.NoError(t, err)
+	lower, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewIntDatum(-10), true)
+	require.NoError(t, err)
+	upper, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewIntDatum(10), true)
+	require.NoError(t, err)
+	checkpoint, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewIntDatum(0), false)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	done := nonTransactionalDMLCheckpoint{
+		JobID:           "job-checkpoint",
+		RangeID:         1,
+		Mode:            "range",
+		DMLType:         "delete",
+		DBName:          "test",
+		TableID:         100,
+		PhysicalTableID: 100,
+		HandleKind:      desc.kind,
+		Lower:           &lower,
+		Upper:           &upper,
+		Checkpoint:      &checkpoint,
+		Status:          nonTransactionalDMLCheckpointDone,
+		Scanned:         11,
+		Affected:        7,
+	}
+	require.NoError(t, writeNonTransactionalDMLCheckpoint(ctx, se, done))
+	loaded, err := loadNonTransactionalDMLCheckpoint(ctx, se, done.JobID, done.RangeID, desc)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	require.Equal(t, done.JobID, loaded.JobID)
+	require.Equal(t, done.RangeID, loaded.RangeID)
+	require.Equal(t, done.HandleKind, loaded.HandleKind)
+	require.Equal(t, done.Status, loaded.Status)
+	require.Equal(t, int64(-10), loaded.Lower.value.GetInt64())
+	require.Equal(t, int64(10), loaded.Upper.value.GetInt64())
+	require.Equal(t, int64(0), loaded.Checkpoint.value.GetInt64())
+	require.Equal(t, uint64(11), loaded.Scanned)
+	require.Equal(t, uint64(7), loaded.Affected)
+	covered, err := nonTransactionalDMLCheckpointCoversBoundary(ctx, se, done.JobID, done.RangeID, desc, checkpoint)
+	require.NoError(t, err)
+	require.True(t, covered)
+	futureCheckpoint, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewIntDatum(5), false)
+	require.NoError(t, err)
+	covered, err = nonTransactionalDMLCheckpointCoversBoundary(ctx, se, done.JobID, done.RangeID, desc, futureCheckpoint)
+	require.NoError(t, err)
+	require.False(t, covered)
+
+	failed := done
+	failed.RangeID = 2
+	failed.Status = nonTransactionalDMLCheckpointFailed
+	failed.RetryCount = 3
+	failed.ErrorClass = "retryable"
+	failed.ErrorText = "write conflict"
+	failed.Scanned = 5
+	failed.Affected = 1
+	require.NoError(t, writeNonTransactionalDMLCheckpoint(ctx, se, failed))
+	covered, err = nonTransactionalDMLCheckpointCoversBoundary(ctx, se, failed.JobID, failed.RangeID, desc, checkpoint)
+	require.NoError(t, err)
+	require.False(t, covered)
+	summary, err := summarizeNonTransactionalDMLCheckpoints(ctx, se, done.JobID)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), summary.TotalRanges)
+	require.Equal(t, uint64(1), summary.DoneRanges)
+	require.Equal(t, uint64(1), summary.FailedRanges)
+	require.Equal(t, uint64(16), summary.Scanned)
+	require.Equal(t, uint64(8), summary.Affected)
+	require.Equal(t, uint64(3), summary.RetryCount)
+
+	require.NoError(t, deleteNonTransactionalDMLCheckpoints(ctx, se, done.JobID))
+	loaded, err = loadNonTransactionalDMLCheckpoint(ctx, se, done.JobID, done.RangeID, desc)
+	require.NoError(t, err)
+	require.Nil(t, loaded)
+
+	require.NoError(t, writeNonTransactionalDMLCheckpoint(ctx, se, failed))
+	loaded, err = loadNonTransactionalDMLCheckpoint(ctx, se, failed.JobID, failed.RangeID, desc)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	require.Equal(t, nonTransactionalDMLCheckpointFailed, loaded.Status)
+	require.Equal(t, "write conflict", loaded.ErrorText)
+}
+
+func TestNonTransactionalDMLRetryableErrorClassification(t *testing.T) {
+	require.False(t, isNonTransactionalDMLRetryableError(nil))
+	require.True(t, isNonTransactionalDMLRetryableError(kv.ErrTxnRetryable))
+	require.True(t, isNonTransactionalDMLRetryableError(kv.ErrWriteConflict))
+	require.True(t, isNonTransactionalDMLRetryableError(storeerr.ErrLockWaitTimeout))
+	require.True(t, isNonTransactionalDMLRetryableError(&tikverr.ErrDeadlock{Deadlock: &kvrpcpb.Deadlock{}, IsRetryable: true}))
+	require.False(t, isNonTransactionalDMLRetryableError(kv.ErrKeyExists))
+	require.False(t, isNonTransactionalDMLRetryableError(&tikverr.ErrDeadlock{Deadlock: &kvrpcpb.Deadlock{}, IsRetryable: false}))
 }
 
 func buildNonTransactionalDMLHandleDescriptorForTest(t *testing.T, se sessiontypes.Session, sql string) (*nonTransactionalDMLHandleDescriptor, error) {
