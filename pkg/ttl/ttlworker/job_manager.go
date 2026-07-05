@@ -172,7 +172,8 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 		manager.ownerManager = owner.NewOwnerManager(context.Background(), etcdCli, ttlJobManagerPrompt, id, ttlJobManagerLeaderPath)
 		manager.ownerManager.SetListener(&ttlJobManagerOwnerListener{})
 		if err := manager.ownerManager.CampaignOwner(5); err != nil {
-			logutil.BgLogger().Error("failed to campaign ttl job manager owner", zap.Error(err))
+			logutil.BgLogger().Error("failed to campaign ttl job manager owner",
+				zap.Error(err))
 		}
 		manager.leaderFunc = manager.ownerManager.IsOwner
 	}
