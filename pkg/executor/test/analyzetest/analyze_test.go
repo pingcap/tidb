@@ -638,7 +638,9 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Keep the configured TopN/bucket numbers for all columns; the reduction for
 			// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int)")
 			tk.MustExec("insert into t (a,b) values (1,1), (1,1), (2,2), (2,2), (3,3), (4,4)")
 			tk.MustExec("flush stats_delta *.*")
@@ -1066,7 +1068,9 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	// Keep the configured TopN/bucket numbers for all columns; the reduction for
 	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
+	origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+	defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
@@ -1163,7 +1167,9 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	// Keep the configured TopN/bucket numbers for all columns; the reduction for
 	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
+	origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+	defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))

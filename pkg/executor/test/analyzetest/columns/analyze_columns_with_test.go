@@ -37,7 +37,9 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Pin the ratio so every analyzed column collects the configured TopN/bucket
 			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int primary key)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
@@ -108,7 +110,9 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Pin the ratio so every analyzed column collects the configured TopN/bucket
 			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
@@ -188,7 +192,9 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Pin the ratio so every analyzed column collects the configured TopN/bucket
 			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
@@ -268,7 +274,9 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Pin the ratio so every analyzed column collects the configured TopN/bucket
 			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
@@ -397,7 +405,9 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Pin the ratio so every analyzed column collects the configured TopN/bucket
 			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
@@ -511,7 +521,9 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			// Pin the ratio so every analyzed column collects the configured TopN/bucket
 			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
+			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
 			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
+			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
