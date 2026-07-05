@@ -392,6 +392,8 @@ func TestNonTransactionalDMLDXFTaskMetaRoundTripVarcharRange(t *testing.T) {
 		upper: &upper,
 	}})
 	require.NoError(t, err)
+	require.Contains(t, taskMeta.DisplayDML, "?")
+	require.NotContains(t, taskMeta.DisplayDML, "v1:pacer_largepayload0010")
 	data, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
 	decoded, err := unmarshalNonTransactionalDMLDXFTaskMeta(data)

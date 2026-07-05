@@ -681,7 +681,7 @@ func executeNonTransactionalDMLRangeChunk(ctx context.Context, se sessiontypes.S
 		zap.Int64("range-id", rangeID),
 		zap.Int("scanned", scanned.size),
 		zap.Uint64("affected", affected),
-		zap.String("sql", parser.Normalize(dmlSQL, se.GetSessionVars().EnableRedactLog)))
+		zap.String("sql", parser.Normalize(dmlSQL, errors.RedactLogEnable)))
 	return affected, nil
 }
 

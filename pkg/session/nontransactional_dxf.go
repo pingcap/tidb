@@ -43,10 +43,8 @@ import (
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -255,11 +253,10 @@ func buildNonTransactionalDMLDXFTaskMeta(rangeCtx *nonTransactionalDMLRangeConte
 			Upper:   nonTransactionalDMLBoundaryMetaFromBoundary(ranges[i].upper),
 		})
 	}
-	redactMode := rangeCtx.SessionCtx.SysVars[variable.TiDBRedactLog]
 	return &nonTransactionalDMLDXFTaskMeta{
 		JobID:            rangeCtx.JobID,
 		ExecutableDML:    executableDML,
-		DisplayDML:       redact.String(redactMode, executableDML),
+		DisplayDML:       parser.Normalize(executableDML, errors.RedactLogEnable),
 		DMLType:          rangeCtx.DMLType,
 		DBName:           rangeCtx.DBName,
 		CurrentDB:        rangeCtx.CurrentDB,

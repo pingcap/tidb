@@ -25,6 +25,19 @@ TIKV_IMAGE="${TIKV_IMAGE:-pingcap/tikv:v8.5.0}"
 MYSQL_IMAGE="${MYSQL_IMAGE:-mysql:8.0}"
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.8.0}"
 
+# Default data sizes are kept laptop-friendly. For a larger/GB-class run, set
+# NTDML_LARGE_MODE=1 or override these directly, for example:
+#   NTDML_RESTART_ROWS=250000 NTDML_PAYLOAD_BYTES=4096 NTDML_RESTART_SLEEP_SECONDS=0
+if [[ "${NTDML_LARGE_MODE:-0}" == "1" ]]; then
+	: "${NTDML_RESTART_ROWS:=250000}"
+	: "${NTDML_PAYLOAD_BYTES:=4096}"
+	: "${NTDML_RESTART_SLEEP_SECONDS:=0}"
+else
+	: "${NTDML_RESTART_ROWS:=800}"
+	: "${NTDML_PAYLOAD_BYTES:=1024}"
+	: "${NTDML_RESTART_SLEEP_SECONDS:=0.02}"
+fi
+
 if docker compose version >/dev/null 2>&1; then
 	COMPOSE=(docker compose)
 elif command -v docker-compose >/dev/null 2>&1; then
@@ -137,22 +150,92 @@ YAML
 "${COMPOSE[@]}" -p "$PROJECT" -f "$WORK_DIR/docker-compose.yml" up -d
 NETWORK="${PROJECT}_default"
 
-sql() {
+tidb_container() {
+	echo "${PROJECT}-$1-1"
+}
+
+sql_on() {
+	host="$1"
+	shift
 	docker run --rm -i --network "$NETWORK" "$MYSQL_IMAGE" \
-		mysql --protocol=tcp -uroot -htidb0 -P4000 --default-character-set=utf8mb4 "$@"
+		mysql --protocol=tcp -uroot -h"$host" -P4000 --default-character-set=utf8mb4 "$@"
+}
+
+sql() {
+	sql_on tidb0 "$@"
+}
+
+scalar_on() {
+	host="$1"
+	query="$2"
+	sql_on "$host" -N -B -e "$query" | tail -n 1
 }
 
 scalar() {
-	sql -N -B -e "$1" | tail -n 1
+	scalar_on tidb0 "$1"
 }
 
-for _ in $(seq 1 90); do
-	if sql -e "select 1" >/dev/null 2>&1; then
-		break
-	fi
-	sleep 2
-done
-sql -e "select 1" >/dev/null
+wait_sql() {
+	host="$1"
+	for _ in $(seq 1 90); do
+		if sql_on "$host" -e "select 1" >/dev/null 2>&1; then
+			return
+		fi
+		sleep 2
+	done
+	sql_on "$host" -e "select 1" >/dev/null
+}
+
+wait_status() {
+	host="$1"
+	for _ in $(seq 1 60); do
+		if docker run --rm --network "$NETWORK" "$CURL_IMAGE" -fsS "http://${host}:10080/status" >/dev/null 2>&1; then
+			return
+		fi
+		sleep 2
+	done
+	docker run --rm --network "$NETWORK" "$CURL_IMAGE" -fsS "http://${host}:10080/status" >/dev/null
+}
+
+wait_scalar_equals() {
+	host="$1"
+	query="$2"
+	expected="$3"
+	label="$4"
+	for _ in $(seq 1 180); do
+		value="$(scalar_on "$host" "$query" 2>/dev/null || true)"
+		if [[ "$value" == "$expected" ]]; then
+			return
+		fi
+		sleep 1
+	done
+	echo "timed out waiting for ${label}; expected ${expected}, got ${value:-<empty>}" >&2
+	exit 1
+}
+
+wait_positive_scalar() {
+	host="$1"
+	query="$2"
+	label="$3"
+	for _ in $(seq 1 180); do
+		value="$(scalar_on "$host" "$query" 2>/dev/null || true)"
+		if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+			echo "$value"
+			return
+		fi
+		sleep 1
+	done
+	echo "timed out waiting for ${label}; got ${value:-<empty>}" >&2
+	exit 1
+}
+
+wait_checkpoint_cleanup() {
+	host="$1"
+	wait_scalar_equals "$host" "SELECT COUNT(*) FROM mysql.tidb_nontransactional_dml_checkpoint" "0" "checkpoint cleanup"
+}
+
+wait_sql tidb0
+wait_sql tidb1
 
 {
 	cat <<'SQL'
@@ -181,13 +264,9 @@ SQL
 } > "$WORK_DIR/int.sql"
 sql < "$WORK_DIR/int.sql"
 
-docker restart "${PROJECT}-tidb1-1" >/dev/null
-for _ in $(seq 1 60); do
-	if docker run --rm --network "$NETWORK" "$CURL_IMAGE" -fsS http://tidb1:10080/status >/dev/null 2>&1; then
-		break
-	fi
-	sleep 2
-done
+docker restart "$(tidb_container tidb1)" >/dev/null
+wait_status tidb1
+wait_sql tidb1
 
 {
 	cat <<'SQL'
@@ -228,17 +307,121 @@ SQL
 } > "$WORK_DIR/varchar.sql"
 sql < "$WORK_DIR/varchar.sql"
 
-for _ in $(seq 1 30); do
-	checkpoints="$(scalar "SELECT COUNT(*) FROM mysql.tidb_nontransactional_dml_checkpoint")"
-	if [[ "$checkpoints" == "0" ]]; then
-		break
+wait_checkpoint_cleanup tidb0
+
+payload="$(printf '%*s' "$NTDML_PAYLOAD_BYTES" '' | tr ' ' 'x')"
+{
+	cat <<'SQL'
+USE ntdml_system;
+SET tidb_nontransactional_dml_execution_mode = 'dxf';
+SET tidb_nontransactional_dml_concurrency = 4;
+DROP TABLE IF EXISTS t_failover;
+CREATE TABLE t_failover(
+  id BIGINT PRIMARY KEY CLUSTERED,
+  payload TEXT NOT NULL,
+  marker VARCHAR(16) NOT NULL
+);
+SQL
+	for start in $(seq 0 20 $((NTDML_RESTART_ROWS - 1))); do
+		values=()
+		end=$((start + 19))
+		if (( end >= NTDML_RESTART_ROWS )); then
+			end=$((NTDML_RESTART_ROWS - 1))
+		fi
+		for i in $(seq "$start" "$end"); do
+			values+=("($i,'$payload','todo')")
+		done
+		IFS=,
+		echo "INSERT INTO t_failover VALUES ${values[*]};"
+		unset IFS
+	done
+	split_points=()
+	for divisor in 1 2 3 4 5 6 7; do
+		point=$((NTDML_RESTART_ROWS * divisor / 8))
+		if (( point > 0 && point < NTDML_RESTART_ROWS )); then
+			split_points+=("($point)")
+		fi
+	done
+	if (( ${#split_points[@]} > 0 )); then
+		IFS=,
+		echo "SPLIT TABLE t_failover BY ${split_points[*]};"
+		unset IFS
 	fi
-	sleep 1
-done
-if [[ "$(scalar "SELECT COUNT(*) FROM mysql.tidb_nontransactional_dml_checkpoint")" != "0" ]]; then
-	echo "checkpoint cleanup did not finish" >&2
+} > "$WORK_DIR/failover_setup.sql"
+sql < "$WORK_DIR/failover_setup.sql"
+
+cat > "$WORK_DIR/failover_run.sql" <<SQL
+USE ntdml_system;
+SET tidb_nontransactional_dml_execution_mode = 'dxf';
+SET tidb_nontransactional_dml_concurrency = 4;
+BATCH ON id LIMIT 20 UPDATE t_failover
+  SET marker = 'done'
+  WHERE id >= 0 AND SLEEP(${NTDML_RESTART_SLEEP_SECONDS}) = 0;
+SQL
+
+sql < "$WORK_DIR/failover_run.sql" > "$WORK_DIR/failover.out" 2> "$WORK_DIR/failover.err" &
+failover_pid=$!
+
+wait_positive_scalar tidb1 \
+	"SELECT COUNT(*) FROM mysql.tidb_nontransactional_dml_checkpoint WHERE db_name='ntdml_system' AND status='done'" \
+	"in-flight checkpoint progress" >/dev/null
+
+docker run --rm --network "$NETWORK" "$CURL_IMAGE" -fsS http://tidb0:10080/metrics \
+	| grep -E 'tidb_session_non_transactional_dml_(task|chunk|rows)_total' >/dev/null
+
+docker restart "$(tidb_container tidb1)" >/dev/null
+wait_status tidb1
+wait_sql tidb1
+
+if ! kill -0 "$failover_pid" 2>/dev/null; then
+	echo "failover workload finished before restart coverage completed" >&2
+	cat "$WORK_DIR/failover.out" >&2 || true
+	cat "$WORK_DIR/failover.err" >&2 || true
 	exit 1
 fi
+
+docker kill "$(tidb_container tidb0)" >/dev/null
+wait "$failover_pid" >/dev/null 2>&1 || true
+
+wait_scalar_equals tidb1 \
+	"SELECT COUNT(*) FROM ntdml_system.t_failover WHERE marker='done'" \
+	"$NTDML_RESTART_ROWS" \
+	"DXF completion after submitter/owner loss"
+
+docker start "$(tidb_container tidb0)" >/dev/null
+wait_status tidb0
+wait_sql tidb0
+wait_checkpoint_cleanup tidb1
+
+{
+	cat <<'SQL'
+USE ntdml_system;
+SET tidb_nontransactional_dml_execution_mode = 'dxf';
+SET tidb_nontransactional_dml_concurrency = 2;
+SET sql_mode = 'STRICT_TRANS_TABLES';
+DROP TABLE IF EXISTS t_failed;
+CREATE TABLE t_failed(
+  id BIGINT PRIMARY KEY CLUSTERED,
+  v INT NOT NULL
+);
+INSERT INTO t_failed VALUES (1, 1), (2, 2), (3, 3), (4, 4);
+BATCH ON id LIMIT 2 UPDATE t_failed SET v = NULL WHERE id >= 1;
+SQL
+} > "$WORK_DIR/failed_checkpoint.sql"
+
+if sql < "$WORK_DIR/failed_checkpoint.sql" > "$WORK_DIR/failed_checkpoint.out" 2> "$WORK_DIR/failed_checkpoint.err"; then
+	echo "expected failed DXF job to preserve diagnostic checkpoint rows" >&2
+	exit 1
+fi
+
+failed_checkpoints="$(scalar "SELECT COUNT(*) FROM mysql.tidb_nontransactional_dml_checkpoint WHERE status='failed' AND error_text IS NOT NULL")"
+if [[ "$failed_checkpoints" == "0" ]]; then
+	echo "failed DXF job did not retain diagnostic checkpoint rows" >&2
+	cat "$WORK_DIR/failed_checkpoint.out" >&2 || true
+	cat "$WORK_DIR/failed_checkpoint.err" >&2 || true
+	exit 1
+fi
+sql -e "DELETE FROM mysql.tidb_nontransactional_dml_checkpoint WHERE status='failed'" >/dev/null
 
 docker run --rm --network "$NETWORK" "$CURL_IMAGE" -fsS http://tidb0:10080/metrics \
 	| grep -E 'tidb_session_non_transactional_dml_(task|chunk|rows)_total' >/dev/null
