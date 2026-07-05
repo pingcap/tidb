@@ -164,15 +164,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
-	if err != nil {
-		return err
-	}
-	ver, err = strconv.ParseInt(verInString, 10, 64)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
 	// sync innodb_lock_wait_timeout
 	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InnodbLockWaitTimeout)
 	if err != nil {
