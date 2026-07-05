@@ -1462,6 +1462,10 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// NonTransactionalDMLExecutionMode indicates how non-transactional DML statements are executed.
+	NonTransactionalDMLExecutionMode string
+	// NonTransactionalDMLConcurrency indicates worker concurrency for explicit parallel non-transactional DML.
+	NonTransactionalDMLConcurrency int
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -2291,6 +2295,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
 		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
 	}
+	vars.NonTransactionalDMLExecutionMode = DefTiDBNonTransactionalDMLExecutionMode
+	vars.NonTransactionalDMLConcurrency = DefTiDBNonTransactionalDMLConcurrency
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName

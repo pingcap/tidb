@@ -812,6 +812,50 @@ func TestSetTIDBDistributeReorg(t *testing.T) {
 	require.Equal(t, Off, val)
 }
 
+func TestNonTransactionalDMLExecutionModeSysVar(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, DefTiDBNonTransactionalDMLExecutionMode, vars.NonTransactionalDMLExecutionMode)
+
+	sv := GetSysVar(TiDBNonTransactionalDMLExecutionMode)
+	require.NotNil(t, sv)
+	for _, tt := range []struct {
+		input    string
+		expected string
+	}{
+		{input: "serial", expected: "serial"},
+		{input: "RANGE", expected: "range"},
+		{input: "dxf", expected: "dxf"},
+	} {
+		val, err := sv.Validate(vars, tt.input, ScopeSession)
+		require.NoError(t, err)
+		require.Equal(t, tt.expected, val)
+		require.NoError(t, sv.SetSessionFromHook(vars, val))
+		require.Equal(t, tt.expected, vars.NonTransactionalDMLExecutionMode)
+	}
+
+	_, err := sv.Validate(vars, "auto", ScopeSession)
+	require.ErrorContains(t, err, "must be one of serial, range, dxf")
+}
+
+func TestNonTransactionalDMLConcurrencySysVar(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, DefTiDBNonTransactionalDMLConcurrency, vars.NonTransactionalDMLConcurrency)
+
+	sv := GetSysVar(TiDBNonTransactionalDMLConcurrency)
+	require.NotNil(t, sv)
+	val, err := sv.Validate(vars, "8", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "8", val)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, 8, vars.NonTransactionalDMLConcurrency)
+
+	val, err = sv.Validate(vars, "0", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "1", val)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, 1, vars.NonTransactionalDMLConcurrency)
+}
+
 func TestDefaultPartitionPruneMode(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

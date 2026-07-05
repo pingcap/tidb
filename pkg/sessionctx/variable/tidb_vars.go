@@ -844,6 +844,10 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+	// TiDBNonTransactionalDMLExecutionMode controls non-transactional DML execution mode.
+	TiDBNonTransactionalDMLExecutionMode = "tidb_nontransactional_dml_execution_mode"
+	// TiDBNonTransactionalDMLConcurrency controls non-transactional DML worker concurrency.
+	TiDBNonTransactionalDMLConcurrency = "tidb_nontransactional_dml_concurrency"
 
 	// Fine grained shuffle is disabled when TiFlashFineGrainedShuffleStreamCount is zero.
 	TiFlashFineGrainedShuffleStreamCount = "tiflash_fine_grained_shuffle_stream_count"
@@ -1512,6 +1516,8 @@ const (
 	DefRequireSecureTransport                         = false
 	DefTiDBCommitterConcurrency                       = 128
 	DefTiDBBatchDMLIgnoreError                        = false
+	DefTiDBNonTransactionalDMLExecutionMode           = "serial"
+	DefTiDBNonTransactionalDMLConcurrency             = 4
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true

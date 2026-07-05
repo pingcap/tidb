@@ -2725,6 +2725,28 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalDMLExecutionMode, Value: DefTiDBNonTransactionalDMLExecutionMode, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			mode := strings.ToLower(normalizedValue)
+			switch mode {
+			case "serial", "range", "dxf":
+				return mode, nil
+			default:
+				return normalizedValue, errors.Errorf("%s must be one of serial, range, dxf", TiDBNonTransactionalDMLExecutionMode)
+			}
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.NonTransactionalDMLExecutionMode = strings.ToLower(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalDMLConcurrency, Value: strconv.Itoa(DefTiDBNonTransactionalDMLConcurrency),
+		Type: TypeInt, MinValue: 1, MaxValue: 1024,
+		SetSession: func(s *SessionVars, val string) error {
+			s.NonTransactionalDMLConcurrency = TidbOptInt(val, DefTiDBNonTransactionalDMLConcurrency)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFineGrainedShuffleStreamCount, Value: strconv.Itoa(DefTiFlashFineGrainedShuffleStreamCount), Type: TypeInt, MinValue: -1, MaxValue: 1024,
 		SetSession: func(s *SessionVars, val string) error {
 			s.TiFlashFineGrainedShuffleStreamCount = TidbOptInt64(val, DefTiFlashFineGrainedShuffleStreamCount)
