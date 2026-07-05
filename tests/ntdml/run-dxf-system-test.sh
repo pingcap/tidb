@@ -35,7 +35,18 @@ else
 fi
 
 cleanup() {
-	"${COMPOSE[@]}" -p "$PROJECT" -f "$WORK_DIR/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true
+	status=$?
+	if [[ "$status" -ne 0 && -f "$WORK_DIR/docker-compose.yml" ]]; then
+		"${COMPOSE[@]}" -p "$PROJECT" -f "$WORK_DIR/docker-compose.yml" logs --no-color --tail=300 >&2 || true
+		for tidb in tidb0 tidb1; do
+			container="${PROJECT}-${tidb}-1"
+			echo "==== ${container} /tmp/${tidb}.log ====" >&2
+			docker exec "$container" sh -c "tail -n 300 /tmp/${tidb}.log" >&2 || true
+		done
+	fi
+	if [[ -f "$WORK_DIR/docker-compose.yml" ]]; then
+		"${COMPOSE[@]}" -p "$PROJECT" -f "$WORK_DIR/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true
+	fi
 	if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
 		rm -rf "$WORK_DIR"
 	fi
@@ -43,7 +54,25 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "${BUILD_TIDB:-0}" == "1" ]]; then
-	docker build -t "$TIDB_IMAGE" -f "$ROOT_DIR/Dockerfile" "$ROOT_DIR"
+	DOCKER_GOARCH="$(docker version --format '{{.Server.Arch}}')"
+	case "$DOCKER_GOARCH" in
+		amd64 | arm64) ;;
+		aarch64) DOCKER_GOARCH=arm64 ;;
+		x86_64) DOCKER_GOARCH=amd64 ;;
+		*)
+			echo "unsupported Docker server architecture: $DOCKER_GOARCH" >&2
+			exit 1
+			;;
+	esac
+	(cd "$ROOT_DIR" && GOOS=linux GOARCH="$DOCKER_GOARCH" CGO_ENABLED=0 GO111MODULE=on go build -tags codes -o "$WORK_DIR/tidb-server" ./cmd/tidb-server)
+	cat > "$WORK_DIR/tidb.Dockerfile" <<'DOCKERFILE'
+FROM rockylinux:9-minimal
+COPY tidb-server /tidb-server
+WORKDIR /
+EXPOSE 4000
+ENTRYPOINT ["/tidb-server"]
+DOCKERFILE
+	docker build -t "$TIDB_IMAGE" -f "$WORK_DIR/tidb.Dockerfile" "$WORK_DIR"
 else
 	echo "Using TIDB_IMAGE=$TIDB_IMAGE. Set BUILD_TIDB=1 to build this branch before running." >&2
 fi
@@ -87,9 +116,6 @@ services:
       - --status
       - "10080"
       - --log-file=/tmp/tidb0.log
-    ports:
-      - "4000:4000"
-      - "10080:10080"
     depends_on:
       - tikv
   tidb1:
@@ -104,9 +130,6 @@ services:
       - --status
       - "10080"
       - --log-file=/tmp/tidb1.log
-    ports:
-      - "4001:4000"
-      - "10081:10080"
     depends_on:
       - tikv
 YAML
@@ -151,7 +174,7 @@ SQL
 		unset IFS
 	done
 	cat <<'SQL'
-SPLIT TABLE t_int BETWEEN (0) AND (200) REGIONS 8;
+SPLIT TABLE t_int BY (25), (50), (75), (100), (125), (150), (175);
 BATCH ON id LIMIT 25 UPDATE t_int SET v = 100 WHERE id >= 0 AND id < 200;
 SELECT IF(COUNT(*) = 200, 'ok', CONCAT('bad_int_count=', COUNT(*))) AS int_rows FROM t_int WHERE v = 100;
 SQL

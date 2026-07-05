@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/privilege"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -493,6 +494,7 @@ func TestNonTransactionalDMLSessionContextCaptureApply(t *testing.T) {
 
 	captured, err := captureNonTransactionalDMLSessionContext(source)
 	require.NoError(t, err)
+	privilege.BindPrivilegeManager(worker, nil)
 	require.NoError(t, applyNonTransactionalDMLSessionContext(worker, captured))
 
 	workerVars := worker.GetSessionVars()

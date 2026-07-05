@@ -82,10 +82,13 @@ func applyNonTransactionalDMLSessionContext(se sessiontypes.Session, captured no
 		}
 	}
 
+	pm := privilege.GetPrivilegeManager(se)
 	userAuthenticated := false
 	if captured.User != nil {
 		user := cloneNonTransactionalDMLUser(captured.User)
-		userAuthenticated = se.AuthWithoutVerification(user)
+		if pm != nil {
+			userAuthenticated = se.AuthWithoutVerification(user)
+		}
 		if !userAuthenticated {
 			vars.User = user
 		}
@@ -93,7 +96,7 @@ func applyNonTransactionalDMLSessionContext(se sessiontypes.Session, captured no
 
 	roles := cloneNonTransactionalDMLRoles(captured.ActiveRoles)
 	if userAuthenticated {
-		if pm := privilege.GetPrivilegeManager(se); pm != nil {
+		if pm != nil {
 			if ok, role := pm.ActiveRoles(se, roles); !ok {
 				return errors.Errorf("failed to activate non-transactional DML worker role %s", role)
 			}

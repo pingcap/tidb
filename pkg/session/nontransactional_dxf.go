@@ -20,6 +20,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -390,12 +391,20 @@ func (e *nonTransactionalDMLTaskExecutor) IsRetryableError(err error) bool {
 	return isNonTransactionalDMLRetryableError(err)
 }
 
-func (e *nonTransactionalDMLStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (e *nonTransactionalDMLStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logutil.Logger(ctx).Error("Non-transactional DML DXF subtask panicked",
+				zap.Any("panic", recovered),
+				zap.ByteString("stack", debug.Stack()))
+			err = errors.Errorf("Non-transactional DML DXF subtask panicked: %v", recovered)
+		}
+	}()
 	var rangeMeta nonTransactionalDMLDXFRangeMeta
 	if err := json.Unmarshal(subtask.Meta, &rangeMeta); err != nil {
 		return err
 	}
-	err := e.taskMgr.WithNewSession(func(ctxSe sessionctx.Context) error {
+	err = e.taskMgr.WithNewSession(func(ctxSe sessionctx.Context) error {
 		se, ok := ctxSe.(sessiontypes.Session)
 		if !ok {
 			return errors.New("Non-transactional DML DXF executor requires a session executor")
