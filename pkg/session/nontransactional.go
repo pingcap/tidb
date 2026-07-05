@@ -99,6 +99,11 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	if err := checkConstraint(stmt, se); err != nil {
 		return nil, err
 	}
+	if sessVars.NonTransactionalDMLExecutionMode == "range" || sessVars.NonTransactionalDMLExecutionMode == "dxf" {
+		if err := checkNonTransactionalDMLRangeModeStatementShape(stmt); err != nil {
+			return nil, err
+		}
+	}
 
 	tableName, selectSQL, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, nodeW.GetResolveContext(), se)
 	if err != nil {
@@ -107,6 +112,16 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 
 	if err := checkConstraintWithShardColumn(se, stmt, tableName, shardColumnInfo, tableSources); err != nil {
 		return nil, err
+	}
+
+	switch sessVars.NonTransactionalDMLExecutionMode {
+	case "range":
+		return handleNonTransactionalDMLByRange(ctx, stmt, se, nodeW.GetResolveContext(), tableName, shardColumnInfo, tableSources)
+	case "dxf":
+		return handleNonTransactionalDMLByDXF(ctx, stmt, se, nodeW.GetResolveContext(), tableName, shardColumnInfo, tableSources)
+	case "", "serial":
+	default:
+		return nil, errors.Errorf("unsupported %s value %q", variable.TiDBNonTransactionalDMLExecutionMode, sessVars.NonTransactionalDMLExecutionMode)
 	}
 
 	if stmt.DryRun == ast.DryRunQuery {

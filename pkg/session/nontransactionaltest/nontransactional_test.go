@@ -62,6 +62,58 @@ func TestNonTransactionalDMLSharding(t *testing.T) {
 	testSharding(tables, tk, "varchar(30)")
 }
 
+func TestNonTransactionalDMLRangeModeIntAndVarchar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_nontransactional_dml_execution_mode='range'")
+	tk.MustExec("set @@tidb_nontransactional_dml_concurrency=2")
+
+	tk.MustExec("create table t_range_int(id bigint primary key clustered, v int)")
+	for i := -2; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_range_int values (%d, %d)", i, i))
+	}
+	tk.MustQuery("batch on id limit 3 update t_range_int set v = v + 10 where id >= 0").
+		Check(testkit.Rows("3 all succeeded"))
+	tk.MustQuery("select sum(v) from t_range_int where id >= 0").Check(testkit.Rows("108"))
+	tk.MustQuery("select count(*) from mysql.tidb_nontransactional_dml_checkpoint").Check(testkit.Rows("0"))
+	tk.MustQuery("batch on id limit 4 delete from t_range_int where id < 4").
+		Check(testkit.Rows("2 all succeeded"))
+	tk.MustQuery("select group_concat(id order by id) from t_range_int").Check(testkit.Rows("4,5,6,7"))
+	tk.MustQuery("select count(*) from mysql.tidb_nontransactional_dml_checkpoint").Check(testkit.Rows("0"))
+
+	tk.MustExec("create table t_range_varchar(id varchar(32) collate utf8mb4_bin primary key clustered, v int)")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_range_varchar values ('k%02d', %d)", i, i))
+	}
+	tk.MustQuery("batch on id limit 4 update t_range_varchar set v = v * 2 where id >= 'k03'").
+		Check(testkit.Rows("2 all succeeded"))
+	tk.MustQuery("select sum(v) from t_range_varchar where id >= 'k03'").Check(testkit.Rows("84"))
+	tk.MustQuery("batch on id limit 3 delete from t_range_varchar where id >= 'k04' and id < 'k09'").
+		Check(testkit.Rows("2 all succeeded"))
+	tk.MustQuery("select group_concat(id order by id) from t_range_varchar").Check(testkit.Rows("k00,k01,k02,k03,k09"))
+	tk.MustQuery("select count(*) from mysql.tidb_nontransactional_dml_checkpoint").Check(testkit.Rows("0"))
+}
+
+func TestNonTransactionalDMLRangeModeRejectsUnsupportedShapes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_nontransactional_dml_execution_mode='range'")
+
+	tk.MustExec("create table t_range_reject_unsigned(id bigint unsigned primary key clustered, v int)")
+	err := tk.ExecToErr("batch on id limit 2 delete from t_range_reject_unsigned")
+	require.ErrorContains(t, err, "doesn't support unsigned integer clustered primary keys")
+
+	tk.MustExec("create table t_range_reject_insert(id bigint primary key clustered, v int)")
+	err = tk.ExecToErr("batch on id limit 2 insert into t_range_reject_insert select * from t_range_reject_insert")
+	require.ErrorContains(t, err, "range mode supports DELETE and UPDATE only")
+
+	tk.MustExec("create table t_range_reject_join(id bigint primary key clustered, v int)")
+	err = tk.ExecToErr("batch on id limit 2 update t_range_reject_insert join t_range_reject_join using(id) set t_range_reject_insert.v = 1")
+	require.ErrorContains(t, err, "range mode supports single-table statements only")
+}
+
 func testSharding(tables []string, tk *testkit.TestKit, tp string) {
 	compositions := []struct{ tableSize, batchSize int }{
 		{0, 10},
