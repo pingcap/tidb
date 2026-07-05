@@ -213,6 +213,17 @@ func deleteNonTransactionalDMLCheckpoints(ctx context.Context, se sessiontypes.S
 	return perrors.Trace(err)
 }
 
+func deleteNonTransactionalDMLCheckpoint(ctx context.Context, se sessiontypes.Session, jobID string, rangeID int64) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	_, err := sqlexec.ExecSQL(ctx, se, `
+		DELETE FROM mysql.tidb_nontransactional_dml_checkpoint
+		WHERE job_id=%? AND range_id=%?`,
+		jobID,
+		rangeID,
+	)
+	return perrors.Trace(err)
+}
+
 func nonTransactionalDMLCheckpointCoversBoundary(ctx context.Context, se sessiontypes.Session, jobID string, rangeID int64,
 	desc *nonTransactionalDMLHandleDescriptor, boundary nonTransactionalDMLBoundary) (bool, error) {
 	checkpoint, err := loadNonTransactionalDMLCheckpoint(ctx, se, jobID, rangeID, desc)

@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -344,6 +345,67 @@ func TestNonTransactionalDMLRegionRangePlanningCommonHandleCoalescesUnsafeBounda
 	require.Nil(t, ranges[2].upper)
 }
 
+func TestNonTransactionalDMLDXFTaskMetaRoundTripVarcharRange(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "create table t_dxf_meta(id varchar(128) collate utf8mb4_bin primary key clustered, b int)")
+	stmt := parseNonTransactionalDMLStmtForTest(t, se, "batch on id limit 2 delete from t_dxf_meta where id >= 'v1:pacer_largepayload0010'")
+	desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, "batch on id limit 2 delete from t_dxf_meta where id >= 'v1:pacer_largepayload0010'")
+	require.NoError(t, err)
+	sessionCtx, err := captureNonTransactionalDMLSessionContext(se)
+	require.NoError(t, err)
+	lower, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewStringDatum("v1:pacer_largepayload0010"), true)
+	require.NoError(t, err)
+	upper, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewStringDatum("v1:pacer_largepayload0020"), false)
+	require.NoError(t, err)
+	rangeCtx := &nonTransactionalDMLRangeContext{
+		Stmt:              stmt,
+		Descriptor:        desc,
+		SessionCtx:        sessionCtx,
+		JobID:             "dxf-meta-job",
+		Mode:              "dxf",
+		DMLType:           "delete",
+		DBName:            "test",
+		CurrentDB:         "test",
+		FromSQL:           "`test`.`t_dxf_meta`",
+		HandleExprSQL:     "`t_dxf_meta`.`id`",
+		OriginalWhereSQL:  "`id` >= 'v1:pacer_largepayload0010'",
+		OriginalCondition: stmt.DMLStmt.WhereExpr(),
+		BatchSize:         2,
+		Concurrency:       4,
+		TableID:           desc.tableInfo.ID,
+		PhysicalTableID:   desc.tableInfo.ID,
+	}
+
+	taskMeta, err := buildNonTransactionalDMLDXFTaskMeta(rangeCtx, []nonTransactionalDMLRangeSpan{{
+		lower: &lower,
+		upper: &upper,
+	}})
+	require.NoError(t, err)
+	data, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+	decoded, err := unmarshalNonTransactionalDMLDXFTaskMeta(data)
+	require.NoError(t, err)
+	require.Equal(t, nonTransactionalDMLHandleCommonBinary, decoded.HandleKind)
+	require.Len(t, decoded.Ranges, 1)
+
+	rebuiltCtx, err := buildNonTransactionalDMLRangeContextFromDXFTaskMeta(decoded)
+	require.NoError(t, err)
+	require.Equal(t, nonTransactionalDMLHandleCommonBinary, rebuiltCtx.Descriptor.kind)
+	require.Equal(t, "utf8mb4_bin", rebuiltCtx.Descriptor.fieldType.GetCollate())
+	decodedLower, err := decoded.Ranges[0].Lower.toBoundary(se.GetSessionVars().StmtCtx, rebuiltCtx.Descriptor)
+	require.NoError(t, err)
+	decodedUpper, err := decoded.Ranges[0].Upper.toBoundary(se.GetSessionVars().StmtCtx, rebuiltCtx.Descriptor)
+	require.NoError(t, err)
+	requireBoundaryString(t, decodedLower, "v1:pacer_largepayload0010", true)
+	requireBoundaryString(t, decodedUpper, "v1:pacer_largepayload0020", false)
+}
+
 func TestNonTransactionalDMLSessionContextCaptureApply(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	t.Cleanup(func() {
@@ -493,17 +555,22 @@ func TestNonTransactionalDMLRetryableErrorClassification(t *testing.T) {
 
 func buildNonTransactionalDMLHandleDescriptorForTest(t *testing.T, se sessiontypes.Session, sql string) (*nonTransactionalDMLHandleDescriptor, error) {
 	ctx := context.Background()
-	stmts, err := se.Parse(ctx, sql)
-	require.NoError(t, err)
-	require.Len(t, stmts, 1)
-	stmt, ok := stmts[0].(*ast.NonTransactionalDMLStmt)
-	require.True(t, ok)
+	stmt := parseNonTransactionalDMLStmtForTest(t, se, sql)
 
 	nodeW := resolve.NewNodeW(stmt)
 	require.NoError(t, core.Preprocess(ctx, se, nodeW))
 	tableName, _, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, nodeW.GetResolveContext(), se)
 	require.NoError(t, err)
 	return buildNonTransactionalDMLHandleDescriptor(se, stmt, tableName, shardColumnInfo, tableSources)
+}
+
+func parseNonTransactionalDMLStmtForTest(t *testing.T, se sessiontypes.Session, sql string) *ast.NonTransactionalDMLStmt {
+	stmts, err := se.Parse(context.Background(), sql)
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+	stmt, ok := stmts[0].(*ast.NonTransactionalDMLStmt)
+	require.True(t, ok)
+	return stmt
 }
 
 func restoreNonTransactionalDMLExprForTest(t *testing.T, expr ast.ExprNode) string {

@@ -43,6 +43,8 @@ func Step2Str(t TaskType, s Step) string {
 		return backfillStep2Str(s)
 	case ImportInto:
 		return importIntoStep2Str(s)
+	case NonTransactionalDML:
+		return nonTransactionalDMLStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)
 	}
@@ -117,6 +119,21 @@ func importIntoStep2Str(s Step) string {
 		return "collect-conflicts"
 	case ImportStepConflictResolution:
 		return "conflict-resolution"
+	default:
+		return fmt.Sprintf("unknown step %d", s)
+	}
+}
+
+// Steps of NonTransactionalDML.
+const (
+	// NonTransactionalDMLStepRun runs bounded non-transactional DML range subtasks.
+	NonTransactionalDMLStepRun Step = 1
+)
+
+func nonTransactionalDMLStep2Str(s Step) string {
+	switch s {
+	case NonTransactionalDMLStepRun:
+		return "run"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

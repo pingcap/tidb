@@ -28,6 +28,7 @@ func TestTaskType(t *testing.T) {
 		{TaskTypeExample, 1},
 		{ImportInto, 2},
 		{Backfill, 3},
+		{NonTransactionalDML, 4},
 		{"", 0},
 	}
 	for _, c := range cases {

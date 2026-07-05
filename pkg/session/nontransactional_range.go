@@ -310,7 +310,7 @@ func runNonTransactionalDMLRangeSpan(ctx context.Context, worker sessiontypes.Se
 			jobSize: scanned.size,
 			sql:     dmlSQL,
 		}
-		_, execErr := executeNonTransactionalDMLRangeChunkWithRetry(ctx, worker, rangeCtx, chunkID, lower, scanned, dmlSQL)
+		_, execErr := executeNonTransactionalDMLRangeChunkWithRetry(ctx, worker, rangeCtx, chunkID, lower, scanned, dmlSQL, 0, 0)
 		if execErr != nil {
 			chunkJob.err = execErr
 			jobs = append(jobs, chunkJob)
@@ -542,12 +542,13 @@ func buildNonTransactionalDMLRangeMutationSQL(rangeCtx *nonTransactionalDMLRange
 }
 
 func executeNonTransactionalDMLRangeChunkWithRetry(ctx context.Context, se sessiontypes.Session, rangeCtx *nonTransactionalDMLRangeContext,
-	rangeID int64, lower *nonTransactionalDMLBoundary, scanned *nonTransactionalDMLScannedChunk, dmlSQL string) (uint64, error) {
+	rangeID int64, lower *nonTransactionalDMLBoundary, scanned *nonTransactionalDMLScannedChunk, dmlSQL string,
+	scannedBefore uint64, affectedBefore uint64) (uint64, error) {
 	var lastErr error
 	var attempts uint64
 	for attempt := 0; attempt <= nonTransactionalDMLRangeMaxRetries; attempt++ {
 		attempts = uint64(attempt + 1)
-		affected, err := executeNonTransactionalDMLRangeChunk(ctx, se, rangeCtx, rangeID, lower, scanned, dmlSQL, uint64(attempt))
+		affected, err := executeNonTransactionalDMLRangeChunk(ctx, se, rangeCtx, rangeID, lower, scanned, dmlSQL, uint64(attempt), scannedBefore, affectedBefore)
 		if err == nil {
 			return affected, nil
 		}
@@ -575,9 +576,10 @@ func executeNonTransactionalDMLRangeChunkWithRetry(ctx context.Context, se sessi
 		Checkpoint:      lower,
 		Status:          nonTransactionalDMLCheckpointFailed,
 		RetryCount:      attempts,
-		ErrorClass:      "execution",
+		ErrorClass:      nonTransactionalDMLCheckpointErrorClass(lastErr),
 		ErrorText:       lastErr.Error(),
-		Scanned:         uint64(scanned.size),
+		Scanned:         scannedBefore + uint64(scanned.size),
+		Affected:        affectedBefore,
 	}
 	if err := writeNonTransactionalDMLCheckpoint(ctx, se, failed); err != nil {
 		logutil.Logger(ctx).Warn("failed to write non-transactional DML failed checkpoint", zap.Error(err))
@@ -585,8 +587,16 @@ func executeNonTransactionalDMLRangeChunkWithRetry(ctx context.Context, se sessi
 	return 0, lastErr
 }
 
+func nonTransactionalDMLCheckpointErrorClass(err error) string {
+	if isNonTransactionalDMLRetryableError(err) {
+		return "retryable"
+	}
+	return "execution"
+}
+
 func executeNonTransactionalDMLRangeChunk(ctx context.Context, se sessiontypes.Session, rangeCtx *nonTransactionalDMLRangeContext,
-	rangeID int64, lower *nonTransactionalDMLBoundary, scanned *nonTransactionalDMLScannedChunk, dmlSQL string, retryCount uint64) (uint64, error) {
+	rangeID int64, lower *nonTransactionalDMLBoundary, scanned *nonTransactionalDMLScannedChunk, dmlSQL string, retryCount uint64,
+	scannedBefore uint64, affectedBefore uint64) (uint64, error) {
 	if err := executeNonTransactionalDMLInternalNoResult(ctx, se, "BEGIN"); err != nil {
 		return 0, err
 	}
@@ -618,8 +628,8 @@ func executeNonTransactionalDMLRangeChunk(ctx context.Context, se sessiontypes.S
 		Checkpoint:      &scanned.last,
 		Status:          nonTransactionalDMLCheckpointDone,
 		RetryCount:      retryCount,
-		Scanned:         uint64(scanned.size),
-		Affected:        affected,
+		Scanned:         scannedBefore + uint64(scanned.size),
+		Affected:        affectedBefore + affected,
 	}
 	if err := writeNonTransactionalDMLCheckpoint(ctx, se, checkpoint); err != nil {
 		return 0, err

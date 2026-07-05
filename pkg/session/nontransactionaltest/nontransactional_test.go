@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	dxftestutil "github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/prometheus/client_golang/prometheus"
@@ -112,6 +113,41 @@ func TestNonTransactionalDMLRangeModeRejectsUnsupportedShapes(t *testing.T) {
 	tk.MustExec("create table t_range_reject_join(id bigint primary key clustered, v int)")
 	err = tk.ExecToErr("batch on id limit 2 update t_range_reject_insert join t_range_reject_join using(id) set t_range_reject_insert.v = 1")
 	require.ErrorContains(t, err, "range mode supports single-table statements only")
+}
+
+func TestNonTransactionalDMLDXFModeIntAndVarchar(t *testing.T) {
+	dxfCtx := dxftestutil.NewTestDXFContext(t, 2, 4, true)
+	tk := testkit.NewTestKit(t, dxfCtx.Store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_nontransactional_dml_execution_mode='dxf'")
+	tk.MustExec("set @@tidb_nontransactional_dml_concurrency=2")
+
+	tk.MustExec("create table t_dxf_int(id bigint primary key clustered, v int)")
+	for i := -2; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_dxf_int values (%d, %d)", i, i))
+	}
+	tk.MustQuery("batch on id limit 3 update t_dxf_int set v = 100 where id >= 0").
+		Check(testkit.Rows("1 all succeeded"))
+	tk.MustQuery("select count(*) from t_dxf_int where id >= 0 and v = 100").Check(testkit.Rows("8"))
+	tk.MustQuery("batch on id limit 4 delete from t_dxf_int where id < 4").
+		Check(testkit.Rows("1 all succeeded"))
+	tk.MustQuery("select group_concat(id order by id) from t_dxf_int").Check(testkit.Rows("4,5,6,7"))
+
+	tk.MustExec("create table t_dxf_varchar(id varchar(64) collate utf8mb4_bin primary key clustered, v int)")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_dxf_varchar values ('v1:pacer_largepayload%04d', %d)", i, i))
+	}
+	tk.MustQuery("batch on id limit 3 update t_dxf_varchar set v = 42 where id >= 'v1:pacer_largepayload0003'").
+		Check(testkit.Rows("1 all succeeded"))
+	tk.MustQuery("select count(*) from t_dxf_varchar where id >= 'v1:pacer_largepayload0003' and v = 42").Check(testkit.Rows("7"))
+	tk.MustQuery("batch on id limit 2 delete from t_dxf_varchar where id >= 'v1:pacer_largepayload0004' and id < 'v1:pacer_largepayload0009'").
+		Check(testkit.Rows("1 all succeeded"))
+	tk.MustQuery("select group_concat(id order by id separator ',') from t_dxf_varchar").
+		Check(testkit.Rows("v1:pacer_largepayload0000,v1:pacer_largepayload0001,v1:pacer_largepayload0002,v1:pacer_largepayload0003,v1:pacer_largepayload0009"))
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select count(*) from mysql.tidb_nontransactional_dml_checkpoint").Rows()
+		return rows[0][0].(string) == "0"
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func testSharding(tables []string, tk *testkit.TestKit, tp string) {
