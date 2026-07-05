@@ -37,8 +37,8 @@ const (
 	defaultDegradedRUFillRate      = 2_000_000
 	defaultDegradedRUBurstLimit    = 50_000_000_000
 	defaultDegradedModeWaitTimeout = 3 * time.Second / 2
-	vipWaitRetryInterval           = 100 * time.Millisecond
-	vipWaitRetryTimes              = 20
+	tokenWaitRetryInterval         = 100 * time.Millisecond
+	tokenWaitRetryTimes            = 20
 )
 
 func isStarter() bool {
@@ -68,8 +68,8 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	}
 	if strings.Contains(os.Getenv("NAMESPACE"), "vip") {
 		opts = append(opts,
-			rmclient.WithWaitRetryInterval(vipWaitRetryInterval),
-			rmclient.WithWaitRetryTimes(vipWaitRetryTimes),
+			rmclient.WithWaitRetryInterval(tokenWaitRetryInterval),
+			rmclient.WithWaitRetryTimes(tokenWaitRetryTimes),
 		)
 	}
 	return opts
