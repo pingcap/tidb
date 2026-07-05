@@ -583,11 +583,25 @@ Bounded by the MySQL-subset type/function work, listed so the full-stack delta i
 | Area | PostGIS | MySQL-subset stack (this project's base) |
 |---|---|---|
 | SRID / CRS | Full EPSG catalog via `spatial_ref_sys`, `ST_Transform` on-the-fly reprojection | Only SRID 0 and 4326; `3857` and all other codes rejected at DDL; no `ST_Transform` |
-| Type model | Distinct `geometry` (planar) and `geography` (geodesic) types | One type; planar-vs-spherical folded into SRID (0 = planar, 4326 = spherical), per MySQL |
-| Distance semantics | `geography` distance is geodesic on the WGS 84 **ellipsoid** by default | 4326 refine uses a **sphere** (matches `ST_Distance_Sphere`); ellipsoidal `ST_Distance` is index-optimized only via a conservatively inflated cap or a scan fallback |
+| Type model | Distinct `geometry` (planar) and `geography` (geodesic, meters) types, chosen per column; `geometry` on SRID 4326 does planar degree math (a footgun) | One geometry type; the SRID's SRS decides. `SRID 0` is planar Cartesian; **`SRID 4326` is the geography equivalent**: `ST_Distance`/`ST_Length`/`ST_Area` return ellipsoidal meters automatically. The delta is ergonomic (one type + SRS vs two types), not a missing capability, and there is no degrees-on-4326 footgun |
+| Distance semantics | `geography` `ST_Distance` is geodesic on the WGS 84 **ellipsoid** (along the surface, meters) by default; spherical is opt-in (`use_spheroid := false`) | MySQL provides, and the base must match, both: `ST_Distance` on 4326 = ellipsoidal geodesic (= PostGIS geography default); `ST_Distance_Sphere` = spherical great-circle. The index accelerates `ST_Distance_Sphere` exactly (S2 cover and refine share one sphere radius); ellipsoidal `ST_Distance` needs geodesic math beyond planar `simplefeatures`, so it is index-optimized via a conservatively inflated cap plus exact refine (or a scan fallback). See the note below |
 | Function breadth | 300+ `ST_*` | ~70 MySQL-style; missing families include buffer/convex-hull/simplify/subdivide/segmentize, overlay set-ops, spatial clustering (`ST_ClusterDBSCAN`/`KMeans`), spatial aggregates (`ST_Union` agg, `ST_Collect`, `ST_Polygonize`, `ST_MakeLine`), linear referencing, Hausdorff/Frechet distance, `ST_MakeValid`, output formats (`ST_AsMVT`/`KML`/`GML`/`SVG`/TWKB) |
 | Geometry types | Adds CIRCULARSTRING, COMPOUNDCURVE, CURVEPOLYGON, POLYHEDRALSURFACE, TIN, TRIANGLE | OGC Simple Features only (`simplefeatures` scope); no curved or TIN geometries |
 | Dimensionality | XYZ / XYM / XYZM with ND-GiST | 2D only, gated on the type carrying a Z coordinate (see the 3D item in Unresolved Questions) |
+
+**Sphere vs ellipsoid, surface vs chord.** Two independent axes describe a geographic
+distance. *Reference surface*: a **sphere** has one constant radius everywhere (MySQL
+`ST_Distance_Sphere` and the index's spherical-cap model use ~6,370,986 m); the **WGS 84
+ellipsoid** is oblate, so its radius varies with latitude (~6,378 km at the equator,
+~6,357 km at the poles), and that is the surface MySQL `ST_Distance` on 4326 and PostGIS
+`geography` measure on. *Path*: every geographic distance here is measured **along the
+curved surface** (great-circle on the sphere, geodesic on the ellipsoid), never the
+straight-line **chord** that cuts through the interior. The only straight-line distance in
+the design is SRID 0 `ST_Distance`, which is planar Euclidean in a flat abstract plane
+(coordinate units, no globe, so neither surface-curved nor a chord). The S2 covering is
+spherical, but that only selects candidates; correctness always comes from the exact
+refine, so a spherical cover under an ellipsoidal predicate is merely conservatively
+inflated, not wrong.
 
 ### Tier 3: whole subsystems (out of scope)
 
