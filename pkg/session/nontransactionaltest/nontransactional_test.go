@@ -121,6 +121,9 @@ func TestNonTransactionalDMLDXFModeIntAndVarchar(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_nontransactional_dml_execution_mode='dxf'")
 	tk.MustExec("set @@tidb_nontransactional_dml_concurrency=2")
+	taskStartBefore := readPrometheusCounter(t, metrics.NonTransactionalDMLTaskCounter.WithLabelValues("dxf", "update", "start"))
+	chunkOKBefore := readPrometheusCounter(t, metrics.NonTransactionalDMLChunkCounter.WithLabelValues("dxf", "update", "ok"))
+	affectedBefore := readPrometheusCounter(t, metrics.NonTransactionalDMLRowsCounter.WithLabelValues("dxf", "update", "affected"))
 
 	tk.MustExec("create table t_dxf_int(id bigint primary key clustered, v int)")
 	for i := -2; i < 8; i++ {
@@ -148,6 +151,9 @@ func TestNonTransactionalDMLDXFModeIntAndVarchar(t *testing.T) {
 		rows := tk.MustQuery("select count(*) from mysql.tidb_nontransactional_dml_checkpoint").Rows()
 		return rows[0][0].(string) == "0"
 	}, 5*time.Second, 100*time.Millisecond)
+	require.Greater(t, readPrometheusCounter(t, metrics.NonTransactionalDMLTaskCounter.WithLabelValues("dxf", "update", "start")), taskStartBefore)
+	require.Greater(t, readPrometheusCounter(t, metrics.NonTransactionalDMLChunkCounter.WithLabelValues("dxf", "update", "ok")), chunkOKBefore)
+	require.Greater(t, readPrometheusCounter(t, metrics.NonTransactionalDMLRowsCounter.WithLabelValues("dxf", "update", "affected")), affectedBefore)
 }
 
 func testSharding(tables []string, tk *testkit.TestKit, tp string) {
@@ -210,6 +216,12 @@ func testSharding(tables []string, tk *testkit.TestKit, tp string) {
 			tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 		}
 	}
+}
+
+func readPrometheusCounter(t *testing.T, counter prometheus.Counter) float64 {
+	var metric dto.Metric
+	require.NoError(t, counter.Write(&metric))
+	return metric.Counter.GetValue()
 }
 
 func TestNonTransactionalDMLErrorMessage(t *testing.T) {

@@ -17,10 +17,12 @@ package session
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"math"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -104,6 +107,8 @@ type nonTransactionalDMLStepExecutor struct {
 
 type nonTransactionalDMLCleanUp struct{}
 
+const nonTransactionalDMLDXFCancelTimeout = 30 * time.Second
+
 func init() {
 	registerNonTransactionalDMLDXFTask()
 }
@@ -139,7 +144,15 @@ func registerNonTransactionalDMLDXFTask() {
 
 func handleNonTransactionalDMLByDXF(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session,
 	resolveCtx *resolve.Context, tableName *ast.TableName, shardColumnInfo *model.ColumnInfo,
-	tableSources []*ast.TableSource) (sqlexec.RecordSet, error) {
+	tableSources []*ast.TableSource) (recordSet sqlexec.RecordSet, retErr error) {
+	startTime := time.Now()
+	dmlType := strings.ToLower(ast.GetStmtLabel(stmt.DMLStmt))
+	session_metrics.NonTransactionalDMLTaskInc(session_metrics.NonTransactionalDMLModeDXF, dmlType, session_metrics.NonTransactionalDMLResultStart)
+	defer func() {
+		result := nonTransactionalDMLMetricsResult(retErr)
+		session_metrics.NonTransactionalDMLTaskInc(session_metrics.NonTransactionalDMLModeDXF, dmlType, result)
+		session_metrics.NonTransactionalDMLDurationObserve(session_metrics.NonTransactionalDMLModeDXF, dmlType, result, time.Since(startTime).Seconds())
+	}()
 	taskMgr, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, errors.Annotate(err, "Non-transactional DML DXF mode requires distributed task framework")
@@ -178,7 +191,8 @@ func handleNonTransactionalDMLByDXF(ctx context.Context, stmt *ast.NonTransactio
 		return nil, err
 	}
 	taskCtx := kv.WithInternalSourceType(ctx, kv.InternalDistTask)
-	task, err := dxfhandle.SubmitTask(taskCtx, nonTransactionalDMLDXFTaskKey(taskMeta.JobID),
+	taskKey := nonTransactionalDMLDXFTaskKey(taskMeta.JobID)
+	task, err := dxfhandle.SubmitTask(taskCtx, taskKey,
 		proto.NonTransactionalDML, nonTransactionalDMLRangeWorkerCount(rangeCtx.Concurrency, len(ranges)), "", 0, taskMetaBytes)
 	if err != nil {
 		return nil, err
@@ -189,7 +203,7 @@ func handleNonTransactionalDMLByDXF(ctx context.Context, stmt *ast.NonTransactio
 		zap.String("table", taskMeta.FromSQL),
 		zap.Int("concurrency", task.Concurrency),
 		zap.String("dml", taskMeta.DisplayDML))
-	if err := dxfhandle.WaitTaskDoneOrPaused(taskCtx, task.ID); err != nil {
+	if err := waitNonTransactionalDMLDXFTask(taskCtx, task.ID, taskKey); err != nil {
 		return nil, err
 	}
 	finishedTask, err := taskMgr.GetTaskByIDWithHistory(taskCtx, task.ID)
@@ -200,6 +214,30 @@ func handleNonTransactionalDMLByDXF(ctx context.Context, stmt *ast.NonTransactio
 		return nil, errors.Errorf("Non-transactional DML DXF task stopped with state %s", finishedTask.State)
 	}
 	return buildNonTransactionalDMLDXFResults(taskCtx, se, taskMeta)
+}
+
+func waitNonTransactionalDMLDXFTask(ctx context.Context, taskID int64, taskKey string) error {
+	err := dxfhandle.WaitTaskDoneOrPaused(ctx, taskID)
+	if err == nil {
+		return nil
+	}
+	if goerrors.Is(err, context.Canceled) || goerrors.Is(err, context.DeadlineExceeded) {
+		return cancelNonTransactionalDMLDXFTask(taskKey, err)
+	}
+	return err
+}
+
+func cancelNonTransactionalDMLDXFTask(taskKey string, cause error) error {
+	cancelCtx, cancel := context.WithTimeout(context.Background(), nonTransactionalDMLDXFCancelTimeout)
+	defer cancel()
+	cancelCtx = kv.WithInternalSourceType(cancelCtx, kv.InternalDistTask)
+	if err := dxfhandle.CancelTask(cancelCtx, taskKey); err != nil {
+		return errors.Annotatef(cause, "Non-transactional DML DXF task %s was interrupted, but cancellation failed: %v", taskKey, err)
+	}
+	if err := dxfhandle.WaitTaskDoneByKey(cancelCtx, taskKey); err != nil {
+		return errors.Annotatef(cause, "Non-transactional DML DXF task %s was interrupted, but waiting for cancellation failed: %v", taskKey, err)
+	}
+	return cause
 }
 
 func buildNonTransactionalDMLDXFTaskMeta(rangeCtx *nonTransactionalDMLRangeContext,

@@ -34,6 +34,11 @@ var (
 	StatementSharedLockKeysCount       prometheus.Histogram
 	ValidateReadTSFromPDCount          prometheus.Counter
 	NonTransactionalDMLCount           *prometheus.CounterVec
+	NonTransactionalDMLTaskCounter     *prometheus.CounterVec
+	NonTransactionalDMLChunkCounter    *prometheus.CounterVec
+	NonTransactionalDMLRowsCounter     *prometheus.CounterVec
+	NonTransactionalDMLRetryCounter    *prometheus.CounterVec
+	NonTransactionalDMLDuration        *prometheus.HistogramVec
 	TxnStatusEnteringCounter           *prometheus.CounterVec
 	TxnDurationHistogram               *prometheus.HistogramVec
 	LazyPessimisticUniqueCheckSetCount prometheus.Counter
@@ -184,6 +189,47 @@ func InitSessionMetrics() {
 			Name:      "non_transactional_dml_count",
 			Help:      "Counter of non-transactional delete",
 		}, []string{LblType},
+	)
+	NonTransactionalDMLTaskCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_dml_task_total",
+			Help:      "Counter of parallel non-transactional DML task lifecycle events.",
+		}, []string{"mode", LblType, LblResult},
+	)
+	NonTransactionalDMLChunkCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_dml_chunk_total",
+			Help:      "Counter of parallel non-transactional DML chunk execution results.",
+		}, []string{"mode", LblType, LblResult},
+	)
+	NonTransactionalDMLRowsCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_dml_rows_total",
+			Help:      "Counter of rows scanned or affected by parallel non-transactional DML chunks.",
+		}, []string{"mode", LblType, "kind"},
+	)
+	NonTransactionalDMLRetryCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_dml_retry_total",
+			Help:      "Counter of parallel non-transactional DML chunk retry attempts.",
+		}, []string{"mode", LblType},
+	)
+	NonTransactionalDMLDuration = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_dml_duration_seconds",
+			Help:      "Bucketed histogram of parallel non-transactional DML task duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24),
+		}, []string{"mode", LblType, LblResult},
 	)
 
 	TxnStatusEnteringCounter = NewCounterVec(

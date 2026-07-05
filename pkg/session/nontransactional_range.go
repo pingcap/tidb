@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -82,7 +83,15 @@ type nonTransactionalDMLRangeSpan struct {
 
 func handleNonTransactionalDMLByRange(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session,
 	resolveCtx *resolve.Context, tableName *ast.TableName, shardColumnInfo *model.ColumnInfo,
-	tableSources []*ast.TableSource) (sqlexec.RecordSet, error) {
+	tableSources []*ast.TableSource) (recordSet sqlexec.RecordSet, retErr error) {
+	startTime := time.Now()
+	dmlType := strings.ToLower(ast.GetStmtLabel(stmt.DMLStmt))
+	session_metrics.NonTransactionalDMLTaskInc(session_metrics.NonTransactionalDMLModeRange, dmlType, session_metrics.NonTransactionalDMLResultStart)
+	defer func() {
+		result := nonTransactionalDMLMetricsResult(retErr)
+		session_metrics.NonTransactionalDMLTaskInc(session_metrics.NonTransactionalDMLModeRange, dmlType, result)
+		session_metrics.NonTransactionalDMLDurationObserve(session_metrics.NonTransactionalDMLModeRange, dmlType, result, time.Since(startTime).Seconds())
+	}()
 	if err := checkNonTransactionalDMLRangeModeStatement(stmt, tableSources); err != nil {
 		return nil, err
 	}
@@ -550,6 +559,7 @@ func executeNonTransactionalDMLRangeChunkWithRetry(ctx context.Context, se sessi
 		attempts = uint64(attempt + 1)
 		affected, err := executeNonTransactionalDMLRangeChunk(ctx, se, rangeCtx, rangeID, lower, scanned, dmlSQL, uint64(attempt), scannedBefore, affectedBefore)
 		if err == nil {
+			recordNonTransactionalDMLChunkMetrics(rangeCtx, session_metrics.NonTransactionalDMLResultOK, attempts-1, uint64(scanned.size), affected)
 			return affected, nil
 		}
 		lastErr = err
@@ -584,7 +594,30 @@ func executeNonTransactionalDMLRangeChunkWithRetry(ctx context.Context, se sessi
 	if err := writeNonTransactionalDMLCheckpoint(ctx, se, failed); err != nil {
 		logutil.Logger(ctx).Warn("failed to write non-transactional DML failed checkpoint", zap.Error(err))
 	}
+	recordNonTransactionalDMLChunkMetrics(rangeCtx, session_metrics.NonTransactionalDMLResultError, attempts-1, uint64(scanned.size), 0)
 	return 0, lastErr
+}
+
+func recordNonTransactionalDMLChunkMetrics(rangeCtx *nonTransactionalDMLRangeContext, result string, retries uint64, scanned uint64, affected uint64) {
+	mode := rangeCtx.Mode
+	if mode == "" {
+		mode = session_metrics.NonTransactionalDMLModeRange
+	}
+	dmlType := rangeCtx.DMLType
+	if dmlType == "" {
+		dmlType = "unknown"
+	}
+	session_metrics.NonTransactionalDMLChunkInc(mode, dmlType, result)
+	session_metrics.NonTransactionalDMLRowsAdd(mode, dmlType, session_metrics.NonTransactionalDMLRowsScanned, scanned)
+	session_metrics.NonTransactionalDMLRowsAdd(mode, dmlType, session_metrics.NonTransactionalDMLRowsAffected, affected)
+	session_metrics.NonTransactionalDMLRetryAdd(mode, dmlType, retries)
+}
+
+func nonTransactionalDMLMetricsResult(err error) string {
+	if err != nil {
+		return session_metrics.NonTransactionalDMLResultError
+	}
+	return session_metrics.NonTransactionalDMLResultOK
 }
 
 func nonTransactionalDMLCheckpointErrorClass(err error) string {

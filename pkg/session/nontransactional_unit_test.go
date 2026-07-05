@@ -19,9 +19,13 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -404,6 +408,65 @@ func TestNonTransactionalDMLDXFTaskMetaRoundTripVarcharRange(t *testing.T) {
 	require.NoError(t, err)
 	requireBoundaryString(t, decodedLower, "v1:pacer_largepayload0010", true)
 	requireBoundaryString(t, decodedUpper, "v1:pacer_largepayload0020", false)
+}
+
+func TestNonTransactionalDMLDXFWaitCancelsTaskOnContextCancel(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return CreateSession(store)
+	}, 2, 2, time.Second)
+	t.Cleanup(pool.Close)
+	taskMgr := storage.NewTaskManager(pool)
+	previousTaskMgr, previousErr := storage.GetTaskManager()
+	storage.SetTaskManager(taskMgr)
+	t.Cleanup(func() {
+		if previousErr == nil {
+			storage.SetTaskManager(previousTaskMgr)
+			return
+		}
+		storage.SetTaskManager(nil)
+	})
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	taskKey := "ntdml/cancel-test"
+	taskID, err := taskMgr.CreateTask(ctx, taskKey, proto.NonTransactionalDML, 1, "", 0, proto.EmptyMeta)
+	require.NoError(t, err)
+
+	transitionDone := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			task, err := taskMgr.GetTaskByID(ctx, taskID)
+			if err != nil {
+				transitionDone <- err
+				return
+			}
+			if task.State != proto.TaskStateCancelling {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			if err := taskMgr.RevertTask(ctx, taskID, proto.TaskStateCancelling, context.Canceled); err != nil {
+				transitionDone <- err
+				return
+			}
+			transitionDone <- taskMgr.RevertedTask(ctx, taskID)
+			return
+		}
+		transitionDone <- errors.New("timed out waiting for task cancellation")
+	}()
+
+	waitCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	err = waitNonTransactionalDMLDXFTask(waitCtx, taskID, taskKey)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, <-transitionDone)
+	task, err := taskMgr.GetTaskByIDWithHistory(ctx, taskID)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
 func TestNonTransactionalDMLSessionContextCaptureApply(t *testing.T) {

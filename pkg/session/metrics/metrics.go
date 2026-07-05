@@ -19,6 +19,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	NonTransactionalDMLModeRange    = "range"
+	NonTransactionalDMLModeDXF      = "dxf"
+	NonTransactionalDMLResultStart  = "start"
+	NonTransactionalDMLResultOK     = "ok"
+	NonTransactionalDMLResultError  = "error"
+	NonTransactionalDMLRowsScanned  = "scanned"
+	NonTransactionalDMLRowsAffected = "affected"
+)
+
 // session metrics vars
 var (
 	NonTransactionalDeleteCount prometheus.Counter
@@ -79,6 +89,29 @@ var (
 	TelemetryIndexMerge        prometheus.Counter
 	TelemetryStoreBatchedUsage prometheus.Counter
 )
+
+func NonTransactionalDMLTaskInc(mode string, dmlType string, result string) {
+	metrics.NonTransactionalDMLTaskCounter.WithLabelValues(mode, dmlType, result).Inc()
+}
+
+func NonTransactionalDMLChunkInc(mode string, dmlType string, result string) {
+	metrics.NonTransactionalDMLChunkCounter.WithLabelValues(mode, dmlType, result).Inc()
+}
+
+func NonTransactionalDMLRowsAdd(mode string, dmlType string, kind string, rows uint64) {
+	metrics.NonTransactionalDMLRowsCounter.WithLabelValues(mode, dmlType, kind).Add(float64(rows))
+}
+
+func NonTransactionalDMLRetryAdd(mode string, dmlType string, retries uint64) {
+	if retries == 0 {
+		return
+	}
+	metrics.NonTransactionalDMLRetryCounter.WithLabelValues(mode, dmlType).Add(float64(retries))
+}
+
+func NonTransactionalDMLDurationObserve(mode string, dmlType string, result string, seconds float64) {
+	metrics.NonTransactionalDMLDuration.WithLabelValues(mode, dmlType, result).Observe(seconds)
+}
 
 func init() {
 	InitMetricsVars()
