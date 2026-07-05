@@ -16,12 +16,15 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,6 +145,97 @@ func TestNonTransactionalDMLHandleDescriptorRejectedShapes(t *testing.T) {
 	}
 }
 
+func TestNonTransactionalDMLBoundaryEncodeDecode(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+
+	cases := []struct {
+		name      string
+		createSQL string
+		stmtSQL   string
+		value     types.Datum
+		check     func(*testing.T, types.Datum)
+	}{
+		{
+			name:      "signed int",
+			createSQL: "create table t_boundary(id bigint primary key clustered, b int)",
+			stmtSQL:   "batch on id limit 2 delete from t_boundary",
+			value:     types.NewIntDatum(-42),
+			check: func(t *testing.T, got types.Datum) {
+				require.Equal(t, int64(-42), got.GetInt64())
+			},
+		},
+		{
+			name:      "varchar binary common handle",
+			createSQL: "create table t_boundary(id varchar(128) collate utf8mb4_bin primary key clustered, b int)",
+			stmtSQL:   "batch on id limit 2 delete from t_boundary",
+			value:     types.NewStringDatum("v1:pacer_largepayload0001"),
+			check: func(t *testing.T, got types.Datum) {
+				require.Equal(t, "v1:pacer_largepayload0001", got.GetString())
+			},
+		},
+		{
+			name:      "varbinary common handle",
+			createSQL: "create table t_boundary(id varbinary(128) primary key clustered, b int)",
+			stmtSQL:   "batch on id limit 2 delete from t_boundary",
+			value:     types.NewBytesDatum([]byte("v1:\x00bytes")),
+			check: func(t *testing.T, got types.Datum) {
+				require.Equal(t, []byte("v1:\x00bytes"), got.GetBytes())
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			MustExec(t, se, "drop table if exists t_boundary")
+			MustExec(t, se, tt.createSQL)
+			desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, tt.stmtSQL)
+			require.NoError(t, err)
+
+			boundary, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, tt.value, true)
+			require.NoError(t, err)
+			require.True(t, boundary.hasValue)
+			require.True(t, boundary.inclusive)
+			require.NotEmpty(t, boundary.encoded)
+
+			decoded, err := decodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, boundary.encoded, false)
+			require.NoError(t, err)
+			require.True(t, decoded.hasValue)
+			require.False(t, decoded.inclusive)
+			tt.check(t, decoded.value)
+		})
+	}
+}
+
+func TestNonTransactionalDMLRangeConditionUsesCheckpointExclusively(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "create table t_condition(id varchar(128) collate utf8mb4_bin primary key clustered, b int)")
+	desc, err := buildNonTransactionalDMLHandleDescriptorForTest(t, se, "batch on id limit 2 delete from t_condition")
+	require.NoError(t, err)
+
+	lower, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewStringDatum("v1:pacer_largepayload0001"), false)
+	require.NoError(t, err)
+	upper, err := encodeNonTransactionalDMLBoundary(se.GetSessionVars().StmtCtx, desc, types.NewStringDatum("v1:pacer_largepayload0100"), true)
+	require.NoError(t, err)
+
+	condition := buildNonTransactionalDMLRangeCondition(desc, &lower, &upper)
+	sql := restoreNonTransactionalDMLExprForTest(t, condition)
+	require.Contains(t, sql, "`id` > 'v1:pacer_largepayload0001'")
+	require.Contains(t, sql, "`id` <= 'v1:pacer_largepayload0100'")
+	require.True(t, strings.Contains(sql, "AND"), sql)
+}
+
 func buildNonTransactionalDMLHandleDescriptorForTest(t *testing.T, se sessiontypes.Session, sql string) (*nonTransactionalDMLHandleDescriptor, error) {
 	ctx := context.Background()
 	stmts, err := se.Parse(ctx, sql)
@@ -155,4 +249,14 @@ func buildNonTransactionalDMLHandleDescriptorForTest(t *testing.T, se sessiontyp
 	tableName, _, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, nodeW.GetResolveContext(), se)
 	require.NoError(t, err)
 	return buildNonTransactionalDMLHandleDescriptor(se, stmt, tableName, shardColumnInfo, tableSources)
+}
+
+func restoreNonTransactionalDMLExprForTest(t *testing.T, expr ast.ExprNode) string {
+	var sb strings.Builder
+	require.NoError(t, expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+		format.RestoreNameBackQuotes|
+		format.RestoreSpacesAroundBinaryOperation|
+		format.RestoreBracketAroundBinaryOperation|
+		format.RestoreStringWithoutCharset, &sb)))
+	return sb.String()
 }
