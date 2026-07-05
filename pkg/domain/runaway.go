@@ -23,10 +23,10 @@ import (
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
@@ -40,10 +40,6 @@ const (
 	tokenWaitRetryInterval         = 100 * time.Millisecond
 	tokenWaitRetryTimes            = 20
 )
-
-func isStarter() bool {
-	return versioninfo.TiDBEdition == "Starter"
-}
 
 func newDefaultDegradedRUSettings() *rmpb.GroupRequestUnitSettings {
 	return &rmpb.GroupRequestUnitSettings{
@@ -60,7 +56,7 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	opts := []rmclient.ResourceControlCreateOption{
 		rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration),
 	}
-	if isStarter() {
+	if deploymode.IsStarter() {
 		opts = append(opts,
 			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
 			rmclient.WithDegradedRUSettings(newDefaultDegradedRUSettings()),
