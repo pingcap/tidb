@@ -539,11 +539,17 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
 
 ## Appendix: PostGIS compatibility delta
 
-This project's compatibility target is **MySQL 8.0**, not PostGIS: the SQL syntax, the
+This project's compatibility target is **MySQL**, not PostGIS: the SQL syntax, the
 `SHOW CREATE TABLE` byte-form, the single-`TypeGeometry`-plus-subtype model, and the
-`simplefeatures`-vs-MySQL predicate parity all anchor on MySQL. MySQL's spatial surface is
-a strict subset of PostGIS's (roughly 70 `ST_*` functions vs 300+, a 2D R-tree vs GiST/
-SP-GiST/BRIN/ND-GiST, no reprojection, no raster/topology), so **full PostGIS
+`simplefeatures`-vs-MySQL predicate parity all anchor on MySQL. Pin the version to the
+current GA line, **8.4 LTS** (MySQL 8.0 reached end of life in 2026), with the 9.x
+Innovation series as the moving edge. This is a currency choice, not a behavior change:
+MySQL's GIS surface has been stable since the SRID-aware overhaul in 8.0, so the syntax,
+types, and `ST_*` semantics the design matches are the same across 8.0, 8.4, and 9.x. The
+PoC's byte-parity was recorded against 8.0.46 (see `research.md` -> "Proof-of-concept
+validation") and should be re-validated against the current LTS before GA. MySQL's spatial
+surface is a strict subset of PostGIS's (roughly 70 `ST_*` functions vs 300+, a 2D R-tree
+vs GiST/SP-GiST/BRIN/ND-GiST, no reprojection, no raster/topology), so **full PostGIS
 compatibility is an explicit non-goal**, not an omission. This appendix catalogs the delta
 so the scope boundary is unambiguous, and so a later reader does not mistake a deliberate
 MySQL-alignment choice for a gap to be closed.
