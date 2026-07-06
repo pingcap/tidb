@@ -109,6 +109,8 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb_ddl_notifier": {},
 		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
 		"tidb_import_jobs": {},
+		// Records export jobs; runtime job state that should not be restored, same as tidb_import_jobs.
+		"tidb_export_jobs": {},
 
 		"help_topic": {},
 		// records the RU for each resource group temporary, no need to recovered.

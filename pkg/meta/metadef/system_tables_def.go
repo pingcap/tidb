@@ -700,6 +700,29 @@ const (
 		KEY idx_group_key(group_key),
 		KEY (status));`
 
+	// CreateTiDBExportJobsTable is a table that EXPORT TABLE uses to track export jobs.
+	CreateTiDBExportJobsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_export_jobs (
+		id bigint(64) NOT NULL AUTO_INCREMENT,
+		create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		start_time TIMESTAMP(6) NULL DEFAULT NULL,
+		update_time TIMESTAMP(6) NULL DEFAULT NULL,
+		end_time TIMESTAMP(6) NULL DEFAULT NULL,
+		table_schema VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		destination VARCHAR(2048) NOT NULL,
+		format VARCHAR(64) NOT NULL,
+		created_by VARCHAR(300) NOT NULL,
+		parameters text NOT NULL,
+		exported_size bigint(64) NOT NULL DEFAULT 0,
+		status VARCHAR(64) NOT NULL,
+		step VARCHAR(64) NOT NULL,
+		summary text DEFAULT NULL,
+		error_message TEXT DEFAULT NULL,
+		PRIMARY KEY (id),
+		KEY (created_by),
+		KEY (status));`
+
 	// CreateTiDBPITRIDMapTable is a table that records the id map from upstream to downstream for PITR.
 	// set restore id default to 0 to make it compatible for old BR tool to restore to a new TiDB, such case should be
 	// rare though.

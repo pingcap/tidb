@@ -507,6 +507,9 @@ const (
 	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
 	// mysql.global_variables was never materialized when the variable was introduced.
 	version261 = 261
+
+	// version262 adds mysql.tidb_export_jobs table.
+	version262 = 262
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -520,7 +523,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version261
+var currentBootstrapVersion int64 = version262
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -706,6 +709,7 @@ var (
 		{version: version259, fn: upgradeToVer259},
 		{version: version260, fn: upgradeToVer260},
 		{version: version261, fn: upgradeToVer261},
+		{version: version262, fn: upgradeToVer262},
 	}
 )
 
@@ -2138,4 +2142,8 @@ func upgradeToVer260(s sessionapi.Session, _ int64) {
 func upgradeToVer261(s sessionapi.Session, _ int64) {
 	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
 	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
+}
+
+func upgradeToVer262(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBExportJobsTable)
 }

@@ -1062,39 +1062,48 @@ func TestUpgradeBindInfo(t *testing.T) {
 	seLatestV.Close()
 }
 
-func checkTiDBMaskingPolicyTableSchema(t *testing.T, tk *testkit.TestKit) {
-	tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").Check(testkit.Rows("1"))
-	tk.MustQuery(`
+// checkSystemTableSchema asserts that mysql.<table> exists with exactly the given
+// columns ("name lower(type) is_nullable" rows in ordinal order) and indexes
+// ("index_name non_unique seq_in_index column_name" rows).
+func checkSystemTableSchema(t *testing.T, tk *testkit.TestKit, table string, columns, indexes []string) {
+	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='%s'", table)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(`
 SELECT column_name, LOWER(column_type), is_nullable
 FROM information_schema.columns
-WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
-ORDER BY ordinal_position`).Check(testkit.Rows(
-		"policy_id bigint(64) NO",
-		"policy_name varchar(64) NO",
-		"db_name varchar(64) NO",
-		"table_name varchar(64) NO",
-		"table_id bigint(64) NO",
-		"column_name varchar(64) NO",
-		"column_id bigint(64) NO",
-		"expression text NO",
-		"status varchar(16) NO",
-		"masking_type varchar(32) NO",
-		"restrict_on varchar(256) NO",
-		"created_at datetime(6) NO",
-		"updated_at datetime(6) NO",
-		"created_by varchar(288) NO",
-	))
-	tk.MustQuery(`
+WHERE table_schema='mysql' AND table_name='%s'
+ORDER BY ordinal_position`, table)).Check(testkit.Rows(columns...))
+	tk.MustQuery(fmt.Sprintf(`
 SELECT index_name, non_unique, seq_in_index, column_name
 FROM information_schema.statistics
-WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
-ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
-		"PRIMARY 0 1 policy_id",
-		"uk_table_column 0 1 table_id",
-		"uk_table_column 0 2 column_id",
-		"uk_table_policy 0 1 table_id",
-		"uk_table_policy 0 2 policy_name",
-	))
+WHERE table_schema='mysql' AND table_name='%s'
+ORDER BY index_name, seq_in_index`, table)).Check(testkit.Rows(indexes...))
+}
+
+func checkTiDBMaskingPolicyTableSchema(t *testing.T, tk *testkit.TestKit) {
+	checkSystemTableSchema(t, tk, "tidb_masking_policy",
+		[]string{
+			"policy_id bigint(64) NO",
+			"policy_name varchar(64) NO",
+			"db_name varchar(64) NO",
+			"table_name varchar(64) NO",
+			"table_id bigint(64) NO",
+			"column_name varchar(64) NO",
+			"column_id bigint(64) NO",
+			"expression text NO",
+			"status varchar(16) NO",
+			"masking_type varchar(32) NO",
+			"restrict_on varchar(256) NO",
+			"created_at datetime(6) NO",
+			"updated_at datetime(6) NO",
+			"created_by varchar(288) NO",
+		},
+		[]string{
+			"PRIMARY 0 1 policy_id",
+			"uk_table_column 0 1 table_id",
+			"uk_table_column 0 2 column_id",
+			"uk_table_policy 0 1 table_id",
+			"uk_table_policy 0 2 policy_name",
+		})
 }
 
 func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
@@ -1150,6 +1159,89 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	checkTiDBMaskingPolicyTableSchema(t, tk)
+}
+
+func checkTiDBExportJobsTableSchema(t *testing.T, tk *testkit.TestKit) {
+	checkSystemTableSchema(t, tk, "tidb_export_jobs",
+		[]string{
+			"id bigint(64) NO",
+			"create_time timestamp(6) NO",
+			"start_time timestamp(6) YES",
+			"update_time timestamp(6) YES",
+			"end_time timestamp(6) YES",
+			"table_schema varchar(64) NO",
+			"table_name varchar(64) NO",
+			"table_id bigint(64) NO",
+			"destination varchar(2048) NO",
+			"format varchar(64) NO",
+			"created_by varchar(300) NO",
+			"parameters text NO",
+			"exported_size bigint(64) NO",
+			"status varchar(64) NO",
+			"step varchar(64) NO",
+			"summary text YES",
+			"error_message text YES",
+		},
+		[]string{
+			"PRIMARY 0 1 id",
+			"created_by 1 1 created_by",
+			"status 1 1 status",
+		})
+}
+
+func TestUpgradeVersion262ExportJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+	const fromVersion = 261
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seFrom := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(fromVersion))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seFrom, fromVersion)
+
+	is := dom.InfoSchema()
+	exportTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_export_jobs"))
+	require.NoError(t, err)
+	exportDBID := exportTbl.Meta().DBID
+	exportTblID := exportTbl.Meta().ID
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	err = m.DropTableOrView(exportDBID, exportTblID)
+	require.NoError(t, err)
+	exists, err := m.CheckTableExists(exportDBID, exportTblID)
+	require.NoError(t, err)
+	require.False(t, exists)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seFrom)
+	require.NoError(t, err)
+	require.Equal(t, int64(fromVersion), ver)
+	dom.Close()
+
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer newVer.Close()
+
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk := testkit.NewTestKit(t, store)
+	checkTiDBExportJobsTableSchema(t, tk)
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
