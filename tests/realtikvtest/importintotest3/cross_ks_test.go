@@ -163,12 +163,14 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		objStore.Close()
 	})
 
+	var taskSubmitCnt atomic.Int64
 	var taskRefreshCnt atomic.Int64
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
 		func(*int, *proto.ExtraParams) {
 			collate.SetNewCollationEnabledForTest(true)
+			taskSubmitCnt.Add(1)
 		},
 	)
 	testfailpoint.EnableCall(
@@ -180,8 +182,8 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			}
 			var taskMeta importinto.TaskMeta
 			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
-			require.False(t, taskMeta.Plan.GetUseNewCollateOrDefault(true))
-			require.True(t, collate.NewCollationEnabled())
+			require.NotNil(t, taskMeta.Plan.UseNewCollate)
+			require.False(t, *taskMeta.Plan.UseNewCollate)
 			taskRefreshCnt.Add(1)
 		},
 	)
@@ -592,10 +594,12 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 				userTK.MustExec(sql)
 			}
 			require.NoError(t, objStore.WriteFile(ctx, tc.fileName, []byte(tc.fileData)))
+			beforeSubmit := taskSubmitCnt.Load()
 			before := taskRefreshCnt.Load()
 			fileURL := fmt.Sprintf("s3://next-gen-test/collate-data/%s?%s", tc.fileName, s3Args)
 			result := userTK.MustQuery(fmt.Sprintf(tc.importSQL, fileURL)).Rows()
 			require.Len(t, result, 1)
+			require.Greater(t, taskSubmitCnt.Load(), beforeSubmit)
 			require.Greater(t, taskRefreshCnt.Load(), before)
 
 			collate.SetNewCollationEnabledForTest(false)
