@@ -790,12 +790,7 @@ func findSchemasForTables(
 		}
 	}
 	// Remove nil elements in tableSlice.
-	remains := tableSlice[:0]
-	for _, tbl := range tableSlice {
-		if tbl != nil {
-			remains = append(remains, tbl)
-		}
-	}
+	remains := slices.DeleteFunc(tableSlice, func(tbl *model.TableInfo) bool { return tbl == nil })
 	// Sort schema/table pairs together, keeping the two slices aligned. The
 	// comparator must stay side-effect free, so swap both slices via sort.Sort
 	// rather than mutating inside a sort.Slice less func.
