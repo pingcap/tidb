@@ -1230,6 +1230,14 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBEnableDiskSpacePrecheckBeforeAddIndex controls whether add-index TiKV
+	// disk space prediction and precheck are run. This is a temporary perf-test
+	// switch used to compare the precheck path against the no-precheck baseline.
+	TiDBEnableDiskSpacePrecheckBeforeAddIndex = "enable_disk_space_precheck_before_add_index"
+	// TiDBEnforceDiskSpacePrecheckBeforeAddIndex controls whether add-index TiKV disk
+	// space precheck failures reject the DDL. When disabled, TiDB still runs the
+	// precheck and logs warnings, but does not reject the DDL.
+	TiDBEnforceDiskSpacePrecheckBeforeAddIndex = "enforce_disk_space_precheck_before_add_index"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
@@ -1707,6 +1715,8 @@ const (
 	DefMemoryUsageAlarmKeepRecordNum                  = 5
 	DefTiDBEnableFastReorg                            = true
 	DefTiDBDDLDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
+	DefEnableDiskSpacePrecheckBeforeAddIndex          = true
+	DefEnforceDiskSpacePrecheckBeforeAddIndex         = false
 	DefExecutorConcurrency                            = 5
 	DefTiDBEnableNonPreparedPlanCache                 = false
 	DefTiDBEnableNonPreparedPlanCacheForDML           = true
@@ -1907,6 +1917,12 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
+	// EnableDiskSpacePrecheckBeforeAddIndex controls whether add-index disk-space
+	// prediction and precheck are run.
+	EnableDiskSpacePrecheckBeforeAddIndex = atomic.NewBool(DefEnableDiskSpacePrecheckBeforeAddIndex)
+	// EnforceDiskSpacePrecheckBeforeAddIndex controls whether add-index disk-space
+	// precheck failures are enforced.
+	EnforceDiskSpacePrecheckBeforeAddIndex = atomic.NewBool(DefEnforceDiskSpacePrecheckBeforeAddIndex)
 	// EnableForeignKey indicates whether to enable foreign key feature.
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
