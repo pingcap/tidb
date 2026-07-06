@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tablemode",
+    srcs = ["table_mode.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/tablemode",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/framework/dxfutil",
+        "//pkg/dxf/framework/storage",
+        "//pkg/executor/importer",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "tablemode_test",
+    timeout = "short",
+    srcs = ["table_mode_test.go"],
+    embed = [":tablemode"],
+    flaky = True,
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/domain/sqlsvrapi/mock",
+        "//pkg/dxf/framework/storage",
+        "//pkg/executor/importer",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/util/mock",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

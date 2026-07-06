@@ -28,6 +28,7 @@ go_test(
         "//pkg/lightning/mydump",
         "//pkg/objstore",
         "//pkg/planner/core",
+        "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store",
         "//pkg/store/driver/error",
