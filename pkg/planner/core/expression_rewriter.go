@@ -118,6 +118,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	for _, opt := range opts {
 		opt(&options)
 	}
+	ctx = expression.CtxWithUseNewCollate(ctx, options.UseNewCollate)
 
 	if options.InputSchema == nil && len(options.InputNames) > 0 {
 		return nil, errors.New("InputSchema and InputNames should be specified at the same time")

@@ -112,7 +112,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	{{- else if eq .Input.TypeName "JSON" -}}
 		compareResult = types.CompareBinaryJSON(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
-		compareResult = types.CompareString(arg0, arg1, b.collation)
+		compareResult = b.ctor.Compare(arg0, arg1)
 	{{- else if eq .Input.TypeNameInColumn "Float64" -}}
 		compareResult = cmp.Compare(arg0, arg1)
 	{{- else -}}
@@ -153,9 +153,6 @@ func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *c
 	args := b.args[1:]
 	{{- if not $InputJSON}}
 	if len(b.hashSet) != 0 {
-		{{- if $InputString }}
-			collator := collate.GetCollator(b.collation)
-		{{- end }}
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -190,7 +187,7 @@ func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *c
 						result.SetNull(i, false)
 					}
 				{{- else if $InputString }}
-					if _, ok := b.hashSet[string(collator.Key(arg0))]; ok {
+				if _, ok := b.hashSet[string(b.ctor.Key(arg0))]; ok {
 						r64s[i] = 1
 						result.SetNull(i, false)
 					}

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -339,7 +338,6 @@ type builtinInStringSig struct {
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
-	collator := collate.GetCollator(b.collation)
 
 	// Keep track of unique args count for in-place modification
 	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
@@ -363,7 +361,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 
-			key := string(collator.Key(val)) // should do memory copy here
+			key := string(b.ctor.Key(val)) // should do memory copy here
 			// Only keep this arg if value wasn't seen before
 			if !b.hashSet.Exist(key) {
 				b.hashSet.Insert(key)
@@ -407,9 +405,8 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	}
 
 	args := b.args[1:]
-	collator := collate.GetCollator(b.collation)
 	if len(b.hashSet) != 0 {
-		if b.hashSet.Exist(string(collator.Key(arg0))) {
+		if b.hashSet.Exist(string(b.ctor.Key(arg0))) {
 			return 1, false, nil
 		}
 		args = make([]Expression, 0, len(b.nonConstArgsIdx))
@@ -428,7 +425,7 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 			hasNull = true
 			continue
 		}
-		if types.CompareString(arg0, evaledArg, b.collation) == 0 {
+		if b.ctor.Compare(arg0, evaledArg) == 0 {
 			return 1, false, nil
 		}
 	}

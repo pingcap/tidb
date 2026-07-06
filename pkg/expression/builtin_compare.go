@@ -703,7 +703,7 @@ func (b *builtinGreatestStringSig) evalString(ctx EvalContext, row chunk.Row) (m
 		if isNull || err != nil {
 			return maxv, isNull, err
 		}
-		if types.CompareString(v, maxv, b.collation) > 0 {
+		if b.ctor.Compare(v, maxv) > 0 {
 			maxv = v
 		}
 	}
@@ -1047,7 +1047,7 @@ func (b *builtinLeastStringSig) evalString(ctx EvalContext, row chunk.Row) (minv
 		if isNull || err != nil {
 			return minv, isNull, err
 		}
-		if types.CompareString(v, minv, b.collation) < 0 {
+		if b.ctor.Compare(v, minv) < 0 {
 			minv = v
 		}
 	}
@@ -1496,7 +1496,7 @@ func GetCmpFunction(ctx BuildContext, lhs, rhs Expression) CompareFunc {
 		return CompareDecimal
 	case types.ETString:
 		coll, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
-		return genCompareString(coll.Collation)
+		return genCompareStringWithCollator(getCollatorFromBuildContext(ctx, coll.Collation))
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -2267,7 +2267,7 @@ func (b *builtinLTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLTStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLT(CompareStringWithCollationInfo(ctx, b.args[0], b.args[1], row, row, b.collation))
+	return resOfLT(compareStringWithCollator(ctx, b.args[0], b.args[1], row, row, b.ctor))
 }
 
 type builtinLTDurationSig struct {
@@ -2403,7 +2403,7 @@ func (b *builtinLEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLEStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLE(CompareStringWithCollationInfo(ctx, b.args[0], b.args[1], row, row, b.collation))
+	return resOfLE(compareStringWithCollator(ctx, b.args[0], b.args[1], row, row, b.ctor))
 }
 
 type builtinLEDurationSig struct {
@@ -2539,7 +2539,7 @@ func (b *builtinGTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGTStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGT(CompareStringWithCollationInfo(ctx, b.args[0], b.args[1], row, row, b.collation))
+	return resOfGT(compareStringWithCollator(ctx, b.args[0], b.args[1], row, row, b.ctor))
 }
 
 type builtinGTDurationSig struct {
@@ -2675,7 +2675,7 @@ func (b *builtinGEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGEStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGE(CompareStringWithCollationInfo(ctx, b.args[0], b.args[1], row, row, b.collation))
+	return resOfGE(compareStringWithCollator(ctx, b.args[0], b.args[1], row, row, b.ctor))
 }
 
 type builtinGEDurationSig struct {
@@ -2811,7 +2811,7 @@ func (b *builtinEQStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(CompareStringWithCollationInfo(ctx, b.args[0], b.args[1], row, row, b.collation))
+	return resOfEQ(compareStringWithCollator(ctx, b.args[0], b.args[1], row, row, b.ctor))
 }
 
 type builtinEQDurationSig struct {
@@ -2947,7 +2947,7 @@ func (b *builtinNEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinNEStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfNE(CompareStringWithCollationInfo(ctx, b.args[0], b.args[1], row, row, b.collation))
+	return resOfNE(compareStringWithCollator(ctx, b.args[0], b.args[1], row, row, b.ctor))
 }
 
 type builtinNEDurationSig struct {
@@ -3151,7 +3151,7 @@ func (b *builtinNullEQStringSig) evalInt(ctx EvalContext, row chunk.Row) (val in
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-	case types.CompareString(arg0, arg1, b.collation) == 0:
+	case b.ctor.Compare(arg0, arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -3410,13 +3410,21 @@ func CompareInt(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chun
 }
 
 func genCompareString(collation string) func(sctx EvalContext, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {
+	return genCompareStringWithCollator(collate.GetCollator(collation))
+}
+
+func genCompareStringWithCollator(collator collate.Collator) func(sctx EvalContext, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {
 	return func(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
-		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation)
+		return compareStringWithCollator(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collator)
 	}
 }
 
 // CompareStringWithCollationInfo compares two strings with the specified collation information.
 func CompareStringWithCollationInfo(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row, collation string) (int64, bool, error) {
+	return compareStringWithCollator(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collate.GetCollator(collation))
+}
+
+func compareStringWithCollator(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row, collator collate.Collator) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalString(sctx, lhsRow)
 	if err != nil {
 		return 0, true, err
@@ -3430,7 +3438,7 @@ func CompareStringWithCollationInfo(sctx EvalContext, lhsArg, rhsArg Expression,
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareString(arg0, arg1, collation)), false, nil
+	return int64(collator.Compare(arg0, arg1)), false, nil
 }
 
 // CompareReal compares two float-point values.
