@@ -85,11 +85,7 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		Check(testkit.Rows("False"))
 	require.False(t, collate.NewCollationEnabled())
 
-	var (
-		backfillInitCnt             atomic.Int64
-		unexpectedUseNewCollateMeta atomic.Bool
-		unexpectedExecutorGlobal    atomic.Bool
-	)
+	var backfillInitCnt atomic.Int64
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
@@ -101,12 +97,8 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		t,
 		"github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep",
 		func(job *model.Job) {
-			if job.ReorgMeta.GetUseNewCollateOrDefault(true) {
-				unexpectedUseNewCollateMeta.Store(true)
-			}
-			if !collate.NewCollationEnabled() {
-				unexpectedExecutorGlobal.Store(true)
-			}
+			require.False(t, job.ReorgMeta.GetUseNewCollateOrDefault(true))
+			require.True(t, collate.NewCollationEnabled())
 			backfillInitCnt.Add(1)
 		},
 	)
@@ -233,8 +225,6 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 				collate.SetNewCollationEnabledForTest(false)
 				tk.MustExec(sql)
 				require.Greater(t, backfillInitCnt.Load(), before)
-				require.False(t, unexpectedUseNewCollateMeta.Load())
-				require.False(t, unexpectedExecutorGlobal.Load())
 				collate.SetNewCollationEnabledForTest(false)
 			}
 			checkTableAndIndexes(tk, tc.table, tc.indexes, "3")
