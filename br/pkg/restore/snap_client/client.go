@@ -96,6 +96,8 @@ type SnapClient struct {
 	cipher                *backuppb.CipherInfo
 	concurrencyPerStore   uint
 	regionScanConcurrency uint
+	splitRegionIndexStep  uint
+	coarseScatter         bool
 	keepaliveConf         keepalive.ClientParameters
 	rateLimit             uint64
 	tlsConf               *tls.Config
@@ -186,11 +188,12 @@ func NewRestoreClient(
 	keepaliveConf keepalive.ClientParameters,
 ) *SnapClient {
 	return &SnapClient{
-		pdClient:      pdClient,
-		pdHTTPClient:  pdHTTPCli,
-		tlsConf:       tlsConf,
-		keepaliveConf: keepaliveConf,
-		switchCh:      make(chan struct{}),
+		pdClient:             pdClient,
+		pdHTTPClient:         pdHTTPCli,
+		tlsConf:              tlsConf,
+		keepaliveConf:        keepaliveConf,
+		splitRegionIndexStep: split.DefaultRegionIndexStep,
+		switchCh:             make(chan struct{}),
 	}
 }
 
@@ -315,6 +318,28 @@ func (rc *SnapClient) SetRegionScanConcurrency(c uint) {
 // GetRegionScanConcurrency returns max in-flight region scan requests during import.
 func (rc *SnapClient) GetRegionScanConcurrency() uint {
 	return rc.regionScanConcurrency
+}
+
+// SetSplitRegionIndexStep sets the rough split step during snapshot restore.
+func (rc *SnapClient) SetSplitRegionIndexStep(step uint) {
+	log.Info("split region index step", zap.Uint("step", step))
+	rc.splitRegionIndexStep = split.NormalizeRegionIndexStep(step)
+}
+
+// GetSplitRegionIndexStep returns the rough split step during snapshot restore.
+func (rc *SnapClient) GetSplitRegionIndexStep() uint {
+	return rc.splitRegionIndexStep
+}
+
+// SetCoarseScatter controls whether only rough split regions are scattered.
+func (rc *SnapClient) SetCoarseScatter(coarseScatter bool) {
+	log.Info("coarse scatter", zap.Bool("enabled", coarseScatter))
+	rc.coarseScatter = coarseScatter
+}
+
+// GetCoarseScatter returns whether only rough split regions are scattered.
+func (rc *SnapClient) GetCoarseScatter() bool {
+	return rc.coarseScatter
 }
 
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
@@ -808,7 +833,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, false, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw

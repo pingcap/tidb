@@ -1241,6 +1241,75 @@ func deleteJobMetaByID(tk *testkit.TestKit, jobID int64) {
 	tk.MustExec(sql)
 }
 
+func TestResumeSystemPausedDDLJobWithKVDiskFullReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	job := model.Job{
+		ID:            1,
+		Type:          model.ActionAddIndex,
+		State:         model.JobStatePaused,
+		AdminOperator: model.AdminCommandBySystem,
+	}
+	job.SetPauseReason(model.JobPauseReasonKVDiskFull, "TiKV disk full")
+	job.Error = dbterror.ErrDDLAutoPausedByKVDiskFull
+	insertMockJob2Table(tk, &job)
+
+	tk.MustExec("admin resume ddl jobs 1;")
+	resumedJob := getJobMetaByID(t, tk, job.ID)
+	require.Equal(t, model.JobStateQueueing, resumedJob.State)
+	require.Nil(t, resumedJob.PauseReason)
+	require.True(t, resumedJob.HasResumeReason(model.JobResumeReasonKVDiskFull))
+	require.Nil(t, resumedJob.Error)
+	deleteJobMetaByID(tk, job.ID)
+
+	systemPausedJob := model.Job{
+		ID:            2,
+		Type:          model.ActionAddIndex,
+		State:         model.JobStatePaused,
+		AdminOperator: model.AdminCommandBySystem,
+	}
+	insertMockJob2Table(tk, &systemPausedJob)
+	tk.MustQuery("admin resume ddl jobs 2;").Check(testkit.Rows(
+		"2 error: [ddl:8261]Job [2] can't be resumed: job has been paused by [System], should not resumed by [EndUser]"))
+	deleteJobMetaByID(tk, systemPausedJob.ID)
+
+	upgradePausedJob := model.Job{
+		ID:            3,
+		Type:          model.ActionAddIndex,
+		State:         model.JobStatePaused,
+		AdminOperator: model.AdminCommandBySystem,
+	}
+	insertMockJob2Table(tk, &upgradePausedJob)
+
+	kvDiskFullPausedJob := model.Job{
+		ID:            4,
+		Type:          model.ActionAddIndex,
+		State:         model.JobStatePaused,
+		AdminOperator: model.AdminCommandBySystem,
+	}
+	kvDiskFullPausedJob.SetPauseReason(model.JobPauseReasonKVDiskFull, "TiKV disk full")
+	kvDiskFullPausedJob.Error = dbterror.ErrDDLAutoPausedByKVDiskFull
+	insertMockJob2Table(tk, &kvDiskFullPausedJob)
+
+	jobErrs, err := ddl.ResumeAllJobsBySystem(tk.Session())
+	require.NoError(t, err)
+	require.Empty(t, jobErrs)
+
+	resumedUpgradeJob := getJobMetaByID(t, tk, upgradePausedJob.ID)
+	require.Equal(t, model.JobStateQueueing, resumedUpgradeJob.State)
+	require.Nil(t, resumedUpgradeJob.PauseReason)
+	require.Nil(t, resumedUpgradeJob.ResumeReason)
+	require.Nil(t, resumedUpgradeJob.Error)
+
+	stillPausedJob := getJobMetaByID(t, tk, kvDiskFullPausedJob.ID)
+	require.True(t, stillPausedJob.IsPausedBySystemForKVDiskFull())
+	require.NotNil(t, stillPausedJob.PauseReason)
+	require.NotNil(t, stillPausedJob.Error)
+	deleteJobMetaByID(tk, upgradePausedJob.ID)
+	deleteJobMetaByID(tk, kvDiskFullPausedJob.ID)
+}
+
 func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -3467,6 +3468,14 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
+		pagingSizeBytes := vars.PagingSizeBytes
+		if pagingSizeBytes > 0 {
+			if !vardef.EnableResourceControl.Load() || dom == nil || sc.ResourceGroupName == "" {
+				pagingSizeBytes = 0
+			} else if rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(sc.ResourceGroupName)); !ok || rg.GetBurstLimitAdjusted() < 0 {
+				pagingSizeBytes = 0
+			}
+		}
 		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -3506,6 +3515,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnablePaging:                  vars.EnablePaging,
 			MinPagingSize:                 vars.MinPagingSize,
 			MaxPagingSize:                 vars.MaxPagingSize,
+			PagingSizeBytes:               pagingSizeBytes,
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,
@@ -5647,6 +5657,13 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		return false
 	}
 	if stmtCtx.IsReadOnly {
+		return false
+	}
+	// The Starter deploy mode schedules background workloads on separate worker
+	// instances that do not support the pipelined protocol, so fall back to the
+	// standard path there.
+	if deploymode.IsStarter() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML is not supported in this deployment. Fallback to standard mode"))
 		return false
 	}
 	vars := s.GetSessionVars()

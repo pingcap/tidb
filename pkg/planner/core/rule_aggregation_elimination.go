@@ -204,7 +204,7 @@ func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) 
 			return false, nil
 		}
 		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncGroupConcat:
 		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		return true, rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)

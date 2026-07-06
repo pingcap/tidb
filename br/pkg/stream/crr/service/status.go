@@ -15,10 +15,7 @@
 package service
 
 import (
-	"fmt"
 	"maps"
-	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,31 +31,18 @@ const (
 	stateStopped  = "stopped"
 
 	phaseIdle = "idle"
+
+	statusFileName = "crr-checkpoint/resume-state.json"
 )
 
-func normalizeStorageSubDir(subDir string) (string, error) {
-	trimmed := strings.Trim(subDir, "/")
-	if trimmed == "" {
-		return "", fmt.Errorf("state storage subdir must not be empty")
-	}
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("state storage subdir must stay within selected storage, got %q", subDir)
-	}
-	return cleaned, nil
-}
-
-func GetStatusFileName(subDir string) (string, error) {
-	normalizedSubDir, err := normalizeStorageSubDir(subDir)
-	if err != nil {
-		return "", err
-	}
-	return path.Join(normalizedSubDir, "resume-state.json"), nil
+func GetStatusFileName() string {
+	return statusFileName
 }
 
 // StatusStatistic summarizes the current round's file-related work.
 type StatusStatistic struct {
 	UpstreamReadMetaFileCount       int            `json:"upstream_read_meta_file_count"`
+	SkippedStoreSyncedMetaFileCount int            `json:"skipped_store_synced_meta_file_count"`
 	EstimatedSyncLogFileCount       int            `json:"estimated_sync_log_file_count"`
 	DownstreamCheckFileCount        int            `json:"downstream_check_file_count"`
 	PlannedFileSuffixCounts         map[string]int `json:"planned_file_suffix_counts,omitempty"`
@@ -77,9 +61,10 @@ type StatusSnapshot struct {
 	CurrentRound      uint64 `json:"current_round"`
 	LastLoopIteration uint64 `json:"last_loop_iteration"`
 
-	LastUpstreamCheckpoint uint64 `json:"last_upstream_checkpoint"`
-	SafeCheckpoint         uint64 `json:"safe_checkpoint"`
-	SyncedTS               uint64 `json:"synced_ts"`
+	LastUpstreamCheckpoint uint64            `json:"last_upstream_checkpoint"`
+	SafeCheckpoint         uint64            `json:"safe_checkpoint"`
+	SyncedTS               uint64            `json:"synced_ts"`
+	SyncedByStore          map[uint64]uint64 `json:"synced_by_store,omitempty"`
 
 	AliveStoreCount  int             `json:"alive_store_count"`
 	PendingFileCount int             `json:"pending_file_count"`
@@ -133,6 +118,7 @@ func (s *statusStore) setPersistentState(state PersistentState) {
 	defer s.mu.Unlock()
 	s.snapshot.SafeCheckpoint = state.LastCheckpoint
 	s.snapshot.SyncedTS = state.SyncedTS
+	s.snapshot.SyncedByStore = maps.Clone(state.SyncedByStore)
 	observeStatusMetrics(&s.snapshot)
 }
 
@@ -174,6 +160,9 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 	if event.SyncedTS > 0 {
 		s.snapshot.SyncedTS = event.SyncedTS
 	}
+	if event.SyncedByStore != nil {
+		s.snapshot.SyncedByStore = maps.Clone(event.SyncedByStore)
+	}
 	if event.Type == checkpoint.EventRoundPlanned || event.Type == checkpoint.EventCheckpointAdvanced {
 		s.snapshot.AliveStoreCount = event.AliveStoreCount
 	}
@@ -212,6 +201,7 @@ func (s *statusStore) snapshotCopy() StatusSnapshot {
 	defer s.mu.RUnlock()
 
 	snapshot := s.snapshot
+	snapshot.SyncedByStore = maps.Clone(snapshot.SyncedByStore)
 	snapshot.Statistic.PlannedFileSuffixCounts = maps.Clone(snapshot.Statistic.PlannedFileSuffixCounts)
 	snapshot.Statistic.DownstreamCheckFileSuffixCounts = maps.Clone(snapshot.Statistic.DownstreamCheckFileSuffixCounts)
 	return snapshot
@@ -236,6 +226,7 @@ func (o *statusObserver) OnCheckpointEvent(event checkpoint.CheckpointEvent) {
 func newStatusStatistic(stat checkpoint.FileStatistic) StatusStatistic {
 	return StatusStatistic{
 		UpstreamReadMetaFileCount:       stat.UpstreamReadMetaFileCount,
+		SkippedStoreSyncedMetaFileCount: stat.SkippedStoreSyncedMetaFileCount,
 		EstimatedSyncLogFileCount:       stat.EstimatedSyncLogFileCount,
 		DownstreamCheckFileCount:        stat.DownstreamCheckFileCount,
 		PlannedFileSuffixCounts:         maps.Clone(stat.PlannedFileSuffixCounts),

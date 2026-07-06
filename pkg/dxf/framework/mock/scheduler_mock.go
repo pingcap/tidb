@@ -458,6 +458,22 @@ func (mr *MockTaskManagerMockRecorder) GetSubtaskCntGroupByStates(arg0, arg1, ar
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCntGroupByStates", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskCntGroupByStates), arg0, arg1, arg2)
 }
 
+// GetSubtaskStateCntAndErrorsByStep mocks base method.
+func (m *MockTaskManager) GetSubtaskStateCntAndErrorsByStep(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.SubtaskState]int64, []error, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSubtaskStateCntAndErrorsByStep", arg0, arg1, arg2)
+	ret0, _ := ret[0].(map[proto.SubtaskState]int64)
+	ret1, _ := ret[1].([]error)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetSubtaskStateCntAndErrorsByStep indicates an expected call of GetSubtaskStateCntAndErrorsByStep.
+func (mr *MockTaskManagerMockRecorder) GetSubtaskStateCntAndErrorsByStep(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskStateCntAndErrorsByStep", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskStateCntAndErrorsByStep), arg0, arg1, arg2)
+}
+
 // GetSubtaskErrors mocks base method.
 func (m *MockTaskManager) GetSubtaskErrors(arg0 context.Context, arg1 int64) ([]error, error) {
 	m.ctrl.T.Helper()
@@ -595,6 +611,20 @@ func (m *MockTaskManager) PauseTask(arg0 context.Context, arg1 string) (bool, er
 func (mr *MockTaskManagerMockRecorder) PauseTask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseTask", reflect.TypeOf((*MockTaskManager)(nil).PauseTask), arg0, arg1)
+}
+
+// PauseTaskOnError mocks base method.
+func (m *MockTaskManager) PauseTaskOnError(arg0 context.Context, arg1 int64, arg2 proto.TaskState, arg3 proto.Step, arg4 error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PauseTaskOnError", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PauseTaskOnError indicates an expected call of PauseTaskOnError.
+func (mr *MockTaskManagerMockRecorder) PauseTaskOnError(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseTaskOnError", reflect.TypeOf((*MockTaskManager)(nil).PauseTaskOnError), arg0, arg1, arg2, arg3, arg4)
 }
 
 // PausedTask mocks base method.
