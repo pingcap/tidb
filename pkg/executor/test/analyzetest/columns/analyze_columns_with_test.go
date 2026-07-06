@@ -630,6 +630,10 @@ func TestAnalyzeNonPredicateColumnRatio(t *testing.T) {
 
 	// Case 4: TopN/bucket numbers explicitly requested by the user are always honored,
 	// even for non-predicate columns (t4 has none of its columns used in predicates).
+	// The requested numbers are upper limits: all 15 TopN values are collected, while
+	// the histogram build packs the 165 samples left outside the TopN into 25 buckets,
+	// below the requested 40. Had the reduction been applied to the requested numbers,
+	// the limits would have dropped to 1 TopN value and 4 buckets.
 	prepareTable("t4")
 	tk.MustExec("analyze table t4 all columns with 15 topn, 40 buckets")
 	checkStatsSize("t4", "a", 0, 15, 25)
